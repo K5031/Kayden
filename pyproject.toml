@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-k = "controller:run"
+k = "main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

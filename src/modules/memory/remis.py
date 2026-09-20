@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 import chromadb
 import requests
+import torch
 from sentence_transformers import SentenceTransformer
 
 from config import BASE_DIR
@@ -139,7 +140,8 @@ class Module(MemoryInterface):
         self.collection = self.client.get_or_create_collection(
             collection_name, metadata={"hnsw:space": "cosine"}
         )
-        self.embedder = SentenceTransformer(embed_model_name, device="cuda")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.embedder = SentenceTransformer(embed_model_name, device=device)
 
         self._queue = queue.Queue()
         self._worker = threading.Thread(target=self._process_queue, daemon=True)
