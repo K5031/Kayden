@@ -1,6 +1,8 @@
 controller = "cloud"
 input = "terminal"
-output = "kokoro"
+output = "terminal"
 core = "deepseek"
 context = "cloud"
-memory = "remis"
+memory = "none"
+action = "native"
+tools = ["clock"]

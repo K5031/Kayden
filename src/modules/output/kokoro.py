@@ -11,31 +11,37 @@ from audio import ensure_audio_ready, resolve_output_device
 class Module(OutputInterface):
     def __init__(self, voice="af_heart", lang_code="a", repo_id="hexgrad/Kokoro-82M"):
         self.log = get_logger("Kokoro")
+        self.stream = None
+        self.thread = None
+        self.running = False
 
         ensure_audio_ready()
 
-        device_index = resolve_output_device()
-        self.log.info("Using output device index: %s", device_index)
-        self.stream = sd.OutputStream(
-            samplerate=24000,
-            channels=1,
-            dtype="float32",
-            device=device_index,
-        )
-        self.stream.start()
+        try:
+            self.log.info("Loading pipeline: %s (lang=%s, voice=%s)", repo_id, lang_code, voice)
+            self.pipeline = KPipeline(lang_code=lang_code, repo_id=repo_id)
+            self.voice = voice
+            self.buffer = ""
+            self.queue = queue.Queue()
+            self._generation = 0
 
-        self.log.info("Loading pipeline: %s (lang=%s, voice=%s)", repo_id, lang_code, voice)
-        self.pipeline = KPipeline(lang_code=lang_code, repo_id=repo_id)
-        self.voice = voice
-        self.buffer = ""
-        self.queue = queue.Queue()
-        self.running = True
-        self._generation = 0
-        self.thread = threading.Thread(
-            target=self._worker,
-            daemon=True,
-        )
-        self.thread.start()
+            device_index = resolve_output_device()
+            self.log.info("Using output device index: %s", device_index)
+            self.stream = sd.OutputStream(
+                samplerate=24000,
+                channels=1,
+                dtype="float32",
+                device=device_index,
+            )
+            self.stream.start()
+
+            self.running = True
+            self.thread = threading.Thread(target=self._worker, daemon=True)
+            self.thread.start()
+        except Exception:
+            if self.stream is not None:
+                self.stream.close()
+            raise
 
     def _worker(self):
         while self.running:
@@ -80,7 +86,8 @@ class Module(OutputInterface):
     def stop(self):
         self.log.info("stopping")
         self.running = False
-        if self.thread.is_alive():
+        if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2)
-        self.stream.stop()
-        self.stream.close()
+        if self.stream is not None:
+            self.stream.stop()
+            self.stream.close()

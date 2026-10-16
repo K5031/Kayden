@@ -1,5 +1,8 @@
-from typing import Iterator
+from typing import Callable, Iterator
+
 from llama_cpp import Llama
+
+from events import CoreEvent, CoreTextDelta
 from interfaces import CoreInterface
 from klogger import get_logger
 from utils import resolve_model_path
@@ -10,13 +13,14 @@ DEFAULT_N_CTX = 16384
 
 
 class Module(CoreInterface):
+    runtime_kind = "local"
+
     def __init__(
         self,
         model_path=DEFAULT_MODEL,
         n_gpu_layers=DEFAULT_N_GPU_LAYERS,
         n_ctx=DEFAULT_N_CTX,
     ):
-        self.system_prompt = "You are an AI assistant. Keep responses concise."
         self.log = get_logger("Core")
 
         resolved_path = resolve_model_path(model_path)
@@ -43,24 +47,19 @@ class Module(CoreInterface):
         self._interrupted = True
         try:
             self.llm.reset()
-        except Exception as e:
-            self.log.warning("reset after interrupt failed: %s", e)
+        except Exception as error:
+            self.log.warning("reset after interrupt failed: %s", error)
 
-    def set_system_prompt(self, prompt: str) -> None:
-        self.system_prompt = prompt
-
-    def generate(self, user_input: str, context: list[dict], memories: str) -> Iterator[str]:
+    def stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        should_interrupt: Callable[[], bool] | None = None,
+    ) -> Iterator[CoreEvent]:
+        if tools:
+            raise NotImplementedError("The llama_cpp core does not support tools yet")
         self._interrupted = False
 
-        system_content = self.system_prompt
-        if memories:
-            system_content += f"\n\nRelevant memories about the user:\n{memories}"
-
-        messages = [
-            {"role": "system", "content": system_content},
-            *context,
-            {"role": "user", "content": user_input},
-        ]
         self.log.debug("messages: %s", messages)
         for chunk in self.llm.create_chat_completion(
             messages=messages,
@@ -70,7 +69,14 @@ class Module(CoreInterface):
             repeat_penalty=1.1,
             max_tokens=512,
         ):
-            if self._interrupted:
+            if self._interrupted or (should_interrupt and should_interrupt()):
+                self.interrupt()
                 break
             token = chunk["choices"][0]["delta"].get("content", "")
-            yield token
+            if token:
+                yield CoreTextDelta(token)
+
+    def stop(self) -> None:
+        close = getattr(self.llm, "close", None)
+        if close:
+            close()

@@ -10,6 +10,8 @@ TRIM_TARGET_RATIO = 0.7
 
 
 class Module(ContextInterface):
+    usage_mode = "self"
+
     def __init__(self, model_path=DEFAULT_MODEL, max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS):
         self.conversation = []
         self.max_context_tokens = max_context_tokens
@@ -48,3 +50,8 @@ class Module(ContextInterface):
         self.log.info("conversation cleared (%d messages, %d tokens)",
                       len(self.conversation), self._total_tokens())
         self.conversation = []
+
+    def stop(self) -> None:
+        close = getattr(self.tokenizer, "close", None)
+        if close:
+            close()

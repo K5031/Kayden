@@ -1,8 +1,43 @@
 import importlib
-from config import config
+from config import load_config
+from interfaces import (
+    ActionInterface,
+    ContextInterface,
+    ControllerInterface,
+    CoreInterface,
+    InputInterface,
+    MemoryInterface,
+    OutputInterface,
+    ToolInterface,
+)
 from klogger import get_logger
+from tool_runtime import ToolRuntime
 
 log = get_logger("Registry")
+
+INTERFACES = {
+    "controller": ControllerInterface,
+    "input": InputInterface,
+    "output": OutputInterface,
+    "core": CoreInterface,
+    "context": ContextInterface,
+    "memory": MemoryInterface,
+    "action": ActionInterface,
+    "tools": ToolInterface,
+}
+
+
+def _load_module(capability: str, name: str):
+    import_name = f"modules.{capability}.{name}"
+    try:
+        return importlib.import_module(import_name)
+    except ModuleNotFoundError as error:
+        if error.name != import_name:
+            raise ModuleNotFoundError(
+                f"cannot load {capability} module '{name}': missing dependency "
+                f"'{error.name}'. Install the corresponding optional dependency group."
+            ) from error
+        raise
 
 
 class _MultiModule:
@@ -20,6 +55,15 @@ class _MultiModule:
 
         return call_all
 
+    def stop(self):
+        for instance in reversed(self._instances):
+            stop = getattr(instance, "stop", None)
+            if stop:
+                try:
+                    stop()
+                except Exception:
+                    log.exception("Failed to stop module instance: %s", instance)
+
 
 class Registry:
     def __init__(self):
@@ -29,10 +73,17 @@ class Registry:
         return self
 
     def __exit__(self, *args):
-        for capability, module in self._registry.items():
+        self.close()
+
+    def close(self):
+        for capability, module in reversed(list(self._registry.items())):
             if hasattr(module, "stop"):
                 log.info("Stopping module: %s (%s)", capability, module)
-                module.stop()
+                try:
+                    module.stop()
+                except Exception:
+                    log.exception("Failed to stop module: %s", capability)
+        self._registry.clear()
 
     def register(self, capability: str, module):
         self._registry[capability] = module
@@ -43,21 +94,33 @@ class Registry:
         except KeyError:
             raise KeyError(f"No module registered for capability '{capability}'")
 
+    def has(self, capability: str) -> bool:
+        return capability in self._registry
+
     @classmethod
-    def from_config(cls) -> "Registry":
-        keys = list(config.keys())
+    def from_config(cls, config_values: dict = None) -> "Registry":
+        config_values = load_config() if config_values is None else config_values
+        if not isinstance(config_values, dict):
+            raise TypeError("config must be a TOML table")
+
+        keys = list(config_values.keys())
         if not keys or keys[0] != "controller":
             raise ValueError(
                 f"config must have 'controller' as its first key, got: {keys}"
             )
 
-        controller_name = config["controller"]
-        controller_mod = importlib.import_module(f"modules.controller.{controller_name}")
+        controller_name = config_values["controller"]
+        if not isinstance(controller_name, str) or not controller_name:
+            raise TypeError("controller must name one module")
+        controller_mod = _load_module("controller", controller_name)
+        if not issubclass(controller_mod.Module, ControllerInterface):
+            raise TypeError(f"controller module '{controller_name}' has the wrong interface")
         required = set(controller_mod.Module.required_modules)
-        provided = set(config.keys()) - {"controller"}
+        optional = set(controller_mod.Module.optional_modules)
+        provided = set(config_values.keys()) - {"controller"}
 
         missing = required - provided
-        extra = provided - required
+        extra = provided - required - optional
         if missing or extra:
             problems = []
             if missing:
@@ -69,18 +132,63 @@ class Registry:
                 + ", ".join(problems)
             )
 
+        module_classes = {"controller": [(controller_name, controller_mod.Module)]}
+        for capability, configured_names in config_values.items():
+            if capability == "controller":
+                continue
+            if capability not in INTERFACES:
+                raise ValueError(f"unknown capability: {capability}")
+            names = configured_names if isinstance(configured_names, list) else [configured_names]
+            if not names and capability != "tools":
+                raise TypeError(f"{capability} must name one or more modules")
+            if any(not isinstance(name, str) or not name for name in names):
+                raise TypeError(f"{capability} must name one or more modules")
+            if len(names) > 1 and capability not in {"output", "tools"}:
+                raise ValueError("only output and tools support more than one module")
+            if capability == "action" and len(names) != 1:
+                raise ValueError("action must name one module; it may expose multiple tools")
+
+            module_classes[capability] = []
+            for name in names:
+                mod = _load_module(capability, name)
+                if not issubclass(mod.Module, INTERFACES[capability]):
+                    raise TypeError(f"{capability} module '{name}' has the wrong interface")
+                module_classes[capability].append((name, mod.Module))
+
+        for capability, features in controller_mod.Module.required_features.items():
+            for name, module_class in module_classes[capability]:
+                for feature, expected in features.items():
+                    actual = getattr(module_class, feature, None)
+                    if actual != expected:
+                        raise ValueError(
+                            f"{capability} module '{name}' is incompatible with controller "
+                            f"'{controller_name}': {feature} must be {expected!r}, got {actual!r}"
+                        )
+
         api = cls()
-        for capability, module_name in config.items():
-            if isinstance(module_name, list):
+        try:
+            for capability in config_values:
+                classes = module_classes[capability]
                 instances = []
-                for name in module_name:
-                    log.info("Loading %s: %s", capability, name)
-                    mod = importlib.import_module(f"modules.{capability}.{name}")
-                    instances.append(mod.Module())
-                instance = _MultiModule(instances)
-            else:
-                log.info("Loading %s: %s", capability, module_name)
-                mod = importlib.import_module(f"modules.{capability}.{module_name}")
-                instance = mod.Module()
-            api.register(capability, instance)
+                try:
+                    for name, module_class in classes:
+                        log.info("Loading %s: %s", capability, name)
+                        instances.append(module_class())
+                    if capability == "tools":
+                        instance = ToolRuntime(instances)
+                    else:
+                        instance = _MultiModule(instances) if len(instances) > 1 else instances[0]
+                except Exception:
+                    for pending in reversed(instances):
+                        stop = getattr(pending, "stop", None)
+                        if stop:
+                            try:
+                                stop()
+                            except Exception:
+                                log.exception("Failed to stop partial module: %s", pending)
+                    raise
+                api.register(capability, instance)
+        except Exception:
+            api.close()
+            raise
         return api

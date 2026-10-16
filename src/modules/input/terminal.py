@@ -21,18 +21,23 @@ class Module(InputInterface):
                 continue
             line = sys.stdin.readline()
             if line == "":
+                self.output_queue.put(None)
                 break
             text = line.rstrip("\n")
             self.output_queue.put(text)
 
     def get_input(self) -> str:
         print("\n> ", end="", flush=True)
-        return self.output_queue.get()
+        value = self.output_queue.get()
+        if value is None:
+            raise EOFError("stdin closed")
+        return value
 
     def has_input(self) -> bool:
         return not self.output_queue.empty()
 
     def stop(self):
         self.running = False
+        self.output_queue.put(None)
         self.thread.join(timeout=1)
         self._selector.close()

@@ -4,6 +4,7 @@ import queue
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -117,47 +118,79 @@ class Module(MemoryInterface):
         self.base_url = f"http://localhost:{port}"
         self.dedup_distance = dedup_distance
         self.conflict_band_upper = conflict_band_upper
+        self.server = None
+        self._queue = None
+        self._worker = None
+        self._stopped = False
 
         resolved_path = resolve_model_path(model_path)
         self.model_path = resolved_path
 
-        self.log.info("Extraction model: %s", resolved_path)
-        self.server = subprocess.Popen(
-            ["python", "-m", "llama_cpp.server",
-             "--model", resolved_path,
-             "--port", str(port),
-             "--n_gpu_layers", str(n_gpu_layers),
-             "--n_ctx", str(n_ctx),
-             "--flash_attn", "True",
-             "--verbose", "False"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid
-        )
-        self._wait_for_server()
+        try:
+            self.log.info("Extraction model: %s", resolved_path)
+            self.server = subprocess.Popen(
+                [sys.executable, "-m", "llama_cpp.server",
+                 "--model", resolved_path,
+                 "--port", str(port),
+                 "--n_gpu_layers", str(n_gpu_layers),
+                 "--n_ctx", str(n_ctx),
+                 "--flash_attn", "True",
+                 "--verbose", "False"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            self._wait_for_server()
 
-        self.client = chromadb.PersistentClient(path=os.path.join(BASE_DIR, "data", "chroma"))
-        self.collection = self.client.get_or_create_collection(
-            collection_name, metadata={"hnsw:space": "cosine"}
-        )
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.embedder = SentenceTransformer(embed_model_name, device=device)
+            self.client = chromadb.PersistentClient(path=os.path.join(BASE_DIR, "data", "chroma"))
+            self.collection = self.client.get_or_create_collection(
+                collection_name, metadata={"hnsw:space": "cosine"}
+            )
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.embedder = SentenceTransformer(embed_model_name, device=device)
 
-        self._queue = queue.Queue()
-        self._worker = threading.Thread(target=self._process_queue, daemon=True)
-        self._worker.start()
+            self._queue = queue.Queue()
+            self._worker = threading.Thread(target=self._process_queue, daemon=True)
+            self._worker.start()
+        except Exception:
+            self._stop_server()
+            raise
 
     def _wait_for_server(self, timeout: int = 60):
         start = time.time()
         while time.time() - start < timeout:
+            if self.server.poll() is not None:
+                raise RuntimeError(
+                    f"{self.name} llama-server exited with code {self.server.returncode}"
+                )
             try:
-                r = requests.get(f"{self.base_url}/v1/models")
+                r = requests.get(f"{self.base_url}/v1/models", timeout=1)
                 if r.status_code == 200:
                     return
-            except requests.exceptions.ConnectionError:
+            except requests.RequestException:
                 pass
             time.sleep(1)
         raise TimeoutError(f"{self.name} llama-server failed to start within timeout")
+
+    def _stop_server(self):
+        if self.server is None or self.server.poll() is not None:
+            return
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(self.server.pid), signal.SIGTERM)
+            else:
+                self.server.terminate()
+            self.server.wait(timeout=5)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            if self.server.poll() is None:
+                if os.name == "posix":
+                    try:
+                        os.killpg(os.getpgid(self.server.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                else:
+                    self.server.kill()
+                self.server.wait()
 
     def _embed(self, text: str) -> list[float]:
         return self.embedder.encode(text, show_progress_bar=False).tolist()
@@ -204,16 +237,16 @@ class Module(MemoryInterface):
     def _process_queue(self):
         while True:
             messages = self._queue.get()
-            if messages is None:
-                self._queue.task_done()
-                break
             try:
+                if messages is None:
+                    return
                 facts = self._extract_and_save(messages)
                 if facts:
                     self.log.info("stored: %s", facts)
             except Exception as e:
                 self.log.error("store failed: %s", e)
-            self._queue.task_done()
+            finally:
+                self._queue.task_done()
 
     def _extract_and_save(self, messages: list[dict]) -> list[str]:
         conversation = _format_conversation(messages)
@@ -282,6 +315,8 @@ class Module(MemoryInterface):
         )
 
     def store(self, messages: list[dict]) -> None:
+        if self._stopped:
+            return
         self._queue.put(messages)
 
     def retrieve(self, query: str, max_distance: float = 0.6) -> str:
@@ -305,8 +340,14 @@ class Module(MemoryInterface):
         return "\n".join(f"- {f}" for f in facts)
 
     def stop(self):
-        self._queue.join()
-        self._queue.put(None)
-        self._worker.join(timeout=5)
-        os.killpg(os.getpgid(self.server.pid), signal.SIGKILL)
-        self.server.wait()
+        if self._stopped:
+            return
+        self._stopped = True
+        if self._queue is not None and self._worker is not None:
+            self._queue.put(None)
+            self._worker.join(timeout=5)
+            if self._worker.is_alive():
+                self.log.warning("memory worker did not stop promptly; terminating local server")
+        self._stop_server()
+        if self._worker is not None and self._worker.is_alive():
+            self._worker.join(timeout=2)

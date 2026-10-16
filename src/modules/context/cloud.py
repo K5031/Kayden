@@ -8,6 +8,8 @@ CHARS_PER_TOKEN_ESTIMATE = 3.5
 
 
 class Module(ContextInterface):
+    usage_mode = "reported"
+
     def __init__(self, max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS):
         self.conversation = []
         self.max_context_tokens = max_context_tokens

@@ -12,15 +12,26 @@ source venv/bin/activate
 pip install -e .
 ```
 
-If you'll use a local core or memory module, drop the GGUF models you want into `models/`.
+The base installation supports the terminal and DeepSeek modules. Install only the optional features you need:
+
+```bash
+pip install -e ".[local]"         # local llama.cpp core
+pip install -e ".[memory]"        # persistent Remis memory
+pip install -e ".[voice-input]"   # Whisper microphone input
+pip install -e ".[voice-output]"  # Kokoro speech output
+pip install -e ".[all]"           # everything
+```
+
+If you'll use a local core or memory module, drop the GGUF models you want into `models/` when running from a checkout. A regular installation uses `$XDG_DATA_HOME/k/models/` (normally `~/.local/share/k/models/`).
 
 Run it:
 
 ```bash
-python src/main.py
+k
+# Or, from a source checkout: python src/main.py
 ```
 
-On first run this creates `~/.config/k/config.toml` (copied from `config.example.toml`) and `~/.config/k/system_prompt.txt` (copied from `default_prompt.txt`). Edit `config.toml` to pick your modules and `system_prompt.txt` to customize the assistant's personality.
+On first run this creates `~/.config/k/config.toml` and `~/.config/k/system_prompt.txt` from defaults bundled with the package. Edit `config.toml` to pick your modules and `system_prompt.txt` to customize the assistant's personality.
 
 Some modules need credentials — e.g. the `deepseek` core module reads its key from the `DEEPSEEK_API_KEY` environment variable.
 
@@ -33,11 +44,13 @@ output = "terminal"
 core = "llama_cpp"
 context = "local"
 memory = "remis"
+action = "native"
+tools = []
 ```
 
-Each key is a capability, and its value is the module (filename, no `.py`) that fills it, loaded from `src/modules/<capability>/`. The `controller` module must be listed first — it declares which other capabilities it needs, and `Registry.from_config` will refuse to start if the config doesn't match exactly.
+Each key is a capability, and its value is the module (filename, no `.py`) that fills it, loaded from `src/modules/<capability>/`. The `controller` module must be listed first — it declares which capabilities it needs and which are optional. `Registry.from_config` checks the config against those declarations.
 
-A capability can also take a list of module names, e.g. `output = ["terminal", "kokoro"]`, to run several modules for that capability side by side.
+The `output` and `tools` capabilities can take lists. For example, `output = ["terminal", "kokoro"]` runs several outputs side by side, while `tools = ["clock", "filesystem"]` makes several tool modules available to the selected action strategy. Other capabilities take one module.
 
 ## Built-in Modules
 
@@ -53,7 +66,10 @@ A capability can also take a list of module names, e.g. `output = ["terminal", "
 | core | `deepseek` | Cloud inference via the DeepSeek API |
 | context | `local` | In-memory conversation buffer, trimmed by counting tokens with a local tokenizer |
 | context | `cloud` | In-memory conversation buffer, trimmed using usage stats reported by the core module |
+| memory | `none` | Disables persistent memory without adding heavy dependencies |
 | memory | `remis` | Persistent long-term memory — extracts durable facts with a local LLM, then embeds, dedupes, and conflict-resolves them against a Chroma store |
+| action | `native` | Runs the inner model/tool loop using the core's native function-calling protocol |
+| tools | `clock` | Exposes the current local date and time |
 
 ## Writing a Module
 
@@ -76,10 +92,26 @@ Place it under `src/modules/<capability>/your_module.py` and reference it by nam
 
 - `InputInterface` — `get_input() -> str`, `has_input() -> bool`
 - `OutputInterface` — `send(token: str)`, `interrupt()`, `flush()`
-- `CoreInterface` — `generate(user_input, context, memories) -> Iterator[str]`, `set_system_prompt(prompt)`, `interrupt()`
+- `CoreInterface` — `stream(messages, tools=None, should_interrupt=None) -> Iterator[CoreEvent]`, `interrupt()`
 - `ContextInterface` — `add(role, content)`, `get() -> list[dict]`, `clear()`
 - `MemoryInterface` — `store(messages)`, `retrieve(query) -> str`
-- `ControllerInterface` — `run(api)`, plus a `required_modules: list[str]` class attribute naming the capabilities it needs
+- `ToolInterface` — `schemas() -> list[dict]` returns function definitions; `execute(name, arguments) -> str` validates and runs a tool
+- `ActionInterface` — `run(core, turn, tools, should_interrupt=None) -> Iterator[ActionEvent]` defines how the model uses tools
+- `ControllerInterface` — `run(api)`, plus `required_modules`, `optional_modules`, and `required_features` class attributes
+
+## Actions and Tools
+
+An action module is a strategy for using tools. It owns the inner model/tool loop: make one model request, execute requested tools through the tool runtime, return their results to the model, and continue until the model produces a final response. The built-in `native` strategy uses the core's native function-calling protocol.
+
+A tool module under `src/modules/tools/` exposes one or more concrete tools through `schemas()` and `execute()`. The shared tool runtime combines schemas, rejects duplicate or unknown names, routes execution, and converts failures into tool results. See `src/modules/tools/clock.py` for a minimal example.
+
+The controller still owns the outer conversation loop, context, memory, and output. Cores perform one model request at a time and emit normalized events. The local llama.cpp core can use the `native` strategy when `tools = []`; native tool calling is not yet supported by that core.
+
+## Tests
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+```
 
 ## Roadmap
 
@@ -87,4 +119,4 @@ Place it under `src/modules/<capability>/your_module.py` and reference it by nam
 - [x] Context overflow prevention
 - [x] Interrupt mid-generation
 - [ ] Vision module
-- [ ] Action modules
+- [x] Native tool-use strategy

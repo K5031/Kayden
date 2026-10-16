@@ -7,18 +7,37 @@ name = "k"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
+    "requests",
+    "tomli; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+local = ["llama-cpp-python[server]"]
+memory = [
+    "chromadb",
     "llama-cpp-python[server]",
+    "sentence-transformers",
+    "torch",
+]
+voice-input = [
+    "numpy",
     "openai-whisper",
+    "PyAudio",
     "SpeechRecognition",
     "sounddevice",
-    "PyAudio",
-    "numpy",
-    "sentence-transformers",
+]
+voice-output = ["kokoro", "sounddevice"]
+all = [
     "chromadb",
-    "requests",
-    "pyyaml",
-    "openai",
     "kokoro",
+    "llama-cpp-python[server]",
+    "numpy",
+    "openai-whisper",
+    "PyAudio",
+    "sentence-transformers",
+    "SpeechRecognition",
+    "sounddevice",
+    "torch",
 ]
 
 [project.scripts]
@@ -26,7 +45,11 @@ k = "main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["main", "controller", "interfaces", "registry", "config"]
+py-modules = ["audio", "config", "events", "interfaces", "klogger", "main", "registry", "tool_runtime", "turns", "utils"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+k_resources = ["*.toml", "*.txt"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

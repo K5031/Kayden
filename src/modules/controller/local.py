@@ -1,10 +1,16 @@
 import signal
 from interfaces import ControllerInterface
-from config import system_prompt
+from config import load_system_prompt
+from events import TextDelta
+from turns import build_turn
 
 
 class Module(ControllerInterface):
-    required_modules = ["input", "output", "core", "context", "memory"]
+    required_modules = ["input", "output", "core", "context", "memory", "action", "tools"]
+    required_features = {
+        "core": {"runtime_kind": "local"},
+        "context": {"usage_mode": "self"},
+    }
 
     def run(self, api) -> None:
         inp = api.get("input")
@@ -12,8 +18,10 @@ class Module(ControllerInterface):
         core = api.get("core")
         contextMgr = api.get("context")
         memory = api.get("memory")
+        action = api.get("action")
+        tools = api.get("tools")
 
-        core.set_system_prompt(system_prompt)
+        system_prompt = load_system_prompt()
         print(f"Selected model: {core.model_path}")
 
         try:
@@ -23,6 +31,7 @@ class Module(ControllerInterface):
 
                 memories = memory.retrieve(user_input)
                 context = contextMgr.get()
+                turn = build_turn(system_prompt, context, memories, user_input)
                 reply = ""
 
                 interrupted = {"flag": False}
@@ -32,16 +41,22 @@ class Module(ControllerInterface):
 
                 previous_handler = signal.signal(signal.SIGINT, _on_sigint)
                 try:
-                    for token in core.generate(user_input, context, memories):
-                        if inp.has_input() or interrupted["flag"]:
-                            core.interrupt()
-                            output.interrupt()
-                            interrupted["flag"] = False
-                            print("\n[interrupted]")
-                            break
+                    def should_interrupt():
+                        return inp.has_input() or interrupted["flag"]
 
-                        output.send(token)
-                        reply += token
+                    for event in action.run(
+                        core,
+                        turn,
+                        tools,
+                        should_interrupt=should_interrupt,
+                    ):
+                        if isinstance(event, TextDelta):
+                            output.send(event.text)
+                            reply += event.text
+                    if should_interrupt():
+                        output.interrupt()
+                        interrupted["flag"] = False
+                        print("\n[interrupted]")
                     else:
                         output.flush()
                 finally:
@@ -54,5 +69,5 @@ class Module(ControllerInterface):
                     {"role": "assistant", "content": reply}
                 ])
 
-        except KeyboardInterrupt:
-            print("\nExiting (Ctrl+C).")
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting.")
