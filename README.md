@@ -1,6 +1,6 @@
 # Kayden
 
-A modular desktop AI assistant. Its `k` command runs a controller that connects
+A modular desktop AI assistant. Its `kayden` command runs a controller that connects
 input, output, model, context, memory, action-strategy, and tool modules.
 
 ## Installation
@@ -28,11 +28,15 @@ If you'll use a local core or memory module, drop the GGUF models you want into 
 Run it:
 
 ```bash
-k
+kayden
 # Or, from a source checkout: python src/main.py
 ```
 
-On first run this creates `~/.config/k/config.toml` and `~/.config/k/system_prompt.txt` from defaults bundled with the package. Edit `config.toml` to pick your modules and `system_prompt.txt` to customize the assistant's personality.
+On first run this creates `~/.config/kayden/config.toml` and
+`~/.config/kayden/system_prompt.txt` from defaults bundled with the package.
+An existing `~/.config/k` directory is migrated automatically. Edit
+`config.toml` to pick your modules and `system_prompt.txt` to customize the
+assistant's personality.
 
 Some modules need credentials — e.g. the `deepseek` core module reads its key from the `DEEPSEEK_API_KEY` environment variable.
 

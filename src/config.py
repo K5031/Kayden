@@ -8,7 +8,12 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-CONFIG_DIR = os.path.expanduser("~/.config/k")
+CONFIG_HOME = os.environ.get(
+    "XDG_CONFIG_HOME",
+    os.path.expanduser("~/.config"),
+)
+CONFIG_DIR = os.path.join(CONFIG_HOME, "kayden")
+LEGACY_CONFIG_DIR = os.path.expanduser("~/.config/k")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.toml")
 SYSTEM_PROMPT_PATH = os.path.join(CONFIG_DIR, "system_prompt.txt")
 
@@ -27,6 +32,9 @@ DEFAULT_PROMPT = RESOURCES.joinpath("default_prompt.txt")
 
 
 def ensure_config():
+    if not os.path.exists(CONFIG_DIR) and os.path.isdir(LEGACY_CONFIG_DIR):
+        os.makedirs(os.path.dirname(CONFIG_DIR), exist_ok=True)
+        shutil.move(LEGACY_CONFIG_DIR, CONFIG_DIR)
     os.makedirs(CONFIG_DIR, exist_ok=True)
     if not os.path.exists(CONFIG_PATH):
         shutil.copyfile(DEFAULT_CONFIG, CONFIG_PATH)
