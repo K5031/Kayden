@@ -1,25 +1,26 @@
-# K
+# Kayden
 
-A modular desktop AI assistant.
+A modular desktop AI assistant. Its `k` command runs a controller that connects
+input, output, model, context, memory, action-strategy, and tool modules.
 
 ## Installation
 
 ```bash
-git clone git@github.com:K5031/K.git
-cd K
+git clone https://github.com/K5031/Kayden.git
+cd Kayden
 python3 -m venv venv
 source venv/bin/activate
-pip install -e .
+python -m pip install -e .
 ```
 
 The base installation supports the terminal and DeepSeek modules. Install only the optional features you need:
 
 ```bash
-pip install -e ".[local]"         # local llama.cpp core
-pip install -e ".[memory]"        # persistent Remis memory
-pip install -e ".[voice-input]"   # Whisper microphone input
-pip install -e ".[voice-output]"  # Kokoro speech output
-pip install -e ".[all]"           # everything
+python -m pip install -e ".[local]"         # local llama.cpp core
+python -m pip install -e ".[memory]"        # persistent Remis memory
+python -m pip install -e ".[voice-input]"   # Whisper microphone input
+python -m pip install -e ".[voice-output]"  # Kokoro speech output
+python -m pip install -e ".[all]"           # everything
 ```
 
 If you'll use a local core or memory module, drop the GGUF models you want into `models/` when running from a checkout. A regular installation uses `$XDG_DATA_HOME/k/models/` (normally `~/.local/share/k/models/`).
@@ -35,22 +36,40 @@ On first run this creates `~/.config/k/config.toml` and `~/.config/k/system_prom
 
 Some modules need credentials — e.g. the `deepseek` core module reads its key from the `DEEPSEEK_API_KEY` environment variable.
 
-## Example Configuration
+## Configuration
+
+The default configuration uses DeepSeek, terminal input/output, no persistent
+memory, and the clock tool:
+
+```toml
+controller = "cloud"
+input = "terminal"
+output = "terminal"
+core = "deepseek"
+context = "cloud"
+memory = "none"
+action = "native"
+tools = ["clock"]
+```
+
+For fully local inference, install the `local` extra and switch the relevant
+settings:
 
 ```toml
 controller = "local"
-input = "terminal"
-output = "terminal"
 core = "llama_cpp"
 context = "local"
-memory = "remis"
-action = "native"
 tools = []
 ```
 
+The local core does not support native tool calling yet.
+
 Each key is a capability, and its value is the module (filename, no `.py`) that fills it, loaded from `src/modules/<capability>/`. The `controller` module must be listed first — it declares which capabilities it needs and which are optional. `Registry.from_config` checks the config against those declarations.
 
-The `output` and `tools` capabilities can take lists. For example, `output = ["terminal", "kokoro"]` runs several outputs side by side, while `tools = ["clock", "filesystem"]` makes several tool modules available to the selected action strategy. Other capabilities take one module.
+The `output` and `tools` capabilities can take lists. For example, `output =
+["terminal", "kokoro"]` runs several outputs side by side. Every module named
+in `tools` contributes its concrete tools to the selected action strategy.
+Other capabilities take one module.
 
 ## Built-in Modules
 
@@ -112,6 +131,8 @@ The controller still owns the outer conversation loop, context, memory, and outp
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
+
+The suite makes no live model API requests.
 
 ## Roadmap
 
