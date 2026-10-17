@@ -1,0 +1,86 @@
+from datetime import datetime, timedelta, timezone
+import inspect
+import logging
+import queue
+import sys
+from types import ModuleType
+import unittest
+from unittest.mock import Mock, patch
+
+
+fake_numpy = ModuleType("numpy")
+fake_numpy.int16 = object()
+fake_numpy.float32 = object()
+fake_sr = ModuleType("speech_recognition")
+fake_sr.AudioData = type("AudioData", (), {})
+fake_sr.Microphone = Mock
+fake_sr.Recognizer = Mock
+fake_whisper = ModuleType("whisper")
+fake_whisper.load_model = Mock()
+with patch.dict(sys.modules, {
+    "numpy": fake_numpy,
+    "speech_recognition": fake_sr,
+    "whisper": fake_whisper,
+}):
+    from kayden.modules.input import whisper as whisper_input
+
+
+def _input():
+    module = whisper_input.Module.__new__(whisper_input.Module)
+    module.log = logging.getLogger("test-whisper")
+    module.model = Mock()
+    module._cuda = False
+    module.data_queue = queue.Queue()
+    module.output_queue = queue.Queue()
+    module.buffer = b""
+    module.last_audio_time = None
+    module.phrase_timeout = 1
+    return module
+
+
+class WhisperInputTests(unittest.TestCase):
+    def test_default_silence_timeout_is_conversational(self):
+        parameter = inspect.signature(whisper_input.Module).parameters["phrase_timeout"]
+        self.assertEqual(parameter.default, 1.2)
+
+    def test_cuda_probe_handles_missing_driver(self):
+        fake_torch = ModuleType("torch")
+        fake_torch.cuda = Mock()
+        fake_torch.cuda.is_available.return_value = False
+        with patch.dict(sys.modules, {"torch": fake_torch}):
+            self.assertFalse(whisper_input._cuda_available())
+        fake_torch.cuda.is_available.return_value = True
+        with patch.dict(sys.modules, {"torch": fake_torch}):
+            self.assertTrue(whisper_input._cuda_available())
+
+    def test_transcribe_drops_low_confidence_segments(self):
+        module = _input()
+        module.model.transcribe.return_value = {"segments": [
+            {"text": "keep", "avg_logprob": -0.2},
+            {"text": "drop", "avg_logprob": -1.2},
+            {"text": "this", "avg_logprob": -0.5},
+        ]}
+        with patch.object(module, "_audio_to_numpy", return_value="audio"):
+            self.assertEqual(module._transcribe(b"bytes"), "keep this")
+        self.assertFalse(module.model.transcribe.call_args.kwargs["fp16"])
+
+    def test_completed_phrase_is_queued(self):
+        module = _input()
+        module.buffer = b"audio"
+        module.last_audio_time = datetime.now(timezone.utc) - timedelta(seconds=2)
+        with patch.object(module, "_transcribe", return_value="hello"):
+            module._process_audio()
+        self.assertEqual(module.output_queue.get_nowait(), "hello")
+        self.assertEqual(module.buffer, b"")
+        self.assertIsNone(module.last_audio_time)
+
+    def test_combines_pending_transcripts(self):
+        module = _input()
+        module.output_queue.put("hello")
+        module.output_queue.put("world")
+        self.assertEqual(module._get_combined_text(), "hello world")
+        self.assertFalse(module.has_input())
+
+
+if __name__ == "__main__":
+    unittest.main()

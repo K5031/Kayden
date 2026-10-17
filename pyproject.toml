@@ -1,11 +1,32 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "k"
+name = "kayden"
 version = "0.1.0"
+description = "A modular desktop AI assistant with swappable models, memory, actions, tools, and interfaces."
+readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "K5031" }]
+keywords = ["ai", "assistant", "agents", "llm", "tui"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console :: Curses",
+    "Environment :: X11 Applications",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Communications :: Chat",
+]
 dependencies = [
     "PyJWT[crypto]",
     "requests",
@@ -13,7 +34,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["build", "pytest", "twine"]
 local = ["llama-cpp-python[server]"]
 memory = [
     "chromadb",
@@ -26,7 +47,6 @@ voice-input = [
     "openai-whisper",
     "PyAudio",
     "SpeechRecognition",
-    "sounddevice",
 ]
 voice-output = ["kokoro", "sounddevice"]
 all = [
@@ -43,15 +63,19 @@ all = [
 ]
 
 [project.scripts]
-kayden = "main:main"
+kayden = "kayden.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/K5031/Kayden"
+Repository = "https://github.com/K5031/Kayden.git"
+Issues = "https://github.com/K5031/Kayden/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["audio", "config", "events", "interfaces", "klogger", "main", "registry", "tool_runtime", "turns", "utils"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-k_resources = ["*.toml", "*.txt"]
+"kayden.resources" = ["*.toml", "*.txt"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

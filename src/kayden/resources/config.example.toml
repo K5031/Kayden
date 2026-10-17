@@ -1,0 +1,10 @@
+controller = "cloud"
+frontend = "tui"
+# Optional voice modules (install the matching extras before enabling):
+# input = "whisper"
+# output = "kokoro"
+core = "deepseek"
+context = "cloud"
+memory = "continuity"
+action = "native"
+tools = ["clock", "calculator", "filesystem", "web"]

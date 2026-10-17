@@ -5,9 +5,9 @@ from tkinter import ttk, messagebox
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # project root
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))  # src/ — where config.py lives
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from config import BASE_DIR  # noqa: E402
+from kayden.config import BASE_DIR  # noqa: E402
 import chromadb  # noqa: E402
 
 CHROMA_PATH = os.path.join(BASE_DIR, "data", "chroma")

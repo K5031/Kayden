@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from interfaces import (
+from kayden.interfaces import (
     ActionInterface,
     ContextPolicyInterface,
     ControllerInterface,
@@ -12,7 +12,7 @@ from interfaces import (
     OutputInterface,
     ToolInterface,
 )
-from registry import Registry
+from kayden.registry import Registry
 
 
 class _Controller(ControllerInterface):
@@ -122,12 +122,12 @@ class RegistryTests(unittest.TestCase):
     def test_partial_startup_is_cleaned_up(self):
         _Frontend.stopped = False
         modules = {
-            "modules.controller.test": _Controller,
-            "modules.frontend.test": _Frontend,
-            "modules.output.test": _FailingOutput,
+            "kayden.modules.controller.test": _Controller,
+            "kayden.modules.frontend.test": _Frontend,
+            "kayden.modules.output.test": _FailingOutput,
         }
 
-        with patch("registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
+        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
             with self.assertRaisesRegex(RuntimeError, "output failed"):
                 Registry.from_config({
                     "controller": "test",
@@ -139,12 +139,12 @@ class RegistryTests(unittest.TestCase):
 
     def test_incompatible_modules_fail_before_initialization(self):
         modules = {
-            "modules.controller.cloud_test": _CloudController,
-            "modules.core.local_test": _LocalCore,
-            "modules.context.reported_test": _ReportedContext,
+            "kayden.modules.controller.cloud_test": _CloudController,
+            "kayden.modules.core.local_test": _LocalCore,
+            "kayden.modules.context.reported_test": _ReportedContext,
         }
 
-        with patch("registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
+        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
             with self.assertRaisesRegex(ValueError, "incompatible"):
                 Registry.from_config({
                     "controller": "cloud_test",
@@ -172,14 +172,14 @@ class RegistryTests(unittest.TestCase):
 
     def test_only_output_and_tools_accept_multiple_modules(self):
         modules = {
-            "modules.controller.test": _Controller,
-            "modules.frontend.test": _Frontend,
-            "modules.input.one": _Input,
-            "modules.input.two": _Input,
-            "modules.output.test": _FailingOutput,
+            "kayden.modules.controller.test": _Controller,
+            "kayden.modules.frontend.test": _Frontend,
+            "kayden.modules.input.one": _Input,
+            "kayden.modules.input.two": _Input,
+            "kayden.modules.output.test": _FailingOutput,
         }
 
-        with patch("registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
+        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
             with self.assertRaisesRegex(ValueError, "only output and tools"):
                 Registry.from_config({
                     "controller": "test",
@@ -190,12 +190,12 @@ class RegistryTests(unittest.TestCase):
 
     def test_action_and_tools_are_wired_into_the_runtime(self):
         modules = {
-            "modules.controller.actions": _ActionController,
-            "modules.action.native_test": _Action,
-            "modules.tools.echo_test": _Tool,
+            "kayden.modules.controller.actions": _ActionController,
+            "kayden.modules.action.native_test": _Action,
+            "kayden.modules.tools.echo_test": _Tool,
         }
 
-        with patch("registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
+        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
             registry = Registry.from_config({
                 "controller": "actions",
                 "action": "native_test",

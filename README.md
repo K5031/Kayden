@@ -1,16 +1,33 @@
 # Kayden
 
+> Weapon of the Faithless.
+
 A modular desktop AI assistant. Its `kayden` command runs a controller that connects
 a selectable frontend, model, context, memory, action strategy, and tool modules.
 
 ## Installation
 
 ```bash
+python -m pip install kayden
+kayden
+```
+
+To work from a source checkout instead:
+
+```bash
 git clone https://github.com/K5031/Kayden.git
 cd Kayden
 python3 -m venv venv
 source venv/bin/activate
-python -m pip install -e .
+python -m pip install -e ".[dev]"
+```
+
+If this checkout was installed before the distribution was renamed from `k`,
+remove that stale editable installation once before reinstalling:
+
+```bash
+python -m pip uninstall k
+python -m pip install -e ".[dev]"
 ```
 
 The base installation supports the TUI, desktop/floaty Tk frontends, DeepSeek,
@@ -18,20 +35,25 @@ OpenAI API, and ChatGPT plan modules. Install only the other optional features
 you need:
 
 ```bash
-python -m pip install -e ".[local]"         # local llama.cpp core
-python -m pip install -e ".[memory]"        # legacy Remis memory dependencies
-python -m pip install -e ".[voice-input]"   # Whisper microphone input
-python -m pip install -e ".[voice-output]"  # Kokoro speech output
-python -m pip install -e ".[all]"           # everything
+python -m pip install "kayden[local]"         # local llama.cpp core
+python -m pip install "kayden[memory]"        # legacy Remis memory dependencies
+python -m pip install "kayden[voice-input]"   # Whisper microphone input
+python -m pip install "kayden[voice-output]"  # Kokoro speech output
+python -m pip install "kayden[all]"           # everything
 ```
 
-If you'll use a local core or memory module, drop the GGUF models you want into `models/` when running from a checkout. A regular installation uses `$XDG_DATA_HOME/k/models/` (normally `~/.local/share/k/models/`).
+When working from a checkout, append the same extra to the editable install—for
+example, `python -m pip install -e ".[local,dev]"`.
+
+If you'll use a local core or memory module, drop the GGUF models you want into
+`models/` when running from a checkout. A regular installation uses
+`$XDG_DATA_HOME/kayden/models/` (normally `~/.local/share/kayden/models/`).
 
 Run it:
 
 ```bash
 kayden
-# Or, from a source checkout: python src/main.py
+# Or: python -m kayden
 ```
 
 On first run this creates `~/.config/kayden/config.toml` and
@@ -104,7 +126,42 @@ frontend = "floaty"  # compact always-on-top window
 The graphical frontends use Python's Tk support. On Linux, install your
 distribution's `python3-tk` package if it is not already available.
 
-Each key is a capability, and its value is the module (filename, no `.py`) that fills it, loaded from `src/modules/<capability>/`. The `controller` module must be listed first — it declares which capabilities it needs and which are optional. `Registry.from_config` checks the config against those declarations.
+### Voice
+
+Voice remains optional. Install either or both extras, then add the modules you
+want to `~/.config/kayden/config.toml`:
+
+```toml
+input = "whisper"  # always-listening microphone transcription
+output = "kokoro"  # speaks assistant replies
+```
+
+Check what Kayden can actually access before launching it:
+
+```bash
+kayden doctor
+```
+
+The command lists the microphone and output devices visible to Kayden. If the
+desired device is not selected automatically, set `KAYDEN_INPUT_DEVICE` or
+`KAYDEN_OUTPUT_DEVICE` to either its numeric index or part of its displayed
+name. Whisper now defaults to the much smaller `base.en` model; override it with
+`KAYDEN_WHISPER_MODEL`. Kokoro can be adjusted with `KAYDEN_KOKORO_VOICE`,
+`KAYDEN_KOKORO_LANGUAGE`, and `KAYDEN_KOKORO_DEVICE`.
+
+Whisper submits a phrase after about 1.2 seconds of silence. This keeps voice
+input conversational while still allowing brief pauses within a sentence.
+
+The first Whisper or Kokoro launch may download model data, so it needs network
+access. On Linux the process must also be able to reach PipeWire/PulseAudio (or
+ALSA) and its microphone permission must be enabled. A sandbox or container
+without `/dev/snd` and the desktop audio socket cannot provide voice.
+
+Each key is a capability, and its value is the module (filename, no `.py`) that
+fills it, loaded from `kayden.modules.<capability>`. In a source checkout those
+modules live under `src/kayden/modules/<capability>/`. The `controller` module
+must be listed first—it declares which capabilities it needs and which are
+optional. `Registry.from_config` checks the config against those declarations.
 
 Every module named in `tools` contributes its concrete tools to the selected action
 strategy. Other main capabilities take one module. The legacy `input` and `output`
@@ -165,7 +222,7 @@ remember that file contents returned by the tool are sent to that model.
 Every module is a Python file with a class named `Module` that implements the relevant interface:
 
 ```python
-from interfaces import FrontendInterface
+from kayden.interfaces import FrontendInterface
 
 class Module(FrontendInterface):
     def run(self, on_submit, on_interrupt):
@@ -178,7 +235,9 @@ class Module(FrontendInterface):
     def finish(self, interrupted=False): ...
 ```
 
-Place it under `src/modules/<capability>/your_module.py` and reference it by name in `config.toml`. Details about each interface can be found in `src/interfaces.py`.
+Place it under `src/kayden/modules/<capability>/your_module.py` and reference it
+by name in `config.toml`. Details about each interface can be found in
+`src/kayden/interfaces.py`.
 
 ## Available Interfaces
 
@@ -196,7 +255,7 @@ Place it under `src/modules/<capability>/your_module.py` and reference it by nam
 
 An action module is a strategy for using tools. It owns the inner model/tool loop: make one model request, execute requested tools through the tool runtime, return their results to the model, and continue until the model produces a final response. The built-in `native` strategy uses the core's native function-calling protocol.
 
-A tool module under `src/modules/tools/` exposes one or more concrete tools through `schemas()` and `execute()`. A memory module may return a `ToolInterface` adapter from `actions()`; the controller adds it automatically. The shared tool runtime combines schemas, rejects duplicate or unknown names, routes execution, and converts failures into tool results. See `src/modules/tools/clock.py` for a minimal standalone example.
+A tool module under `src/kayden/modules/tools/` exposes one or more concrete tools through `schemas()` and `execute()`. A memory module may return a `ToolInterface` adapter from `actions()`; the controller adds it automatically. The shared tool runtime combines schemas, rejects duplicate or unknown names, routes execution, and converts failures into tool results. See `src/kayden/modules/tools/clock.py` for a minimal standalone example.
 
 The controller owns the outer conversation flow and processes turns on a worker so
 the frontend's event loop stays responsive. Frontends only collect user actions and

@@ -11,15 +11,16 @@ class ConfigTests(unittest.TestCase):
         project_file = Path(__file__).resolve().parents[1] / "pyproject.toml"
         project_text = project_file.read_text()
 
-        self.assertIn('kayden = "main:main"', project_text)
-        self.assertNotIn('\nk = "main:main"', project_text)
+        self.assertIn('name = "kayden"', project_text)
+        self.assertIn('kayden = "kayden.cli:main"', project_text)
+        self.assertNotIn("py-modules", project_text)
 
     def test_import_has_no_filesystem_side_effect_and_load_creates_defaults(self):
         source_dir = str(Path(__file__).resolve().parents[1] / "src")
         with tempfile.TemporaryDirectory() as home:
             code = """
 from pathlib import Path
-import config
+from kayden import config
 
 config_dir = Path.home() / '.config' / 'kayden'
 assert not config_dir.exists()
@@ -33,7 +34,7 @@ assert values['action'] == 'native'
 assert values['tools'] == ['clock', 'calculator', 'filesystem', 'web']
 assert (config_dir / 'config.toml').is_file()
 assert (config_dir / 'system_prompt.txt').is_file()
-assert config.load_system_prompt().startswith('You are K')
+assert config.load_system_prompt().startswith('You are Kayden')
 """
             env = os.environ.copy()
             env["HOME"] = home
@@ -49,7 +50,7 @@ assert config.load_system_prompt().startswith('You are K')
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_old_terminal_config_is_normalized_to_tui_frontend(self):
-        from config import _normalize_legacy_frontend
+        from kayden.config import _normalize_legacy_frontend
 
         values = _normalize_legacy_frontend({
             "controller": "cloud",
@@ -85,7 +86,7 @@ assert config.load_system_prompt().startswith('You are K')
             (legacy_dir / "system_prompt.txt").write_text("custom prompt")
             code = """
 from pathlib import Path
-import config
+from kayden import config
 
 legacy_dir = Path.home() / '.config' / 'k'
 config_dir = Path.home() / '.config' / 'kayden'
