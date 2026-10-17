@@ -2,10 +2,10 @@ from typing import Callable, Iterator
 
 from llama_cpp import Llama
 
+from kayden.config import resolve_model_path
 from kayden.events import CoreEvent, CoreTextDelta
 from kayden.interfaces import CoreInterface
 from kayden.klogger import get_logger
-from kayden.utils import resolve_model_path
 
 DEFAULT_MODEL = "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
 DEFAULT_N_GPU_LAYERS = 5

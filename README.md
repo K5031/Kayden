@@ -2,8 +2,8 @@
 
 > Weapon of the Faithless.
 
-A modular desktop AI assistant. Its `kayden` command runs a controller that connects
-a selectable frontend, model, context, memory, action strategy, and tool modules.
+A modular desktop AI assistant. Its fixed application loop connects a selectable
+frontend, model, context, memory, action strategy, and tool modules.
 
 ## Installation
 
@@ -73,7 +73,6 @@ The default configuration uses DeepSeek, the full-screen TUI, continuous local
 history, and the starter tool set:
 
 ```toml
-controller = "cloud"
 frontend = "tui"
 core = "deepseek"
 context = "cloud"
@@ -86,7 +85,6 @@ For fully local inference, install the `local` extra and switch the relevant
 settings:
 
 ```toml
-controller = "local"
 core = "llama_cpp"
 context = "local"
 tools = []
@@ -94,7 +92,7 @@ tools = []
 
 The local core does not support native tool calling yet.
 
-To use OpenAI instead, keep the cloud controller/context and set:
+To use OpenAI instead, keep `context = "cloud"` and set:
 
 ```toml
 core = "openai"
@@ -174,22 +172,22 @@ without `/dev/snd` and the desktop audio socket cannot provide voice.
 
 Each key is a capability, and its value is the module (filename, no `.py`) that
 fills it, loaded from `kayden.modules.<capability>`. In a source checkout those
-modules live under `src/kayden/modules/<capability>/`. The `controller` module
-must be listed first—it declares which capabilities it needs and which are
-optional. `Registry.from_config` checks the config against those declarations.
+modules live under `src/kayden/modules/<capability>/`. Kayden requires one
+frontend, core, context, memory, and action module plus a tools list. Input and
+output are optional. Configuration order does not matter, and
+`Registry.from_config` validates the selected modules before starting them.
 
 Every module named in `tools` contributes its concrete tools to the selected action
-strategy. Other main capabilities take one module. The legacy `input` and `output`
+strategy. Other main capabilities take one module. The `input` and `output`
 capabilities are optional auxiliaries for voice: for example, add `input = "whisper"`
 or `output = "kokoro"` alongside any frontend. Old terminal input/output configs are
-automatically normalized to `frontend = "tui"` when loaded.
+automatically normalized to `frontend = "tui"` when loaded, and obsolete
+`controller` settings are ignored.
 
 ## Built-in Modules
 
 | Capability | Module | Description |
 |---|---|---|
-| controller | `local` | Runs frontend events against a local core |
-| controller | `cloud` | Runs frontend events and feeds reported usage into context trimming |
 | frontend | `tui` | Full-screen terminal chat with streaming, scrolling, and interruption |
 | frontend | `gui` | Full desktop chat window |
 | frontend | `floaty` | Compact always-on-top assistant window |
@@ -218,7 +216,7 @@ requiring the user to manage sessions. Every user and assistant message is saved
 `~/.local/share/kayden/continuity.sqlite3`) and recent messages are restored when
 the app starts.
 
-Near the model's context limit, the controller asks the selected core to summarize
+Near the model's context limit, the application asks the selected core to summarize
 older context while the memory module retains the latest messages verbatim. The
 original messages remain in SQLite and can still be found through `search_history`.
 The selected memory module contributes its own actions automatically; continuity
@@ -266,17 +264,20 @@ by name in `config.toml`. Details about each interface can be found in
 - `MemoryInterface` — `append`, `recall`, `view`, recent history, race-safe compaction planning/commit, reset, and optional `actions()`
 - `ToolInterface` — `schemas() -> list[dict]` returns function definitions; `execute(name, arguments) -> str` validates and runs a tool
 - `ActionInterface` — `run(core, turn, tools, should_interrupt=None) -> Iterator[ActionEvent]` defines how the model uses tools
-- `ControllerInterface` — `run(api)`, plus `required_modules`, `optional_modules`, and `required_features` class attributes
 
 ## Actions and Tools
 
 An action module is a strategy for using tools. It owns the inner model/tool loop: make one model request, execute requested tools through the tool runtime, return their results to the model, and continue until the model produces a final response. The built-in `native` strategy uses the core's native function-calling protocol.
 
-A tool module under `src/kayden/modules/tools/` exposes one or more concrete tools through `schemas()` and `execute()`. A memory module may return a `ToolInterface` adapter from `actions()`; the controller adds it automatically. The shared tool runtime combines schemas, rejects duplicate or unknown names, routes execution, and converts failures into tool results. See `src/kayden/modules/tools/clock.py` for a minimal standalone example.
+A tool module under `src/kayden/modules/tools/` exposes one or more concrete tools through `schemas()` and `execute()`. A memory module may return a `ToolInterface` adapter from `actions()`; the application adds it automatically. The shared tool runtime combines schemas, rejects duplicate or unknown names, routes execution, and converts failures into tool results. See `src/kayden/modules/tools/clock.py` for a minimal standalone example.
 
-The controller owns the outer conversation flow and processes turns on a worker so
-the frontend's event loop stays responsive. Frontends only collect user actions and
-render events. Cores perform one model request at a time and emit normalized events.
+Kayden's fixed application loop owns the outer conversation flow and processes
+turns on a worker so the frontend's event loop stays responsive. Frontends only
+collect user actions and render events. Cores perform one model request at a time
+and emit normalized events.
+The fixed application, registry, and tool-routing machinery live under
+`src/kayden/runtime/`; this is internal infrastructure, not another configurable
+module category.
 The local llama.cpp core can use the `native` strategy when `tools = []`; native tool
 calling is not yet supported by that core.
 

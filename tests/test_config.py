@@ -25,7 +25,7 @@ from kayden import config
 config_dir = Path.home() / '.config' / 'kayden'
 assert not config_dir.exists()
 values = config.load_config()
-assert values['controller'] == 'cloud'
+assert 'controller' not in values
 assert values['frontend'] == 'tui'
 assert 'input' not in values
 assert 'output' not in values
@@ -60,7 +60,6 @@ assert config.load_system_prompt().startswith('You are Kayden')
         })
 
         self.assertEqual(values, {
-            "controller": "cloud",
             "frontend": "tui",
             "output": ["kokoro"],
             "core": "deepseek",
@@ -73,7 +72,6 @@ assert config.load_system_prompt().startswith('You are Kayden')
             "output": "terminal",
         })
         self.assertEqual(already_migrated, {
-            "controller": "cloud",
             "frontend": "gui",
         })
 
@@ -82,7 +80,9 @@ assert config.load_system_prompt().startswith('You are Kayden')
         with tempfile.TemporaryDirectory() as home:
             legacy_dir = Path(home) / ".config" / "k"
             legacy_dir.mkdir(parents=True)
-            (legacy_dir / "config.toml").write_text('controller = "legacy"\n')
+            (legacy_dir / "config.toml").write_text(
+                'controller = "legacy"\nfrontend = "gui"\n'
+            )
             (legacy_dir / "system_prompt.txt").write_text("custom prompt")
             code = """
 from pathlib import Path
@@ -90,7 +90,9 @@ from kayden import config
 
 legacy_dir = Path.home() / '.config' / 'k'
 config_dir = Path.home() / '.config' / 'kayden'
-assert config.load_config()['controller'] == 'legacy'
+values = config.load_config()
+assert 'controller' not in values
+assert values['frontend'] == 'gui'
 assert config.load_system_prompt() == 'custom prompt'
 assert not legacy_dir.exists()
 assert config_dir.is_dir()

@@ -5,22 +5,15 @@ from unittest.mock import patch
 from kayden.interfaces import (
     ActionInterface,
     ContextPolicyInterface,
-    ControllerInterface,
     CoreInterface,
     FrontendInterface,
     InputInterface,
+    MemoryInterface,
+    MemoryView,
     OutputInterface,
     ToolInterface,
 )
-from kayden.registry import Registry
-
-
-class _Controller(ControllerInterface):
-    required_modules = ["frontend", "output"]
-    optional_modules = ["input"]
-
-    def run(self, api):
-        pass
+from kayden.runtime.registry import Registry
 
 
 class _Frontend(FrontendInterface):
@@ -53,10 +46,7 @@ class _Input(InputInterface):
         return False
 
 
-class _FailingOutput(OutputInterface):
-    def __init__(self):
-        raise RuntimeError("output failed")
-
+class _Output(OutputInterface):
     def send(self, token):
         pass
 
@@ -67,19 +57,14 @@ class _FailingOutput(OutputInterface):
         pass
 
 
-class _CloudController(ControllerInterface):
-    required_modules = ["core", "context"]
-    required_features = {
-        "core": {"runtime_kind": "cloud"},
-        "context": {"usage_mode": "reported"},
-    }
-
-    def run(self, api):
-        pass
+class _FailingOutput(_Output):
+    def __init__(self):
+        raise RuntimeError("output failed")
 
 
-class _LocalCore(CoreInterface):
-    runtime_kind = "local"
+class _CloudCore(CoreInterface):
+    runtime_kind = "cloud"
+    reports_usage = True
 
     def stream(self, messages, tools=None, should_interrupt=None):
         return iter(())
@@ -88,18 +73,27 @@ class _LocalCore(CoreInterface):
         pass
 
 
+class _LocalCore(_CloudCore):
+    runtime_kind = "local"
+    reports_usage = False
+
+
 class _ReportedContext(ContextPolicyInterface):
     usage_mode = "reported"
 
-    def prepare(self, messages):
-        return list(messages)
+    def prepare(self, view):
+        return list(view.messages)
 
 
-class _ActionController(ControllerInterface):
-    required_modules = ["action", "tools"]
-
-    def run(self, api):
+class _Memory(MemoryInterface):
+    def append(self, messages):
         pass
+
+    def recall(self, query):
+        return ""
+
+    def view(self):
+        return MemoryView("", [])
 
 
 class _Action(ActionInterface):
@@ -111,46 +105,68 @@ class _Tool(ToolInterface):
     def schemas(self):
         return [{
             "type": "function",
-            "function": {"name": "echo", "parameters": {"type": "object"}},
+            "function": {
+                "name": "echo",
+                "parameters": {"type": "object"},
+            },
         }]
 
     def execute(self, name, arguments):
         return arguments["text"]
 
 
+def _config(**changes):
+    values = {
+        "frontend": "test",
+        "core": "cloud_test",
+        "context": "reported_test",
+        "memory": "test",
+        "action": "native_test",
+        "tools": ["echo_test"],
+    }
+    values.update(changes)
+    return values
+
+
+def _modules(**changes):
+    values = {
+        "kayden.modules.frontend.test": _Frontend,
+        "kayden.modules.core.cloud_test": _CloudCore,
+        "kayden.modules.context.reported_test": _ReportedContext,
+        "kayden.modules.memory.test": _Memory,
+        "kayden.modules.action.native_test": _Action,
+        "kayden.modules.tools.echo_test": _Tool,
+        "kayden.modules.input.one": _Input,
+        "kayden.modules.input.two": _Input,
+        "kayden.modules.output.test": _Output,
+    }
+    values.update(changes)
+    return values
+
+
 class RegistryTests(unittest.TestCase):
     def test_partial_startup_is_cleaned_up(self):
         _Frontend.stopped = False
-        modules = {
-            "kayden.modules.controller.test": _Controller,
-            "kayden.modules.frontend.test": _Frontend,
-            "kayden.modules.output.test": _FailingOutput,
-        }
+        modules = _modules(**{"kayden.modules.output.test": _FailingOutput})
 
-        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
             with self.assertRaisesRegex(RuntimeError, "output failed"):
-                Registry.from_config({
-                    "controller": "test",
-                    "frontend": "test",
-                    "output": "test",
-                })
+                Registry.from_config(_config(output="test"))
 
         self.assertTrue(_Frontend.stopped)
 
-    def test_incompatible_modules_fail_before_initialization(self):
-        modules = {
-            "kayden.modules.controller.cloud_test": _CloudController,
-            "kayden.modules.core.local_test": _LocalCore,
-            "kayden.modules.context.reported_test": _ReportedContext,
-        }
+    def test_incompatible_core_and_context_fail_before_initialization(self):
+        modules = _modules(**{"kayden.modules.core.local_test": _LocalCore})
 
-        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
             with self.assertRaisesRegex(ValueError, "incompatible"):
-                Registry.from_config({
-                    "controller": "cloud_test",
-                    "core": "local_test",
-                    "context": "reported_test",
-                })
+                Registry.from_config(_config(core="local_test"))
 
     def test_close_runs_in_reverse_order_and_is_idempotent(self):
         stopped = []
@@ -171,36 +187,23 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(stopped, ["second", "first"])
 
     def test_only_output_and_tools_accept_multiple_modules(self):
-        modules = {
-            "kayden.modules.controller.test": _Controller,
-            "kayden.modules.frontend.test": _Frontend,
-            "kayden.modules.input.one": _Input,
-            "kayden.modules.input.two": _Input,
-            "kayden.modules.output.test": _FailingOutput,
-        }
+        modules = _modules()
 
-        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
             with self.assertRaisesRegex(ValueError, "only output and tools"):
-                Registry.from_config({
-                    "controller": "test",
-                    "frontend": "test",
-                    "input": ["one", "two"],
-                    "output": "test",
-                })
+                Registry.from_config(_config(input=["one", "two"]))
 
     def test_action_and_tools_are_wired_into_the_runtime(self):
-        modules = {
-            "kayden.modules.controller.actions": _ActionController,
-            "kayden.modules.action.native_test": _Action,
-            "kayden.modules.tools.echo_test": _Tool,
-        }
+        modules = _modules()
 
-        with patch("kayden.registry.importlib.import_module", side_effect=lambda name: SimpleNamespace(Module=modules[name])):
-            registry = Registry.from_config({
-                "controller": "actions",
-                "action": "native_test",
-                "tools": ["echo_test"],
-            })
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
+            registry = Registry.from_config(_config())
 
         try:
             self.assertIsInstance(registry.get("action"), _Action)
@@ -212,6 +215,20 @@ class RegistryTests(unittest.TestCase):
                 registry.get("tools").execute("echo", {"text": "hello"}).content,
                 "hello",
             )
+        finally:
+            registry.close()
+
+    def test_legacy_controller_key_is_ignored(self):
+        modules = _modules()
+
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
+            registry = Registry.from_config({"controller": "cloud", **_config()})
+
+        try:
+            self.assertFalse(registry.has("controller"))
         finally:
             registry.close()
 

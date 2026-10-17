@@ -41,6 +41,10 @@ DEFAULT_CONFIG = RESOURCES.joinpath("config.example.toml")
 DEFAULT_PROMPT = RESOURCES.joinpath("default_prompt.txt")
 
 
+def resolve_model_path(filename: str) -> str:
+    return os.path.join(BASE_DIR, "models", filename)
+
+
 def ensure_config():
     if not os.path.exists(CONFIG_DIR) and os.path.isdir(LEGACY_CONFIG_DIR):
         os.makedirs(os.path.dirname(CONFIG_DIR), exist_ok=True)
@@ -67,15 +71,19 @@ def _without_terminal(value):
 
 
 def _normalize_legacy_frontend(values):
-    """Keep pre-frontend configs working while preserving voice auxiliaries."""
-    if "frontend" not in values and not ({"input", "output"} & values.keys()):
-        return values
+    """Keep legacy controller/terminal configs working with current modules."""
+    needs_frontend = "frontend" not in values and bool(
+        {"input", "output"} & values.keys()
+    )
 
     normalized = {}
     for key, value in values.items():
+        if key == "controller":
+            continue
         normalized[key] = value
-        if key == "controller" and "frontend" not in values:
-            normalized["frontend"] = "tui"
+
+    if needs_frontend:
+        normalized = {"frontend": "tui", **normalized}
 
     for capability in ("input", "output"):
         if capability not in normalized:

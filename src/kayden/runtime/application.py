@@ -3,13 +3,19 @@ import queue
 import threading
 
 from kayden.config import load_system_prompt
-from kayden.events import CoreTextDelta, TextDelta, ToolFinished, ToolStarted, UsageReported
+from kayden.events import (
+    CoreTextDelta,
+    TextDelta,
+    ToolFinished,
+    ToolStarted,
+    TurnRequest,
+    UsageReported,
+)
 from kayden.interfaces import ManualInputInterface
 from kayden.klogger import get_logger
-from kayden.turns import build_turn
 
 
-log = get_logger("Controller")
+log = get_logger("Application")
 _STOP = object()
 
 COMPACTION_PROMPT = """Condense the earlier conversation into a compact factual state for continuing it later.
@@ -25,6 +31,16 @@ Do not add facts or commentary. Do not describe the summarization task. Use conc
 
 def _optional(api, capability):
     return api.get(capability) if api.has(capability) else None
+
+
+def _build_turn(system_prompt, context, memories, user_input):
+    if memories:
+        system_prompt += f"\n\nRelevant memories about the user:\n{memories}"
+    return TurnRequest(messages=[
+        {"role": "system", "content": system_prompt},
+        *context,
+        {"role": "user", "content": user_input},
+    ])
 
 
 def _restore_transcript(frontend, memory):
@@ -94,8 +110,8 @@ def _compact_context(
     frontend.status(finished_status)
 
 
-def run_frontend_controller(api, report_usage=False):
-    """Connect a frontend event loop to Kayden's sequential turn worker."""
+def run_application(api):
+    """Run Kayden's fixed conversation lifecycle over the selected modules."""
     frontend = api.get("frontend")
     core = api.get("core")
     context = api.get("context")
@@ -104,6 +120,7 @@ def run_frontend_controller(api, report_usage=False):
     tools = api.get("tools")
     speech_input = _optional(api, "input")
     speech_output = _optional(api, "output")
+    report_usage = getattr(context, "usage_mode", None) == "reported"
 
     system_prompt = load_system_prompt()
     pending = queue.Queue()
@@ -204,7 +221,7 @@ def run_frontend_controller(api, report_usage=False):
         # failure does not erase what the user said.
         memory.append([{"role": "user", "content": user_input}])
         memories = memory.recall(user_input)
-        turn = build_turn(system_prompt, prior_context, memories, user_input)
+        turn = _build_turn(system_prompt, prior_context, memories, user_input)
         reply = ""
         prompt_tokens = None
 

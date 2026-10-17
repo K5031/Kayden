@@ -5,7 +5,7 @@ from unittest.mock import patch
 import requests
 
 from kayden.modules.tools.web import Module as WebTool
-from kayden.tool_runtime import ToolRuntime
+from kayden.runtime.tools import ToolRuntime
 
 
 class _WebResponse:

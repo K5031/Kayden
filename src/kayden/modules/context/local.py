@@ -1,7 +1,7 @@
 from llama_cpp import Llama
 
+from kayden.config import resolve_model_path
 from kayden.interfaces import ContextPolicyInterface, MemoryView
-from kayden.utils import resolve_model_path
 
 DEFAULT_MODEL = "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
 DEFAULT_MAX_CONTEXT_TOKENS = 15600

@@ -1,4 +1,3 @@
-controller = "cloud"
 frontend = "tui"
 # Optional voice modules (install the matching extras before enabling):
 # input = "dictation"  # push-to-talk, or "whisper" for always-listening

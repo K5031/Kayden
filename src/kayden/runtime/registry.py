@@ -3,7 +3,6 @@ from kayden.config import load_config
 from kayden.interfaces import (
     ActionInterface,
     ContextPolicyInterface,
-    ControllerInterface,
     CoreInterface,
     FrontendInterface,
     InputInterface,
@@ -12,12 +11,11 @@ from kayden.interfaces import (
     ToolInterface,
 )
 from kayden.klogger import get_logger
-from kayden.tool_runtime import ToolRuntime
+from kayden.runtime.tools import ToolRuntime
 
 log = get_logger("Registry")
 
 INTERFACES = {
-    "controller": ControllerInterface,
     "frontend": FrontendInterface,
     "input": InputInterface,
     "output": OutputInterface,
@@ -27,6 +25,16 @@ INTERFACES = {
     "action": ActionInterface,
     "tools": ToolInterface,
 }
+
+REQUIRED_CAPABILITIES = {
+    "frontend",
+    "core",
+    "context",
+    "memory",
+    "action",
+    "tools",
+}
+OPTIONAL_CAPABILITIES = {"input", "output"}
 
 
 def _load_module(capability: str, name: str):
@@ -105,24 +113,16 @@ class Registry:
         if not isinstance(config_values, dict):
             raise TypeError("config must be a TOML table")
 
-        keys = list(config_values.keys())
-        if not keys or keys[0] != "controller":
-            raise ValueError(
-                f"config must have 'controller' as its first key, got: {keys}"
-            )
-
-        controller_name = config_values["controller"]
-        if not isinstance(controller_name, str) or not controller_name:
-            raise TypeError("controller must name one module")
-        controller_mod = _load_module("controller", controller_name)
-        if not issubclass(controller_mod.Module, ControllerInterface):
-            raise TypeError(f"controller module '{controller_name}' has the wrong interface")
-        required = set(controller_mod.Module.required_modules)
-        optional = set(controller_mod.Module.optional_modules)
-        provided = set(config_values.keys()) - {"controller"}
-
-        missing = required - provided
-        extra = provided - required - optional
+        # Controller modules existed before Kayden's application lifecycle became
+        # fixed. Ignore the old key so existing user configs migrate in place.
+        config_values = {
+            capability: value
+            for capability, value in config_values.items()
+            if capability != "controller"
+        }
+        provided = set(config_values)
+        missing = REQUIRED_CAPABILITIES - provided
+        extra = provided - REQUIRED_CAPABILITIES - OPTIONAL_CAPABILITIES
         if missing or extra:
             problems = []
             if missing:
@@ -130,17 +130,19 @@ class Registry:
             if extra:
                 problems.append(f"unexpected: {sorted(extra)}")
             raise ValueError(
-                f"config does not match controller '{controller_name}' requirements — "
+                "config does not match Kayden requirements — "
                 + ", ".join(problems)
             )
 
-        module_classes = {"controller": [(controller_name, controller_mod.Module)]}
+        module_classes = {}
         for capability, configured_names in config_values.items():
-            if capability == "controller":
-                continue
             if capability not in INTERFACES:
                 raise ValueError(f"unknown capability: {capability}")
-            names = configured_names if isinstance(configured_names, list) else [configured_names]
+            names = (
+                configured_names
+                if isinstance(configured_names, list)
+                else [configured_names]
+            )
             if not names and capability != "tools":
                 raise TypeError(f"{capability} must name one or more modules")
             if any(not isinstance(name, str) or not name for name in names):
@@ -154,18 +156,21 @@ class Registry:
             for name in names:
                 mod = _load_module(capability, name)
                 if not issubclass(mod.Module, INTERFACES[capability]):
-                    raise TypeError(f"{capability} module '{name}' has the wrong interface")
+                    raise TypeError(
+                        f"{capability} module '{name}' has the wrong interface"
+                    )
                 module_classes[capability].append((name, mod.Module))
 
-        for capability, features in controller_mod.Module.required_features.items():
-            for name, module_class in module_classes[capability]:
-                for feature, expected in features.items():
-                    actual = getattr(module_class, feature, None)
-                    if actual != expected:
-                        raise ValueError(
-                            f"{capability} module '{name}' is incompatible with controller "
-                            f"'{controller_name}': {feature} must be {expected!r}, got {actual!r}"
-                        )
+        core_name, core_class = module_classes["core"][0]
+        context_name, context_class = module_classes["context"][0]
+        expected_usage = "reported" if core_class.reports_usage else "self"
+        actual_usage = getattr(context_class, "usage_mode", None)
+        if actual_usage != expected_usage:
+            raise ValueError(
+                f"core module '{core_name}' is incompatible with context module "
+                f"'{context_name}': usage_mode must be {expected_usage!r}, "
+                f"got {actual_usage!r}"
+            )
 
         api = cls()
         try:

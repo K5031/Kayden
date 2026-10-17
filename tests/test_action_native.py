@@ -3,7 +3,7 @@ import unittest
 from kayden.events import CoreTextDelta, CoreToolCall, TextDelta, ToolFinished, ToolStarted, TurnRequest
 from kayden.interfaces import ToolInterface
 from kayden.modules.action.native import Module as NativeAction
-from kayden.tool_runtime import ToolRuntime
+from kayden.runtime.tools import ToolRuntime
 
 
 class _EchoTool(ToolInterface):

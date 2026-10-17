@@ -15,11 +15,10 @@ import requests
 import torch
 from sentence_transformers import SentenceTransformer
 
-from kayden.config import BASE_DIR
+from kayden.config import BASE_DIR, resolve_model_path
 from kayden.interfaces import MemoryInterface
 from kayden.klogger import get_logger
 from kayden.modules.memory.remis.transcript import EphemeralTranscript
-from kayden.utils import resolve_model_path
 
 DEFAULT_MODEL = "gemma-4-E4B-it-Q4_K_M.gguf"
 DEFAULT_N_GPU_LAYERS = 5

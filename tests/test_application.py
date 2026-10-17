@@ -11,10 +11,9 @@ from kayden.events import (
     ToolStarted,
     UsageReported,
 )
-from kayden.modules.controller._frontend import _compact_context, _restore_transcript
-from kayden.modules.controller.cloud import Module as CloudController
+from kayden.runtime.application import _compact_context, _restore_transcript, run_application
 from kayden.interfaces import CompactionPlan, ManualInputInterface, MemoryView, ToolInterface
-from kayden.tool_runtime import ToolRuntime
+from kayden.runtime.tools import ToolRuntime
 
 
 class _Frontend:
@@ -25,7 +24,7 @@ class _Frontend:
     def run(self, on_submit, on_interrupt):
         on_submit("question")
         if not self.done.wait(timeout=2):
-            raise AssertionError("controller did not finish the turn")
+            raise AssertionError("application did not finish the turn")
 
     def user(self, message):
         self.events.append(("user", message))
@@ -42,6 +41,7 @@ class _Frontend:
 
 
 class _Context:
+    usage_mode = "reported"
     keep_recent_messages = 12
 
     def __init__(self):
@@ -58,6 +58,10 @@ class _Context:
 
     def report_usage(self, usage):
         self.reported_usage.append(usage)
+
+
+class _SelfCountingContext(_Context):
+    usage_mode = "self"
 
 
 class _Memory:
@@ -225,13 +229,7 @@ class _ManualFrontend(_Frontend):
             raise AssertionError("dictation did not reach the frontend draft")
 
 
-class ControllerTests(unittest.TestCase):
-    def test_declares_cloud_compatibility(self):
-        self.assertEqual(CloudController.required_features, {
-            "core": {"runtime_kind": "cloud", "reports_usage": True},
-            "context": {"usage_mode": "reported"},
-        })
-
+class ApplicationTests(unittest.TestCase):
     def test_selected_memory_contributes_its_own_actions(self):
         class MemoryActions(ToolInterface):
             def schemas(self):
@@ -266,8 +264,8 @@ class ControllerTests(unittest.TestCase):
             "has": lambda self, name: name in modules,
         })()
 
-        with patch("kayden.modules.controller._frontend.load_system_prompt", return_value="system"):
-            CloudController().run(api)
+        with patch("kayden.runtime.application.load_system_prompt", return_value="system"):
+            run_application(api)
 
         self.assertIn("remember", [
             schema["function"]["name"] for schema in tools.schemas()
@@ -294,8 +292,8 @@ class ControllerTests(unittest.TestCase):
             "has": lambda self, name: name in modules,
         })()
 
-        with patch("kayden.modules.controller._frontend.load_system_prompt", return_value="system"):
-            CloudController().run(api)
+        with patch("kayden.runtime.application.load_system_prompt", return_value="system"):
+            run_application(api)
 
         self.assertIn({"role": "user", "content": "spoken question"}, memory.recorded)
         self.assertEqual(speech_output.events, [
@@ -323,8 +321,8 @@ class ControllerTests(unittest.TestCase):
             "has": lambda self, name: name in modules,
         })()
 
-        with patch("kayden.modules.controller._frontend.load_system_prompt", return_value="system"):
-            CloudController().run(api)
+        with patch("kayden.runtime.application.load_system_prompt", return_value="system"):
+            run_application(api)
 
         self.assertEqual(memory.recorded, [])
         self.assertEqual(frontend.capture_events[:4], [
@@ -335,7 +333,7 @@ class ControllerTests(unittest.TestCase):
         ])
         self.assertIn("finish", manual_input.events)
 
-    def test_cloud_controller_owns_turn_and_persists_final_reply(self):
+    def test_application_owns_turn_and_persists_final_reply(self):
         frontend = _Frontend()
         context = _Context()
         memory = _Memory()
@@ -355,8 +353,8 @@ class ControllerTests(unittest.TestCase):
             "has": lambda self, name: name in modules,
         })()
 
-        with patch("kayden.modules.controller._frontend.load_system_prompt", return_value="system"):
-            CloudController().run(api)
+        with patch("kayden.runtime.application.load_system_prompt", return_value="system"):
+            run_application(api)
 
         self.assertEqual(frontend.events, [
             ("status", "Model: test-model"),
@@ -387,6 +385,27 @@ class ControllerTests(unittest.TestCase):
             {"role": "user", "content": "question"},
         ])
 
+    def test_self_counting_context_does_not_receive_provider_usage(self):
+        frontend = _Frontend()
+        context = _SelfCountingContext()
+        modules = {
+            "frontend": frontend,
+            "core": type("Core", (), {"model": "local-model"})(),
+            "context": context,
+            "memory": _Memory(),
+            "action": _Action(),
+            "tools": object(),
+        }
+        api = type("Api", (), {
+            "get": lambda self, name: modules[name],
+            "has": lambda self, name: name in modules,
+        })()
+
+        with patch("kayden.runtime.application.load_system_prompt", return_value="system"):
+            run_application(api)
+
+        self.assertEqual(context.reported_usage, [])
+
     def test_new_submission_interrupts_then_queues_the_next_turn(self):
         action = _InterruptibleAction()
         frontend = _InterruptingFrontend(action)
@@ -406,8 +425,8 @@ class ControllerTests(unittest.TestCase):
             "has": lambda self, name: name in modules,
         })()
 
-        with patch("kayden.modules.controller._frontend.load_system_prompt", return_value="system"):
-            CloudController().run(api)
+        with patch("kayden.runtime.application.load_system_prompt", return_value="system"):
+            run_application(api)
 
         self.assertGreaterEqual(core.interruptions, 1)
         self.assertEqual(action.calls, 2)

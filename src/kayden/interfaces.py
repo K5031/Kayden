@@ -79,7 +79,7 @@ class FrontendInterface(ABC):
     """Interactive presentation layer for Kayden.
 
     ``run`` owns the platform event loop. The other methods may be called from
-    the controller's worker thread, so frontend implementations must marshal
+    the application's worker thread, so frontend implementations must marshal
     rendering back to their UI thread.
     """
 
@@ -157,6 +157,9 @@ class ContextPolicyInterface(ABC):
     def compacted(self, view: MemoryView) -> None:
         """Update token accounting after memory compacts its transcript."""
 
+    def report_usage(self, prompt_tokens: int) -> None:
+        """Accept provider-reported prompt usage when ``usage_mode`` requires it."""
+
     def reset(self) -> None:
         """Reset transient context accounting."""
 
@@ -225,19 +228,4 @@ class ActionInterface(ABC):
         tools: ToolRuntimeInterface,
         should_interrupt: Callable[[], bool] | None = None,
     ) -> Iterator[ActionEvent]:
-        pass
-
-
-class ControllerInterface(ABC):
-    required_modules: list[str] = None
-    optional_modules: list[str] = []
-    required_features: dict[str, dict[str, object]] = {}
-
-    def __init_subclass__(cls):
-        super().__init_subclass__()
-        if cls.required_modules is None:
-            raise TypeError(f"{cls.__name__} must define required_modules")
-
-    @abstractmethod
-    def run(self, api) -> None:
         pass

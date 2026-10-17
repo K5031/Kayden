@@ -1,4 +1,4 @@
-from kayden.modules.frontend._tk import TkFrontend
+from kayden.ui.tk import TkFrontend
 
 
 class Module(TkFrontend):
