@@ -45,10 +45,6 @@ class Module(CoreInterface):
 
     def interrupt(self):
         self._interrupted = True
-        try:
-            self.llm.reset()
-        except Exception as error:
-            self.log.warning("reset after interrupt failed: %s", error)
 
     def stream(
         self,
@@ -70,7 +66,10 @@ class Module(CoreInterface):
             max_tokens=512,
         ):
             if self._interrupted or (should_interrupt and should_interrupt()):
-                self.interrupt()
+                try:
+                    self.llm.reset()
+                except Exception as error:
+                    self.log.warning("reset after interrupt failed: %s", error)
                 break
             token = chunk["choices"][0]["delta"].get("content", "")
             if token:

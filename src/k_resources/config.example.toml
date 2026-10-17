@@ -1,8 +1,7 @@
 controller = "cloud"
-input = "terminal"
-output = "terminal"
+frontend = "tui"
 core = "deepseek"
 context = "cloud"
-memory = "none"
+memory = "continuity"
 action = "native"
-tools = ["clock"]
+tools = ["clock", "calculator", "filesystem", "web"]

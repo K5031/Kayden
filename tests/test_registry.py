@@ -4,9 +4,10 @@ from unittest.mock import patch
 
 from interfaces import (
     ActionInterface,
-    ContextInterface,
+    ContextPolicyInterface,
     ControllerInterface,
     CoreInterface,
+    FrontendInterface,
     InputInterface,
     OutputInterface,
     ToolInterface,
@@ -15,23 +16,41 @@ from registry import Registry
 
 
 class _Controller(ControllerInterface):
-    required_modules = ["input", "output"]
+    required_modules = ["frontend", "output"]
+    optional_modules = ["input"]
 
     def run(self, api):
         pass
 
 
-class _Input(InputInterface):
+class _Frontend(FrontendInterface):
     stopped = False
 
+    def run(self, on_submit, on_interrupt):
+        pass
+
+    def user(self, message):
+        pass
+
+    def assistant(self, token):
+        pass
+
+    def status(self, message):
+        pass
+
+    def finish(self, interrupted=False):
+        pass
+
+    def stop(self):
+        type(self).stopped = True
+
+
+class _Input(InputInterface):
     def get_input(self):
         return ""
 
     def has_input(self):
         return False
-
-    def stop(self):
-        type(self).stopped = True
 
 
 class _FailingOutput(OutputInterface):
@@ -69,17 +88,11 @@ class _LocalCore(CoreInterface):
         pass
 
 
-class _ReportedContext(ContextInterface):
+class _ReportedContext(ContextPolicyInterface):
     usage_mode = "reported"
 
-    def add(self, role, content):
-        pass
-
-    def get(self):
-        return []
-
-    def clear(self):
-        pass
+    def prepare(self, messages):
+        return list(messages)
 
 
 class _ActionController(ControllerInterface):
@@ -107,10 +120,10 @@ class _Tool(ToolInterface):
 
 class RegistryTests(unittest.TestCase):
     def test_partial_startup_is_cleaned_up(self):
-        _Input.stopped = False
+        _Frontend.stopped = False
         modules = {
             "modules.controller.test": _Controller,
-            "modules.input.test": _Input,
+            "modules.frontend.test": _Frontend,
             "modules.output.test": _FailingOutput,
         }
 
@@ -118,11 +131,11 @@ class RegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "output failed"):
                 Registry.from_config({
                     "controller": "test",
-                    "input": "test",
+                    "frontend": "test",
                     "output": "test",
                 })
 
-        self.assertTrue(_Input.stopped)
+        self.assertTrue(_Frontend.stopped)
 
     def test_incompatible_modules_fail_before_initialization(self):
         modules = {
@@ -160,6 +173,7 @@ class RegistryTests(unittest.TestCase):
     def test_only_output_and_tools_accept_multiple_modules(self):
         modules = {
             "modules.controller.test": _Controller,
+            "modules.frontend.test": _Frontend,
             "modules.input.one": _Input,
             "modules.input.two": _Input,
             "modules.output.test": _FailingOutput,
@@ -169,6 +183,7 @@ class RegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "only output and tools"):
                 Registry.from_config({
                     "controller": "test",
+                    "frontend": "test",
                     "input": ["one", "two"],
                     "output": "test",
                 })

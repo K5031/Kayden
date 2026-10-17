@@ -1,7 +1,27 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Callable, Iterator
 
-from events import ActionEvent, CoreEvent, ToolResult, TurnRequest
+from events import (
+    ActionEvent,
+    CoreEvent,
+    ToolResult,
+    TurnRequest,
+)
+
+
+@dataclass(frozen=True)
+class MemoryView:
+    summary: str
+    messages: list[dict]
+
+
+@dataclass(frozen=True)
+class CompactionPlan:
+    previous_summary: str
+    messages: list[dict]
+    base_checkpoint: int
+    through_checkpoint: int
 
 
 class InputInterface(ABC):
@@ -19,6 +39,9 @@ class OutputInterface(ABC):
     def send(self, token: str) -> None:
         pass
 
+    def status(self, message: str) -> None:
+        """Display transient activity without treating it as assistant text."""
+
     @abstractmethod
     def interrupt(self) -> None:
         pass
@@ -26,6 +49,39 @@ class OutputInterface(ABC):
     @abstractmethod
     def flush(self) -> None:
         pass
+
+
+class FrontendInterface(ABC):
+    """Interactive presentation layer for Kayden.
+
+    ``run`` owns the platform event loop. The other methods may be called from
+    the controller's worker thread, so frontend implementations must marshal
+    rendering back to their UI thread.
+    """
+
+    @abstractmethod
+    def run(
+        self,
+        on_submit: Callable[[str], None],
+        on_interrupt: Callable[[], None],
+    ) -> None:
+        """Run until the user closes the frontend."""
+
+    @abstractmethod
+    def user(self, message: str) -> None:
+        """Render a submitted user message."""
+
+    @abstractmethod
+    def assistant(self, token: str) -> None:
+        """Append streamed assistant text to the current turn."""
+
+    @abstractmethod
+    def status(self, message: str) -> None:
+        """Render transient activity such as a tool call."""
+
+    @abstractmethod
+    def finish(self, interrupted: bool = False) -> None:
+        """Mark the current assistant turn as complete."""
 
 
 class CoreInterface(ABC):
@@ -46,30 +102,54 @@ class CoreInterface(ABC):
         pass
 
 
-class ContextInterface(ABC):
+class ContextPolicyInterface(ABC):
     usage_mode: str | None = None
+    keep_recent_messages: int = 12
 
     @abstractmethod
-    def add(self, role: str, content: str) -> None:
+    def prepare(self, view: MemoryView) -> list[dict]:
+        """Select and format stored conversation for the next model turn."""
         pass
 
-    @abstractmethod
-    def get(self) -> list[dict]:
-        pass
+    def needs_compaction(self, view: MemoryView) -> bool:
+        return False
 
-    @abstractmethod
-    def clear(self) -> None:
-        pass
+    def compacted(self, view: MemoryView) -> None:
+        """Update token accounting after memory compacts its transcript."""
+
+    def reset(self) -> None:
+        """Reset transient context accounting."""
 
 
 class MemoryInterface(ABC):
     @abstractmethod
-    def store(self, messages: list[dict]) -> None:
+    def append(self, messages: list[dict]) -> None:
+        """Record messages and perform any backend-specific learning."""
         pass
 
     @abstractmethod
-    def retrieve(self, query: str) -> str:
+    def recall(self, query: str) -> str:
+        """Return durable information relevant to a new user query."""
         pass
+
+    @abstractmethod
+    def view(self) -> MemoryView:
+        """Return the summary and active transcript as structured state."""
+
+    def recent(self, limit: int = 50) -> list[dict]:
+        return self.view().messages[-limit:]
+
+    def plan_compaction(self, keep_recent: int) -> CompactionPlan | None:
+        return None
+
+    def commit_compaction(self, plan: CompactionPlan, summary: str) -> bool:
+        return False
+
+    def reset_context(self) -> None:
+        """Start fresh active context without requiring history deletion."""
+
+    def actions(self) -> "ToolInterface | None":
+        return None
 
 
 class ToolInterface(ABC):
@@ -83,6 +163,10 @@ class ToolInterface(ABC):
 
 
 class ToolRuntimeInterface(ABC):
+    @abstractmethod
+    def add(self, module: ToolInterface) -> None:
+        """Expose tools from a borrowed capability module."""
+
     @abstractmethod
     def schemas(self) -> list[dict]:
         pass

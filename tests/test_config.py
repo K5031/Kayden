@@ -25,9 +25,12 @@ config_dir = Path.home() / '.config' / 'kayden'
 assert not config_dir.exists()
 values = config.load_config()
 assert values['controller'] == 'cloud'
-assert values['memory'] == 'none'
+assert values['frontend'] == 'tui'
+assert 'input' not in values
+assert 'output' not in values
+assert values['memory'] == 'continuity'
 assert values['action'] == 'native'
-assert values['tools'] == ['clock']
+assert values['tools'] == ['clock', 'calculator', 'filesystem', 'web']
 assert (config_dir / 'config.toml').is_file()
 assert (config_dir / 'system_prompt.txt').is_file()
 assert config.load_system_prompt().startswith('You are K')
@@ -44,6 +47,34 @@ assert config.load_system_prompt().startswith('You are K')
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_old_terminal_config_is_normalized_to_tui_frontend(self):
+        from config import _normalize_legacy_frontend
+
+        values = _normalize_legacy_frontend({
+            "controller": "cloud",
+            "input": "terminal",
+            "output": ["terminal", "kokoro"],
+            "core": "deepseek",
+        })
+
+        self.assertEqual(values, {
+            "controller": "cloud",
+            "frontend": "tui",
+            "output": ["kokoro"],
+            "core": "deepseek",
+        })
+
+        already_migrated = _normalize_legacy_frontend({
+            "controller": "cloud",
+            "frontend": "gui",
+            "input": "terminal",
+            "output": "terminal",
+        })
+        self.assertEqual(already_migrated, {
+            "controller": "cloud",
+            "frontend": "gui",
+        })
 
     def test_legacy_config_directory_is_migrated(self):
         source_dir = str(Path(__file__).resolve().parents[1] / "src")

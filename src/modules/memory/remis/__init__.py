@@ -18,6 +18,7 @@ from sentence_transformers import SentenceTransformer
 from config import BASE_DIR
 from interfaces import MemoryInterface
 from klogger import get_logger
+from modules.memory.remis.transcript import EphemeralTranscript
 from utils import resolve_model_path
 
 DEFAULT_MODEL = "gemma-4-E4B-it-Q4_K_M.gguf"
@@ -103,7 +104,7 @@ def _extract_json_facts(raw_text: str) -> list[str]:
         return []
 
 
-class Module(MemoryInterface):
+class Module(EphemeralTranscript, MemoryInterface):
     def __init__(self, model_path=DEFAULT_MODEL, n_gpu_layers=DEFAULT_N_GPU_LAYERS,
                  n_ctx=DEFAULT_N_CTX,
                  collection_name="k_memory",
@@ -122,6 +123,7 @@ class Module(MemoryInterface):
         self._queue = None
         self._worker = None
         self._stopped = False
+        self._initialize_transcript()
 
         resolved_path = resolve_model_path(model_path)
         self.model_path = resolved_path
@@ -314,12 +316,14 @@ class Module(MemoryInterface):
             metadatas=[{"data": text, "user_id": self.user_id, "created_at": now}],
         )
 
-    def store(self, messages: list[dict]) -> None:
+    def append(self, messages: list[dict]) -> None:
+        super().append(messages)
         if self._stopped:
             return
-        self._queue.put(messages)
+        if any(message.get("role") == "user" for message in messages):
+            self._queue.put(messages)
 
-    def retrieve(self, query: str, max_distance: float = 0.6) -> str:
+    def recall(self, query: str, max_distance: float = 0.6) -> str:
         if self.collection.count() == 0:
             return ""
         query_embedding = self._embed(query)

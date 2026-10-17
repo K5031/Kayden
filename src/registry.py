@@ -2,9 +2,10 @@ import importlib
 from config import load_config
 from interfaces import (
     ActionInterface,
-    ContextInterface,
+    ContextPolicyInterface,
     ControllerInterface,
     CoreInterface,
+    FrontendInterface,
     InputInterface,
     MemoryInterface,
     OutputInterface,
@@ -17,10 +18,11 @@ log = get_logger("Registry")
 
 INTERFACES = {
     "controller": ControllerInterface,
+    "frontend": FrontendInterface,
     "input": InputInterface,
     "output": OutputInterface,
     "core": CoreInterface,
-    "context": ContextInterface,
+    "context": ContextPolicyInterface,
     "memory": MemoryInterface,
     "action": ActionInterface,
     "tools": ToolInterface,
