@@ -13,8 +13,9 @@ source venv/bin/activate
 python -m pip install -e .
 ```
 
-The base installation supports the TUI, desktop/floaty Tk frontends, and DeepSeek
-modules. Install only the optional features you need:
+The base installation supports the TUI, desktop/floaty Tk frontends, DeepSeek,
+OpenAI API, and ChatGPT plan modules. Install only the other optional features
+you need:
 
 ```bash
 python -m pip install -e ".[local]"         # local llama.cpp core
@@ -40,7 +41,8 @@ An existing `~/.config/k` directory is migrated automatically. Edit
 assistant's personality.
 
 Some modules need credentials. The `deepseek` core reads `DEEPSEEK_API_KEY`,
-while the `openai` core reads `OPENAI_API_KEY`.
+while the `openai` core reads `OPENAI_API_KEY`. The separate `chatgpt` core opens
+the official Continue with ChatGPT flow and uses an eligible Plus or Pro plan.
 
 ## Configuration
 
@@ -77,6 +79,20 @@ core = "openai"
 
 Then provide `OPENAI_API_KEY` in the environment.
 
+To use your ChatGPT plan instead of API billing, set:
+
+```toml
+core = "chatgpt"
+```
+
+On first launch Kayden opens the system browser for ChatGPT sign-in and plan-use
+consent. It stores the issued OAuth registration and rotating tokens in
+`~/.config/kayden/chatgpt.json` with owner-only permissions on Unix. Kayden uses
+the first model visible to the connected account; set `KAYDEN_CHATGPT_MODEL` to
+request a specific available model. This connection does not give Kayden access
+to ChatGPT conversations or memories. Disconnect the app in ChatGPT settings if
+the local credentials are ever exposed.
+
 Choose the user experience independently from the rest of Kayden:
 
 ```toml
@@ -110,6 +126,7 @@ automatically normalized to `frontend = "tui"` when loaded.
 | core | `llama_cpp` | Local inference via llama.cpp, using a GGUF model from `models/` |
 | core | `deepseek` | Cloud inference via the DeepSeek API |
 | core | `openai` | Cloud inference via OpenAI (`gpt-6-luna` by default), with streaming and native tool calling |
+| core | `chatgpt` | OpenAI Responses inference using an eligible ChatGPT Plus/Pro plan and browser sign-in |
 | context | `local` | Selects active context and requests compaction using a local tokenizer |
 | context | `cloud` | Selects active context and requests compaction using cloud usage reports |
 | memory | `continuity` | Owns the persistent transcript, summaries, named facts, history search, and memory actions in SQLite |
@@ -190,7 +207,8 @@ calling is not yet supported by that core.
 ## Tests
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
+python -m pip install -e ".[dev]"
+pytest
 ```
 
 The suite makes no live model API requests.

@@ -16,6 +16,7 @@ CONFIG_DIR = os.path.join(CONFIG_HOME, "kayden")
 LEGACY_CONFIG_DIR = os.path.expanduser("~/.config/k")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.toml")
 SYSTEM_PROMPT_PATH = os.path.join(CONFIG_DIR, "system_prompt.txt")
+CHATGPT_AUTH_PATH = os.path.join(CONFIG_DIR, "chatgpt.json")
 
 DATA_HOME = os.environ.get(
     "XDG_DATA_HOME",
