@@ -48,9 +48,11 @@ voice-input = [
     "PyAudio",
     "SpeechRecognition",
 ]
+voice-dictation = ["faster-whisper", "numpy", "PyAudio"]
 voice-output = ["kokoro", "sounddevice"]
 all = [
     "chromadb",
+    "faster-whisper",
     "kokoro",
     "llama-cpp-python[server]",
     "numpy",

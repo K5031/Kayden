@@ -4,6 +4,7 @@ import threading
 
 from kayden.config import load_system_prompt
 from kayden.events import CoreTextDelta, TextDelta, ToolFinished, ToolStarted, UsageReported
+from kayden.interfaces import ManualInputInterface
 from kayden.klogger import get_logger
 from kayden.turns import build_turn
 
@@ -109,6 +110,8 @@ def run_frontend_controller(api, report_usage=False):
     busy = threading.Event()
     interrupted = threading.Event()
     stopping = threading.Event()
+    capture_busy = threading.Event()
+    capture_threads = []
 
     add_tools = getattr(tools, "add", None)
     memory_actions = memory.actions()
@@ -133,6 +136,59 @@ def run_frontend_controller(api, report_usage=False):
         if busy.is_set():
             interrupt()
         pending.put(message.strip())
+
+    def start_capture():
+        if stopping.is_set() or capture_busy.is_set():
+            return
+        if busy.is_set():
+            interrupt()
+        try:
+            speech_input.start_capture()
+        except Exception as error:
+            log.exception("Input capture failed to start")
+            frontend.status(f"[error] {error}")
+            frontend.capture_state("idle")
+            return
+        frontend.capture_state("recording")
+
+    def finish_capture():
+        if stopping.is_set() or capture_busy.is_set():
+            return
+        capture_busy.set()
+        frontend.capture_state("transcribing")
+
+        def transcribe():
+            try:
+                text = speech_input.finish_capture()
+                if text and not stopping.is_set():
+                    frontend.draft(text)
+                elif not stopping.is_set():
+                    frontend.status("[voice] No speech detected")
+            except Exception as error:
+                if not stopping.is_set():
+                    log.exception("Input transcription failed")
+                    frontend.status(f"[error] {error}")
+            finally:
+                capture_busy.clear()
+                if not stopping.is_set():
+                    frontend.capture_state("idle")
+
+        thread = threading.Thread(
+            target=transcribe,
+            name="kayden-input-transcription",
+            daemon=True,
+        )
+        capture_threads.append(thread)
+        thread.start()
+
+    def cancel_capture():
+        if capture_busy.is_set():
+            return
+        try:
+            speech_input.cancel_capture()
+        except Exception:
+            log.exception("Input capture failed to cancel")
+        frontend.capture_state("idle")
 
     def process_turn(user_input):
         interrupted.clear()
@@ -220,9 +276,22 @@ def run_frontend_controller(api, report_usage=False):
                     log.exception("Speech input failed")
                 return
 
+    manual_input = isinstance(speech_input, ManualInputInterface)
+    if manual_input:
+        supported = frontend.configure_capture(
+            start_capture,
+            finish_capture,
+            cancel_capture,
+            label=speech_input.capture_label,
+        )
+        if not supported:
+            raise RuntimeError(
+                f"{type(frontend).__name__} does not support manual input capture"
+            )
+
     turn_thread = threading.Thread(target=worker, name="kayden-turns", daemon=True)
     turn_thread.start()
-    if speech_input:
+    if speech_input and not manual_input:
         threading.Thread(
             target=speech_worker,
             name="kayden-speech-input",
@@ -233,6 +302,13 @@ def run_frontend_controller(api, report_usage=False):
         frontend.run(submit, interrupt)
     finally:
         stopping.set()
+        if manual_input:
+            try:
+                speech_input.cancel_capture()
+            except Exception:
+                log.exception("Input capture failed to stop")
         interrupt()
         pending.put(_STOP)
         turn_thread.join(timeout=2)
+        for thread in capture_threads:
+            thread.join(timeout=2)

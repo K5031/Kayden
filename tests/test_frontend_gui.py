@@ -21,6 +21,18 @@ class GuiFrontendTests(unittest.TestCase):
         self.assertEqual(frontend._events.get_nowait(), ("assistant", "hi"))
         self.assertEqual(frontend._events.get_nowait(), ("finish", False))
 
+    def test_manual_capture_callbacks_and_drafts_are_marshaled(self):
+        frontend = GuiFrontend()
+        callbacks = [lambda: None, lambda: None, lambda: None]
+
+        self.assertTrue(frontend.configure_capture(*callbacks, label="Mic"))
+        frontend.capture_state("recording")
+        frontend.draft("hello world")
+
+        self.assertEqual(frontend._capture_label, "Mic")
+        self.assertEqual(frontend._events.get_nowait(), ("capture_state", "recording"))
+        self.assertEqual(frontend._events.get_nowait(), ("draft", "hello world"))
+
 
 if __name__ == "__main__":
     unittest.main()

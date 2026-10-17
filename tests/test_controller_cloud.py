@@ -13,7 +13,7 @@ from kayden.events import (
 )
 from kayden.modules.controller._frontend import _compact_context, _restore_transcript
 from kayden.modules.controller.cloud import Module as CloudController
-from kayden.interfaces import CompactionPlan, MemoryView, ToolInterface
+from kayden.interfaces import CompactionPlan, ManualInputInterface, MemoryView, ToolInterface
 from kayden.tool_runtime import ToolRuntime
 
 
@@ -181,6 +181,50 @@ class _SpeechOutput:
         self.events.append(("flush", None))
 
 
+class _ManualInput(ManualInputInterface):
+    capture_label = "Mic"
+
+    def __init__(self):
+        self.events = []
+
+    def start_capture(self):
+        self.events.append("start")
+
+    def finish_capture(self):
+        self.events.append("finish")
+        return "drafted speech"
+
+    def cancel_capture(self):
+        self.events.append("cancel")
+
+
+class _ManualFrontend(_Frontend):
+    def __init__(self):
+        super().__init__()
+        self.capture_events = []
+        self.draft_ready = threading.Event()
+
+    def configure_capture(self, on_start, on_finish, on_cancel, label="Capture"):
+        self.capture_events.append(("configured", label))
+        self.on_capture_start = on_start
+        self.on_capture_finish = on_finish
+        self.on_capture_cancel = on_cancel
+        return True
+
+    def capture_state(self, state):
+        self.capture_events.append(("state", state))
+
+    def draft(self, text):
+        self.capture_events.append(("draft", text))
+        self.draft_ready.set()
+
+    def run(self, on_submit, on_interrupt):
+        self.on_capture_start()
+        self.on_capture_finish()
+        if not self.draft_ready.wait(timeout=2):
+            raise AssertionError("dictation did not reach the frontend draft")
+
+
 class ControllerTests(unittest.TestCase):
     def test_declares_cloud_compatibility(self):
         self.assertEqual(CloudController.required_features, {
@@ -260,6 +304,36 @@ class ControllerTests(unittest.TestCase):
             ("send", "world"),
             ("flush", None),
         ])
+
+    def test_manual_input_is_transcribed_into_draft_without_auto_submit(self):
+        frontend = _ManualFrontend()
+        memory = _Memory()
+        manual_input = _ManualInput()
+        modules = {
+            "frontend": frontend,
+            "core": type("Core", (), {"model": "test-model"})(),
+            "context": _Context(),
+            "memory": memory,
+            "action": _Action(),
+            "tools": object(),
+            "input": manual_input,
+        }
+        api = type("Api", (), {
+            "get": lambda self, name: modules[name],
+            "has": lambda self, name: name in modules,
+        })()
+
+        with patch("kayden.modules.controller._frontend.load_system_prompt", return_value="system"):
+            CloudController().run(api)
+
+        self.assertEqual(memory.recorded, [])
+        self.assertEqual(frontend.capture_events[:4], [
+            ("configured", "Mic"),
+            ("state", "recording"),
+            ("state", "transcribing"),
+            ("draft", "drafted speech"),
+        ])
+        self.assertIn("finish", manual_input.events)
 
     def test_cloud_controller_owns_turn_and_persists_final_reply(self):
         frontend = _Frontend()

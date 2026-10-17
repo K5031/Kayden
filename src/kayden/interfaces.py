@@ -34,6 +34,30 @@ class InputInterface(ABC):
         pass
 
 
+class ManualInputInterface(InputInterface):
+    """Input collected explicitly by a frontend control such as push-to-talk."""
+
+    capture_label = "Capture"
+
+    def get_input(self) -> str:
+        raise RuntimeError("manual input must be driven through capture controls")
+
+    def has_input(self) -> bool:
+        return False
+
+    @abstractmethod
+    def start_capture(self) -> None:
+        """Begin collecting input without blocking the frontend event loop."""
+
+    @abstractmethod
+    def finish_capture(self) -> str:
+        """Stop capture and return text suitable for the frontend draft."""
+
+    @abstractmethod
+    def cancel_capture(self) -> None:
+        """Stop capture and discard the collected input."""
+
+
 class OutputInterface(ABC):
     @abstractmethod
     def send(self, token: str) -> None:
@@ -82,6 +106,22 @@ class FrontendInterface(ABC):
     @abstractmethod
     def finish(self, interrupted: bool = False) -> None:
         """Mark the current assistant turn as complete."""
+
+    def configure_capture(
+        self,
+        on_start: Callable[[], None],
+        on_finish: Callable[[], None],
+        on_cancel: Callable[[], None],
+        label: str = "Capture",
+    ) -> bool:
+        """Attach optional manual-input controls; return whether they are supported."""
+        return False
+
+    def capture_state(self, state: str) -> None:
+        """Render ``idle``, ``recording``, or ``transcribing`` capture state."""
+
+    def draft(self, text: str) -> None:
+        """Insert captured text into the editable composer for user review."""
 
 
 class CoreInterface(ABC):

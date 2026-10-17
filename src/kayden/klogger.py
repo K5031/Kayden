@@ -1,21 +1,30 @@
 import logging
 import sys
 
-_CONFIGURED = False
+
+_HANDLER = None
 
 
-def _configure_root():
-    global _CONFIGURED
-    if _CONFIGURED:
-        return
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
-    root = logging.getLogger()
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
-    _CONFIGURED = True
+class _KaydenFormatter(logging.Formatter):
+    def format(self, record):
+        record.component = record.name.removeprefix("kayden.")
+        return super().format(record)
+
+
+def _handler():
+    global _HANDLER
+    if _HANDLER is None:
+        _HANDLER = logging.StreamHandler(sys.stdout)
+        _HANDLER.setFormatter(_KaydenFormatter("[%(component)s] %(message)s"))
+    return _HANDLER
 
 
 def get_logger(name: str) -> logging.Logger:
-    _configure_root()
-    return logging.getLogger(name)
+    """Return an app logger without changing third-party logging levels."""
+    logger = logging.getLogger(f"kayden.{name}")
+    handler = _handler()
+    if handler not in logger.handlers:
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger

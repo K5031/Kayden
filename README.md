@@ -37,9 +37,10 @@ you need:
 ```bash
 python -m pip install "kayden[local]"         # local llama.cpp core
 python -m pip install "kayden[memory]"        # legacy Remis memory dependencies
-python -m pip install "kayden[voice-input]"   # Whisper microphone input
-python -m pip install "kayden[voice-output]"  # Kokoro speech output
-python -m pip install "kayden[all]"           # everything
+python -m pip install "kayden[voice-dictation]"  # push-to-talk with Faster Whisper
+python -m pip install "kayden[voice-input]"      # always-listening OpenAI Whisper
+python -m pip install "kayden[voice-output]"     # Kokoro speech output
+python -m pip install "kayden[all]"              # everything
 ```
 
 When working from a checkout, append the same extra to the editable install—for
@@ -132,9 +133,19 @@ Voice remains optional. Install either or both extras, then add the modules you
 want to `~/.config/kayden/config.toml`:
 
 ```toml
-input = "whisper"  # always-listening microphone transcription
-output = "kokoro"  # speaks assistant replies
+input = "dictation"  # push-to-talk with Faster Whisper + Silero VAD
+output = "kokoro"    # speaks assistant replies
 ```
+
+With `dictation`, press the GUI's **Mic** button or `Ctrl-Y` in the TUI to
+start recording, then use the same control to stop. Kayden inserts the
+transcript into the message composer so you can correct it before sending.
+Press Escape while recording in the TUI to discard the clip. The transcription
+model is loaded lazily on the first completed recording.
+
+The original `input = "whisper"` module remains available for hands-free,
+always-listening input. Install `voice-dictation` for `dictation`, or
+`voice-input` for `whisper`.
 
 Check what Kayden can actually access before launching it:
 
@@ -146,8 +157,12 @@ The command lists the microphone and output devices visible to Kayden. If the
 desired device is not selected automatically, set `KAYDEN_INPUT_DEVICE` or
 `KAYDEN_OUTPUT_DEVICE` to either its numeric index or part of its displayed
 name. Whisper now defaults to the much smaller `base.en` model; override it with
-`KAYDEN_WHISPER_MODEL`. Kokoro can be adjusted with `KAYDEN_KOKORO_VOICE`,
-`KAYDEN_KOKORO_LANGUAGE`, and `KAYDEN_KOKORO_DEVICE`.
+`KAYDEN_WHISPER_MODEL`. Dictation defaults to `small.en`; override it with
+`KAYDEN_DICTATION_MODEL`, `KAYDEN_DICTATION_DEVICE`, and
+`KAYDEN_DICTATION_COMPUTE_TYPE`. Dictation uses portable CPU `int8` inference
+by default; opt into an installed CUDA runtime with
+`KAYDEN_DICTATION_DEVICE=cuda`. Kokoro can be adjusted with
+`KAYDEN_KOKORO_VOICE`, `KAYDEN_KOKORO_LANGUAGE`, and `KAYDEN_KOKORO_DEVICE`.
 
 Whisper submits a phrase after about 1.2 seconds of silence. This keeps voice
 input conversational while still allowing brief pauses within a sentence.
@@ -178,6 +193,7 @@ automatically normalized to `frontend = "tui"` when loaded.
 | frontend | `tui` | Full-screen terminal chat with streaming, scrolling, and interruption |
 | frontend | `gui` | Full desktop chat window |
 | frontend | `floaty` | Compact always-on-top assistant window |
+| input | `dictation` | Push-to-talk Faster Whisper input with VAD and editable transcripts |
 | input | `whisper` | Optional microphone input available to every frontend |
 | output | `kokoro` | Optional Kokoro speech output available to every frontend |
 | core | `llama_cpp` | Local inference via llama.cpp, using a GGUF model from `models/` |
@@ -242,7 +258,8 @@ by name in `config.toml`. Details about each interface can be found in
 ## Available Interfaces
 
 - `FrontendInterface` — owns the platform event loop, submits/interrupts through callbacks, and renders user, assistant, status, and completion events
-- `InputInterface` — optional auxiliary input such as Whisper
+- `InputInterface` — optional streaming auxiliary input such as always-listening Whisper
+- `ManualInputInterface` — explicit start/finish/cancel capture that returns an editable frontend draft
 - `OutputInterface` — optional auxiliary output such as Kokoro
 - `CoreInterface` — `stream(messages, tools=None, should_interrupt=None) -> Iterator[CoreEvent]`, `interrupt()`
 - `ContextPolicyInterface` — selects model-visible messages and owns token-budget/compaction policy, without owning storage

@@ -1,7 +1,7 @@
 controller = "cloud"
 frontend = "tui"
 # Optional voice modules (install the matching extras before enabling):
-# input = "whisper"
+# input = "dictation"  # push-to-talk, or "whisper" for always-listening
 # output = "kokoro"
 core = "deepseek"
 context = "cloud"

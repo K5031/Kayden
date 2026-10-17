@@ -19,6 +19,12 @@ class Module(FrontendInterface):
         self._scroll = 0
         self._on_submit = None
         self._on_interrupt = None
+        self._editor = ""
+        self._capture_label = "Capture"
+        self._capture_state = "idle"
+        self._on_capture_start = None
+        self._on_capture_finish = None
+        self._on_capture_cancel = None
 
     def user(self, message: str) -> None:
         self._events.put(("user", message))
@@ -31,6 +37,25 @@ class Module(FrontendInterface):
 
     def finish(self, interrupted: bool = False) -> None:
         self._events.put(("finish", interrupted))
+
+    def configure_capture(
+        self,
+        on_start: Callable[[], None],
+        on_finish: Callable[[], None],
+        on_cancel: Callable[[], None],
+        label: str = "Capture",
+    ) -> bool:
+        self._on_capture_start = on_start
+        self._on_capture_finish = on_finish
+        self._on_capture_cancel = on_cancel
+        self._capture_label = label
+        return True
+
+    def capture_state(self, state: str) -> None:
+        self._events.put(("capture_state", state))
+
+    def draft(self, text: str) -> None:
+        self._events.put(("draft", text))
 
     def stop(self) -> None:
         self._events.put(("close", None))
@@ -60,6 +85,15 @@ class Module(FrontendInterface):
             elif kind == "finish":
                 self._busy = False
                 self._status = "Interrupted" if value else "Ready"
+            elif kind == "capture_state":
+                self._capture_state = value
+                self._status = {
+                    "recording": "Recording…",
+                    "transcribing": "Transcribing…",
+                }.get(value, "Ready")
+            elif kind == "draft":
+                separator = " " if self._editor and not self._editor.endswith((" ", "\n")) else ""
+                self._editor += separator + value
             elif kind == "close":
                 self._closed = True
 
@@ -92,7 +126,7 @@ class Module(FrontendInterface):
             lines.append(("", 0))
         return lines
 
-    def _draw(self, screen, editor):
+    def _draw(self, screen):
         screen.erase()
         height, width = screen.getmaxyx()
         if height < 7 or width < 24:
@@ -117,13 +151,22 @@ class Module(FrontendInterface):
         divider = height - 3
         self._safe_add(screen, divider, 0, "─" * width, width)
         prompt = "› "
-        shown = editor[-max(1, width - len(prompt) - 2):]
+        shown = self._editor[-max(1, width - len(prompt) - 2):]
         self._safe_add(screen, divider + 1, 1, prompt + shown, width - 2)
 
-        hint = "Esc stop  •  Ctrl-D quit" if self._busy else "Enter send  •  Ctrl-D quit"
-        status_width = max(1, width - len(hint) - 4)
+        if self._capture_state == "recording":
+            hint = "Ctrl-Y finish  •  Esc cancel"
+        elif self._capture_state == "transcribing":
+            hint = "Transcribing  •  Ctrl-D quit"
+        elif self._on_capture_start:
+            hint = "Enter send  •  Ctrl-Y mic  •  Ctrl-D quit"
+        else:
+            hint = "Esc stop  •  Ctrl-D quit" if self._busy else "Enter send  •  Ctrl-D quit"
+        hint = hint[:max(1, width - 2)]
+        hint_col = max(1, width - len(hint) - 1)
+        status_width = max(1, hint_col - 2)
         self._safe_add(screen, height - 1, 1, self._status, status_width, curses.A_DIM)
-        self._safe_add(screen, height - 1, width - len(hint) - 1, hint, len(hint), curses.A_DIM)
+        self._safe_add(screen, height - 1, hint_col, hint, len(hint), curses.A_DIM)
 
         cursor_col = min(width - 2, len(prompt) + len(shown) + 1)
         try:
@@ -146,11 +189,11 @@ class Module(FrontendInterface):
             curses.init_pair(2, curses.COLOR_GREEN, -1)
         screen.timeout(50)
         screen.keypad(True)
-        editor = ""
+        self._editor = ""
 
         while not self._closed:
             self._drain_events()
-            self._draw(screen, editor)
+            self._draw(screen)
             try:
                 key = screen.get_wch()
             except curses.error:
@@ -163,28 +206,35 @@ class Module(FrontendInterface):
                 return
 
             if key in (curses.KEY_ENTER, "\n", "\r"):
-                message = editor.strip()
+                message = self._editor.strip()
                 if message:
-                    editor = ""
+                    self._editor = ""
                     self._busy = True
                     self._status = "Queued…"
                     self._on_submit(message)
+            elif key == "\x19" and self._on_capture_start:
+                if self._capture_state == "recording":
+                    self._on_capture_finish()
+                elif self._capture_state == "idle":
+                    self._on_capture_start()
             elif key in ("\x1b", "\x03"):
-                if self._busy:
+                if self._capture_state == "recording" and self._on_capture_cancel:
+                    self._on_capture_cancel()
+                elif self._busy:
                     self._status = "Stopping…"
                     self._on_interrupt()
                 elif key == "\x03":
                     return
-            elif key == "\x04" and not editor:
+            elif key == "\x04" and not self._editor:
                 return
             elif key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-                editor = editor[:-1]
+                self._editor = self._editor[:-1]
             elif key == curses.KEY_PPAGE:
                 self._scroll += max(1, screen.getmaxyx()[0] - 6)
             elif key == curses.KEY_NPAGE:
                 self._scroll = max(0, self._scroll - max(1, screen.getmaxyx()[0] - 6))
             elif isinstance(key, str) and key.isprintable():
-                editor += key
+                self._editor += key
 
     def run(
         self,

@@ -16,6 +16,11 @@ class TkFrontend(FrontendInterface):
         self._assistant_open = False
         self._busy = False
         self._has_messages = False
+        self._capture_label = "Capture"
+        self._capture_state = "idle"
+        self._on_capture_start = None
+        self._on_capture_finish = None
+        self._on_capture_cancel = None
 
     def user(self, message: str) -> None:
         self._events.put(("user", message))
@@ -28,6 +33,25 @@ class TkFrontend(FrontendInterface):
 
     def finish(self, interrupted: bool = False) -> None:
         self._events.put(("finish", interrupted))
+
+    def configure_capture(
+        self,
+        on_start: Callable[[], None],
+        on_finish: Callable[[], None],
+        on_cancel: Callable[[], None],
+        label: str = "Capture",
+    ) -> bool:
+        self._on_capture_start = on_start
+        self._on_capture_finish = on_finish
+        self._on_capture_cancel = on_cancel
+        self._capture_label = label
+        return True
+
+    def capture_state(self, state: str) -> None:
+        self._events.put(("capture_state", state))
+
+    def draft(self, text: str) -> None:
+        self._events.put(("draft", text))
 
     def stop(self) -> None:
         self._events.put(("close", None))
@@ -81,6 +105,22 @@ class TkFrontend(FrontendInterface):
                 self._assistant_open = False
                 self._status_var.set("Interrupted" if value else "Ready")
                 self._stop_button.configure(state="disabled")
+            elif kind == "capture_state":
+                self._capture_state = value
+                if value == "recording":
+                    self._capture_button.configure(text="Stop mic", state="normal")
+                    self._status_var.set("Recording…")
+                elif value == "transcribing":
+                    self._capture_button.configure(text="Transcribing…", state="disabled")
+                    self._status_var.set("Transcribing…")
+                else:
+                    self._capture_button.configure(text=self._capture_label, state="normal")
+                    self._status_var.set("Ready")
+            elif kind == "draft":
+                current = self._editor.get("1.0", "end-1c")
+                separator = " " if current and not current.endswith((" ", "\n")) else ""
+                self._editor.insert("end", separator + value)
+                self._editor.focus_set()
             elif kind == "close":
                 self._root.destroy()
                 return
@@ -213,6 +253,7 @@ class TkFrontend(FrontendInterface):
             font=("TkDefaultFont", 11),
         )
         editor.grid(row=0, column=0, sticky="ew")
+        self._editor = editor
 
         buttons = tk.Frame(controls, bg="#0b0d12")
         buttons.grid(row=0, column=1, sticky="ns", padx=(10, 0))
@@ -243,6 +284,31 @@ class TkFrontend(FrontendInterface):
             cursor="hand2",
             font=("TkDefaultFont", 10, "bold"),
         ).pack(fill="x")
+        if self._on_capture_start:
+            def toggle_capture():
+                if self._capture_state == "recording":
+                    self._on_capture_finish()
+                elif self._capture_state == "idle":
+                    self._on_capture_start()
+
+            capture_button = tk.Button(
+                buttons,
+                text=self._capture_label,
+                command=toggle_capture,
+                bg="#292f3d",
+                fg="#f2f4f8",
+                activebackground="#394257",
+                activeforeground="#ffffff",
+                disabledforeground="#626a7b",
+                relief="flat",
+                borderwidth=0,
+                padx=18,
+                pady=7,
+                cursor="hand2",
+                font=("TkDefaultFont", 10),
+            )
+            capture_button.pack(fill="x", pady=(7, 0))
+            self._capture_button = capture_button
         stop_button = tk.Button(
             buttons,
             text="Stop",
@@ -283,6 +349,8 @@ class TkFrontend(FrontendInterface):
             if closing["value"]:
                 return
             closing["value"] = True
+            if self._capture_state == "recording" and self._on_capture_cancel:
+                self._on_capture_cancel()
             on_interrupt()
             root.destroy()
 
