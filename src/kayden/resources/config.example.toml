@@ -7,3 +7,6 @@ context = "cloud"
 memory = "continuity"
 action = "native"
 tools = ["clock", "calculator", "filesystem", "web"]
+
+[assistant]
+name = "Kayden"

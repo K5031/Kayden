@@ -38,6 +38,11 @@ class _Frontend(FrontendInterface):
         type(self).stopped = True
 
 
+class _ConfigurableFrontend(_Frontend):
+    def __init__(self, mode="full"):
+        self.mode = mode
+
+
 class _Input(InputInterface):
     def get_input(self):
         return ""
@@ -231,6 +236,47 @@ class RegistryTests(unittest.TestCase):
             self.assertFalse(registry.has("controller"))
         finally:
             registry.close()
+
+    def test_passes_settings_only_to_the_selected_module(self):
+        modules = _modules(**{
+            "kayden.modules.frontend.test": _ConfigurableFrontend,
+        })
+        config = _config(settings={
+            "frontend": {"test": {"mode": "floaty"}},
+            "core": {"unused": {"anything": True}},
+        })
+
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
+            registry = Registry.from_config(config)
+
+        try:
+            self.assertEqual(registry.get("frontend").mode, "floaty")
+        finally:
+            registry.close()
+
+    def test_rejects_non_table_module_settings(self):
+        with self.assertRaisesRegex(TypeError, "settings must be a TOML table"):
+            Registry.from_config(_config(settings="wrong"))
+
+    def test_exposes_global_assistant_name_to_the_application(self):
+        modules = _modules()
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
+            registry = Registry.from_config(_config(assistant={"name": "Ahri"}))
+
+        try:
+            self.assertEqual(registry.assistant_name, "Ahri")
+        finally:
+            registry.close()
+
+    def test_rejects_invalid_assistant_name(self):
+        with self.assertRaisesRegex(TypeError, "assistant.name"):
+            Registry.from_config(_config(assistant={"name": "  "}))
 
 
 if __name__ == "__main__":

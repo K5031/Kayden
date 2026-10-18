@@ -99,7 +99,7 @@ class DictationTests(unittest.TestCase):
                 return "hello"
 
         with patch(
-            "kayden.modules.input.dictation.FasterWhisperTranscriber",
+            "kayden.modules.input.dictation.main.FasterWhisperTranscriber",
             Transcriber,
         ), patch.dict("os.environ", {}, clear=True):
             module = Module(capture=_Capture())

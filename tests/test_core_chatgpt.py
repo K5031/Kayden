@@ -18,7 +18,7 @@ from kayden.modules.core.chatgpt.auth import (
     ChatGPTAuth,
     ChatGPTAuthError,
 )
-from kayden.modules.core.chatgpt.core import Module as ChatGPTCore
+from kayden.modules.core.chatgpt import Module as ChatGPTCore
 from kayden.modules.core.chatgpt.credentials import CredentialStore
 
 
@@ -100,6 +100,9 @@ def _core(session, auth=None):
     core.auth = auth or _Auth()
     core.model = "test-model"
     core.model_display_name = "Test Model"
+    core._available_models = [
+        {"slug": "test-model", "display_name": "Test Model"},
+    ]
     core._interrupted = False
     core.last_usage = None
     return core
@@ -271,6 +274,25 @@ class ChatGPTCoreTests(unittest.TestCase):
         self.assertEqual(core.model, "gpt-test")
         self.assertTrue(response.closed)
         self.assertEqual(session.calls[0][2]["headers"]["Authorization"], "Bearer access-token")
+
+    def test_exposes_and_switches_between_visible_models(self):
+        response = _Response({"models": [
+            {"slug": "gpt-fast", "display_name": "GPT Fast", "visibility": "list"},
+            {"slug": "gpt-deep", "display_name": "GPT Deep", "visibility": "list"},
+        ]})
+        core = ChatGPTCore(session=_Session(gets=[response]), auth=_Auth())
+
+        self.assertEqual(core.available_models(), [
+            {"id": "gpt-fast", "name": "GPT Fast"},
+            {"id": "gpt-deep", "name": "GPT Deep"},
+        ])
+
+        core.select_model("gpt-deep")
+
+        self.assertEqual(core.model, "gpt-deep")
+        self.assertEqual(core.model_display_name, "GPT Deep")
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            core.select_model("gpt-hidden")
 
     def test_builds_supported_responses_input_with_tools_and_history(self):
         schemas = [{

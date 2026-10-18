@@ -11,6 +11,7 @@ class Module(FrontendInterface):
     """A dependency-free, full-screen terminal frontend."""
 
     def __init__(self):
+        self._assistant_name = "Kayden"
         self._events = queue.SimpleQueue()
         self._messages = []
         self._status = "Ready"
@@ -25,6 +26,9 @@ class Module(FrontendInterface):
         self._on_capture_start = None
         self._on_capture_finish = None
         self._on_capture_cancel = None
+
+    def configure_identity(self, assistant_name: str) -> None:
+        self._assistant_name = assistant_name
 
     def user(self, message: str) -> None:
         self._events.put(("user", message))
@@ -72,8 +76,8 @@ class Module(FrontendInterface):
                 self._status = "Thinking…"
                 self._scroll = 0
             elif kind == "assistant":
-                if not self._messages or self._messages[-1][0] != "Kayden":
-                    self._messages.append(["Kayden", ""])
+                if not self._messages or self._messages[-1][0] != self._assistant_name:
+                    self._messages.append([self._assistant_name, ""])
                 self._messages[-1][1] += value
                 self._scroll = 0
             elif kind == "status":
@@ -110,7 +114,7 @@ class Module(FrontendInterface):
         lines = []
         body_width = max(10, width - 4)
         for role, content in self._messages:
-            role_style = {"You": 1, "Kayden": 2}.get(role, 0)
+            role_style = 1 if role == "You" else 2 if role == self._assistant_name else 0
             lines.append((role, role_style))
             wrapped = []
             for paragraph in content.splitlines() or [""]:
@@ -134,7 +138,8 @@ class Module(FrontendInterface):
             screen.refresh()
             return
 
-        self._safe_add(screen, 0, 2, " KAYDEN ", width - 4, curses.A_BOLD)
+        title = f" {self._assistant_name.upper()} "
+        self._safe_add(screen, 0, 2, title, width - 4, curses.A_BOLD)
         self._safe_add(screen, 1, 0, "─" * width, width)
 
         available = height - 5

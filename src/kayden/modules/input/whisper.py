@@ -24,14 +24,24 @@ class Module(InputInterface):
         self,
         model=None,
         energy_threshold=1000,
-        record_timeout=2.0,
-        phrase_timeout=1.2,
+        record_timeout=1.5,
+        phrase_timeout=2.0,
         device=None,
+        min_seconds=0.35,
+        min_rms=0.006,
+        min_avg_logprob=-0.8,
+        max_no_speech_prob=0.6,
+        max_compression_ratio=2.4,
     ):
         self.log = get_logger("Input")
         self.energy_threshold = energy_threshold
         self.record_timeout = record_timeout
         self.phrase_timeout = phrase_timeout
+        self.min_seconds = float(min_seconds)
+        self.min_rms = float(min_rms)
+        self.min_avg_logprob = float(min_avg_logprob)
+        self.max_no_speech_prob = float(max_no_speech_prob)
+        self.max_compression_ratio = float(max_compression_ratio)
 
         self._cuda = _cuda_available()
         self.log.info("CUDA available: %s", self._cuda)
@@ -81,8 +91,25 @@ class Module(InputInterface):
             .astype(np.float32) / 32768.0
         )
 
+    def _usable_audio(self, audio):
+        if audio.size / 16000 < self.min_seconds:
+            return False
+        rms = float(np.sqrt(np.mean(np.square(audio)))) if audio.size else 0.0
+        return rms >= self.min_rms
+
+    def _usable_segment(self, segment):
+        text = segment.get("text", "").strip()
+        return bool(text) and all((
+            segment.get("avg_logprob", 0.0) >= self.min_avg_logprob,
+            segment.get("no_speech_prob", 0.0) <= self.max_no_speech_prob,
+            segment.get("compression_ratio", 0.0) <= self.max_compression_ratio,
+        ))
+
     def _transcribe(self, audio_bytes):
         audio_np = self._audio_to_numpy(audio_bytes)
+        if not self._usable_audio(audio_np):
+            self.log.debug("dropped short or low-energy audio")
+            return ""
         result = self.model.transcribe(
             audio_np,
             language="en",
@@ -90,17 +117,19 @@ class Module(InputInterface):
             fp16=self._cuda,
             temperature=0.0,
             condition_on_previous_text=False,
+            compression_ratio_threshold=self.max_compression_ratio,
+            logprob_threshold=-1.0,
+            no_speech_threshold=self.max_no_speech_prob,
+            word_timestamps=True,
+            hallucination_silence_threshold=1.0,
         )
         segments = result.get("segments", [])
-        text_parts = [
-            seg["text"]
-            for seg in segments
-            if seg["avg_logprob"] > -1.0
-        ]
-
-        low_confidence = [seg["text"] for seg in segments if seg["avg_logprob"] <= -1.0]
-        if low_confidence:
-            self.log.debug("dropped low-confidence segments: %s", low_confidence)
+        text_parts = [segment["text"].strip() for segment in segments
+                      if self._usable_segment(segment)]
+        rejected = [segment.get("text", "") for segment in segments
+                    if not self._usable_segment(segment)]
+        if rejected:
+            self.log.debug("dropped likely hallucinations: %s", rejected)
 
         return " ".join(text_parts).strip()
 

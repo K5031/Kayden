@@ -76,8 +76,9 @@ class _MultiModule:
 
 
 class Registry:
-    def __init__(self):
+    def __init__(self, assistant_name="Kayden"):
         self._registry = {}
+        self.assistant_name = assistant_name
 
     def __enter__(self):
         return self
@@ -113,12 +114,30 @@ class Registry:
         if not isinstance(config_values, dict):
             raise TypeError("config must be a TOML table")
 
+        module_settings = config_values.get("settings", {})
+        if not isinstance(module_settings, dict):
+            raise TypeError("settings must be a TOML table")
+        assistant = config_values.get("assistant", {})
+        if not isinstance(assistant, dict):
+            raise TypeError("assistant must be a TOML table")
+        unknown_assistant_settings = set(assistant) - {"name"}
+        if unknown_assistant_settings:
+            raise ValueError(
+                f"unknown assistant settings: {sorted(unknown_assistant_settings)}"
+            )
+        assistant_name = assistant.get("name", "Kayden")
+        if not isinstance(assistant_name, str) or not assistant_name.strip():
+            raise TypeError("assistant.name must be non-empty text")
+        assistant_name = assistant_name.strip()
+        if len(assistant_name) > 64 or any(ord(char) < 32 for char in assistant_name):
+            raise ValueError("assistant.name must be a single line of at most 64 characters")
+
         # Controller modules existed before Kayden's application lifecycle became
         # fixed. Ignore the old key so existing user configs migrate in place.
         config_values = {
             capability: value
             for capability, value in config_values.items()
-            if capability != "controller"
+            if capability not in {"assistant", "controller", "settings"}
         }
         provided = set(config_values)
         missing = REQUIRED_CAPABILITIES - provided
@@ -172,7 +191,7 @@ class Registry:
                 f"got {actual_usage!r}"
             )
 
-        api = cls()
+        api = cls(assistant_name=assistant_name)
         try:
             for capability in config_values:
                 classes = module_classes[capability]
@@ -180,7 +199,17 @@ class Registry:
                 try:
                     for name, module_class in classes:
                         log.info("Loading %s: %s", capability, name)
-                        instances.append(module_class())
+                        capability_settings = module_settings.get(capability, {})
+                        if not isinstance(capability_settings, dict):
+                            raise TypeError(
+                                f"settings.{capability} must be a TOML table"
+                            )
+                        options = capability_settings.get(name, {})
+                        if not isinstance(options, dict):
+                            raise TypeError(
+                                f"settings.{capability}.{name} must be a TOML table"
+                            )
+                        instances.append(module_class(**options))
                     if capability == "tools":
                         instance = ToolRuntime(instances)
                     else:

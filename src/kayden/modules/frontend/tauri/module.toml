@@ -1,0 +1,13 @@
+schema = 1
+name = "tauri"
+display_name = "Kayden Desktop"
+capability = "frontend"
+entrypoint = "kayden.modules.frontend.tauri:Module"
+version = "0.1.0"
+description = "React and TypeScript desktop frontend in a Tauri shell."
+
+[modes.gui]
+description = "Full desktop chat window."
+
+[modes.floaty]
+description = "Compact always-on-top assistant window."

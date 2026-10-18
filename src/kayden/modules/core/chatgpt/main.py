@@ -1,3 +1,5 @@
+"""ChatGPT core module entrypoint."""
+
 import json
 import os
 from typing import Callable, Iterator
@@ -49,6 +51,7 @@ class Module(CoreInterface):
 
         requested_model = model or os.environ.get("KAYDEN_CHATGPT_MODEL")
         available = self._list_models()
+        self._available_models = available
         if requested_model:
             matching = [item for item in available if item["slug"] == requested_model]
             if not matching:
@@ -64,6 +67,29 @@ class Module(CoreInterface):
         self.model_display_name = selected["display_name"]
         self.log.info(
             "Using ChatGPT plan model: %s (%s)",
+            self.model_display_name,
+            self.model,
+        )
+
+    def available_models(self) -> list[dict[str, str]]:
+        return [
+            {"id": item["slug"], "name": item["display_name"]}
+            for item in self._available_models
+        ]
+
+    def select_model(self, model: str) -> None:
+        selected = next(
+            (item for item in self._available_models if item["slug"] == model),
+            None,
+        )
+        if selected is None:
+            raise ValueError(
+                f"ChatGPT model '{model}' is unavailable for this account"
+            )
+        self.model = selected["slug"]
+        self.model_display_name = selected["display_name"]
+        self.log.info(
+            "Switched ChatGPT plan model: %s (%s)",
             self.model_display_name,
             self.model,
         )

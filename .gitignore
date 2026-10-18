@@ -81,6 +81,10 @@ docs/_build/
 # PyBuilder
 .pybuilder/
 target/
+src/kayden/modules/frontend/tauri/desktop/node_modules/
+src/kayden/modules/frontend/tauri/desktop/dist/
+src/kayden/modules/frontend/tauri/desktop/src-tauri/target/
+src/kayden/modules/frontend/tauri/desktop/src-tauri/gen/
 
 # Jupyter Notebook
 .ipynb_checkpoints

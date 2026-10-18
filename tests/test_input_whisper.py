@@ -35,13 +35,23 @@ def _input():
     module.buffer = b""
     module.last_audio_time = None
     module.phrase_timeout = 1
+    module.min_seconds = 0.35
+    module.min_rms = 0.006
+    module.min_avg_logprob = -0.8
+    module.max_no_speech_prob = 0.6
+    module.max_compression_ratio = 2.4
     return module
 
 
 class WhisperInputTests(unittest.TestCase):
     def test_default_silence_timeout_is_conversational(self):
-        parameter = inspect.signature(whisper_input.Module).parameters["phrase_timeout"]
-        self.assertEqual(parameter.default, 1.2)
+        parameters = inspect.signature(whisper_input.Module).parameters
+        self.assertEqual(parameters["record_timeout"].default, 1.5)
+        self.assertEqual(parameters["phrase_timeout"].default, 2.0)
+        self.assertLess(
+            parameters["record_timeout"].default,
+            parameters["phrase_timeout"].default,
+        )
 
     def test_cuda_probe_handles_missing_driver(self):
         fake_torch = ModuleType("torch")
@@ -60,9 +70,31 @@ class WhisperInputTests(unittest.TestCase):
             {"text": "drop", "avg_logprob": -1.2},
             {"text": "this", "avg_logprob": -0.5},
         ]}
-        with patch.object(module, "_audio_to_numpy", return_value="audio"):
+        with patch.object(module, "_audio_to_numpy", return_value="audio"), \
+                patch.object(module, "_usable_audio", return_value=True):
             self.assertEqual(module._transcribe(b"bytes"), "keep this")
         self.assertFalse(module.model.transcribe.call_args.kwargs["fp16"])
+        self.assertTrue(
+            module.model.transcribe.call_args.kwargs["word_timestamps"]
+        )
+
+    def test_transcribe_rejects_silence_and_repetitive_segments(self):
+        module = _input()
+        module.model.transcribe.return_value = {"segments": [
+            {"text": "silence", "avg_logprob": -0.2, "no_speech_prob": 0.9},
+            {"text": "repeated", "avg_logprob": -0.2, "compression_ratio": 3.0},
+            {"text": "spoken", "avg_logprob": -0.2, "no_speech_prob": 0.1},
+        ]}
+        with patch.object(module, "_audio_to_numpy", return_value="audio"), \
+                patch.object(module, "_usable_audio", return_value=True):
+            self.assertEqual(module._transcribe(b"bytes"), "spoken")
+
+    def test_transcribe_skips_unusable_audio_before_model_inference(self):
+        module = _input()
+        with patch.object(module, "_audio_to_numpy", return_value="audio"), \
+                patch.object(module, "_usable_audio", return_value=False):
+            self.assertEqual(module._transcribe(b"bytes"), "")
+        module.model.transcribe.assert_not_called()
 
     def test_completed_phrase_is_queued(self):
         module = _input()

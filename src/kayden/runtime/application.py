@@ -122,6 +122,9 @@ def run_application(api):
     speech_output = _optional(api, "output")
     report_usage = getattr(context, "usage_mode", None) == "reported"
 
+    configure_identity = getattr(frontend, "configure_identity", None)
+    if configure_identity:
+        configure_identity(getattr(api, "assistant_name", "Kayden"))
     system_prompt = load_system_prompt()
     pending = queue.Queue()
     busy = threading.Event()
@@ -136,6 +139,18 @@ def run_application(api):
         add_tools(memory_actions)
 
     model_name = getattr(core, "model", None) or getattr(core, "model_path", "unknown")
+    available_models = getattr(core, "available_models", lambda: [])()
+
+    def select_model(model):
+        if busy.is_set():
+            raise RuntimeError("cannot change model while a response is active")
+        core.select_model(model)
+        frontend.status(f"Model: {core.model}")
+
+    configure_models = getattr(frontend, "configure_models", None)
+    if configure_models and available_models:
+        configure_models(available_models, model_name, select_model)
+
     _restore_transcript(frontend, memory)
     frontend.status(f"Model: {model_name}")
 
@@ -147,10 +162,10 @@ def run_application(api):
         if speech_output:
             speech_output.interrupt()
 
-    def submit(message):
+    def submit(message, interrupt_active=True):
         if not isinstance(message, str) or not message.strip():
             return
-        if busy.is_set():
+        if busy.is_set() and interrupt_active:
             interrupt()
         pending.put(message.strip())
 
@@ -285,7 +300,7 @@ def run_application(api):
     def speech_worker():
         while not stopping.is_set():
             try:
-                submit(speech_input.get_input())
+                submit(speech_input.get_input(), interrupt_active=False)
             except EOFError:
                 return
             except Exception:

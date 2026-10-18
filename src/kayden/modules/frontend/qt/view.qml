@@ -1,0 +1,409 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+ApplicationWindow {
+    id: root
+    width: backend.windowWidth
+    height: backend.windowHeight
+    minimumWidth: 480
+    minimumHeight: 420
+    visible: true
+    title: backend.assistantName
+    color: "#1a1b26"
+    palette.window: "#1a1b26"
+    palette.windowText: "#c0caf5"
+    palette.base: "#16161e"
+    palette.text: "#c0caf5"
+    palette.button: "#24283b"
+    palette.buttonText: "#c0caf5"
+    palette.highlight: "#7aa2f7"
+    palette.highlightedText: "#c0caf5"
+
+    property bool busy: false
+    property bool following: true
+    property int activeAssistant: -1
+    property string captureState: "idle"
+    property string statusText: "Ready"
+    property real pageMargin: Math.min(80, Math.max(20, width * 0.052))
+    property real feedWidth: width - pageMargin * 2
+    property real assistantWidth: Math.min(1180, feedWidth)
+
+    component NightButton: Button {
+        id: control
+        implicitHeight: 38
+        leftPadding: 16
+        rightPadding: 16
+        contentItem: Text {
+            text: control.text
+            color: control.enabled ? "#c0caf5" : "#565f89"
+            font.pixelSize: 13
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 9
+            color: control.down ? "#3b4261"
+                : control.hovered ? "#292e42" : "#24283b"
+            border.width: 1
+            border.color: control.activeFocus ? "#7aa2f7" : "#3b4261"
+            opacity: control.enabled ? 1 : 0.55
+        }
+    }
+
+    function revealLatest() {
+        if (following)
+            Qt.callLater(function() { transcript.positionViewAtEnd() })
+    }
+
+    function addStatus(message) {
+        statusText = message
+        if (message.indexOf("[tool]") === 0) {
+            transcriptModel.append({
+                "kind": "tool",
+                "content": message.substring(6).trim(),
+                "interrupted": false
+            })
+            revealLatest()
+        } else if (message.indexOf("[error]") === 0) {
+            transcriptModel.append({
+                "kind": "error",
+                "content": message.substring(7).trim(),
+                "interrupted": false
+            })
+            revealLatest()
+        }
+    }
+
+    function submitDraft() {
+        var message = composer.text.trim()
+        if (!message)
+            return
+        backend.submit(message)
+        composer.clear()
+    }
+
+    onClosing: backend.close()
+
+    ListModel { id: transcriptModel }
+
+    Connections {
+        target: backend
+
+        function onUserReceived(message) {
+            transcriptModel.append({"kind": "user", "content": message, "interrupted": false})
+            root.activeAssistant = -1
+            root.busy = true
+            root.statusText = "Thinking…"
+            root.following = true
+            root.revealLatest()
+        }
+
+        function onAssistantReceived(token) {
+            if (root.activeAssistant < 0) {
+                transcriptModel.append({"kind": "assistant", "content": "", "interrupted": false})
+                root.activeAssistant = transcriptModel.count - 1
+            }
+            var current = transcriptModel.get(root.activeAssistant).content
+            transcriptModel.setProperty(root.activeAssistant, "content", current + token)
+            root.revealLatest()
+        }
+
+        function onStatusReceived(message) {
+            root.addStatus(message)
+        }
+
+        function onFinishReceived(interrupted) {
+            if (root.activeAssistant >= 0)
+                transcriptModel.setProperty(root.activeAssistant, "interrupted", interrupted)
+            root.activeAssistant = -1
+            root.busy = false
+            root.statusText = interrupted ? "Interrupted" : "Ready"
+        }
+
+        function onCaptureStateReceived(state) {
+            root.captureState = state
+            root.statusText = state === "recording" ? "Recording…"
+                : state === "transcribing" ? "Transcribing…" : "Ready"
+        }
+
+        function onDraftReceived(text) {
+            var spacer = composer.text.length > 0 && !composer.text.endsWith(" ") ? " " : ""
+            composer.text += spacer + text
+            composer.forceActiveFocus()
+            composer.cursorPosition = composer.length
+        }
+
+        function onModelReceived(model, label) {
+            for (var index = 0; index < modelPicker.count; index++) {
+                if (modelPicker.valueAt(index) === model) {
+                    modelPicker.currentIndex = index
+                    break
+                }
+            }
+            root.statusText = "Model: " + label
+        }
+    }
+
+    header: Rectangle {
+        height: 68
+        color: "#16161e"
+        border.color: "#292e42"
+
+        Column {
+            anchors.left: parent.left
+            anchors.leftMargin: root.pageMargin
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 3
+
+            Label {
+                text: backend.assistantName
+                color: "#c0caf5"
+                font.pixelSize: 17
+                font.bold: true
+            }
+            Label {
+                text: root.statusText
+                color: root.captureState === "recording" ? "#f7768e" : "#7aa2f7"
+                font.pixelSize: 11
+            }
+        }
+
+        Row {
+            anchors.right: parent.right
+            anchors.rightMargin: root.pageMargin
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 10
+
+            ComboBox {
+                id: modelPicker
+                objectName: "modelPicker"
+                width: Math.max(150, Math.min(210, root.width * 0.24))
+                height: 38
+                visible: count > 1
+                enabled: !root.busy
+                model: backend.models
+                textRole: "name"
+                valueRole: "id"
+                leftPadding: 13
+                rightPadding: 34
+
+                contentItem: Text {
+                    text: modelPicker.displayText
+                    color: modelPicker.enabled ? "#c0caf5" : "#565f89"
+                    font.pixelSize: 13
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+                indicator: Text {
+                    x: modelPicker.width - width - 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "⌄"
+                    color: "#7aa2f7"
+                    font.pixelSize: 17
+                }
+                background: Rectangle {
+                    radius: 9
+                    color: modelPicker.hovered ? "#292e42" : "#24283b"
+                    border.width: 1
+                    border.color: modelPicker.activeFocus ? "#7aa2f7" : "#3b4261"
+                    opacity: modelPicker.enabled ? 1 : 0.6
+                }
+                delegate: ItemDelegate {
+                    id: modelOption
+                    required property int index
+                    width: modelPicker.width
+                    height: 40
+                    text: modelPicker.textAt(index)
+                    highlighted: modelPicker.highlightedIndex === index
+
+                    contentItem: Text {
+                        text: modelOption.text
+                        color: "#c0caf5"
+                        font.pixelSize: 13
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+                    background: Rectangle {
+                        color: modelOption.highlighted ? "#3b4261"
+                            : modelOption.hovered ? "#292e42" : "#16161e"
+                    }
+                }
+
+                Component.onCompleted: {
+                    for (var index = 0; index < count; index++) {
+                        if (valueAt(index) === backend.selectedModel) {
+                            currentIndex = index
+                            break
+                        }
+                    }
+                }
+                onActivated: backend.selectModel(currentValue)
+            }
+
+            NightButton {
+                visible: root.busy
+                text: "Stop"
+                onClicked: backend.interrupt()
+            }
+        }
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.leftMargin: root.pageMargin
+        anchors.rightMargin: root.pageMargin
+        anchors.topMargin: 12
+        anchors.bottomMargin: 16
+        spacing: 14
+
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            ListView {
+                id: transcript
+                anchors.fill: parent
+                clip: true
+                spacing: 6
+                model: transcriptModel
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {}
+                onMovementEnded: root.following = atYEnd
+
+                delegate: Item {
+                    id: messageRow
+                    required property string kind
+                    required property string content
+                    required property bool interrupted
+                    width: ListView.view.width
+                    height: messageColumn.implicitHeight + 8
+                    property real conversationWidth: Math.min(width,
+                        kind === "user" ? root.feedWidth : root.assistantWidth)
+
+                    TextMetrics {
+                        id: userMetrics
+                        text: messageRow.content
+                        font.pixelSize: 15
+                    }
+
+                    Column {
+                        id: messageColumn
+                        width: kind === "user"
+                            ? Math.min(messageRow.conversationWidth * 0.72,
+                                Math.max(112, userMetrics.advanceWidth + 34))
+                            : messageRow.conversationWidth
+                        x: kind === "user" ? parent.width - width : 0
+
+                        Rectangle {
+                            width: parent.width
+                            height: body.contentHeight + (kind === "assistant" ? 8 : 20)
+                            radius: 13
+                            color: kind === "user" ? "#24283b"
+                                : kind === "tool" ? "#1f2335"
+                                : kind === "error" ? "#30202b" : "transparent"
+                            border.width: kind === "assistant" ? 0 : 1
+                            border.color: kind === "error" ? "#f7768e" : "#3b4261"
+
+                            TextEdit {
+                                id: body
+                                anchors.fill: parent
+                                anchors.margins: kind === "assistant" ? 4 : 10
+                                readOnly: true
+                                selectByMouse: true
+                                wrapMode: TextEdit.Wrap
+                                textFormat: kind === "assistant" ? TextEdit.RichText : TextEdit.PlainText
+                                text: kind === "assistant"
+                                    ? backend.renderMarkdown(content
+                                        + (interrupted ? "\n\n*Interrupted*" : ""))
+                                    : (kind === "tool" ? "⚙  " : kind === "error" ? "Error  " : "")
+                                        + content
+                                color: kind === "error" ? "#f7768e" : "#c0caf5"
+                                selectionColor: "#7aa2f7"
+                                selectedTextColor: "#1a1b26"
+                                font.pixelSize: 15
+                            }
+                        }
+                    }
+                }
+            }
+
+            NightButton {
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: !transcript.atYEnd && transcript.count > 0
+                text: "Latest ↓"
+                onClicked: {
+                    root.following = true
+                    transcript.positionViewAtEnd()
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredWidth: root.feedWidth
+            Layout.maximumWidth: root.feedWidth
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredHeight: Math.max(68, Math.min(150, composer.contentHeight + 28))
+            radius: 14
+            color: "#16161e"
+            border.width: 1
+            border.color: composer.activeFocus ? "#7aa2f7" : "#3b4261"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 9
+
+                TextArea {
+                    id: composer
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    placeholderText: "Message " + backend.assistantName + "…"
+                    color: "#c0caf5"
+                    placeholderTextColor: "#565f89"
+                    wrapMode: TextArea.Wrap
+                    background: null
+                    font.pixelSize: 15
+
+                    Keys.onPressed: function(event) {
+                        if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                && !(event.modifiers & Qt.ShiftModifier)) {
+                            root.submitDraft()
+                            event.accepted = true
+                        } else if (event.key === Qt.Key_Escape) {
+                            if (root.captureState === "recording")
+                                backend.cancelCapture()
+                            else if (root.busy)
+                                backend.interrupt()
+                            event.accepted = true
+                        }
+                    }
+                }
+
+                NightButton {
+                    visible: backend.captureAvailable
+                    enabled: root.captureState !== "transcribing"
+                    text: root.captureState === "recording" ? "Finish" : backend.captureLabel
+                    onClicked: root.captureState === "recording"
+                        ? backend.finishCapture() : backend.startCapture()
+                }
+
+                NightButton {
+                    text: "Send"
+                    enabled: composer.text.trim().length > 0
+                    onClicked: root.submitDraft()
+                }
+            }
+        }
+
+        Label {
+            Layout.alignment: Qt.AlignHCenter
+            text: "Enter to send  ·  Shift+Enter for a new line"
+            color: "#565f89"
+            font.pixelSize: 11
+        }
+    }
+}

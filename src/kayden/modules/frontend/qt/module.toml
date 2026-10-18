@@ -1,0 +1,7 @@
+schema = 1
+name = "qt"
+display_name = "Kayden Qt"
+capability = "frontend"
+entrypoint = "kayden.modules.frontend.qt:Module"
+version = "0.1.0"
+description = "Native Qt Quick desktop frontend using PySide6 and QML."

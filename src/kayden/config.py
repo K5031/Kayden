@@ -93,6 +93,14 @@ def _normalize_legacy_frontend(values):
             del normalized[capability]
         else:
             normalized[capability] = remaining
+
+    legacy_frontend = normalized.get("frontend")
+    if legacy_frontend in {"gui", "floaty"}:
+        normalized["frontend"] = "tauri"
+        settings = normalized.setdefault("settings", {})
+        frontend_settings = settings.setdefault("frontend", {})
+        tauri_settings = frontend_settings.setdefault("tauri", {})
+        tauri_settings.setdefault("mode", legacy_frontend)
     return normalized
 
 

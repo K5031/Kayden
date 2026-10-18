@@ -30,9 +30,10 @@ python -m pip uninstall k
 python -m pip install -e ".[dev]"
 ```
 
-The base installation supports the TUI, desktop/floaty Tk frontends, DeepSeek,
-OpenAI API, and ChatGPT plan modules. Install only the other optional features
-you need:
+The base installation supports the TUI, DeepSeek, OpenAI API, and ChatGPT plan
+modules. The self-contained Tauri frontend module is currently built from the
+source checkout.
+Install only the other optional features you need:
 
 ```bash
 python -m pip install "kayden[local]"         # local llama.cpp core
@@ -79,7 +80,14 @@ context = "cloud"
 memory = "continuity"
 action = "native"
 tools = ["clock", "calculator", "filesystem", "web"]
+
+[assistant]
+name = "Kayden"
 ```
+
+`assistant.name` is the user-facing identity shown by every frontend. Changing
+it updates the window title, logo, assistant labels, and message composer; it
+does not rename the Kayden application or rewrite the system prompt.
 
 For fully local inference, install the `local` extra and switch the relevant
 settings:
@@ -110,20 +118,67 @@ On first launch Kayden opens the system browser for ChatGPT sign-in and plan-use
 consent. It stores the issued OAuth registration and rotating tokens in
 `~/.config/kayden/chatgpt.json` with owner-only permissions on Unix. Kayden uses
 the first model visible to the connected account; set `KAYDEN_CHATGPT_MODEL` to
-request a specific available model. This connection does not give Kayden access
+request a specific available model. The Tauri frontend also turns its model badge
+into a selector when the selected core advertises multiple models; a selection
+applies to subsequent responses for the current run. This connection does not give Kayden access
 to ChatGPT conversations or memories. Disconnect the app in ChatGPT settings if
 the local credentials are ever exposed.
 
 Choose the user experience independently from the rest of Kayden:
 
 ```toml
-frontend = "tui"     # full-screen terminal interface
-frontend = "gui"     # desktop chat window
-frontend = "floaty"  # compact always-on-top window
+frontend = "tui"    # full-screen terminal interface
+frontend = "tauri"  # React/TypeScript desktop interface
+frontend = "qt"     # native PySide6/QML desktop interface
 ```
 
-The graphical frontends use Python's Tk support. On Linux, install your
-distribution's `python3-tk` package if it is not already available.
+The Qt frontend is the pip-only desktop option. Install its module dependency,
+then select it in the config:
+
+```bash
+pip install "kayden[qt]"
+```
+
+```toml
+frontend = "qt"
+
+[settings.frontend.qt]
+width = 1000
+height = 760
+```
+
+It supports streamed responses, tool and error activity, interruption, push-to-talk
+controls, assistant identity, transcript restoration, and runtime model selection.
+
+The desktop module opens in its full layout by default. For its compact
+always-on-top layout, add module-owned settings:
+
+```toml
+[settings.frontend.tauri]
+mode = "floaty"
+```
+
+The `tauri` module owns its React/TypeScript client, Rust shell, Python bridge,
+metadata, and tests as one removable unit. Kayden's runtime remains responsible
+for models, memory, actions, and tools; the desktop client connects through an
+authenticated local bridge bound only to `127.0.0.1`.
+
+To run the desktop client from a checkout, install Node.js, Rust, and
+[Tauri's platform prerequisites](https://v2.tauri.app/start/prerequisites/),
+then prepare the frontend once:
+
+```bash
+cd src/kayden/modules/frontend/tauri/desktop
+npm install
+cd ../../../../../..
+```
+
+With `frontend = "tauri"`, `kayden` launches the Tauri development client
+automatically. `KAYDEN_TAURI_MODE` can override the configured mode for a
+single launch. A prebuilt client can be selected with
+`KAYDEN_DESKTOP_BINARY=/path/to/kayden-desktop`. The future module marketplace
+can install or remove the complete `tauri` directory and its platform binary
+without changing Kayden's runtime or TUI.
 
 ### Voice
 
@@ -170,9 +225,14 @@ access. On Linux the process must also be able to reach PipeWire/PulseAudio (or
 ALSA) and its microphone permission must be enabled. A sandbox or container
 without `/dev/snd` and the desktop audio socket cannot provide voice.
 
-Each key is a capability, and its value is the module (filename, no `.py`) that
-fills it, loaded from `kayden.modules.<capability>`. In a source checkout those
-modules live under `src/kayden/modules/<capability>/`. Kayden requires one
+Each top-level capability key selects a module, loaded from
+`kayden.modules.<capability>`. A module may be either one file or a directory
+that owns all of its implementation and assets. Multi-file modules put their
+interface implementation and `Module` entrypoint in `main.py`; their
+`__init__.py` only re-exports that class. All other internal filenames and
+structure remain module-owned. The optional
+`settings.<capability>.<module>` table is passed only to that selected module.
+Kayden requires one
 frontend, core, context, memory, and action module plus a tools list. Input and
 output are optional. Configuration order does not matter, and
 `Registry.from_config` validates the selected modules before starting them.
@@ -189,8 +249,8 @@ automatically normalized to `frontend = "tui"` when loaded, and obsolete
 | Capability | Module | Description |
 |---|---|---|
 | frontend | `tui` | Full-screen terminal chat with streaming, scrolling, and interruption |
-| frontend | `gui` | Full desktop chat window |
-| frontend | `floaty` | Compact always-on-top assistant window |
+| frontend | `tauri` | React/Tauri desktop chat with full and compact floating layouts |
+| frontend | `qt` | Native PySide6/QML desktop chat installable entirely through pip |
 | input | `dictation` | Push-to-talk Faster Whisper input with VAD and editable transcripts |
 | input | `whisper` | Optional microphone input available to every frontend |
 | output | `kokoro` | Optional Kokoro speech output available to every frontend |
@@ -221,7 +281,10 @@ older context while the memory module retains the latest messages verbatim. The
 original messages remain in SQLite and can still be found through `search_history`.
 The selected memory module contributes its own actions automatically; continuity
 provides `remember`, `forget_memory`, `list_memories`, and `search_history`. Stable
-facts are saved explicitly under named keys, so ordinary messages do
+facts are saved explicitly under named keys. Each key owns one atomic value—for
+example, `profile.university = UCL` and
+`profile.degree_subject = Computer Science`—so related facts do not duplicate
+one another. Ordinary messages do
 not launch a second model or embedding pipeline. Set `KAYDEN_DATA_DIR` to relocate
 the continuity database. The older `remis` module remains available and its Chroma
 data is not modified by the continuity module.

@@ -83,6 +83,18 @@ class FrontendInterface(ABC):
     rendering back to their UI thread.
     """
 
+    def configure_identity(self, assistant_name: str) -> None:
+        """Configure the user-facing assistant identity before rendering."""
+
+    def configure_models(
+        self,
+        models: list[dict[str, str]],
+        selected_model: str,
+        on_select: Callable[[str], None],
+    ) -> bool:
+        """Attach an optional runtime model selector."""
+        return False
+
     @abstractmethod
     def run(
         self,
@@ -127,6 +139,19 @@ class FrontendInterface(ABC):
 class CoreInterface(ABC):
     runtime_kind: str | None = None
     reports_usage: bool = False
+
+    def available_models(self) -> list[dict[str, str]]:
+        """Return models that can be selected without replacing the core."""
+        model = getattr(self, "model", None)
+        if not isinstance(model, str) or not model:
+            return []
+        display_name = getattr(self, "model_display_name", model)
+        return [{"id": model, "name": display_name}]
+
+    def select_model(self, model: str) -> None:
+        """Select a model for subsequent turns when the core supports it."""
+        if model != getattr(self, "model", None):
+            raise ValueError(f"model '{model}' is unavailable")
 
     @abstractmethod
     def stream(

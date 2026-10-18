@@ -32,6 +32,7 @@ assert 'output' not in values
 assert values['memory'] == 'continuity'
 assert values['action'] == 'native'
 assert values['tools'] == ['clock', 'calculator', 'filesystem', 'web']
+assert values['assistant']['name'] == 'Kayden'
 assert (config_dir / 'config.toml').is_file()
 assert (config_dir / 'system_prompt.txt').is_file()
 assert config.load_system_prompt().startswith('You are Kayden')
@@ -72,7 +73,10 @@ assert config.load_system_prompt().startswith('You are Kayden')
             "output": "terminal",
         })
         self.assertEqual(already_migrated, {
-            "frontend": "gui",
+            "frontend": "tauri",
+            "settings": {
+                "frontend": {"tauri": {"mode": "gui"}},
+            },
         })
 
     def test_legacy_config_directory_is_migrated(self):
@@ -92,7 +96,8 @@ legacy_dir = Path.home() / '.config' / 'k'
 config_dir = Path.home() / '.config' / 'kayden'
 values = config.load_config()
 assert 'controller' not in values
-assert values['frontend'] == 'gui'
+assert values['frontend'] == 'tauri'
+assert values['settings']['frontend']['tauri']['mode'] == 'gui'
 assert config.load_system_prompt() == 'custom prompt'
 assert not legacy_dir.exists()
 assert config_dir.is_dir()

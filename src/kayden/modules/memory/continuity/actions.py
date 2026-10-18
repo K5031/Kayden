@@ -5,6 +5,14 @@ from kayden.interfaces import ToolInterface
 
 
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+NON_ATOMIC_VALUE_PATTERN = re.compile(
+    r"^(?:the\s+)?user\s+(?:"
+    r"is|has|had|likes?|loves?|prefers?|wants?|needs?|works?|"
+    r"stud(?:y|ies|ied)|attends?|goes?|lives?|uses?|owns?|"
+    r"knows?|speaks?|plays?|builds?"
+    r")\b",
+    re.IGNORECASE,
+)
 MAX_HISTORY_RESULT_CHARACTERS = 12000
 
 
@@ -19,7 +27,8 @@ class MemoryActions(ToolInterface):
             "type": "string",
             "description": (
                 "Stable lowercase key such as profile.name, preference.tone, "
-                "or plan.current_project. Reuse a key to update it."
+                "or plan.current_project. The key owns the subject of exactly "
+                "one fact; reuse that same key to update it."
             ),
         }
         return [
@@ -28,8 +37,9 @@ class MemoryActions(ToolInterface):
                 "function": {
                     "name": "remember",
                     "description": (
-                        "Save or update one durable fact the user explicitly wants "
-                        "remembered, or a stable preference they clearly stated."
+                        "Save or update exactly one atomic durable fact the user "
+                        "explicitly wants remembered, or a stable preference they "
+                        "clearly stated. Split independent facts across separate keys."
                     ),
                     "parameters": {
                         "type": "object",
@@ -37,7 +47,14 @@ class MemoryActions(ToolInterface):
                             "key": key,
                             "value": {
                                 "type": "string",
-                                "description": "A concise self-contained fact.",
+                                "description": (
+                                    "Only the value belonging to the key, not a sentence "
+                                    "and not facts owned by other keys. Examples: use "
+                                    "profile.university='UCL' and "
+                                    "profile.degree_subject='Computer Science'; never "
+                                    "profile.degree_subject='User studies Computer Science "
+                                    "at UCL'."
+                                ),
                             },
                         },
                         "required": ["key", "value"],
@@ -114,16 +131,29 @@ class MemoryActions(ToolInterface):
             )
         return key
 
+    @staticmethod
+    def _value(arguments: dict) -> str:
+        value = arguments.get("value")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("value must be a non-empty string")
+        value = value.strip()
+        if len(value) > 1000:
+            raise ValueError("value is too long")
+        if "\n" in value or "\r" in value:
+            raise ValueError("value must describe one atomic fact on one line")
+        if NON_ATOMIC_VALUE_PATTERN.match(value):
+            raise ValueError(
+                "value must contain only the atomic value owned by the key, "
+                "not a sentence about the user or facts from other keys"
+            )
+        return value
+
     def execute(self, name: str, arguments: dict) -> str:
         if name == "remember":
             self._validate_arguments(arguments, {"key", "value"})
             key = self._key(arguments)
-            value = arguments.get("value")
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError("value must be a non-empty string")
-            if len(value) > 1000:
-                raise ValueError("value is too long")
-            self.memory.remember(key, value.strip())
+            value = self._value(arguments)
+            self.memory.remember(key, value)
             return f"Remembered {key}."
 
         if name == "forget_memory":

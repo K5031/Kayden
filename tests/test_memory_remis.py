@@ -21,7 +21,7 @@ with patch.dict(sys.modules, {
     "torch": _fake_torch,
     "sentence_transformers": _fake_sentence_transformers,
 }):
-    from kayden.modules.memory import remis
+    from kayden.modules.memory.remis import main as remis
 
 
 RemisMemory = remis.Module

@@ -42,5 +42,14 @@ class TuiFrontendTests(unittest.TestCase):
         self.assertEqual(frontend._capture_state, "idle")
         self.assertEqual(frontend._status, "Ready")
 
+    def test_uses_configured_assistant_name(self):
+        frontend = TuiFrontend()
+        frontend.configure_identity("Ahri")
+        frontend.assistant("hello")
+        frontend._drain_events()
+
+        self.assertEqual(frontend._assistant_name, "Ahri")
+        self.assertEqual(frontend._messages, [["Ahri", "hello"]])
+
 if __name__ == "__main__":
     unittest.main()

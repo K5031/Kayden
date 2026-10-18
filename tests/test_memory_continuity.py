@@ -134,6 +134,40 @@ class ContinuityMemoryTests(MemoryContractTests, unittest.TestCase):
                     "remember", {"key": "Profile Name", "value": "Kai"}
                 )
 
+    def test_remember_requires_an_atomic_value_instead_of_a_user_sentence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            memory = ContinuityMemory(
+                database_path=Path(directory) / "continuity.sqlite3"
+            )
+
+            with self.assertRaisesRegex(ValueError, "atomic value"):
+                memory.actions().execute(
+                    "remember",
+                    {
+                        "key": "profile.degree_subject",
+                        "value": "User studies Computer Science at UCL.",
+                    },
+                )
+
+            self.assertEqual(
+                memory.actions().execute(
+                    "remember",
+                    {"key": "profile.degree_subject", "value": "Computer Science"},
+                ),
+                "Remembered profile.degree_subject.",
+            )
+
+    def test_remember_schema_explains_how_to_split_overlapping_facts(self):
+        remember = next(
+            schema["function"]
+            for schema in self.memory.actions().schemas()
+            if schema["function"]["name"] == "remember"
+        )
+        value_description = remember["parameters"]["properties"]["value"]["description"]
+
+        self.assertIn("profile.university='UCL'", value_description)
+        self.assertIn("profile.degree_subject='Computer Science'", value_description)
+
 
 if __name__ == "__main__":
     unittest.main()

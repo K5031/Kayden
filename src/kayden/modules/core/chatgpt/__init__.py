@@ -1,4 +1,4 @@
-from kayden.modules.core.chatgpt.core import Module
+from .main import Module
 
 
 __all__ = ["Module"]
