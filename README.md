@@ -1,7 +1,5 @@
 # Kayden
 
-> Weapon of the Faithless.
-
 A modular desktop AI assistant. Its fixed application loop connects a selectable
 frontend, model, context, memory, action strategy, and tool modules.
 
