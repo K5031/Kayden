@@ -31,7 +31,7 @@ assert 'input' not in values
 assert 'output' not in values
 assert values['memory'] == 'continuity'
 assert values['action'] == 'native'
-assert values['tools'] == ['clock', 'calculator', 'filesystem', 'web']
+assert values['tools'] == ['clock', 'calculator', 'filesystem', 'web_fetch', 'web_exa']
 assert values['assistant']['name'] == 'Kayden'
 assert (config_dir / 'config.toml').is_file()
 assert (config_dir / 'system_prompt.txt').is_file()
@@ -78,6 +78,19 @@ assert config.load_system_prompt().startswith('You are Kayden')
                 "frontend": {"tauri": {"mode": "gui"}},
             },
         })
+
+    def test_legacy_web_tool_is_split_into_fetch_and_search_modules(self):
+        from kayden.config import _normalize_legacy_frontend
+
+        values = _normalize_legacy_frontend({
+            "tools": ["clock", "web"],
+        })
+        self.assertEqual(values["tools"], ["clock", "web_fetch", "web_exa"])
+
+        searxng = _normalize_legacy_frontend({
+            "tools": ["web", "web_searxng"],
+        })
+        self.assertEqual(searxng["tools"], ["web_fetch", "web_searxng"])
 
     def test_legacy_config_directory_is_migrated(self):
         source_dir = str(Path(__file__).resolve().parents[1] / "src")

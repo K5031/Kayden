@@ -18,6 +18,13 @@ class Module(ToolInterface):
             },
         }]
 
+    def describe_activity(self, name, arguments, state, result=None):
+        if state == "running":
+            return "Checking the time"
+        if state == "failed":
+            return "Couldn’t check the time"
+        return "Checked the time"
+
     def execute(self, name: str, arguments: dict) -> str:
         if name != "current_time":
             raise ValueError(f"Unknown tool: {name}")

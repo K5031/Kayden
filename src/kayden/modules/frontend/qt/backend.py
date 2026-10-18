@@ -14,6 +14,7 @@ class FrontendBridge(QObject):
     userReceived = Signal(str)
     assistantReceived = Signal(str)
     statusReceived = Signal(str)
+    toolGroupReceived = Signal(int, str, str, str, int)
     finishReceived = Signal(bool)
     captureStateReceived = Signal(str)
     draftReceived = Signal(str)
@@ -108,6 +109,8 @@ class FrontendBridge(QObject):
                 self.assistantReceived.emit(value)
             elif kind == "status":
                 self.statusReceived.emit(value)
+            elif kind == "tool_group":
+                self.toolGroupReceived.emit(*value)
             elif kind == "finish":
                 self.finishReceived.emit(value)
             elif kind == "capture_state":

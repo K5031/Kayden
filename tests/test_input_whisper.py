@@ -6,7 +6,7 @@ import threading
 import sys
 from types import ModuleType
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 
 fake_numpy = ModuleType("numpy")
@@ -45,6 +45,12 @@ def _input():
     module._stopped = False
     module._thread = None
     module._start_lock = threading.Lock()
+    module.energy_threshold = 1000.0
+    module.calibrate = True
+    module.calibration_duration = 1.0
+    module.max_calibrated_threshold = 4000.0
+    module.source = MagicMock()
+    module.recorder = Mock()
     return module
 
 
@@ -57,6 +63,39 @@ class WhisperInputTests(unittest.TestCase):
             parameters["record_timeout"].default,
             parameters["phrase_timeout"].default,
         )
+
+    def test_rejects_implausibly_high_ambient_calibration(self):
+        module = _input()
+
+        def calibrate(_source, duration):
+            self.assertEqual(duration, 1.0)
+            module.recorder.energy_threshold = 14_000
+
+        module.recorder.adjust_for_ambient_noise.side_effect = calibrate
+        module._calibrate_recorder()
+
+        self.assertEqual(module.recorder.energy_threshold, 1000.0)
+
+    def test_keeps_reasonable_ambient_calibration(self):
+        module = _input()
+
+        def calibrate(_source, duration):
+            module.recorder.energy_threshold = 650
+
+        module.recorder.adjust_for_ambient_noise.side_effect = calibrate
+        module._calibrate_recorder()
+
+        self.assertEqual(module.recorder.energy_threshold, 650)
+
+    def test_calibration_can_be_disabled_for_a_fixed_threshold(self):
+        module = _input()
+        module.calibrate = False
+        module.recorder.energy_threshold = 14_000
+
+        module._calibrate_recorder()
+
+        self.assertEqual(module.recorder.energy_threshold, 1000.0)
+        module.recorder.adjust_for_ambient_noise.assert_not_called()
 
     def test_cuda_probe_handles_missing_driver(self):
         fake_torch = ModuleType("torch")

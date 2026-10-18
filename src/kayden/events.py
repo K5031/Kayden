@@ -47,6 +47,7 @@ class ToolStarted:
     call_id: str
     name: str
     arguments: dict
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class ToolFinished:
     call_id: str
     name: str
     result: ToolResult
+    description: str | None = None
 
 
 @dataclass(frozen=True)

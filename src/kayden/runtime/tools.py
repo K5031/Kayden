@@ -93,6 +93,35 @@ class ToolRuntime(ToolRuntimeInterface):
             self.log.exception("Tool %s failed", name)
             return ToolResult("Tool error: execution failed", is_error=True)
 
+    def describe_activity(
+        self,
+        name: str,
+        arguments: dict,
+        state: str,
+        result: ToolResult | None = None,
+    ) -> str:
+        with self._lock:
+            module = self._owners.get(name)
+        description = None
+        describe = getattr(module, "describe_activity", None)
+        if callable(describe):
+            try:
+                description = describe(name, arguments, state, result)
+            except Exception:
+                self.log.exception("Tool %s failed to describe its activity", name)
+        if not isinstance(description, str) or not description.strip():
+            description = super().describe_activity(name, arguments, state, result)
+        description = " ".join(description.split())
+        if state == "running" and not description.endswith(("…", "...")):
+            description += "…"
+        if state == "failed" and result is not None:
+            detail = " ".join(
+                result.content.removeprefix("Tool error: ").split()
+            )[:120]
+            if detail and detail.lower() not in description.lower():
+                description += f" — {detail}"
+        return description[:240]
+
     def stop(self) -> None:
         with self._lock:
             modules = list(self._modules)

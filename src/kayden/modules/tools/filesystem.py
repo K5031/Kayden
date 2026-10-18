@@ -68,6 +68,29 @@ class Module(ToolInterface):
             },
         ]
 
+    def describe_activity(self, name, arguments, state, result=None):
+        path = " ".join(str(arguments.get("path", ".")).split())[:72]
+        query = " ".join(str(arguments.get("query", "")).split())[:72]
+        descriptions = {
+            "list_directory": (
+                f"Browsing “{path}”",
+                f"Browsed “{path}”",
+                f"Couldn’t browse “{path}”",
+            ),
+            "read_text_file": (
+                f"Reading “{path}”",
+                f"Read “{path}”",
+                f"Couldn’t read “{path}”",
+            ),
+            "search_files": (
+                f"Searching files for “{query}”",
+                f"Searched files for “{query}”",
+                "File search failed",
+            ),
+        }
+        running, finished, failed = descriptions[name]
+        return {"running": running, "finished": finished, "failed": failed}[state]
+
     def _resolve(self, relative_path: str) -> Path:
         if not isinstance(relative_path, str) or not relative_path:
             raise ValueError("path must be a non-empty string")

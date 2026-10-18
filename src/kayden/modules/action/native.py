@@ -93,11 +93,29 @@ class Module(ActionInterface):
                         raise ValueError("tool arguments must be a JSON object")
                 except (json.JSONDecodeError, ValueError, TypeError) as error:
                     result = ToolResult(f"Tool error: {error}", is_error=True)
+                    arguments = {}
                 else:
-                    yield ToolStarted(call.call_id, call.name, arguments)
+                    description = tools.describe_activity(
+                        call.name, arguments, "running"
+                    )
+                    yield ToolStarted(
+                        call.call_id,
+                        call.name,
+                        arguments,
+                        description,
+                    )
                     result = tools.execute(call.name, arguments)
 
-                yield ToolFinished(call.call_id, call.name, result)
+                state = "failed" if result.is_error else "finished"
+                description = tools.describe_activity(
+                    call.name, arguments, state, result
+                )
+                yield ToolFinished(
+                    call.call_id,
+                    call.name,
+                    result,
+                    description,
+                )
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.call_id,

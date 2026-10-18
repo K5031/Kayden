@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import Mock
 
 from kayden.interfaces import FrontendInterface
+from kayden.events import ToolResult
 from kayden.modules.frontend.qt import Module as QtFrontend
 from kayden.modules.frontend.qt.markdown import render_markdown
 
@@ -25,6 +26,18 @@ class QtFrontendTests(unittest.TestCase):
         frontend.user("hello")
         frontend.assistant("Hi")
         frontend.status("[tool] current_time({})")
+        frontend.tool_started(
+            "call_1",
+            "search_web",
+            {"query": "latest news"},
+            "Searching the web for “latest news”…",
+        )
+        frontend.tool_finished(
+            "call_1",
+            "search_web",
+            ToolResult("results"),
+            "Searched the web for “latest news”",
+        )
         frontend.finish()
         frontend.capture_state("recording")
         frontend.draft("voice text")
@@ -33,6 +46,26 @@ class QtFrontendTests(unittest.TestCase):
             ("user", "hello"),
             ("assistant", "Hi"),
             ("status", "[tool] current_time({})"),
+            (
+                "tool_group",
+                (
+                    1,
+                    "Searching the web for “latest news”…",
+                    "running",
+                    "◌  Searching the web for “latest news”…",
+                    1,
+                ),
+            ),
+            (
+                "tool_group",
+                (
+                    1,
+                    "Searched the web for “latest news”",
+                    "finished",
+                    "✓  Searched the web for “latest news”",
+                    1,
+                ),
+            ),
             ("finish", False),
             ("capture_state", "recording"),
             ("draft", "voice text"),
@@ -50,6 +83,112 @@ class QtFrontendTests(unittest.TestCase):
 
         submit.assert_called_once_with("hello")
         interrupt.assert_called_once_with()
+
+    def test_tool_failures_are_human_readable_and_keep_the_call_id(self):
+        frontend = QtFrontend()
+
+        frontend.tool_started(
+            "call_fetch",
+            "fetch_webpage",
+            {"url": "https://example.com/article"},
+            "Reading example.com…",
+        )
+        frontend.tool_finished(
+            "call_fetch",
+            "fetch_webpage",
+            ToolResult("Tool error: HTTP 403 from example.com", is_error=True),
+            "Couldn’t read example.com — HTTP 403 from example.com",
+        )
+
+        self.assertEqual(list(frontend._drain_events()), [
+            (
+                "tool_group",
+                (
+                    1,
+                    "Reading example.com…",
+                    "running",
+                    "◌  Reading example.com…",
+                    1,
+                ),
+            ),
+            (
+                "tool_group",
+                (
+                    1,
+                    "Couldn’t read example.com — HTTP 403 from example.com",
+                    "failed",
+                    "!  Couldn’t read example.com — HTTP 403 from example.com",
+                    1,
+                ),
+            ),
+        ])
+
+    def test_multiple_tools_update_one_expandable_group(self):
+        frontend = QtFrontend()
+        frontend.user("find and read it")
+        list(frontend._drain_events())
+
+        frontend.tool_started(
+            "search",
+            "search_web",
+            {"query": "news"},
+            "Searching the web for “news”…",
+        )
+        frontend.tool_finished(
+            "search",
+            "search_web",
+            ToolResult("results"),
+            "Searched the web for “news”",
+        )
+        frontend.tool_started(
+            "fetch",
+            "fetch_webpage",
+            {"url": "https://example.com"},
+            "Reading example.com…",
+        )
+
+        groups = list(frontend._drain_events())
+        self.assertEqual(len(groups), 3)
+        self.assertTrue(all(kind == "tool_group" for kind, _ in groups))
+        self.assertEqual(groups[-1][1], (
+            1,
+            "Reading example.com…",
+            "running",
+            "✓  Searched the web for “news”\n◌  Reading example.com…",
+            2,
+        ))
+
+    def test_assistant_text_closes_group_before_a_later_tool(self):
+        frontend = QtFrontend()
+        frontend.user("do two stages")
+        list(frontend._drain_events())
+
+        frontend.tool_started(
+            "first", "current_time", {}, "Checking the time…"
+        )
+        frontend.tool_finished(
+            "first", "current_time", ToolResult("12:00"), "Checked the time"
+        )
+        frontend.assistant("Now I’ll search.")
+        frontend.tool_started(
+            "second",
+            "search_web",
+            {"query": "news"},
+            "Searching the web for “news”…",
+        )
+
+        events = list(frontend._drain_events())
+        self.assertEqual(events[-2], ("assistant", "Now I’ll search."))
+        self.assertEqual(events[-1], (
+            "tool_group",
+            (
+                2,
+                "Searching the web for “news”…",
+                "running",
+                "◌  Searching the web for “news”…",
+                1,
+            ),
+        ))
 
     def test_exposes_identity_models_and_model_selection(self):
         frontend = QtFrontend()
@@ -107,6 +246,14 @@ class QtFrontendTests(unittest.TestCase):
         self.assertIn("backend.selectModel", qml)
         self.assertIn("backend.startCapture", qml)
         self.assertIn("backend.interrupt", qml)
+        self.assertIn("onToolGroupReceived", qml)
+        self.assertIn("root.updateToolGroup", qml)
+        self.assertIn("activeAssistant = -1", qml)
+        self.assertIn("activeToolGroup", qml)
+        self.assertIn("activeToolGroupId", qml)
+        self.assertIn("toolExpanded", qml)
+        self.assertIn("toolDetails", qml)
+        self.assertIn("maximumLineCount: 1", qml)
         self.assertIn("property real feedWidth", qml)
         self.assertIn("root.feedWidth", qml)
         self.assertIn("width - pageMargin * 2", qml)

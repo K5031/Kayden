@@ -506,10 +506,27 @@ class ApplicationRuntime:
                     speech_output.send(event.text)
                 reply += event.text
             elif isinstance(event, ToolStarted):
-                arguments = json.dumps(event.arguments, ensure_ascii=False)
-                frontend.status(f"[tool] {event.name}({arguments})")
+                tool_started = getattr(frontend, "tool_started", None)
+                if callable(tool_started):
+                    tool_started(
+                        event.call_id,
+                        event.name,
+                        event.arguments,
+                        event.description,
+                    )
+                else:
+                    arguments = json.dumps(event.arguments, ensure_ascii=False)
+                    frontend.status(f"[tool] {event.name}({arguments})")
             elif isinstance(event, ToolFinished):
-                if event.result.is_error:
+                tool_finished = getattr(frontend, "tool_finished", None)
+                if callable(tool_finished):
+                    tool_finished(
+                        event.call_id,
+                        event.name,
+                        event.result,
+                        event.description,
+                    )
+                elif event.result.is_error:
                     frontend.status(
                         f"[tool] {event.name} failed: {event.result.content}"
                     )

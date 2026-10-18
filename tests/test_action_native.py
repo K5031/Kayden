@@ -20,6 +20,9 @@ class _EchoTool(ToolInterface):
         self.calls.append((name, arguments))
         return arguments["text"]
 
+    def describe_activity(self, name, arguments, state, result=None):
+        return f"Echo {state}: {arguments.get('text', '')}".strip()
+
 
 class _ScriptedCore:
     def __init__(self, *responses):
@@ -58,6 +61,10 @@ class NativeActionTests(unittest.TestCase):
         self.assertEqual(tool.calls, [("echo", {"text": "hello"})])
         self.assertTrue(any(isinstance(e, ToolStarted) for e in events))
         self.assertTrue(any(isinstance(e, ToolFinished) for e in events))
+        started = next(e for e in events if isinstance(e, ToolStarted))
+        finished = next(e for e in events if isinstance(e, ToolFinished))
+        self.assertEqual(started.description, "Echo running: hello…")
+        self.assertEqual(finished.description, "Echo finished: hello")
         self.assertEqual(core.messages[1][-1], {
             "role": "tool", "tool_call_id": "call_1", "content": "hello",
         })

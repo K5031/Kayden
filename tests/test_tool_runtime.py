@@ -41,6 +41,25 @@ class ToolRuntimeTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertIn("bad input", result.content)
 
+    def test_activity_description_is_owned_by_tool_with_generic_fallback(self):
+        class DescribedTool(_Tool):
+            def describe_activity(self, name, arguments, state, result=None):
+                return f"Custom {state} {arguments['subject']}"
+
+        custom = ToolRuntime([DescribedTool()])
+        self.assertEqual(
+            custom.describe_activity(
+                "echo", {"subject": "work"}, "running"
+            ),
+            "Custom running work…",
+        )
+
+        generic = ToolRuntime([_Tool()])
+        self.assertEqual(
+            generic.describe_activity("echo", {}, "finished"),
+            "Finished Echo",
+        )
+
     def test_stop_reaches_owned_modules(self):
         first, second = _Tool("first"), _Tool("second")
         runtime = ToolRuntime([first, second])

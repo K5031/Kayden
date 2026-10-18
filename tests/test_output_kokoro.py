@@ -64,6 +64,28 @@ class KokoroOutputTests(unittest.TestCase):
         self.assertEqual(output.queue.get_nowait(), (0, "Hello!"))
         self.assertEqual(output.buffer, "")
 
+    def test_markdown_is_removed_from_spoken_text(self):
+        output = _output()
+        output.send("**Important.**")
+        self.assertEqual(output.queue.get_nowait(), (0, "Important."))
+        self.assertEqual(output.buffer, "")
+
+    def test_links_lists_and_inline_code_are_spoken_naturally(self):
+        output = _output()
+        output.buffer = "- Read [`profile.name`](https://example.com) & **remember** it"
+        output.flush()
+        self.assertEqual(
+            output.queue.get_nowait(),
+            (0, "Read profile.name & remember it"),
+        )
+
+    def test_formatting_only_does_not_start_audio(self):
+        output = _output()
+        output.buffer = "***"
+        output.flush()
+        output._ensure_started.assert_not_called()
+        self.assertTrue(output.queue.empty())
+
     def test_flush_queues_trailing_text(self):
         output = _output()
         output.buffer = "unfinished"

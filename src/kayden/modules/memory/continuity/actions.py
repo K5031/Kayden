@@ -116,6 +116,34 @@ class MemoryActions(ToolInterface):
             },
         ]
 
+    def describe_activity(self, name, arguments, state, result=None):
+        key = " ".join(str(arguments.get("key", "")).split())[:72]
+        query = " ".join(str(arguments.get("query", "")).split())[:72]
+        descriptions = {
+            "remember": (
+                f"Saving memory “{key}”" if key else "Saving a memory",
+                f"Saved memory “{key}”" if key else "Saved a memory",
+                "Couldn’t save the memory",
+            ),
+            "forget_memory": (
+                f"Forgetting memory “{key}”" if key else "Forgetting a memory",
+                f"Forgot memory “{key}”" if key else "Forgot a memory",
+                "Couldn’t forget the memory",
+            ),
+            "list_memories": (
+                "Checking saved memories",
+                "Checked saved memories",
+                "Couldn’t check saved memories",
+            ),
+            "search_history": (
+                f"Searching conversation history for “{query}”",
+                f"Searched conversation history for “{query}”",
+                "Conversation search failed",
+            ),
+        }
+        running, finished, failed = descriptions[name]
+        return {"running": running, "finished": finished, "failed": failed}[state]
+
     @staticmethod
     def _validate_arguments(arguments: dict, allowed: set[str]) -> None:
         if not set(arguments).issubset(allowed):

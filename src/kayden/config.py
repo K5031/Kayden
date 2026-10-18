@@ -101,6 +101,23 @@ def _normalize_legacy_frontend(values):
         frontend_settings = settings.setdefault("frontend", {})
         tauri_settings = frontend_settings.setdefault("tauri", {})
         tauri_settings.setdefault("mode", legacy_frontend)
+
+    tools = normalized.get("tools")
+    tool_names = tools if isinstance(tools, list) else [tools]
+    if "web" in tool_names:
+        has_search_provider = any(
+            name in {"web_exa", "web_searxng"} for name in tool_names
+        )
+        migrated_tools = []
+        for name in tool_names:
+            if name == "web":
+                if "web_fetch" not in migrated_tools:
+                    migrated_tools.append("web_fetch")
+                if not has_search_provider and "web_exa" not in migrated_tools:
+                    migrated_tools.append("web_exa")
+            elif name not in migrated_tools:
+                migrated_tools.append(name)
+        normalized["tools"] = migrated_tools
     return normalized
 
 

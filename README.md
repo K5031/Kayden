@@ -77,7 +77,7 @@ core = "deepseek"
 context = "cloud"
 memory = "continuity"
 action = "native"
-tools = ["clock", "calculator", "filesystem", "web"]
+tools = ["clock", "calculator", "filesystem", "web_fetch", "web_exa"]
 
 [assistant]
 name = "Kayden"
@@ -105,6 +105,27 @@ core = "openai"
 ```
 
 Then provide `OPENAI_API_KEY` in the environment.
+
+Web search and page fetching are separate modules. The default `web_exa`
+search module uses Exa's hosted MCP endpoint anonymously, subject to its free
+rate limits. Set `KAYDEN_EXA_API_KEY` (or `EXA_API_KEY`) for your own Exa quota.
+`web_fetch` retrieves a chosen page directly and may send its URL to Jina Reader
+when the site blocks direct access or requires JavaScript.
+
+To use a self-hosted SearXNG instance instead, replace `web_exa` with
+`web_searxng` and configure its base URL:
+
+```toml
+tools = ["clock", "calculator", "filesystem", "web_fetch", "web_searxng"]
+
+[settings.tools.web_searxng]
+base_url = "http://127.0.0.1:8888"
+```
+
+The SearXNG instance must enable JSON responses. You can alternatively set
+`KAYDEN_SEARXNG_URL`. Do not enable both search modules simultaneously because
+both intentionally provide the same `search_web` tool. Legacy `web` entries are
+automatically migrated to `web_fetch` plus `web_exa` when the config is loaded.
 
 To use your ChatGPT plan instead of API billing, set:
 
@@ -217,6 +238,15 @@ by default; opt into an installed CUDA runtime with
 
 Whisper submits a phrase after about 2 seconds of silence. This keeps voice
 input conversational while still allowing brief pauses within a sentence.
+Its ambient calibration rejects implausibly high thresholds and falls back to
+the configured value. For a microphone whose driver reports unreliable ambient
+levels, use a fixed threshold:
+
+```toml
+[settings.input.whisper]
+energy_threshold = 1000
+calibrate = false
+```
 
 The first Whisper or Kokoro launch may download model data, so it needs network
 access. On Linux the process must also be able to reach PipeWire/PulseAudio (or
@@ -264,7 +294,9 @@ automatically normalized to `frontend = "tui"` when loaded, and obsolete
 | tools | `clock` | Exposes the current local date and time |
 | tools | `calculator` | Safely evaluates arithmetic and common mathematical functions |
 | tools | `filesystem` | Lists, reads, and searches visible files beneath a read-only root |
-| tools | `web` | Searches the web and extracts readable text from public pages |
+| tools | `web_fetch` | Extracts readable text from public pages, with a reader fallback |
+| tools | `web_exa` | Searches through Exa's hosted MCP endpoint |
+| tools | `web_searxng` | Searches through a configured SearXNG instance |
 
 ## Continuous Memory
 
@@ -349,14 +381,14 @@ by name in `config.toml`. Details about each interface can be found in
 - `CoreInterface` — `stream(messages, tools=None, should_interrupt=None) -> Iterator[CoreEvent]`, `interrupt()`
 - `ContextPolicyInterface` — selects model-visible messages and owns token-budget/compaction policy, without owning storage
 - `MemoryInterface` — `append`, `recall`, `view`, recent history, race-safe compaction planning/commit, reset, and optional `actions()`
-- `ToolInterface` — `schemas() -> list[dict]` returns function definitions; `execute(name, arguments) -> str` validates and runs a tool
+- `ToolInterface` — `schemas() -> list[dict]` returns function definitions; `execute(name, arguments) -> str` validates and runs a tool; optional `describe_activity(...)` supplies frontend-neutral status text
 - `ActionInterface` — `run(core, turn, tools, should_interrupt=None) -> Iterator[ActionEvent]` defines how the model uses tools
 
 ## Actions and Tools
 
 An action module is a strategy for using tools. It owns the inner model/tool loop: make one model request, execute requested tools through the tool runtime, return their results to the model, and continue until the model produces a final response. The built-in `native` strategy uses the core's native function-calling protocol.
 
-A tool module under `src/kayden/modules/tools/` exposes one or more concrete tools through `schemas()` and `execute()`. A memory module may return a `ToolInterface` adapter from `actions()`; the application adds it automatically. The shared tool runtime combines schemas, rejects duplicate or unknown names, routes execution, and converts failures into tool results. See `src/kayden/modules/tools/clock.py` for a minimal standalone example.
+A tool module under `src/kayden/modules/tools/` exposes one or more concrete tools through `schemas()` and `execute()`. It may implement `describe_activity()` so every frontend can show human-readable running, finished, and failed states without knowing which tool modules are installed. A memory module may return a `ToolInterface` adapter from `actions()`; the application adds it automatically. The shared tool runtime combines schemas, rejects duplicate or unknown names, routes execution, and converts failures into tool results. See `src/kayden/modules/tools/clock.py` for a minimal standalone example.
 
 Kayden's fixed application loop owns the outer conversation flow and processes
 turns on a worker so the frontend's event loop stays responsive. Frontends only

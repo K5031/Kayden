@@ -23,6 +23,8 @@ ApplicationWindow {
     property bool busy: false
     property bool following: true
     property int activeAssistant: -1
+    property int activeToolGroup: -1
+    property int activeToolGroupId: -1
     property string captureState: "idle"
     property string statusText: "Ready"
     property real pageMargin: Math.min(80, Math.max(20, width * 0.052))
@@ -63,17 +65,51 @@ ApplicationWindow {
             transcriptModel.append({
                 "kind": "tool",
                 "content": message.substring(6).trim(),
-                "interrupted": false
+                "interrupted": false,
+                "callId": "",
+                "toolState": "finished",
+                "toolDetails": "",
+                "toolExpanded": false,
+                "toolCount": 1
             })
             revealLatest()
         } else if (message.indexOf("[error]") === 0) {
             transcriptModel.append({
                 "kind": "error",
                 "content": message.substring(7).trim(),
-                "interrupted": false
+                "interrupted": false,
+                "callId": "",
+                "toolState": "failed",
+                "toolDetails": "",
+                "toolExpanded": false,
+                "toolCount": 0
             })
             revealLatest()
         }
+    }
+
+    function updateToolGroup(groupId, summary, state, details, count) {
+        activeAssistant = -1
+        if (activeToolGroup < 0 || activeToolGroupId !== groupId) {
+            transcriptModel.append({
+                "kind": "tool",
+                "content": summary,
+                "interrupted": false,
+                "callId": "",
+                "toolState": state,
+                "toolDetails": details,
+                "toolExpanded": false,
+                "toolCount": count
+            })
+            activeToolGroup = transcriptModel.count - 1
+            activeToolGroupId = groupId
+        } else {
+            transcriptModel.setProperty(activeToolGroup, "content", summary)
+            transcriptModel.setProperty(activeToolGroup, "toolState", state)
+            transcriptModel.setProperty(activeToolGroup, "toolDetails", details)
+            transcriptModel.setProperty(activeToolGroup, "toolCount", count)
+        }
+        revealLatest()
     }
 
     function submitDraft() {
@@ -92,8 +128,14 @@ ApplicationWindow {
         target: backend
 
         function onUserReceived(message) {
-            transcriptModel.append({"kind": "user", "content": message, "interrupted": false})
+            transcriptModel.append({
+                "kind": "user", "content": message, "interrupted": false,
+                "callId": "", "toolState": "", "toolDetails": "",
+                "toolExpanded": false, "toolCount": 0
+            })
             root.activeAssistant = -1
+            root.activeToolGroup = -1
+            root.activeToolGroupId = -1
             root.busy = true
             root.statusText = "Thinking…"
             root.following = true
@@ -102,7 +144,11 @@ ApplicationWindow {
 
         function onAssistantReceived(token) {
             if (root.activeAssistant < 0) {
-                transcriptModel.append({"kind": "assistant", "content": "", "interrupted": false})
+                transcriptModel.append({
+                    "kind": "assistant", "content": "", "interrupted": false,
+                    "callId": "", "toolState": "", "toolDetails": "",
+                    "toolExpanded": false, "toolCount": 0
+                })
                 root.activeAssistant = transcriptModel.count - 1
             }
             var current = transcriptModel.get(root.activeAssistant).content
@@ -112,6 +158,12 @@ ApplicationWindow {
 
         function onStatusReceived(message) {
             root.addStatus(message)
+        }
+
+        function onToolGroupReceived(groupId, summary, state, details, count) {
+            root.statusText = state === "running" || state === "failed"
+                ? summary : "Thinking…"
+            root.updateToolGroup(groupId, summary, state, details, count)
         }
 
         function onFinishReceived(interrupted) {
@@ -277,8 +329,17 @@ ApplicationWindow {
                     required property string kind
                     required property string content
                     required property bool interrupted
+                    required property string callId
+                    required property string toolState
+                    required property string toolDetails
+                    required property bool toolExpanded
+                    required property int toolCount
+                    required property int index
                     width: ListView.view.width
-                    height: messageColumn.implicitHeight + 8
+                    height: kind === "tool"
+                        ? 34 + (toolExpanded && toolCount > 1
+                            ? toolDetailsBody.contentHeight + 12 : 0)
+                        : messageColumn.implicitHeight + 8
                     property real conversationWidth: Math.min(width,
                         kind === "user" ? root.feedWidth : root.assistantWidth)
 
@@ -298,16 +359,18 @@ ApplicationWindow {
 
                         Rectangle {
                             width: parent.width
-                            height: body.contentHeight + (kind === "assistant" ? 8 : 20)
-                            radius: 13
+                            height: kind === "tool" ? messageRow.height - 4
+                                : body.contentHeight + (kind === "assistant" ? 8 : 20)
+                            radius: kind === "tool" ? 0 : 13
                             color: kind === "user" ? "#24283b"
-                                : kind === "tool" ? "#1f2335"
+                                : kind === "tool" ? "transparent"
                                 : kind === "error" ? "#30202b" : "transparent"
-                            border.width: kind === "assistant" ? 0 : 1
+                            border.width: kind === "assistant" || kind === "tool" ? 0 : 1
                             border.color: kind === "error" ? "#f7768e" : "#3b4261"
 
                             TextEdit {
                                 id: body
+                                visible: kind !== "tool"
                                 anchors.fill: parent
                                 anchors.margins: kind === "assistant" ? 4 : 10
                                 readOnly: true
@@ -317,12 +380,71 @@ ApplicationWindow {
                                 text: kind === "assistant"
                                     ? backend.renderMarkdown(content
                                         + (interrupted ? "\n\n*Interrupted*" : ""))
-                                    : (kind === "tool" ? "⚙  " : kind === "error" ? "Error  " : "")
-                                        + content
+                                    : (kind === "error" ? "Error  " : "") + content
                                 color: kind === "error" ? "#f7768e" : "#c0caf5"
                                 selectionColor: "#7aa2f7"
                                 selectedTextColor: "#1a1b26"
                                 font.pixelSize: 15
+                            }
+
+                            Text {
+                                id: toolSummary
+                                visible: kind === "tool"
+                                anchors.left: parent.left
+                                anchors.right: toolChevron.left
+                                anchors.top: parent.top
+                                height: 30
+                                anchors.leftMargin: 6
+                                anchors.rightMargin: 6
+                                text: (toolState === "running" ? "◌  "
+                                    : toolState === "failed" ? "!  " : "✓  ") + content
+                                color: toolState === "failed" ? "#f7768e" : "#7aa2f7"
+                                font.pixelSize: 14
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
+
+                            Text {
+                                id: toolChevron
+                                visible: kind === "tool" && toolCount > 1
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8
+                                anchors.top: parent.top
+                                height: 30
+                                verticalAlignment: Text.AlignVCenter
+                                text: toolExpanded ? "⌃" : "⌄"
+                                color: "#565f89"
+                                font.pixelSize: 14
+                            }
+
+                            Text {
+                                id: toolDetailsBody
+                                visible: kind === "tool" && toolExpanded && toolCount > 1
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.topMargin: 32
+                                anchors.leftMargin: 27
+                                anchors.rightMargin: 12
+                                text: toolDetails
+                                color: "#a9b1d6"
+                                font.pixelSize: 13
+                                lineHeight: 1.35
+                                wrapMode: Text.Wrap
+                            }
+
+                            MouseArea {
+                                visible: kind === "tool" && toolCount > 1
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                height: 30
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: transcriptModel.setProperty(
+                                    messageRow.index,
+                                    "toolExpanded",
+                                    !messageRow.toolExpanded
+                                )
                             }
                         }
                     }

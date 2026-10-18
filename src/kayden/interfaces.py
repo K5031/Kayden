@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import json
 from typing import Callable, Iterator
 
 from kayden.events import (
@@ -114,6 +115,30 @@ class FrontendInterface(ABC):
     @abstractmethod
     def status(self, message: str) -> None:
         """Render transient activity such as a tool call."""
+
+    def tool_started(
+        self,
+        call_id: str,
+        name: str,
+        arguments: dict,
+        description: str | None = None,
+    ) -> None:
+        """Render a tool activity that may later be updated in place."""
+        serialized = json.dumps(arguments, ensure_ascii=False)
+        self.status(f"[tool] {name}({serialized})")
+
+    def tool_finished(
+        self,
+        call_id: str,
+        name: str,
+        result: ToolResult,
+        description: str | None = None,
+    ) -> None:
+        """Complete the matching tool activity."""
+        if result.is_error:
+            self.status(f"[tool] {name} failed: {result.content}")
+        else:
+            self.status(f"[tool] {name} finished")
 
     @abstractmethod
     def finish(self, interrupted: bool = False) -> None:
@@ -238,6 +263,16 @@ class ToolInterface(ABC):
     def execute(self, name: str, arguments: dict) -> str:
         """Validate and run a named tool, returning text for the model."""
 
+    def describe_activity(
+        self,
+        name: str,
+        arguments: dict,
+        state: str,
+        result: ToolResult | None = None,
+    ) -> str | None:
+        """Optionally describe a call for presentation by any frontend."""
+        return None
+
 
 class ToolRuntimeInterface(ABC):
     @abstractmethod
@@ -251,6 +286,21 @@ class ToolRuntimeInterface(ABC):
     @abstractmethod
     def execute(self, name: str, arguments: dict) -> ToolResult:
         pass
+
+    def describe_activity(
+        self,
+        name: str,
+        arguments: dict,
+        state: str,
+        result: ToolResult | None = None,
+    ) -> str:
+        """Return a concise provider-owned description of tool activity."""
+        label = " ".join(name.split("_")).capitalize() or "Tool"
+        if state == "running":
+            return f"Running {label}…"
+        if state == "failed":
+            return f"{label} failed"
+        return f"Finished {label}"
 
 
 class ActionInterface(ABC):

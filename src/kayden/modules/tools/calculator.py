@@ -91,6 +91,15 @@ class Module(ToolInterface):
             },
         }]
 
+    def describe_activity(self, name, arguments, state, result=None):
+        expression = " ".join(str(arguments.get("expression", "")).split())[:72]
+        subject = f" “{expression}”" if expression else ""
+        if state == "running":
+            return f"Calculating{subject}"
+        if state == "failed":
+            return "Calculation failed"
+        return f"Calculated{subject}"
+
     def execute(self, name: str, arguments: dict) -> str:
         if name != "calculate":
             raise ValueError(f"Unknown tool: {name}")

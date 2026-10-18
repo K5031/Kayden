@@ -6,7 +6,7 @@ core = "deepseek"
 context = "cloud"
 memory = "continuity"
 action = "native"
-tools = ["clock", "calculator", "filesystem", "web"]
+tools = ["clock", "calculator", "filesystem", "web_fetch", "web_exa"]
 
 [assistant]
 name = "Kayden"

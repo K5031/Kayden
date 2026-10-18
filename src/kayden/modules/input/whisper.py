@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from queue import Queue, Empty
 from time import sleep
+import math
 import os
 import threading
 import numpy as np
@@ -24,6 +25,9 @@ class Module(InputInterface):
         self,
         model=None,
         energy_threshold=1000,
+        calibrate=True,
+        calibration_duration=1.0,
+        max_calibrated_threshold=4000,
         record_timeout=1.5,
         phrase_timeout=2.0,
         device=None,
@@ -34,7 +38,30 @@ class Module(InputInterface):
         max_compression_ratio=2.4,
     ):
         self.log = get_logger("Input")
-        self.energy_threshold = energy_threshold
+        if (
+            not isinstance(energy_threshold, (int, float))
+            or isinstance(energy_threshold, bool)
+            or energy_threshold <= 0
+        ):
+            raise ValueError("energy_threshold must be a positive number")
+        if not isinstance(calibrate, bool):
+            raise ValueError("calibrate must be true or false")
+        if (
+            not isinstance(calibration_duration, (int, float))
+            or isinstance(calibration_duration, bool)
+            or calibration_duration <= 0
+        ):
+            raise ValueError("calibration_duration must be a positive number")
+        if (
+            not isinstance(max_calibrated_threshold, (int, float))
+            or isinstance(max_calibrated_threshold, bool)
+            or max_calibrated_threshold <= 0
+        ):
+            raise ValueError("max_calibrated_threshold must be a positive number")
+        self.energy_threshold = float(energy_threshold)
+        self.calibrate = calibrate
+        self.calibration_duration = float(calibration_duration)
+        self.max_calibrated_threshold = float(max_calibrated_threshold)
         self.record_timeout = record_timeout
         self.phrase_timeout = phrase_timeout
         self.min_seconds = float(min_seconds)
@@ -73,6 +100,35 @@ class Module(InputInterface):
         # Ambient-noise calibration itself happens in _run_loop, not here —
         # see the note there for why.
         return recorder
+
+    def _calibrate_recorder(self):
+        if not self.calibrate:
+            self.recorder.energy_threshold = self.energy_threshold
+            self.log.info(
+                "ambient calibration disabled; energy_threshold: %s",
+                self.recorder.energy_threshold,
+            )
+            return
+
+        with self.source:
+            self.recorder.adjust_for_ambient_noise(
+                self.source,
+                duration=self.calibration_duration,
+            )
+        calibrated = float(self.recorder.energy_threshold)
+        if (
+            not math.isfinite(calibrated)
+            or calibrated <= 0
+            or calibrated > self.max_calibrated_threshold
+        ):
+            self.log.warning(
+                "rejected implausible calibrated energy_threshold %s; using %s",
+                calibrated,
+                self.energy_threshold,
+            )
+            self.recorder.energy_threshold = self.energy_threshold
+        else:
+            self.log.info("calibrated energy_threshold: %s", calibrated)
 
     def _record_callback(self, _, audio: sr.AudioData):
         self.data_queue.put(audio.get_raw_data())
@@ -168,9 +224,7 @@ class Module(InputInterface):
         # before was doing the open/close half in __init__ on the main
         # thread and the reopen half here on this background thread;
         # PortAudio's ALSA backend isn't safe to re-init across threads.
-        with self.source:
-            self.recorder.adjust_for_ambient_noise(self.source)
-        self.log.info("calibrated energy_threshold: %s", self.recorder.energy_threshold)
+        self._calibrate_recorder()
 
         self.stop_listening = self.recorder.listen_in_background(
             self.source,

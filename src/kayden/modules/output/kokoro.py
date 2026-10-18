@@ -1,12 +1,34 @@
 import threading
 import queue
 import os
+import html
+import re
 import sounddevice as sd
 from kokoro import KPipeline
 from queue import Empty
 from kayden.interfaces import OutputInterface
 from kayden.klogger import get_logger
 from kayden.audio import ensure_audio_ready, resolve_output_device
+
+
+def _text_for_speech(text: str) -> str:
+    """Turn model Markdown into text suitable for a speech synthesizer."""
+    text = re.sub(r"!\[([^]]*)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"<https?://[^>]+>", "", text)
+    text = re.sub(r"(?m)^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+", "", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text)
+    text = text.replace("```", "").replace("`", "")
+    text = text.replace("**", "").replace("__", "").replace("~~", "")
+    text = text.replace("*", "")
+    text = re.sub(r"\\([\\`*{}\[\]()#+.!_>~-])", r"\1", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _ends_sentence(text: str) -> bool:
+    return bool(re.search(r"[.!?][\"')\]}*_~`]*\s*$", text))
 
 
 class Module(OutputInterface):
@@ -80,17 +102,21 @@ class Module(OutputInterface):
 
     def send(self, token: str):
         self.buffer += token
-        if self.buffer.endswith((".", "!", "?")):
-            self._ensure_started()
-            self.queue.put((self._generation, self.buffer))
-            self.buffer = ""
+        if _ends_sentence(self.buffer):
+            self._queue_buffer()
 
     def flush(self):
         if self.buffer.strip():
             self.log.debug("flushing trailing text: %r", self.buffer)
-            self._ensure_started()
-            self.queue.put((self._generation, self.buffer))
+            self._queue_buffer()
+
+    def _queue_buffer(self):
+        text = _text_for_speech(self.buffer)
         self.buffer = ""
+        if not text:
+            return
+        self._ensure_started()
+        self.queue.put((self._generation, text))
 
     def interrupt(self):
         self.log.debug("interrupted")

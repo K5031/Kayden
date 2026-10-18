@@ -29,6 +29,9 @@ class Module(FrontendInterface):
         self._on_submit = None
         self._on_interrupt = None
         self._closed = threading.Event()
+        self._tool_activities = {}
+        self._tool_chain_open = False
+        self._tool_group_id = 0
 
     def configure_identity(self, assistant_name: str) -> None:
         self.assistant_name = assistant_name
@@ -69,13 +72,74 @@ class Module(FrontendInterface):
         return True
 
     def user(self, message: str) -> None:
+        self._tool_activities = {}
+        self._tool_chain_open = False
         self._events.put(("user", message))
 
     def assistant(self, token: str) -> None:
+        if token and self._tool_activities:
+            self._tool_chain_open = False
         self._events.put(("assistant", token))
 
     def status(self, message: str) -> None:
         self._events.put(("status", message))
+
+    def _begin_tool_chain(self) -> None:
+        self._tool_activities = {}
+        self._tool_group_id += 1
+        self._tool_chain_open = True
+
+    def tool_started(
+        self,
+        call_id: str,
+        name: str,
+        arguments: dict,
+        description: str | None = None,
+    ) -> None:
+        if not self._tool_chain_open:
+            self._begin_tool_chain()
+        self._tool_activities[call_id] = {
+            "description": description or f"Running {name}…",
+            "state": "running",
+        }
+        self._emit_tool_group()
+
+    def tool_finished(
+        self,
+        call_id: str,
+        name: str,
+        result,
+        description: str | None = None,
+    ) -> None:
+        if call_id not in self._tool_activities and not self._tool_chain_open:
+            self._begin_tool_chain()
+        state = "failed" if result.is_error else "finished"
+        fallback = f"{name} failed" if result.is_error else f"Finished {name}"
+        self._tool_activities[call_id] = {
+            "description": description or fallback,
+            "state": state,
+        }
+        self._emit_tool_group()
+
+    def _emit_tool_group(self) -> None:
+        activities = list(self._tool_activities.values())
+        latest = activities[-1]
+        state = latest["state"]
+        symbols = {"running": "◌", "finished": "✓", "failed": "!"}
+        details = "\n".join(
+            f"{symbols[activity['state']]}  {activity['description']}"
+            for activity in activities
+        )
+        self._events.put((
+            "tool_group",
+            (
+                self._tool_group_id,
+                latest["description"],
+                state,
+                details,
+                len(activities),
+            ),
+        ))
 
     def finish(self, interrupted: bool = False) -> None:
         self._events.put(("finish", interrupted))
