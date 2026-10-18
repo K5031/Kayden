@@ -1,5 +1,5 @@
 from kayden.audio import audio_diagnostics
-from kayden.runtime.application import run_application
+from kayden.runtime.application import ApplicationRuntime
 from kayden.runtime.registry import Registry
 import argparse
 import warnings
@@ -33,8 +33,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return _doctor()
-    with Registry.from_config() as api:
-        run_application(api)
+    api = Registry.from_config()
+    with ApplicationRuntime(api, owns_registry=True) as runtime:
+        runtime.attach_frontend(api.get("frontend"))
     return 0
 
 if __name__ == "__main__":

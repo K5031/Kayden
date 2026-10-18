@@ -1,3 +1,4 @@
+import queue
 import threading
 import time
 import unittest
@@ -11,8 +12,22 @@ from kayden.events import (
     ToolStarted,
     UsageReported,
 )
-from kayden.runtime.application import _compact_context, _restore_transcript, run_application
-from kayden.interfaces import CompactionPlan, ManualInputInterface, MemoryView, ToolInterface
+from kayden.runtime.application import (
+    ApplicationRuntime,
+    _compact_context,
+    _restore_transcript,
+    run_application,
+)
+from kayden.interfaces import (
+    CompactionPlan,
+    CoreInterface,
+    InputInterface,
+    ManualInputInterface,
+    MemoryInterface,
+    MemoryView,
+    ToolInterface,
+)
+from kayden.runtime.registry import Registry
 from kayden.runtime.tools import ToolRuntime
 
 
@@ -106,6 +121,20 @@ class _Action:
         yield TextDelta("world")
 
 
+class _BlockingAction:
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.core = None
+
+    def run(self, core, turn, tools, should_interrupt=None):
+        self.core = core
+        self.started.set()
+        if not self.release.wait(timeout=2):
+            raise AssertionError("blocked turn was not released")
+        yield TextDelta("finished")
+
+
 class _InterruptingFrontend(_Frontend):
     def __init__(self, action):
         super().__init__()
@@ -154,10 +183,90 @@ class _InterruptibleCore:
         self.interruptions += 1
 
 
+class _SwappableCore(CoreInterface):
+    reports_usage = True
+
+    def __init__(self, model):
+        self.model = model
+        self.stopped = False
+
+    def stream(self, messages, tools=None, should_interrupt=None):
+        return iter(())
+
+    def interrupt(self):
+        pass
+
+    def stop(self):
+        self.stopped = True
+
+
+class _MemoryActions(ToolInterface):
+    def __init__(self, value):
+        self.value = value
+
+    def schemas(self):
+        return [{
+            "type": "function",
+            "function": {
+                "name": "memory_value",
+                "parameters": {"type": "object"},
+            },
+        }]
+
+    def execute(self, name, arguments):
+        return self.value
+
+
+class _SwappableMemory(MemoryInterface):
+    def __init__(self, value):
+        self.messages = []
+        self._actions = _MemoryActions(value)
+        self.stopped = False
+
+    def append(self, messages):
+        self.messages.extend(dict(message) for message in messages)
+
+    def recall(self, query):
+        return ""
+
+    def view(self):
+        return MemoryView("", list(self.messages))
+
+    def actions(self):
+        return self._actions
+
+    def stop(self):
+        self.stopped = True
+
+
+class _SwappableInput(InputInterface):
+    def __init__(self):
+        self.values = queue.Queue()
+        self.stopped = False
+
+    def get_input(self):
+        value = self.values.get()
+        if value is None:
+            raise EOFError
+        return value
+
+    def has_input(self):
+        return not self.values.empty()
+
+    def stop(self):
+        self.stopped = True
+        self.values.put(None)
+
+
 class _SpeechFrontend(_Frontend):
     def run(self, on_submit, on_interrupt):
         if not self.done.wait(timeout=2):
             raise AssertionError("speech input did not finish the turn")
+
+
+class _PassiveFrontend(_Frontend):
+    def run(self, on_submit, on_interrupt):
+        return
 
 
 class _SpeechInput:
@@ -230,6 +339,158 @@ class _ManualFrontend(_Frontend):
 
 
 class ApplicationTests(unittest.TestCase):
+    def test_prepared_module_swaps_at_runtime_boundary(self):
+        frontend = _PassiveFrontend()
+        old_core = _SwappableCore("old-model")
+        new_core = _SwappableCore("new-model")
+        registry = Registry()
+        registry.register("frontend", frontend)
+        registry.register("core", old_core)
+        registry.register("context", _Context())
+        registry.register("memory", _Memory())
+        registry.register("action", _Action())
+        registry.register("tools", ToolRuntime([]))
+        runtime = ApplicationRuntime(registry)
+
+        try:
+            runtime.start()
+            displaced = runtime.swap_modules({"core": new_core})
+
+            self.assertIs(displaced["core"], old_core)
+            self.assertIs(registry.get("core"), new_core)
+            self.assertTrue(old_core.stopped)
+            self.assertFalse(new_core.stopped)
+            self.assertTrue(runtime.is_running)
+        finally:
+            runtime.close()
+            registry.close()
+
+    def test_memory_swap_replaces_its_borrowed_tools(self):
+        frontend = _PassiveFrontend()
+        old_memory = _SwappableMemory("old")
+        new_memory = _SwappableMemory("new")
+        tools = ToolRuntime([])
+        registry = Registry()
+        registry.register("frontend", frontend)
+        registry.register("core", _SwappableCore("model"))
+        registry.register("context", _Context())
+        registry.register("memory", old_memory)
+        registry.register("action", _Action())
+        registry.register("tools", tools)
+        runtime = ApplicationRuntime(registry)
+
+        try:
+            runtime.start()
+            self.assertEqual(tools.execute("memory_value", {}).content, "old")
+
+            runtime.swap_modules({"memory": new_memory})
+
+            self.assertEqual(tools.execute("memory_value", {}).content, "new")
+            self.assertTrue(old_memory.stopped)
+        finally:
+            runtime.close()
+            registry.close()
+
+    def test_continuous_input_worker_moves_to_replacement(self):
+        old_input = _SwappableInput()
+        new_input = _SwappableInput()
+        registry = Registry()
+        registry.register("frontend", _PassiveFrontend())
+        registry.register("core", _SwappableCore("model"))
+        registry.register("context", _Context())
+        registry.register("memory", _Memory())
+        registry.register("action", _Action())
+        registry.register("tools", ToolRuntime([]))
+        registry.register("input", old_input)
+        runtime = ApplicationRuntime(registry)
+
+        try:
+            runtime.start()
+            runtime.swap_modules({"input": new_input})
+
+            self.assertTrue(old_input.stopped)
+            self.assertIs(registry.get("input"), new_input)
+            self.assertTrue(runtime.speech_thread.is_alive())
+        finally:
+            runtime.close()
+            registry.close()
+
+    def test_swap_waits_for_active_turn_and_affects_the_next_generation(self):
+        frontend = _Frontend()
+        old_core = _SwappableCore("old-model")
+        new_core = _SwappableCore("new-model")
+        action = _BlockingAction()
+        registry = Registry()
+        registry.register("frontend", frontend)
+        registry.register("core", old_core)
+        registry.register("context", _Context())
+        registry.register("memory", _Memory())
+        registry.register("action", action)
+        registry.register("tools", ToolRuntime([]))
+        runtime = ApplicationRuntime(registry)
+        attachment = threading.Thread(
+            target=runtime.attach_frontend,
+            args=(frontend,),
+        )
+        swapped = threading.Event()
+
+        def swap():
+            runtime.swap_modules({"core": new_core})
+            swapped.set()
+
+        swap_thread = threading.Thread(target=swap)
+        try:
+            attachment.start()
+            self.assertTrue(action.started.wait(timeout=2))
+            swap_thread.start()
+            self.assertFalse(swapped.wait(timeout=0.05))
+
+            action.release.set()
+            attachment.join(timeout=2)
+            swap_thread.join(timeout=2)
+
+            self.assertTrue(swapped.is_set())
+            self.assertIs(action.core, old_core)
+            self.assertIs(registry.get("core"), new_core)
+            self.assertTrue(old_core.stopped)
+        finally:
+            action.release.set()
+            runtime.close()
+            attachment.join(timeout=2)
+            swap_thread.join(timeout=2)
+            registry.close()
+
+    def test_frontends_attach_without_owning_runtime_lifetime(self):
+        first = _PassiveFrontend()
+        second = _PassiveFrontend()
+        modules = {
+            "frontend": first,
+            "core": type("Core", (), {"model": "test-model"})(),
+            "context": _Context(),
+            "memory": _Memory(),
+            "action": _Action(),
+            "tools": object(),
+        }
+        api = type("Api", (), {
+            "get": lambda self, name: modules[name],
+            "has": lambda self, name: name in modules,
+            "assistant_name": "Kayden",
+        })()
+        runtime = ApplicationRuntime(api)
+
+        try:
+            runtime.attach_frontend(first)
+            self.assertTrue(runtime.is_running)
+
+            runtime.attach_frontend(second)
+            self.assertTrue(runtime.is_running)
+        finally:
+            runtime.close()
+
+        self.assertFalse(runtime.is_running)
+        self.assertIn(("status", "Model: test-model"), first.events)
+        self.assertIn(("status", "Model: test-model"), second.events)
+
     def test_selected_memory_contributes_its_own_actions(self):
         class MemoryActions(ToolInterface):
             def schemas(self):

@@ -55,6 +55,27 @@ class ToolRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.execute("borrowed", {}).content, "ok")
         self.assertFalse(borrowed.stopped)
 
+    def test_replaces_borrowed_tools_atomically(self):
+        runtime = ToolRuntime([_Tool("owned")])
+        old = _Tool("memory", "old")
+        new = _Tool("memory", "new")
+        runtime.add(old)
+
+        runtime.replace_borrowed(old, new)
+
+        self.assertEqual(runtime.execute("memory", {}).content, "new")
+        self.assertTrue(runtime.execute("owned", {}).content)
+
+    def test_failed_borrowed_replacement_preserves_existing_routes(self):
+        runtime = ToolRuntime([_Tool("owned")])
+        old = _Tool("memory", "old")
+        runtime.add(old)
+
+        with self.assertRaisesRegex(ValueError, "duplicate tool name"):
+            runtime.replace_borrowed(old, _Tool("owned", "conflict"))
+
+        self.assertEqual(runtime.execute("memory", {}).content, "old")
+
 
 if __name__ == "__main__":
     unittest.main()

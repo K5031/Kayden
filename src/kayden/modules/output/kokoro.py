@@ -15,42 +15,50 @@ class Module(OutputInterface):
         self.stream = None
         self.thread = None
         self.running = False
+        self._stopped = False
+        self._start_lock = threading.Lock()
 
         ensure_audio_ready()
 
-        try:
-            device_index = resolve_output_device(device=device)
-            self.log.info("Using output device index: %s", device_index)
-            voice = voice or os.environ.get("KAYDEN_KOKORO_VOICE", "af_heart")
-            lang_code = lang_code or os.environ.get("KAYDEN_KOKORO_LANGUAGE", "a")
-            repo_id = repo_id or os.environ.get("KAYDEN_KOKORO_REPO", "hexgrad/Kokoro-82M")
-            pipeline_device = os.environ.get("KAYDEN_KOKORO_DEVICE")
-            self.log.info("Loading pipeline: %s (lang=%s, voice=%s)", repo_id, lang_code, voice)
-            self.pipeline = KPipeline(
-                lang_code=lang_code,
-                repo_id=repo_id,
-                device=pipeline_device,
-            )
-            self.voice = voice
-            self.buffer = ""
-            self.queue = queue.Queue()
-            self._generation = 0
+        self.device_index = resolve_output_device(device=device)
+        self.log.info("Using output device index: %s", self.device_index)
+        voice = voice or os.environ.get("KAYDEN_KOKORO_VOICE", "af_heart")
+        lang_code = lang_code or os.environ.get("KAYDEN_KOKORO_LANGUAGE", "a")
+        repo_id = repo_id or os.environ.get("KAYDEN_KOKORO_REPO", "hexgrad/Kokoro-82M")
+        pipeline_device = os.environ.get("KAYDEN_KOKORO_DEVICE")
+        self.log.info("Loading pipeline: %s (lang=%s, voice=%s)", repo_id, lang_code, voice)
+        self.pipeline = KPipeline(
+            lang_code=lang_code,
+            repo_id=repo_id,
+            device=pipeline_device,
+        )
+        self.voice = voice
+        self.buffer = ""
+        self.queue = queue.Queue()
+        self._generation = 0
 
-            self.stream = sd.OutputStream(
-                samplerate=24000,
-                channels=1,
-                dtype="float32",
-                device=device_index,
-            )
-            self.stream.start()
-
-            self.running = True
-            self.thread = threading.Thread(target=self._worker, daemon=True)
-            self.thread.start()
-        except Exception:
-            if self.stream is not None:
-                self.stream.close()
-            raise
+    def _ensure_started(self):
+        with self._start_lock:
+            if self._stopped:
+                raise RuntimeError("speech output stopped")
+            if self.running:
+                return
+            try:
+                self.stream = sd.OutputStream(
+                    samplerate=24000,
+                    channels=1,
+                    dtype="float32",
+                    device=self.device_index,
+                )
+                self.stream.start()
+                self.running = True
+                self.thread = threading.Thread(target=self._worker, daemon=True)
+                self.thread.start()
+            except Exception:
+                if self.stream is not None:
+                    self.stream.close()
+                    self.stream = None
+                raise
 
     def _worker(self):
         while self.running:
@@ -73,12 +81,14 @@ class Module(OutputInterface):
     def send(self, token: str):
         self.buffer += token
         if self.buffer.endswith((".", "!", "?")):
+            self._ensure_started()
             self.queue.put((self._generation, self.buffer))
             self.buffer = ""
 
     def flush(self):
         if self.buffer.strip():
             self.log.debug("flushing trailing text: %r", self.buffer)
+            self._ensure_started()
             self.queue.put((self._generation, self.buffer))
         self.buffer = ""
 
@@ -94,6 +104,7 @@ class Module(OutputInterface):
 
     def stop(self):
         self.log.info("stopping")
+        self._stopped = True
         self.running = False
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2)

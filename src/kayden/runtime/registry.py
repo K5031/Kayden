@@ -1,4 +1,5 @@
 import importlib
+import threading
 from kayden.config import load_config
 from kayden.interfaces import (
     ActionInterface,
@@ -9,6 +10,7 @@ from kayden.interfaces import (
     MemoryInterface,
     OutputInterface,
     ToolInterface,
+    ToolRuntimeInterface,
 )
 from kayden.klogger import get_logger
 from kayden.runtime.tools import ToolRuntime
@@ -78,6 +80,7 @@ class _MultiModule:
 class Registry:
     def __init__(self, assistant_name="Kayden"):
         self._registry = {}
+        self._lock = threading.RLock()
         self.assistant_name = assistant_name
 
     def __enter__(self):
@@ -87,26 +90,134 @@ class Registry:
         self.close()
 
     def close(self):
-        for capability, module in reversed(list(self._registry.items())):
+        with self._lock:
+            registered = list(self._registry.items())
+            self._registry.clear()
+        for capability, module in reversed(registered):
             if hasattr(module, "stop"):
                 log.info("Stopping module: %s (%s)", capability, module)
                 try:
                     module.stop()
                 except Exception:
                     log.exception("Failed to stop module: %s", capability)
-        self._registry.clear()
-
     def register(self, capability: str, module):
-        self._registry[capability] = module
+        with self._lock:
+            self._registry[capability] = module
 
     def get(self, capability: str):
-        try:
-            return self._registry[capability]
-        except KeyError:
-            raise KeyError(f"No module registered for capability '{capability}'")
+        with self._lock:
+            try:
+                return self._registry[capability]
+            except KeyError:
+                raise KeyError(f"No module registered for capability '{capability}'")
 
     def has(self, capability: str) -> bool:
-        return capability in self._registry
+        with self._lock:
+            return capability in self._registry
+
+    @staticmethod
+    def _matches_interface(capability, module) -> bool:
+        if capability == "tools":
+            return isinstance(module, ToolRuntimeInterface)
+        if isinstance(module, _MultiModule):
+            return all(
+                isinstance(instance, INTERFACES[capability])
+                for instance in module._instances
+            )
+        return isinstance(module, INTERFACES[capability])
+
+    def swap(self, replacements: dict) -> dict:
+        """Atomically publish prepared modules and return the displaced modules."""
+        if not isinstance(replacements, dict) or not replacements:
+            raise TypeError("replacements must be a non-empty mapping")
+        with self._lock:
+            prospective = dict(self._registry)
+            for capability, module in replacements.items():
+                if capability not in INTERFACES:
+                    raise ValueError(f"unknown capability: {capability}")
+                if module is None:
+                    if capability not in OPTIONAL_CAPABILITIES:
+                        raise ValueError(f"cannot remove required capability: {capability}")
+                    prospective.pop(capability, None)
+                    continue
+                if not self._matches_interface(capability, module):
+                    raise TypeError(
+                        f"replacement for '{capability}' has the wrong interface"
+                    )
+                prospective[capability] = module
+
+            missing = REQUIRED_CAPABILITIES - set(prospective)
+            if missing:
+                raise ValueError(f"missing required capabilities: {sorted(missing)}")
+            core = prospective["core"]
+            context = prospective["context"]
+            expected_usage = "reported" if core.reports_usage else "self"
+            actual_usage = getattr(context, "usage_mode", None)
+            if actual_usage != expected_usage:
+                raise ValueError(
+                    "replacement core and context are incompatible: "
+                    f"usage_mode must be {expected_usage!r}, got {actual_usage!r}"
+                )
+
+            displaced = {
+                capability: self._registry.get(capability)
+                for capability in replacements
+            }
+            self._registry = prospective
+            return displaced
+
+    @classmethod
+    def prepare(cls, capability: str, configured_names, options=None):
+        """Construct and validate a module without publishing it."""
+        if capability not in INTERFACES:
+            raise ValueError(f"unknown capability: {capability}")
+        names = (
+            configured_names
+            if isinstance(configured_names, list)
+            else [configured_names]
+        )
+        if not names and capability != "tools":
+            raise TypeError(f"{capability} must name one or more modules")
+        if any(not isinstance(name, str) or not name for name in names):
+            raise TypeError(f"{capability} must name one or more modules")
+        if len(names) > 1 and capability not in {"output", "tools"}:
+            raise ValueError("only output and tools support more than one module")
+        if options is None:
+            options = {}
+        if not isinstance(options, dict):
+            raise TypeError("module options must be a mapping")
+
+        instances = []
+        try:
+            for name in names:
+                module = _load_module(capability, name)
+                if not issubclass(module.Module, INTERFACES[capability]):
+                    raise TypeError(
+                        f"{capability} module '{name}' has the wrong interface"
+                    )
+                module_options = (
+                    options.get(name, {})
+                    if len(names) > 1
+                    else options
+                )
+                if not isinstance(module_options, dict):
+                    raise TypeError(f"options for module '{name}' must be a mapping")
+                instances.append(module.Module(**module_options))
+        except Exception:
+            for instance in reversed(instances):
+                stop = getattr(instance, "stop", None)
+                if stop:
+                    try:
+                        stop()
+                    except Exception:
+                        log.exception("Failed to stop prepared module: %s", instance)
+            raise
+
+        if capability == "tools":
+            return ToolRuntime(instances)
+        if len(instances) > 1:
+            return _MultiModule(instances)
+        return instances[0]
 
     @classmethod
     def from_config(cls, config_values: dict = None) -> "Registry":

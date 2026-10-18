@@ -24,11 +24,13 @@ def _output():
     output.running = False
     output.thread = None
     output.stream = None
+    output._stopped = False
+    output._ensure_started = Mock()
     return output
 
 
 class KokoroOutputTests(unittest.TestCase):
-    def test_initializes_pipeline_and_selected_output(self):
+    def test_prepares_pipeline_then_opens_output_lazily(self):
         pipeline = Mock()
         stream = Mock()
         thread = Mock()
@@ -41,10 +43,15 @@ class KokoroOutputTests(unittest.TestCase):
         ), patch.object(kokoro.threading, "Thread", return_value=thread):
             output = kokoro.Module(device="speaker")
 
-        pipeline_factory.assert_called_once_with(
-            lang_code="a", repo_id="hexgrad/Kokoro-82M", device=None
-        )
-        resolve.assert_called_once_with(device="speaker")
+            pipeline_factory.assert_called_once_with(
+                lang_code="a", repo_id="hexgrad/Kokoro-82M", device=None
+            )
+            resolve.assert_called_once_with(device="speaker")
+            stream.start.assert_not_called()
+            thread.start.assert_not_called()
+
+            output._ensure_started()
+
         stream.start.assert_called_once_with()
         thread.start.assert_called_once_with()
         self.assertIs(output.pipeline, pipeline)

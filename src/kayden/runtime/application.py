@@ -125,70 +125,288 @@ def _compact_context(
     frontend.status(finished_status)
 
 
-def run_application(api):
-    """Run Kayden's fixed conversation lifecycle over the selected modules."""
-    frontend = api.get("frontend")
-    core = api.get("core")
-    context = api.get("context")
-    memory = api.get("memory")
-    action = api.get("action")
-    tools = api.get("tools")
-    speech_input = _optional(api, "input")
-    speech_output = _optional(api, "output")
-    report_usage = getattr(context, "usage_mode", None) == "reported"
+class ApplicationRuntime:
+    """Own Kayden's lifetime while presentation modules attach and detach."""
 
-    configure_identity = getattr(frontend, "configure_identity", None)
-    if configure_identity:
-        configure_identity(getattr(api, "assistant_name", "Kayden"))
-    system_prompt = load_system_prompt()
-    pending = queue.Queue()
-    busy = threading.Event()
-    interrupted = threading.Event()
-    stopping = threading.Event()
-    capture_busy = threading.Event()
-    capture_threads = []
+    def __init__(self, api, owns_registry=False):
+        self.api = api
+        self.owns_registry = owns_registry
+        self.system_prompt = load_system_prompt()
+        self.pending = queue.Queue()
+        self.busy = threading.Event()
+        self.interrupted = threading.Event()
+        self.stopping = threading.Event()
+        self.capture_busy = threading.Event()
+        self.capture_threads = []
+        self.turn_thread = None
+        self.speech_thread = None
+        self._started = False
+        self._closed = False
+        self._frontend = None
+        self._frontend_condition = threading.Condition()
+        self._idle_condition = threading.Condition()
+        self._turn_gate = threading.Lock()
+        self._memory_actions = None
 
-    add_tools = getattr(tools, "add", None)
-    memory_actions = memory.actions()
-    if memory_actions is not None and add_tools:
-        add_tools(memory_actions)
+    def __enter__(self):
+        self.start()
+        return self
 
-    model_name = getattr(core, "model", None) or getattr(core, "model_path", "unknown")
-    available_models = getattr(core, "available_models", lambda: [])()
+    def __exit__(self, *args):
+        self.close()
 
-    def select_model(model):
-        if busy.is_set():
-            raise RuntimeError("cannot change model while a response is active")
-        core.select_model(model)
-        frontend.status(f"Model: {core.model}")
+    @property
+    def is_running(self):
+        return self._started and not self.stopping.is_set()
 
-    configure_models = getattr(frontend, "configure_models", None)
-    if configure_models and available_models:
-        configure_models(available_models, model_name, select_model)
+    def _current_frontend(self):
+        with self._frontend_condition:
+            return self._frontend
 
-    _restore_transcript(frontend, memory)
-    frontend.status(f"Model: {model_name}")
+    def _wait_for_frontend(self):
+        with self._frontend_condition:
+            while self._frontend is None and not self.stopping.is_set():
+                self._frontend_condition.wait()
+            return self._frontend
 
-    def interrupt():
-        if not busy.is_set():
+    def wait_until_idle(self):
+        with self._idle_condition:
+            while self.busy.is_set() and not self.stopping.is_set():
+                self._idle_condition.wait()
+
+    def start(self):
+        if self._closed:
+            raise RuntimeError("runtime is closed")
+        if self._started:
             return
-        interrupted.set()
-        core.interrupt()
+
+        memory = self.api.get("memory")
+        tools = self.api.get("tools")
+        add_tools = getattr(tools, "add", None)
+        memory_actions = memory.actions()
+        if memory_actions is not None and add_tools:
+            add_tools(memory_actions)
+        self._memory_actions = memory_actions
+
+        self.turn_thread = threading.Thread(
+            target=self._worker,
+            name="kayden-turns",
+            daemon=True,
+        )
+        self.turn_thread.start()
+
+        speech_input = _optional(self.api, "input")
+        if speech_input and not isinstance(speech_input, ManualInputInterface):
+            self.speech_thread = threading.Thread(
+                target=self._speech_worker,
+                args=(speech_input,),
+                name="kayden-speech-input",
+                daemon=True,
+            )
+            self.speech_thread.start()
+        self._started = True
+
+    def attach_frontend(self, frontend):
+        """Run one frontend attachment without giving it runtime ownership."""
+        self.start()
+        self.wait_until_idle()
+        with self._frontend_condition:
+            if self._frontend is not None:
+                raise RuntimeError("a frontend is already attached")
+            self._frontend = frontend
+            self._frontend_condition.notify_all()
+
+        try:
+            self._configure_frontend(frontend)
+            frontend.run(self.submit, self.interrupt)
+        finally:
+            with self._frontend_condition:
+                if self._frontend is frontend:
+                    self._frontend = None
+                self._frontend_condition.notify_all()
+
+    def _configure_frontend(self, frontend):
+        memory = self.api.get("memory")
+        configure_identity = getattr(frontend, "configure_identity", None)
+        if configure_identity:
+            configure_identity(getattr(self.api, "assistant_name", "Kayden"))
+
+        self._configure_models(frontend)
+
+        _restore_transcript(frontend, memory)
+
+        speech_input = _optional(self.api, "input")
+        if isinstance(speech_input, ManualInputInterface):
+            self._configure_capture(frontend, speech_input)
+
+    def _configure_models(self, frontend):
+        core = self.api.get("core")
+        model_name = (
+            getattr(core, "model", None)
+            or getattr(core, "model_path", "unknown")
+        )
+        available_models = getattr(core, "available_models", lambda: [])()
+        configure_models = getattr(frontend, "configure_models", None)
+        if configure_models and available_models:
+            configure_models(available_models, model_name, self.select_model)
+        frontend.status(f"Model: {model_name}")
+
+    def _configure_capture(self, frontend, speech_input):
+        supported = frontend.configure_capture(
+            self.start_capture,
+            self.finish_capture,
+            self.cancel_capture,
+            label=speech_input.capture_label,
+        )
+        if not supported:
+            raise RuntimeError(
+                f"{type(frontend).__name__} does not support manual input capture"
+            )
+
+    @staticmethod
+    def _stop_module(module):
+        if module is None:
+            return
+        stop = getattr(module, "stop", None)
+        if stop:
+            try:
+                stop()
+            except Exception:
+                log.exception("Failed to stop displaced module: %s", module)
+
+    def swap_modules(self, replacements: dict):
+        """Publish prepared module instances at a boundary between turns."""
+        if not hasattr(self.api, "swap"):
+            raise TypeError("the active module registry does not support swapping")
+        if "frontend" in replacements and self._current_frontend() is not None:
+            raise RuntimeError("detach the active frontend before replacing it")
+
+        replacement_memory = replacements.get("memory", self.api.get("memory"))
+        replacement_tools = replacements.get("tools", self.api.get("tools"))
+        replacement_actions = replacement_memory.actions()
+        if "tools" in replacements and replacement_actions is not None:
+            add_tools = getattr(replacement_tools, "add", None)
+            if add_tools:
+                add_tools(replacement_actions)
+
+        with self._turn_gate:
+            displaced = self.api.swap(replacements)
+            try:
+                if "memory" in replacements and "tools" not in replacements:
+                    replace_borrowed = getattr(
+                        replacement_tools,
+                        "replace_borrowed",
+                        None,
+                    )
+                    if replace_borrowed:
+                        replace_borrowed(self._memory_actions, replacement_actions)
+                if "memory" in replacements:
+                    self._memory_actions = replacement_actions
+            except Exception:
+                self.api.swap(displaced)
+                raise
+
+        old_input = displaced.get("input") if "input" in replacements else None
+        if "input" in replacements:
+            self._stop_module(old_input)
+            if self.speech_thread:
+                self.speech_thread.join(timeout=2)
+                self.speech_thread = None
+            new_input = replacements["input"]
+            if new_input and not isinstance(new_input, ManualInputInterface):
+                self.speech_thread = threading.Thread(
+                    target=self._speech_worker,
+                    args=(new_input,),
+                    name="kayden-speech-input",
+                    daemon=True,
+                )
+                self.speech_thread.start()
+
+        frontend = self._current_frontend()
+        if frontend and "core" in replacements:
+            try:
+                self._configure_models(frontend)
+            except Exception:
+                log.exception("Failed to refresh frontend model controls")
+        if frontend and "input" in replacements:
+            new_input = replacements["input"]
+            if isinstance(new_input, ManualInputInterface):
+                try:
+                    self._configure_capture(frontend, new_input)
+                except Exception:
+                    log.exception("Failed to refresh frontend capture controls")
+
+        for capability, old_module in displaced.items():
+            if capability == "input" or old_module is replacements.get(capability):
+                continue
+            self._stop_module(old_module)
+        return displaced
+
+    def swap_configured(self, selections: dict, settings=None):
+        """Prepare named modules, then swap them without disturbing failures."""
+        if not isinstance(selections, dict) or not selections:
+            raise TypeError("selections must be a non-empty mapping")
+        settings = {} if settings is None else settings
+        if not isinstance(settings, dict):
+            raise TypeError("settings must be a mapping")
+        prepare = getattr(self.api, "prepare", None)
+        if prepare is None:
+            raise TypeError("the active module registry cannot prepare modules")
+
+        candidates = {}
+        try:
+            for capability, names in selections.items():
+                candidates[capability] = prepare(
+                    capability,
+                    names,
+                    settings.get(capability, {}),
+                )
+            return self.swap_modules(candidates)
+        except Exception:
+            for candidate in reversed(list(candidates.values())):
+                try:
+                    self._stop_module(candidate)
+                except Exception:
+                    log.exception("Failed to stop rejected module: %s", candidate)
+            raise
+
+    def select_model(self, model):
+        if self.busy.is_set():
+            raise RuntimeError("cannot change model while a response is active")
+        core = self.api.get("core")
+        core.select_model(model)
+        frontend = self._current_frontend()
+        if frontend:
+            frontend.status(f"Model: {core.model}")
+
+    def interrupt(self):
+        if not self.busy.is_set():
+            return
+        self.interrupted.set()
+        self.api.get("core").interrupt()
+        speech_output = _optional(self.api, "output")
         if speech_output:
             speech_output.interrupt()
 
-    def submit(message, interrupt_active=True):
+    def submit(self, message, interrupt_active=True):
         if not isinstance(message, str) or not message.strip():
             return
-        if busy.is_set() and interrupt_active:
-            interrupt()
-        pending.put(message.strip())
+        if self.busy.is_set() and interrupt_active:
+            self.interrupt()
+        self.pending.put(message.strip())
 
-    def start_capture():
-        if stopping.is_set() or capture_busy.is_set():
+    def start_capture(self):
+        speech_input = _optional(self.api, "input")
+        frontend = self._current_frontend()
+        if (
+            speech_input is None
+            or frontend is None
+            or self.stopping.is_set()
+            or self.capture_busy.is_set()
+        ):
             return
-        if busy.is_set():
-            interrupt()
+        if self.busy.is_set():
+            self.interrupt()
         try:
             speech_input.start_capture()
         except Exception as error:
@@ -198,26 +416,33 @@ def run_application(api):
             return
         frontend.capture_state("recording")
 
-    def finish_capture():
-        if stopping.is_set() or capture_busy.is_set():
+    def finish_capture(self):
+        speech_input = _optional(self.api, "input")
+        frontend = self._current_frontend()
+        if (
+            speech_input is None
+            or frontend is None
+            or self.stopping.is_set()
+            or self.capture_busy.is_set()
+        ):
             return
-        capture_busy.set()
+        self.capture_busy.set()
         frontend.capture_state("transcribing")
 
         def transcribe():
             try:
                 text = speech_input.finish_capture()
-                if text and not stopping.is_set():
+                if text and not self.stopping.is_set():
                     frontend.draft(text)
-                elif not stopping.is_set():
+                elif not self.stopping.is_set():
                     frontend.status("[voice] No speech detected")
             except Exception as error:
-                if not stopping.is_set():
+                if not self.stopping.is_set():
                     log.exception("Input transcription failed")
                     frontend.status(f"[error] {error}")
             finally:
-                capture_busy.clear()
-                if not stopping.is_set():
+                self.capture_busy.clear()
+                if not self.stopping.is_set():
                     frontend.capture_state("idle")
 
         thread = threading.Thread(
@@ -225,33 +450,47 @@ def run_application(api):
             name="kayden-input-transcription",
             daemon=True,
         )
-        capture_threads.append(thread)
+        self.capture_threads.append(thread)
         thread.start()
 
-    def cancel_capture():
-        if capture_busy.is_set():
+    def cancel_capture(self):
+        speech_input = _optional(self.api, "input")
+        if speech_input is None or self.capture_busy.is_set():
             return
         try:
             speech_input.cancel_capture()
         except Exception:
             log.exception("Input capture failed to cancel")
-        frontend.capture_state("idle")
+        frontend = self._current_frontend()
+        if frontend:
+            frontend.capture_state("idle")
 
-    def process_turn(user_input):
-        interrupted.clear()
+    def _process_turn(self, user_input, frontend):
+        core = self.api.get("core")
+        context = self.api.get("context")
+        memory = self.api.get("memory")
+        action = self.api.get("action")
+        tools = self.api.get("tools")
+        speech_output = _optional(self.api, "output")
+        report_usage = getattr(context, "usage_mode", None) == "reported"
+
+        self.interrupted.clear()
         frontend.user(user_input)
         if speech_output:
             speech_output.interrupt()
 
-        # Normally compaction happens after the preceding turn. This preflight
-        # also protects the first turn after restarting with a nearly-full context.
-        _compact_context(context, memory, core, frontend, interrupted, "Thinking…")
+        _compact_context(
+            context,
+            memory,
+            core,
+            frontend,
+            self.interrupted,
+            "Thinking…",
+        )
         prior_context = context.prepare(memory.view())
-        # Persist the user message before the model request so a crash or API
-        # failure does not erase what the user said.
         memory.append([{"role": "user", "content": user_input}])
         memories = memory.recall(user_input)
-        turn = _build_turn(system_prompt, prior_context, memories, user_input)
+        turn = _build_turn(self.system_prompt, prior_context, memories, user_input)
         reply = ""
         prompt_tokens = None
 
@@ -259,7 +498,7 @@ def run_application(api):
             core,
             turn,
             tools,
-            should_interrupt=interrupted.is_set,
+            should_interrupt=self.interrupted.is_set,
         ):
             if isinstance(event, TextDelta):
                 frontend.assistant(event.text)
@@ -281,7 +520,7 @@ def run_application(api):
                 if isinstance(reported, int):
                     prompt_tokens = reported
 
-        was_interrupted = interrupted.is_set()
+        was_interrupted = self.interrupted.is_set()
         if speech_output:
             if was_interrupted:
                 speech_output.interrupt()
@@ -291,71 +530,78 @@ def run_application(api):
 
         if report_usage and isinstance(prompt_tokens, int):
             context.report_usage(prompt_tokens)
-
         if reply or not was_interrupted:
             memory.append([{"role": "assistant", "content": reply}])
-        _compact_context(context, memory, core, frontend, interrupted)
+        _compact_context(context, memory, core, frontend, self.interrupted)
 
-    def worker():
-        while not stopping.is_set():
-            user_input = pending.get()
+    def _worker(self):
+        while not self.stopping.is_set():
+            user_input = self.pending.get()
             if user_input is _STOP:
                 return
-            busy.set()
-            try:
-                process_turn(user_input)
-            except Exception as error:
-                log.exception("Turn failed")
-                frontend.status(f"[error] {error}")
-                frontend.finish(interrupted.is_set())
-            finally:
-                busy.clear()
-                interrupted.clear()
+            frontend = self._wait_for_frontend()
+            if frontend is None:
+                return
+            with self._turn_gate:
+                self.busy.set()
+                try:
+                    self._process_turn(user_input, frontend)
+                except Exception as error:
+                    log.exception("Turn failed")
+                    frontend.status(f"[error] {error}")
+                    frontend.finish(self.interrupted.is_set())
+                finally:
+                    self.busy.clear()
+                    self.interrupted.clear()
+                    with self._idle_condition:
+                        self._idle_condition.notify_all()
 
-    def speech_worker():
-        while not stopping.is_set():
+    def _speech_worker(self, speech_input):
+        while not self.stopping.is_set():
             try:
-                submit(speech_input.get_input(), interrupt_active=False)
+                self.submit(speech_input.get_input(), interrupt_active=False)
             except EOFError:
                 return
             except Exception:
-                if not stopping.is_set():
+                if not self.stopping.is_set():
                     log.exception("Speech input failed")
                 return
 
-    manual_input = isinstance(speech_input, ManualInputInterface)
-    if manual_input:
-        supported = frontend.configure_capture(
-            start_capture,
-            finish_capture,
-            cancel_capture,
-            label=speech_input.capture_label,
-        )
-        if not supported:
-            raise RuntimeError(
-                f"{type(frontend).__name__} does not support manual input capture"
-            )
+    def stop(self):
+        if not self._started or self.stopping.is_set():
+            return
+        self.stopping.set()
+        with self._frontend_condition:
+            self._frontend_condition.notify_all()
+        with self._idle_condition:
+            self._idle_condition.notify_all()
 
-    turn_thread = threading.Thread(target=worker, name="kayden-turns", daemon=True)
-    turn_thread.start()
-    if speech_input and not manual_input:
-        threading.Thread(
-            target=speech_worker,
-            name="kayden-speech-input",
-            daemon=True,
-        ).start()
-
-    try:
-        frontend.run(submit, interrupt)
-    finally:
-        stopping.set()
-        if manual_input:
+        speech_input = _optional(self.api, "input")
+        if isinstance(speech_input, ManualInputInterface):
             try:
                 speech_input.cancel_capture()
             except Exception:
                 log.exception("Input capture failed to stop")
-        interrupt()
-        pending.put(_STOP)
-        turn_thread.join(timeout=2)
-        for thread in capture_threads:
+        self.interrupt()
+        self.pending.put(_STOP)
+        if self.turn_thread:
+            self.turn_thread.join(timeout=2)
+        for thread in self.capture_threads:
             thread.join(timeout=2)
+
+    def close(self):
+        if self._closed:
+            return
+        self.stop()
+        if self.owns_registry:
+            self.api.close()
+        self._closed = True
+
+
+def run_application(api):
+    """Compatibility entrypoint that runs the configured frontend until exit."""
+    runtime = ApplicationRuntime(api)
+    try:
+        runtime.attach_frontend(api.get("frontend"))
+    finally:
+        runtime.close()

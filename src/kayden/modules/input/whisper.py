@@ -61,9 +61,10 @@ class Module(InputInterface):
         self.last_audio_time = None
         self.stop_listening = None
 
-        self._running = True
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
+        self._running = False
+        self._stopped = False
+        self._thread = None
+        self._start_lock = threading.Lock()
 
     def _setup_recorder(self):
         recorder = sr.Recognizer()
@@ -180,8 +181,19 @@ class Module(InputInterface):
             self._process_audio()
             sleep(0.05)
 
+    def _ensure_started(self):
+        with self._start_lock:
+            if self._stopped:
+                raise EOFError("speech input stopped")
+            if self._thread is not None:
+                return
+            self._running = True
+            self._thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._thread.start()
+
     def stop(self):
         self.log.info("stopping")
+        self._stopped = True
         self._running = False
         if self.stop_listening:
             self.stop_listening(wait_for_stop=False)
@@ -189,11 +201,13 @@ class Module(InputInterface):
             self._thread.join()
 
     def get_input(self):
-        while True:
+        self._ensure_started()
+        while self._running:
             text = self._get_combined_text()
             if text:
                 return text
             sleep(0.05)
+        raise EOFError("speech input stopped")
 
     def has_input(self) -> bool:
         return not self.output_queue.empty()

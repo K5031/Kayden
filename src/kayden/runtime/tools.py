@@ -1,3 +1,5 @@
+import threading
+
 from kayden.interfaces import ToolRuntimeInterface
 from kayden.events import ToolResult
 from kayden.klogger import get_logger
@@ -7,8 +9,10 @@ class ToolRuntime(ToolRuntimeInterface):
     def __init__(self, modules):
         self.log = get_logger("Tools")
         self._modules = list(modules)
+        self._borrowed = []
         self._schemas = []
         self._owners = {}
+        self._lock = threading.RLock()
 
         for module in self._modules:
             self._register(module)
@@ -29,17 +33,55 @@ class ToolRuntime(ToolRuntimeInterface):
             self._schemas.append(schema)
             self._owners[name] = module
 
+    @staticmethod
+    def _definitions(modules):
+        schemas = []
+        owners = {}
+        for module in modules:
+            module_schemas = module.schemas()
+            if not isinstance(module_schemas, list):
+                raise ValueError(f"tool schemas must be a list: {module!r}")
+            for schema in module_schemas:
+                try:
+                    name = schema["function"]["name"]
+                except (KeyError, TypeError):
+                    raise ValueError(f"invalid tool schema from {module!r}")
+                if not isinstance(name, str) or not name:
+                    raise ValueError(f"invalid tool name from {module!r}")
+                if name in owners:
+                    raise ValueError(f"duplicate tool name: {name}")
+                schemas.append(schema)
+                owners[name] = module
+        return schemas, owners
+
+    def _replace_borrowed(self, borrowed) -> None:
+        schemas, owners = self._definitions([*self._modules, *borrowed])
+        self._borrowed = list(borrowed)
+        self._schemas = schemas
+        self._owners = owners
+
     def add(self, module) -> None:
         """Expose tools from another capability without taking ownership of it."""
-        self._register(module)
+        with self._lock:
+            self._replace_borrowed([*self._borrowed, module])
+
+    def replace_borrowed(self, old, new) -> None:
+        """Atomically replace tools borrowed from another capability."""
+        with self._lock:
+            borrowed = [module for module in self._borrowed if module is not old]
+            if new is not None:
+                borrowed.append(new)
+            self._replace_borrowed(borrowed)
 
     def schemas(self) -> list[dict]:
-        return list(self._schemas)
+        with self._lock:
+            return list(self._schemas)
 
     def execute(self, name: str, arguments: dict) -> ToolResult:
         if not isinstance(arguments, dict):
             return ToolResult("Tool error: arguments must be an object", is_error=True)
-        module = self._owners.get(name)
+        with self._lock:
+            module = self._owners.get(name)
         if module is None:
             return ToolResult(f"Tool error: unknown tool '{name}'", is_error=True)
         try:
@@ -52,7 +94,9 @@ class ToolRuntime(ToolRuntimeInterface):
             return ToolResult("Tool error: execution failed", is_error=True)
 
     def stop(self) -> None:
-        for module in reversed(self._modules):
+        with self._lock:
+            modules = list(self._modules)
+        for module in reversed(modules):
             stop = getattr(module, "stop", None)
             if stop:
                 try:

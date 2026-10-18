@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import inspect
 import logging
 import queue
+import threading
 import sys
 from types import ModuleType
 import unittest
@@ -40,6 +41,10 @@ def _input():
     module.min_avg_logprob = -0.8
     module.max_no_speech_prob = 0.6
     module.max_compression_ratio = 2.4
+    module._running = False
+    module._stopped = False
+    module._thread = None
+    module._start_lock = threading.Lock()
     return module
 
 
@@ -112,6 +117,13 @@ class WhisperInputTests(unittest.TestCase):
         module.output_queue.put("world")
         self.assertEqual(module._get_combined_text(), "hello world")
         self.assertFalse(module.has_input())
+
+    def test_stopped_input_unblocks_reader(self):
+        module = _input()
+        module._stopped = True
+
+        with self.assertRaises(EOFError):
+            module.get_input()
 
 
 if __name__ == "__main__":

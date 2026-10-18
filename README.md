@@ -292,6 +292,27 @@ not launch a second model or embedding pipeline. Set `KAYDEN_DATA_DIR` to reloca
 the continuity database. The older `remis` module remains available and its Chroma
 data is not modified by the continuity module.
 
+## Runtime Module Swapping
+
+Kayden's fixed `ApplicationRuntime` owns the conversation worker and module
+registry. Frontends attach to that runtime; returning from a frontend event loop
+only detaches the presentation and does not inherently destroy the runtime.
+
+The registry can prepare installed modules without publishing them, and the runtime
+can activate one or several prepared replacements atomically between turns:
+
+```python
+runtime.swap_configured({"core": "openai"})
+runtime.swap_configured({"core": "llama_cpp", "context": "local"})
+```
+
+A turn that is already running finishes with the exact module generation it began
+with. Later turns use the replacements. Failed preparation or compatibility checks
+leave the active modules unchanged. Memory-provided actions and continuous input
+workers are moved to the new generation automatically. An active frontend must
+detach before its frontend module can be replaced, after which another frontend can
+attach to the still-running application.
+
 The filesystem tool uses the directory where Kayden was launched as its root.
 Set `KAYDEN_FILESYSTEM_ROOT` to choose another directory. Hidden paths, parent
 traversal, and files larger than 64 KiB are rejected. When using a cloud core,

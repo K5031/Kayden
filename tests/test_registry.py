@@ -90,6 +90,10 @@ class _ReportedContext(ContextPolicyInterface):
         return list(view.messages)
 
 
+class _SelfContext(_ReportedContext):
+    usage_mode = "self"
+
+
 class _Memory(MemoryInterface):
     def append(self, messages):
         pass
@@ -150,6 +154,52 @@ def _modules(**changes):
 
 
 class RegistryTests(unittest.TestCase):
+    def test_prepares_named_module_without_publishing_it(self):
+        registry = Registry()
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            return_value=SimpleNamespace(Module=_CloudCore),
+        ):
+            candidate = registry.prepare("core", "cloud_test")
+
+        self.assertIsInstance(candidate, _CloudCore)
+        self.assertFalse(registry.has("core"))
+
+    def test_swap_atomically_replaces_prepared_modules(self):
+        registry = Registry()
+        old_core = _CloudCore()
+        new_core = _CloudCore()
+        registry.register("core", old_core)
+        registry.register("context", _ReportedContext())
+        registry.register("frontend", _Frontend())
+        registry.register("memory", _Memory())
+        registry.register("action", _Action())
+        from kayden.runtime.tools import ToolRuntime
+        registry.register("tools", ToolRuntime([]))
+
+        displaced = registry.swap({"core": new_core})
+
+        self.assertIs(displaced["core"], old_core)
+        self.assertIs(registry.get("core"), new_core)
+
+    def test_failed_swap_preserves_every_active_module(self):
+        registry = Registry()
+        core = _CloudCore()
+        context = _ReportedContext()
+        registry.register("core", core)
+        registry.register("context", context)
+        registry.register("frontend", _Frontend())
+        registry.register("memory", _Memory())
+        registry.register("action", _Action())
+        from kayden.runtime.tools import ToolRuntime
+        registry.register("tools", ToolRuntime([]))
+
+        with self.assertRaisesRegex(ValueError, "incompatible"):
+            registry.swap({"context": _SelfContext()})
+
+        self.assertIs(registry.get("core"), core)
+        self.assertIs(registry.get("context"), context)
+
     def test_partial_startup_is_cleaned_up(self):
         _Frontend.stopped = False
         modules = _modules(**{"kayden.modules.output.test": _FailingOutput})
