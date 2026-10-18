@@ -76,7 +76,13 @@ def _compact_context(
     view = memory.view()
     if not context.needs_compaction(view):
         return
-    plan = memory.plan_compaction(context.keep_recent_messages)
+    retention = getattr(context, "retained_message_count", None)
+    keep_recent = (
+        retention(view)
+        if retention
+        else min(len(view.messages), max(2, int(context.keep_recent_messages)))
+    )
+    plan = memory.plan_compaction(keep_recent)
     if plan is None:
         return
 
@@ -89,9 +95,16 @@ def _compact_context(
             "content": "Existing summary:\n" + plan.previous_summary,
         })
     source.extend(plan.messages)
+    summary_prompt = COMPACTION_PROMPT
+    summary_target = getattr(context, "summary_target_tokens", None)
+    if isinstance(summary_target, int) and summary_target > 0:
+        summary_prompt += (
+            f"\n\nKeep the resulting summary below {summary_target} tokens. "
+            "Rewrite and consolidate existing points rather than appending to them."
+        )
     try:
         for event in core.stream(
-            [{"role": "system", "content": COMPACTION_PROMPT}, *source],
+            [{"role": "system", "content": summary_prompt}, *source],
             tools=None,
             should_interrupt=interrupted.is_set,
         ):
@@ -103,7 +116,9 @@ def _compact_context(
         return
 
     failed_markers = ("[request failed", "[api error", "[connection dropped")
-    if not interrupted.is_set() and summary.strip() and not summary.lower().startswith(failed_markers):
+    constrain_summary = getattr(context, "constrain_summary", None)
+    summary = constrain_summary(summary) if constrain_summary else summary.strip()
+    if not interrupted.is_set() and summary and not summary.lower().startswith(failed_markers):
         if memory.commit_compaction(plan, summary):
             context.compacted(memory.view())
             log.info("compacted older conversation into %d characters", len(summary.strip()))

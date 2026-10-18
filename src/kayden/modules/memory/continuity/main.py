@@ -47,7 +47,7 @@ class Module(MemoryInterface):
     def plan_compaction(self, keep_recent: int) -> CompactionPlan | None:
         summary, through_id = self.backend.context_state()
         active = self.backend.messages_after(through_id)
-        older = active[:-max(2, int(keep_recent))]
+        older = active[:-max(1, int(keep_recent))]
         if not older:
             return None
         return CompactionPlan(

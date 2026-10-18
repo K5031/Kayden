@@ -217,7 +217,7 @@ by default; opt into an installed CUDA runtime with
 `KAYDEN_DICTATION_DEVICE=cuda`. Kokoro can be adjusted with
 `KAYDEN_KOKORO_VOICE`, `KAYDEN_KOKORO_LANGUAGE`, and `KAYDEN_KOKORO_DEVICE`.
 
-Whisper submits a phrase after about 1.2 seconds of silence. This keeps voice
+Whisper submits a phrase after about 2 seconds of silence. This keeps voice
 input conversational while still allowing brief pauses within a sentence.
 
 The first Whisper or Kokoro launch may download model data, so it needs network
@@ -277,8 +277,13 @@ requiring the user to manage sessions. Every user and assistant message is saved
 the app starts.
 
 Near the model's context limit, the application asks the selected core to summarize
-older context while the memory module retains the latest messages verbatim. The
-original messages remain in SQLite and can still be found through `search_history`.
+older context while the memory module retains the latest complete turns verbatim.
+The cloud policy compacts by token budget rather than message count: for its default
+60k working context it targets roughly 35k tokens of recent conversation, a summary
+below 4k, up to 2k for durable memories, and 19k free after compaction. Compaction
+starts at a lower 10k free-space watermark so it does not run after every exchange.
+These are budgets rather than separate storage limits. The original messages remain
+in SQLite and can still be found through `search_history`.
 The selected memory module contributes its own actions automatically; continuity
 provides `remember`, `forget_memory`, `list_memories`, and `search_history`. Stable
 facts are saved explicitly under named keys. Each key owns one atomic value—for

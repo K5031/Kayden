@@ -170,6 +170,7 @@ class CoreInterface(ABC):
 class ContextPolicyInterface(ABC):
     usage_mode: str | None = None
     keep_recent_messages: int = 12
+    summary_target_tokens: int | None = None
 
     @abstractmethod
     def prepare(self, view: MemoryView) -> list[dict]:
@@ -178,6 +179,14 @@ class ContextPolicyInterface(ABC):
 
     def needs_compaction(self, view: MemoryView) -> bool:
         return False
+
+    def retained_message_count(self, view: MemoryView) -> int:
+        """Return how many newest transcript messages should remain verbatim."""
+        return min(len(view.messages), max(2, int(self.keep_recent_messages)))
+
+    def constrain_summary(self, summary: str) -> str:
+        """Bound a generated summary to this policy's context budget."""
+        return summary.strip()
 
     def compacted(self, view: MemoryView) -> None:
         """Update token accounting after memory compacts its transcript."""

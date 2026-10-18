@@ -25,7 +25,7 @@ class EphemeralTranscript:
         return [dict(message) for message in self._conversation[-limit:]]
 
     def plan_compaction(self, keep_recent: int) -> CompactionPlan | None:
-        keep_recent = max(2, int(keep_recent))
+        keep_recent = max(1, int(keep_recent))
         active = self._conversation[self._through_index:]
         older = active[:-keep_recent]
         if not older:
