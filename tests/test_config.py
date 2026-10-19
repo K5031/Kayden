@@ -128,6 +128,44 @@ assert config_dir.is_dir()
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_module_selections_are_saved_without_rewriting_settings(self):
+        from kayden import config
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(
+                'frontend = "qt"\n'
+                'core = "chatgpt"\n'
+                'output = "kokoro"\n'
+                'tools = [\n'
+                '    "clock",\n'
+                ']\n\n'
+                '[assistant]\n'
+                'name = "Ahri"\n\n'
+                '[settings.core.openai]\n'
+                'model = "gpt-6-luna"\n'
+            )
+
+            config.save_module_selections({
+                "core": "openai",
+                "output": None,
+                "tools": ["clock", "calculator"],
+            }, path=path)
+
+            text = path.read_text()
+            with path.open("rb") as config_file:
+                values = config.tomllib.load(config_file)
+            self.assertEqual(values["core"], "openai")
+            self.assertNotIn("output", values)
+            self.assertEqual(values["tools"], ["clock", "calculator"])
+            self.assertEqual(values["assistant"]["name"], "Ahri")
+            self.assertIn('[settings.core.openai]', text)
+            self.assertIn('model = "gpt-6-luna"', text)
+
+            config.save_module_selections({"tools": []}, path=path)
+            with path.open("rb") as config_file:
+                self.assertEqual(config.tomllib.load(config_file)["tools"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

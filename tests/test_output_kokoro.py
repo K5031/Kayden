@@ -1,4 +1,6 @@
 import logging
+import importlib
+import builtins
 import queue
 import sys
 from types import ModuleType
@@ -25,11 +27,31 @@ def _output():
     output.thread = None
     output.stream = None
     output._stopped = False
+    output._sounddevice = fake_sounddevice
     output._ensure_started = Mock()
     return output
 
 
 class KokoroOutputTests(unittest.TestCase):
+    def test_import_does_not_load_optional_speech_dependencies(self):
+        imported = []
+        original = builtins.__import__
+
+        def track(name, globals=None, locals=None, fromlist=(), level=0):
+            imported.append(name)
+            return original(name, globals, locals, fromlist, level)
+
+        spec = importlib.util.spec_from_file_location(
+            "_kayden_kokoro_import_test",
+            kokoro.__file__,
+        )
+        module = importlib.util.module_from_spec(spec)
+        with patch.object(builtins, "__import__", side_effect=track):
+            spec.loader.exec_module(module)
+
+        self.assertNotIn("kokoro", imported)
+        self.assertNotIn("sounddevice", imported)
+
     def test_prepares_pipeline_then_opens_output_lazily(self):
         pipeline = Mock()
         stream = Mock()
@@ -37,12 +59,15 @@ class KokoroOutputTests(unittest.TestCase):
         with patch.object(kokoro, "ensure_audio_ready"), patch.object(
             kokoro, "resolve_output_device", return_value=7
         ) as resolve, patch.object(
-            kokoro, "KPipeline", return_value=pipeline
-        ) as pipeline_factory, patch.object(
-            kokoro.sd, "OutputStream", return_value=stream
+            kokoro,
+            "_load_dependencies",
+            return_value=(fake_sounddevice, Mock(return_value=pipeline)),
+        ) as load_dependencies, patch.object(
+            fake_sounddevice, "OutputStream", return_value=stream
         ), patch.object(kokoro.threading, "Thread", return_value=thread):
             output = kokoro.Module(device="speaker")
 
+            pipeline_factory = load_dependencies.return_value[1]
             pipeline_factory.assert_called_once_with(
                 lang_code="a", repo_id="hexgrad/Kokoro-82M", device=None
             )

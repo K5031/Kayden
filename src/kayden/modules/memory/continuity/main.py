@@ -6,11 +6,18 @@ from kayden.modules.memory.continuity.store import ContinuityStore
 
 
 class Module(MemoryInterface):
-    """Own Kayden's persistent transcript, facts, summaries, and recall."""
+    """Own Kayden's bounded transcript, summaries, facts, and recall."""
 
-    def __init__(self, database_path=None, max_characters=6000):
+    def __init__(
+        self,
+        database_path=None,
+        max_characters=6000,
+        compacted_history_messages=200,
+    ):
         self.backend = ContinuityStore(database_path)
         self.max_characters = max(256, int(max_characters))
+        self.compacted_history_messages = max(0, int(compacted_history_messages))
+        self.backend.prune_compacted_messages(self.compacted_history_messages)
         self._actions = MemoryActions(self)
 
     def append(self, messages: list[dict]) -> None:
@@ -67,6 +74,7 @@ class Module(MemoryInterface):
             plan.base_checkpoint,
             summary.strip(),
             plan.through_checkpoint,
+            self.compacted_history_messages,
         )
 
     def reset_context(self) -> None:

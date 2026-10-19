@@ -1,5 +1,6 @@
 """Qt frontend module entrypoint."""
 
+import json
 import queue
 import threading
 from typing import Callable
@@ -22,6 +23,10 @@ class Module(FrontendInterface):
         self._models = []
         self._selected_model = None
         self._on_model_select = None
+        self._module_catalog = []
+        self._on_modules_apply = None
+        self._module_change_busy = False
+        self._module_change_thread = None
         self._capture_label = "Capture"
         self._on_capture_start = None
         self._on_capture_finish = None
@@ -58,6 +63,43 @@ class Module(FrontendInterface):
         self._on_model_select = on_select
         return True
 
+    def configure_modules(self, modules, on_apply) -> bool:
+        normalized = []
+        for category in modules:
+            if not isinstance(category, dict):
+                continue
+            capability = category.get("id")
+            options = category.get("options")
+            selected = category.get("selected", [])
+            if not isinstance(capability, str) or not isinstance(options, list):
+                continue
+            valid_options = [
+                {"id": option["id"], "name": option.get("name") or option["id"]}
+                for option in options
+                if isinstance(option, dict)
+                and isinstance(option.get("id"), str)
+                and option["id"]
+            ]
+            valid_ids = {option["id"] for option in valid_options}
+            selected = [
+                name for name in selected
+                if isinstance(name, str) and name in valid_ids
+            ]
+            normalized.append({
+                "id": capability,
+                "name": category.get("name") or capability,
+                "multiple": bool(category.get("multiple")),
+                "optional": bool(category.get("optional")),
+                "options": valid_options,
+                "selected": selected,
+            })
+        if not normalized:
+            return False
+        self._module_catalog = normalized
+        self._on_modules_apply = on_apply
+        self._events.put(("modules", list(normalized)))
+        return True
+
     def configure_capture(
         self,
         on_start: Callable[[], None],
@@ -69,7 +111,15 @@ class Module(FrontendInterface):
         self._on_capture_finish = on_finish
         self._on_capture_cancel = on_cancel
         self._capture_label = label
+        self._events.put(("capture_config", (True, label)))
         return True
+
+    def clear_capture(self) -> None:
+        self._on_capture_start = None
+        self._on_capture_finish = None
+        self._on_capture_cancel = None
+        self._capture_label = "Capture"
+        self._events.put(("capture_config", (False, self._capture_label)))
 
     def user(self, message: str) -> None:
         self._tool_activities = {}
@@ -176,6 +226,58 @@ class Module(FrontendInterface):
         self._selected_model = model
         self._events.put(("model", (model, choices[model])))
 
+    def _apply_modules(self, serialized: str) -> None:
+        if self._module_change_busy:
+            raise RuntimeError("a module change is already in progress")
+        if not self._on_modules_apply:
+            raise RuntimeError("module selection is unavailable")
+        try:
+            requested = json.loads(serialized)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ValueError("invalid module selection") from error
+        if not isinstance(requested, dict):
+            raise ValueError("module selection must be an object")
+
+        categories = {category["id"]: category for category in self._module_catalog}
+        if set(requested) - set(categories):
+            raise ValueError("module selection contains an unknown capability")
+        normalized = {}
+        for capability, names in requested.items():
+            category = categories[capability]
+            if not isinstance(names, list) or any(
+                not isinstance(name, str) for name in names
+            ):
+                raise ValueError(f"invalid selection for {capability}")
+            names = list(dict.fromkeys(names))
+            available = {option["id"] for option in category["options"]}
+            if any(name not in available for name in names):
+                raise ValueError(f"unavailable {capability} module")
+            if not category["multiple"] and len(names) > 1:
+                raise ValueError(f"{capability} accepts one module")
+            if not names and not category["optional"] and not category["multiple"]:
+                raise ValueError(f"{capability} requires a module")
+            normalized[capability] = names
+
+        self._module_change_busy = True
+        self._events.put(("modules_busy", (True, "Applying modules…")))
+
+        def apply():
+            try:
+                self._on_modules_apply(normalized)
+            except Exception as error:
+                self._events.put(("modules_busy", (False, str(error))))
+            else:
+                self._events.put(("modules_busy", (False, "")))
+            finally:
+                self._module_change_busy = False
+
+        self._module_change_thread = threading.Thread(
+            target=apply,
+            name="kayden-module-change",
+            daemon=True,
+        )
+        self._module_change_thread.start()
+
     def _capture(self, action: str) -> None:
         callbacks = {
             "start": self._on_capture_start,
@@ -213,6 +315,8 @@ class Module(FrontendInterface):
                 ) from error
             raise
         run_qt(self)
+        if self._module_change_thread and self._module_change_thread.is_alive():
+            self._module_change_thread.join()
 
     def stop(self) -> None:
         if self._closed.is_set():

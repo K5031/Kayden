@@ -3,12 +3,18 @@ import queue
 import os
 import html
 import re
-import sounddevice as sd
-from kokoro import KPipeline
 from queue import Empty
 from kayden.interfaces import OutputInterface
 from kayden.klogger import get_logger
 from kayden.audio import ensure_audio_ready, resolve_output_device
+
+
+def _load_dependencies():
+    """Import the optional speech stack only when this module is selected."""
+    import sounddevice as sd
+    from kokoro import KPipeline
+
+    return sd, KPipeline
 
 
 def _text_for_speech(text: str) -> str:
@@ -40,6 +46,8 @@ class Module(OutputInterface):
         self._stopped = False
         self._start_lock = threading.Lock()
 
+        self.log.info("Loading Kokoro dependencies")
+        self._sounddevice, pipeline_factory = _load_dependencies()
         ensure_audio_ready()
 
         self.device_index = resolve_output_device(device=device)
@@ -49,7 +57,7 @@ class Module(OutputInterface):
         repo_id = repo_id or os.environ.get("KAYDEN_KOKORO_REPO", "hexgrad/Kokoro-82M")
         pipeline_device = os.environ.get("KAYDEN_KOKORO_DEVICE")
         self.log.info("Loading pipeline: %s (lang=%s, voice=%s)", repo_id, lang_code, voice)
-        self.pipeline = KPipeline(
+        self.pipeline = pipeline_factory(
             lang_code=lang_code,
             repo_id=repo_id,
             device=pipeline_device,
@@ -66,7 +74,7 @@ class Module(OutputInterface):
             if self.running:
                 return
             try:
-                self.stream = sd.OutputStream(
+                self.stream = self._sounddevice.OutputStream(
                     samplerate=24000,
                     channels=1,
                     dtype="float32",

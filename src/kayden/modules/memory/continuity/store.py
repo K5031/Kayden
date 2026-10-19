@@ -7,7 +7,7 @@ from kayden.config import CONTINUITY_PATH
 
 
 class ContinuityStore:
-    """Durable conversation and explicit memory storage."""
+    """Bounded conversation context and explicit durable-memory storage."""
 
     def __init__(self, path=None):
         self.path = Path(path or CONTINUITY_PATH).expanduser()
@@ -138,6 +138,7 @@ class ContinuityStore:
         expected_through_message_id: int,
         summary: str,
         through_message_id: int,
+        compacted_history_messages: int,
     ) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
@@ -145,7 +146,57 @@ class ContinuityStore:
                 "WHERE id = 1 AND through_message_id = ?",
                 (summary, through_message_id, expected_through_message_id),
             )
+            if cursor.rowcount == 1:
+                self._prune_compacted_messages(
+                    connection,
+                    through_message_id,
+                    compacted_history_messages,
+                )
         return cursor.rowcount == 1
+
+    @staticmethod
+    def _prune_compacted_messages(
+        connection,
+        through_message_id: int,
+        keep_recent: int,
+    ) -> int:
+        """Delete summarized raw messages outside the bounded recall window."""
+        keep_recent = max(0, int(keep_recent))
+        if keep_recent:
+            oldest_retained = connection.execute(
+                "SELECT id FROM messages WHERE id <= ? "
+                "ORDER BY id DESC LIMIT 1 OFFSET ?",
+                (through_message_id, keep_recent - 1),
+            ).fetchone()
+            if oldest_retained is None:
+                return 0
+            delete_through = oldest_retained["id"] - 1
+        else:
+            delete_through = through_message_id
+
+        if delete_through <= 0:
+            return 0
+        connection.execute(
+            "DELETE FROM messages_fts WHERE CAST(message_id AS INTEGER) <= ?",
+            (delete_through,),
+        )
+        cursor = connection.execute(
+            "DELETE FROM messages WHERE id <= ?",
+            (delete_through,),
+        )
+        return cursor.rowcount
+
+    def prune_compacted_messages(self, keep_recent: int) -> int:
+        """Apply the retention policy to messages already covered by the summary."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT through_message_id FROM context_state WHERE id = 1"
+            ).fetchone()
+            return self._prune_compacted_messages(
+                connection,
+                row["through_message_id"],
+                keep_recent,
+            )
 
     def latest_message_id(self) -> int:
         with self._connect() as connection:

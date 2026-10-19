@@ -154,6 +154,20 @@ def _modules(**changes):
 
 
 class RegistryTests(unittest.TestCase):
+    def test_tracks_configured_module_names(self):
+        modules = _modules()
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
+            registry = Registry.from_config(_config())
+
+        try:
+            self.assertEqual(registry.selection("core"), "cloud_test")
+            self.assertEqual(registry.selection("tools"), ["echo_test"])
+        finally:
+            registry.close()
+
     def test_prepares_named_module_without_publishing_it(self):
         registry = Registry()
         with patch(

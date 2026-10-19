@@ -2,7 +2,7 @@ import queue
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from kayden.events import (
     CoreTextDelta,
@@ -339,6 +339,30 @@ class _ManualFrontend(_Frontend):
 
 
 class ApplicationTests(unittest.TestCase):
+    def test_ui_module_selection_uses_named_prepare_and_updates_selection(self):
+        old_core = _SwappableCore("old-model")
+        new_core = _SwappableCore("new-model")
+        registry = Registry()
+        registry.register("frontend", _PassiveFrontend(), selection="test")
+        registry.register("core", old_core, selection="old")
+        registry.register("context", _Context(), selection="cloud")
+        registry.register("memory", _Memory(), selection="memory")
+        registry.register("action", _Action(), selection="native")
+        registry.register("tools", ToolRuntime([]), selection=[])
+        registry.prepare = Mock(return_value=new_core)
+        runtime = ApplicationRuntime(registry)
+
+        try:
+            runtime.apply_module_selections({"core": ["new"]})
+
+            registry.prepare.assert_called_once_with("core", "new", {})
+            self.assertIs(registry.get("core"), new_core)
+            self.assertEqual(registry.selection("core"), "new")
+            self.assertTrue(old_core.stopped)
+        finally:
+            runtime.close()
+            registry.close()
+
     def test_prepared_module_swaps_at_runtime_boundary(self):
         frontend = _PassiveFrontend()
         old_core = _SwappableCore("old-model")

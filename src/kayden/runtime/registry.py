@@ -1,6 +1,7 @@
 import importlib
+import pkgutil
 import threading
-from kayden.config import load_config
+from kayden.config import CONFIG_PATH, load_config
 from kayden.interfaces import (
     ActionInterface,
     ContextPolicyInterface,
@@ -37,6 +38,25 @@ REQUIRED_CAPABILITIES = {
     "tools",
 }
 OPTIONAL_CAPABILITIES = {"input", "output"}
+MODULE_NAME_PARTS = {
+    "ai": "AI",
+    "chatgpt": "ChatGPT",
+    "cpp": "C++",
+    "deepseek": "DeepSeek",
+    "exa": "Exa",
+    "gpt": "GPT",
+    "openai": "OpenAI",
+    "qt": "Qt",
+    "searxng": "SearXNG",
+    "tui": "TUI",
+}
+
+
+def _module_display_name(name: str) -> str:
+    return " ".join(
+        MODULE_NAME_PARTS.get(part, part.title())
+        for part in name.split("_")
+    )
 
 
 def _load_module(capability: str, name: str):
@@ -80,8 +100,11 @@ class _MultiModule:
 class Registry:
     def __init__(self, assistant_name="Kayden"):
         self._registry = {}
+        self._selections = {}
         self._lock = threading.RLock()
         self.assistant_name = assistant_name
+        self.module_settings = {}
+        self.config_path = None
 
     def __enter__(self):
         return self
@@ -100,9 +123,39 @@ class Registry:
                     module.stop()
                 except Exception:
                     log.exception("Failed to stop module: %s", capability)
-    def register(self, capability: str, module):
+    def register(self, capability: str, module, selection=None):
         with self._lock:
             self._registry[capability] = module
+            if selection is not None:
+                self._selections[capability] = (
+                    list(selection) if isinstance(selection, list) else selection
+                )
+
+    def selection(self, capability: str):
+        with self._lock:
+            selected = self._selections.get(capability, [])
+            return list(selected) if isinstance(selected, list) else selected
+
+    def set_selections(self, selections: dict) -> None:
+        with self._lock:
+            for capability, selected in selections.items():
+                self._selections[capability] = (
+                    list(selected) if isinstance(selected, list) else selected
+                )
+
+    @classmethod
+    def available_modules(cls, capability: str) -> list[dict[str, str]]:
+        """Discover installed module names without importing their dependencies."""
+        if capability not in INTERFACES:
+            raise ValueError(f"unknown capability: {capability}")
+        package = importlib.import_module(f"kayden.modules.{capability}")
+        discovered = []
+        for item in pkgutil.iter_modules(package.__path__):
+            if item.name.startswith("_"):
+                continue
+            label = _module_display_name(item.name)
+            discovered.append({"id": item.name, "name": label})
+        return sorted(discovered, key=lambda item: item["name"].casefold())
 
     def get(self, capability: str):
         with self._lock:
@@ -221,7 +274,8 @@ class Registry:
 
     @classmethod
     def from_config(cls, config_values: dict = None) -> "Registry":
-        config_values = load_config() if config_values is None else config_values
+        loaded_from_disk = config_values is None
+        config_values = load_config() if loaded_from_disk else config_values
         if not isinstance(config_values, dict):
             raise TypeError("config must be a TOML table")
 
@@ -303,6 +357,8 @@ class Registry:
             )
 
         api = cls(assistant_name=assistant_name)
+        api.module_settings = module_settings
+        api.config_path = CONFIG_PATH if loaded_from_disk else None
         try:
             for capability in config_values:
                 classes = module_classes[capability]
@@ -334,7 +390,13 @@ class Registry:
                             except Exception:
                                 log.exception("Failed to stop partial module: %s", pending)
                     raise
-                api.register(capability, instance)
+                configured_selection = config_values[capability]
+                selection = (
+                    list(configured_selection)
+                    if isinstance(configured_selection, list)
+                    else configured_selection
+                )
+                api.register(capability, instance, selection=selection)
         except Exception:
             api.close()
             raise

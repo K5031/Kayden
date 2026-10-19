@@ -1,4 +1,5 @@
 from pathlib import Path
+import struct
 import unittest
 from unittest.mock import Mock
 
@@ -220,6 +221,55 @@ class QtFrontendTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unavailable"):
             frontend._select_model("gpt-hidden")
 
+    def test_exposes_generic_module_catalog_and_applies_in_background(self):
+        frontend = QtFrontend()
+        applied = Mock()
+        completed = __import__("threading").Event()
+
+        def apply(selections):
+            applied(selections)
+            completed.set()
+
+        supported = frontend.configure_modules([
+            {
+                "id": "memory",
+                "name": "Memory",
+                "multiple": False,
+                "optional": False,
+                "options": [
+                    {"id": "continuity", "name": "Continuity"},
+                    {"id": "remis", "name": "Remis"},
+                ],
+                "selected": ["continuity"],
+            },
+        ], apply)
+        list(frontend._drain_events())
+
+        frontend._apply_modules('{"memory":["remis"]}')
+
+        self.assertTrue(completed.wait(timeout=2))
+        applied.assert_called_once_with({"memory": ["remis"]})
+        events = list(frontend._drain_events())
+        self.assertEqual(events[0], ("modules_busy", (True, "Applying modules…")))
+        self.assertEqual(events[-1], ("modules_busy", (False, "")))
+        self.assertTrue(supported)
+
+    def test_rejects_unadvertised_module_before_applying(self):
+        frontend = QtFrontend()
+        frontend.configure_modules([
+            {
+                "id": "core",
+                "name": "Core",
+                "multiple": False,
+                "optional": False,
+                "options": [{"id": "chatgpt", "name": "Chatgpt"}],
+                "selected": ["chatgpt"],
+            },
+        ], Mock())
+
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            frontend._apply_modules('{"core":["hidden"]}')
+
     def test_routes_manual_capture_controls(self):
         frontend = QtFrontend()
         start, finish, cancel = Mock(), Mock(), Mock()
@@ -234,6 +284,13 @@ class QtFrontendTests(unittest.TestCase):
         finish.assert_called_once_with()
         cancel.assert_called_once_with()
 
+        frontend.clear_capture()
+        self.assertIsNone(frontend._on_capture_start)
+        self.assertEqual(
+            list(frontend._drain_events())[-1],
+            ("capture_config", (False, "Capture")),
+        )
+
     def test_module_owns_its_qml_and_metadata(self):
         module = (
             Path(__file__).resolve().parents[1]
@@ -244,6 +301,8 @@ class QtFrontendTests(unittest.TestCase):
         self.assertIn('name = "qt"', (module / "module.toml").read_text())
         qml = (module / "view.qml").read_text()
         self.assertIn("backend.selectModel", qml)
+        self.assertIn("backend.applyModules", qml)
+        self.assertIn("onModulesReceived", qml)
         self.assertIn("backend.startCapture", qml)
         self.assertIn("backend.interrupt", qml)
         self.assertIn("onToolGroupReceived", qml)
@@ -260,11 +319,19 @@ class QtFrontendTests(unittest.TestCase):
         self.assertIn("Math.min(80, Math.max(20, width * 0.052))", qml)
         self.assertIn("property real assistantWidth: Math.min(1180, feedWidth)", qml)
         self.assertIn('x: kind === "user" ? parent.width - width : 0', qml)
-        self.assertIn('modelOption.highlighted ? "#3b4261"', qml)
+        self.assertIn('modelOption.highlighted ? "#404040"', qml)
 
         backend = (module / "backend.py").read_text()
         self.assertIn("signal.SIGINT", backend)
         self.assertIn("app.quit()", backend)
+        self.assertIn("setWindowIcon", backend)
+
+        icon = module.parents[2] / "resources/icons/kayden.png"
+        contents = icon.read_bytes()
+        self.assertEqual(contents[:8], b"\x89PNG\r\n\x1a\n")
+        width, height = struct.unpack(">II", contents[16:24])
+        self.assertEqual(width, height)
+        self.assertGreaterEqual(width, 512)
 
     def test_markdown_renderer_normalizes_lists_and_inline_code(self):
         rendered = render_markdown(

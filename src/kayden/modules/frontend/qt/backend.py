@@ -1,9 +1,10 @@
 import signal
 import sys
+from importlib.resources import files
 from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
@@ -17,8 +18,11 @@ class FrontendBridge(QObject):
     toolGroupReceived = Signal(int, str, str, str, int)
     finishReceived = Signal(bool)
     captureStateReceived = Signal(str)
+    captureConfigured = Signal(bool, str)
     draftReceived = Signal(str)
     modelReceived = Signal(str, str)
+    modulesReceived = Signal("QVariantList")
+    modulesBusyReceived = Signal(bool, str)
 
     def __init__(self, frontend, parent=None):
         super().__init__(parent)
@@ -46,6 +50,10 @@ class FrontendBridge(QObject):
     @Property(str, constant=True)
     def selectedModel(self):
         return self._frontend._selected_model or ""
+
+    @Property("QVariantList", constant=True)
+    def modules(self):
+        return list(self._frontend._module_catalog)
 
     @Property(bool, constant=True)
     def captureAvailable(self):
@@ -77,6 +85,13 @@ class FrontendBridge(QObject):
             self._frontend._select_model(model)
         except Exception as error:
             self.statusReceived.emit(f"[error] {error}")
+
+    @Slot(str)
+    def applyModules(self, serialized):
+        try:
+            self._frontend._apply_modules(serialized)
+        except Exception as error:
+            self.modulesBusyReceived.emit(False, str(error))
 
     @Slot()
     def startCapture(self):
@@ -115,10 +130,16 @@ class FrontendBridge(QObject):
                 self.finishReceived.emit(value)
             elif kind == "capture_state":
                 self.captureStateReceived.emit(value)
+            elif kind == "capture_config":
+                self.captureConfigured.emit(*value)
             elif kind == "draft":
                 self.draftReceived.emit(value)
             elif kind == "model":
                 self.modelReceived.emit(*value)
+            elif kind == "modules":
+                self.modulesReceived.emit(value)
+            elif kind == "modules_busy":
+                self.modulesBusyReceived.emit(*value)
             elif kind == "close":
                 QGuiApplication.quit()
 
@@ -131,6 +152,8 @@ def run_qt(frontend):
     app = QGuiApplication.instance()
     if app is None:
         app = QGuiApplication(sys.argv[:1])
+    icon = files("kayden.resources").joinpath("icons", "kayden.png")
+    app.setWindowIcon(QIcon(str(icon)))
 
     engine = QQmlApplicationEngine()
     bridge = FrontendBridge(frontend, engine)

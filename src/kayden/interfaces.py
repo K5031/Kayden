@@ -96,6 +96,14 @@ class FrontendInterface(ABC):
         """Attach an optional runtime model selector."""
         return False
 
+    def configure_modules(
+        self,
+        modules: list[dict],
+        on_apply: Callable[[dict], None],
+    ) -> bool:
+        """Attach an optional generic selector for runtime module replacements."""
+        return False
+
     @abstractmethod
     def run(
         self,
@@ -153,6 +161,9 @@ class FrontendInterface(ABC):
     ) -> bool:
         """Attach optional manual-input controls; return whether they are supported."""
         return False
+
+    def clear_capture(self) -> None:
+        """Remove manual-input controls after the active input module changes."""
 
     def capture_state(self, state: str) -> None:
         """Render ``idle``, ``recording``, or ``transcribing`` capture state."""

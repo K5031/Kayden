@@ -55,6 +55,12 @@ class Module(FrontendInterface):
         self._capture_label = label
         return True
 
+    def clear_capture(self) -> None:
+        self._on_capture_start = None
+        self._on_capture_finish = None
+        self._on_capture_cancel = None
+        self._capture_state = "idle"
+
     def capture_state(self, state: str) -> None:
         self._events.put(("capture_state", state))
 

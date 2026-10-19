@@ -46,10 +46,13 @@ class ContinuityMemoryTests(MemoryContractTests, unittest.TestCase):
                 {"role": "assistant", "content": "Got it"},
             ])
 
-    def test_compaction_keeps_recent_context_and_searchable_originals(self):
+    def test_compaction_keeps_bounded_searchable_originals(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "continuity.sqlite3"
-            memory = ContinuityMemory(database_path=path)
+            memory = ContinuityMemory(
+                database_path=path,
+                compacted_history_messages=1,
+            )
             memory.append([
                 {"role": "user", "content": "The old codename is Moonbeam"},
                 {"role": "assistant", "content": "I will retain that context"},
@@ -67,16 +70,61 @@ class ContinuityMemoryTests(MemoryContractTests, unittest.TestCase):
                 {"role": "assistant", "content": "That removes startup work"},
             ])
 
+            self.assertEqual(
+                memory.actions().execute(
+                    "search_history",
+                    {"query": "old codename"},
+                ),
+                "[no matching conversation]",
+            )
             result = json.loads(memory.actions().execute(
                 "search_history",
-                {"query": "old codename"},
+                {"query": "retain context"},
             ))
-            self.assertEqual(result[0]["content"], "The old codename is Moonbeam")
+            self.assertEqual(result[0]["content"], "I will retain that context")
+
+    def test_reopening_applies_retention_to_an_existing_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "continuity.sqlite3"
+            memory = ContinuityMemory(
+                database_path=path,
+                compacted_history_messages=10,
+            )
+            memory.append([
+                {"role": "user", "content": "old searchable detail"},
+                {"role": "assistant", "content": "old acknowledgement"},
+                {"role": "user", "content": "recent question"},
+                {"role": "assistant", "content": "recent answer"},
+            ])
+            plan = memory.plan_compaction(2)
+            self.assertTrue(memory.commit_compaction(plan, "older summary"))
+
+            reopened = ContinuityMemory(
+                database_path=path,
+                compacted_history_messages=0,
+            )
+
+            self.assertEqual(reopened.view().summary, "older summary")
+            self.assertEqual(
+                reopened.recent(),
+                [
+                    {"role": "user", "content": "recent question"},
+                    {"role": "assistant", "content": "recent answer"},
+                ],
+            )
+            self.assertEqual(
+                reopened.actions().execute(
+                    "search_history",
+                    {"query": "old searchable detail"},
+                ),
+                "[no matching conversation]",
+            )
 
     def test_compaction_plan_does_not_consume_messages_appended_later(self):
         with tempfile.TemporaryDirectory() as directory:
             memory = ContinuityMemory(
-                database_path=Path(directory) / "continuity.sqlite3"
+                database_path=Path(directory) / "continuity.sqlite3",
+                compacted_history_messages=0,
             )
             memory.append([
                 {"role": "user", "content": "one"},

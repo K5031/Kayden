@@ -11,7 +11,7 @@ def _plain_inline(text):
     escaped = html.escape(text)
     escaped = re.sub(
         r"\[([^]]+)]\((https?://[^ )]+)\)",
-        r'<a href="\2" style="color:#7dcfff;">\1</a>',
+        r'<a href="\2" style="color:#8ab4f8;">\1</a>',
         escaped,
     )
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
@@ -26,7 +26,7 @@ def _inline(text):
         if len(part) >= 2 and part.startswith("`") and part.endswith("`"):
             rendered.append(
                 '<span style="font-family:monospace; font-size:13px; '
-                'color:#bb9af7;">'
+                'color:#d4d4d4;">'
                 f"{html.escape(part[1:-1])}</span>"
             )
         else:
@@ -38,7 +38,7 @@ def render_markdown(source):
     """Render Kayden's conversational Markdown with stable Qt-friendly styles."""
     lines = source.splitlines()
     output = [
-        '<div style="color:#c0caf5; font-family:sans-serif; font-size:15px;">'
+        '<div style="color:#ececec; font-family:sans-serif; font-size:15px;">'
     ]
     paragraph = []
     list_kind = None
@@ -64,7 +64,7 @@ def render_markdown(source):
             if line.strip().startswith("```"):
                 output.append(
                     '<pre style="margin:6px 0 10px 0; padding:10px; '
-                    'background-color:#16161e; color:#c0caf5; '
+                    'background-color:#111111; color:#ececec; '
                     'font-family:monospace; font-size:13px;">'
                     + html.escape("\n".join(code_lines))
                     + "</pre>"
@@ -114,7 +114,7 @@ def render_markdown(source):
             close_list()
             content = line.lstrip()[1:].lstrip()
             output.append(
-                '<p style="margin:4px 0 8px 8px; color:#a9b1d6;">'
+                '<p style="margin:4px 0 8px 8px; color:#b3b3b3;">'
                 f"{_inline(content)}</p>"
             )
         else:
@@ -126,7 +126,7 @@ def render_markdown(source):
     if code_lines is not None:
         output.append(
             '<pre style="margin:6px 0 10px 0; padding:10px; '
-            'background-color:#16161e; color:#c0caf5; '
+            'background-color:#111111; color:#ececec; '
             'font-family:monospace; font-size:13px;">'
             + html.escape("\n".join(code_lines))
             + "</pre>"

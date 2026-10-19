@@ -10,15 +10,15 @@ ApplicationWindow {
     minimumHeight: 420
     visible: true
     title: backend.assistantName
-    color: "#1a1b26"
-    palette.window: "#1a1b26"
-    palette.windowText: "#c0caf5"
-    palette.base: "#16161e"
-    palette.text: "#c0caf5"
-    palette.button: "#24283b"
-    palette.buttonText: "#c0caf5"
-    palette.highlight: "#7aa2f7"
-    palette.highlightedText: "#c0caf5"
+    color: "#171717"
+    palette.window: "#171717"
+    palette.windowText: "#ececec"
+    palette.base: "#111111"
+    palette.text: "#ececec"
+    palette.button: "#2f2f2f"
+    palette.buttonText: "#ececec"
+    palette.highlight: "#8ab4f8"
+    palette.highlightedText: "#171717"
 
     property bool busy: false
     property bool following: true
@@ -26,7 +26,13 @@ ApplicationWindow {
     property int activeToolGroup: -1
     property int activeToolGroupId: -1
     property string captureState: "idle"
+    property bool captureAvailable: backend.captureAvailable
+    property string captureLabel: backend.captureLabel
     property string statusText: "Ready"
+    property var moduleCatalog: backend.modules
+    property var moduleDraft: ({})
+    property bool moduleApplying: false
+    property string moduleError: ""
     property real pageMargin: Math.min(80, Math.max(20, width * 0.052))
     property real feedWidth: width - pageMargin * 2
     property real assistantWidth: Math.min(1180, feedWidth)
@@ -38,7 +44,7 @@ ApplicationWindow {
         rightPadding: 16
         contentItem: Text {
             text: control.text
-            color: control.enabled ? "#c0caf5" : "#565f89"
+            color: control.enabled ? "#ececec" : "#737373"
             font.pixelSize: 13
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
@@ -46,10 +52,10 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 9
-            color: control.down ? "#3b4261"
-                : control.hovered ? "#292e42" : "#24283b"
+            color: control.down ? "#404040"
+                : control.hovered ? "#292929" : "#2f2f2f"
             border.width: 1
-            border.color: control.activeFocus ? "#7aa2f7" : "#3b4261"
+            border.color: control.activeFocus ? "#8ab4f8" : "#404040"
             opacity: control.enabled ? 1 : 0.55
         }
     }
@@ -120,6 +126,56 @@ ApplicationWindow {
         composer.clear()
     }
 
+    function resetModuleDraft() {
+        var draft = {}
+        for (var index = 0; index < moduleCatalog.length; index++) {
+            var category = moduleCatalog[index]
+            var selected = []
+            for (var selectedIndex = 0;
+                    selectedIndex < category.selected.length; selectedIndex++)
+                selected.push(category.selected[selectedIndex])
+            draft[category.id] = selected
+        }
+        moduleDraft = draft
+        moduleError = ""
+    }
+
+    function moduleSelected(capability, moduleName) {
+        var selected = moduleDraft[capability] || []
+        return selected.indexOf(moduleName) >= 0
+    }
+
+    function setModuleSelected(capability, moduleName, multiple) {
+        var current = moduleDraft[capability] || []
+        var selected = []
+        for (var index = 0; index < current.length; index++)
+            selected.push(current[index])
+        var existing = selected.indexOf(moduleName)
+        if (multiple) {
+            if (existing >= 0)
+                selected.splice(existing, 1)
+            else
+                selected.push(moduleName)
+        } else {
+            selected = [moduleName]
+        }
+        var next = {}
+        for (var key in moduleDraft)
+            next[key] = moduleDraft[key]
+        next[capability] = selected
+        moduleDraft = next
+    }
+
+    function disableOptionalModule(capability) {
+        var next = {}
+        for (var key in moduleDraft)
+            next[key] = moduleDraft[key]
+        next[capability] = []
+        moduleDraft = next
+    }
+
+    Component.onCompleted: resetModuleDraft()
+
     onClosing: backend.close()
 
     ListModel { id: transcriptModel }
@@ -180,6 +236,13 @@ ApplicationWindow {
                 : state === "transcribing" ? "Transcribing…" : "Ready"
         }
 
+        function onCaptureConfigured(available, label) {
+            root.captureAvailable = available
+            root.captureLabel = label
+            if (!available)
+                root.captureState = "idle"
+        }
+
         function onDraftReceived(text) {
             var spacer = composer.text.length > 0 && !composer.text.endsWith(" ") ? " " : ""
             composer.text += spacer + text
@@ -196,12 +259,26 @@ ApplicationWindow {
             }
             root.statusText = "Model: " + label
         }
+
+        function onModulesReceived(modules) {
+            root.moduleCatalog = modules
+            root.resetModuleDraft()
+            if (moduleDialog.visible)
+                moduleDialog.close()
+        }
+
+        function onModulesBusyReceived(busy, message) {
+            root.moduleApplying = busy
+            root.moduleError = message
+            if (message.length > 0)
+                root.statusText = "Module change failed"
+        }
     }
 
     header: Rectangle {
         height: 68
-        color: "#16161e"
-        border.color: "#292e42"
+        color: "#111111"
+        border.color: "#292929"
 
         Column {
             anchors.left: parent.left
@@ -211,13 +288,13 @@ ApplicationWindow {
 
             Label {
                 text: backend.assistantName
-                color: "#c0caf5"
+                color: "#ececec"
                 font.pixelSize: 17
                 font.bold: true
             }
             Label {
                 text: root.statusText
-                color: root.captureState === "recording" ? "#f7768e" : "#7aa2f7"
+                color: root.captureState === "recording" ? "#f87171" : "#8ab4f8"
                 font.pixelSize: 11
             }
         }
@@ -227,6 +304,16 @@ ApplicationWindow {
             anchors.rightMargin: root.pageMargin
             anchors.verticalCenter: parent.verticalCenter
             spacing: 10
+
+            NightButton {
+                visible: root.moduleCatalog.length > 0
+                enabled: !root.busy && !root.moduleApplying
+                text: "Modules"
+                onClicked: {
+                    root.resetModuleDraft()
+                    moduleDialog.open()
+                }
+            }
 
             ComboBox {
                 id: modelPicker
@@ -243,7 +330,7 @@ ApplicationWindow {
 
                 contentItem: Text {
                     text: modelPicker.displayText
-                    color: modelPicker.enabled ? "#c0caf5" : "#565f89"
+                    color: modelPicker.enabled ? "#ececec" : "#737373"
                     font.pixelSize: 13
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
@@ -252,14 +339,14 @@ ApplicationWindow {
                     x: modelPicker.width - width - 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: "⌄"
-                    color: "#7aa2f7"
+                    color: "#8ab4f8"
                     font.pixelSize: 17
                 }
                 background: Rectangle {
                     radius: 9
-                    color: modelPicker.hovered ? "#292e42" : "#24283b"
+                    color: modelPicker.hovered ? "#292929" : "#2f2f2f"
                     border.width: 1
-                    border.color: modelPicker.activeFocus ? "#7aa2f7" : "#3b4261"
+                    border.color: modelPicker.activeFocus ? "#8ab4f8" : "#404040"
                     opacity: modelPicker.enabled ? 1 : 0.6
                 }
                 delegate: ItemDelegate {
@@ -272,14 +359,14 @@ ApplicationWindow {
 
                     contentItem: Text {
                         text: modelOption.text
-                        color: "#c0caf5"
+                        color: "#ececec"
                         font.pixelSize: 13
                         verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
                     }
                     background: Rectangle {
-                        color: modelOption.highlighted ? "#3b4261"
-                            : modelOption.hovered ? "#292e42" : "#16161e"
+                        color: modelOption.highlighted ? "#404040"
+                            : modelOption.hovered ? "#292929" : "#111111"
                     }
                 }
 
@@ -298,6 +385,160 @@ ApplicationWindow {
                 visible: root.busy
                 text: "Stop"
                 onClicked: backend.interrupt()
+            }
+        }
+    }
+
+    Popup {
+        id: moduleDialog
+        objectName: "moduleDialog"
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(root.width - 40, 720)
+        height: Math.min(root.height - 40, 680)
+        modal: true
+        focus: true
+        closePolicy: root.moduleApplying ? Popup.NoAutoClose
+            : Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+
+        background: Rectangle {
+            radius: 14
+            color: "#111111"
+            border.width: 1
+            border.color: "#404040"
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 0
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 16
+                Layout.topMargin: 16
+                Layout.bottomMargin: 14
+
+                ColumnLayout {
+                    spacing: 3
+                    Label {
+                        text: "Runtime modules"
+                        color: "#ececec"
+                        font.pixelSize: 18
+                        font.bold: true
+                    }
+                    Label {
+                        text: "Changes activate together at a safe turn boundary."
+                        color: "#8a8a8a"
+                        font.pixelSize: 12
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+                NightButton {
+                    text: "Close"
+                    enabled: !root.moduleApplying
+                    onClicked: moduleDialog.close()
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: "#292929"
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                Column {
+                    width: moduleDialog.availableWidth
+                    padding: 22
+                    spacing: 22
+
+                    Repeater {
+                        model: root.moduleCatalog
+
+                        delegate: Column {
+                            id: categoryBlock
+                            required property var modelData
+                            property var category: modelData
+                            width: parent.width - 44
+                            spacing: 9
+
+                            Label {
+                                text: categoryBlock.category.name
+                                color: "#d1d1d1"
+                                font.pixelSize: 12
+                                font.bold: true
+                                font.capitalization: Font.AllUppercase
+                            }
+
+                            Flow {
+                                width: parent.width
+                                spacing: 8
+
+                                NightButton {
+                                    visible: categoryBlock.category.optional
+                                        && !categoryBlock.category.multiple
+                                    text: (root.moduleDraft[categoryBlock.category.id] || []).length === 0
+                                        ? "✓ Off" : "Off"
+                                    onClicked: root.disableOptionalModule(
+                                        categoryBlock.category.id)
+                                }
+
+                                Repeater {
+                                    model: categoryBlock.category.options
+
+                                    delegate: NightButton {
+                                        required property var modelData
+                                        property var option: modelData
+                                        text: (root.moduleSelected(
+                                            categoryBlock.category.id,
+                                            option.id) ? "✓ " : "") + option.name
+                                        onClicked: root.setModuleSelected(
+                                            categoryBlock.category.id,
+                                            option.id,
+                                            categoryBlock.category.multiple)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                Layout.bottomMargin: visible ? 10 : 0
+                visible: root.moduleError.length > 0
+                text: root.moduleError
+                color: "#f87171"
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                Layout.topMargin: 12
+                Layout.bottomMargin: 18
+
+                Label {
+                    text: root.moduleApplying ? "Preparing modules…" : ""
+                    color: "#8ab4f8"
+                    font.pixelSize: 12
+                }
+                Item { Layout.fillWidth: true }
+                NightButton {
+                    text: root.moduleApplying ? "Applying…" : "Apply"
+                    enabled: !root.moduleApplying
+                    onClicked: backend.applyModules(JSON.stringify(root.moduleDraft))
+                }
             }
         }
     }
@@ -362,11 +603,11 @@ ApplicationWindow {
                             height: kind === "tool" ? messageRow.height - 4
                                 : body.contentHeight + (kind === "assistant" ? 8 : 20)
                             radius: kind === "tool" ? 0 : 13
-                            color: kind === "user" ? "#24283b"
+                            color: kind === "user" ? "#2f2f2f"
                                 : kind === "tool" ? "transparent"
                                 : kind === "error" ? "#30202b" : "transparent"
                             border.width: kind === "assistant" || kind === "tool" ? 0 : 1
-                            border.color: kind === "error" ? "#f7768e" : "#3b4261"
+                            border.color: kind === "error" ? "#f87171" : "#404040"
 
                             TextEdit {
                                 id: body
@@ -381,9 +622,9 @@ ApplicationWindow {
                                     ? backend.renderMarkdown(content
                                         + (interrupted ? "\n\n*Interrupted*" : ""))
                                     : (kind === "error" ? "Error  " : "") + content
-                                color: kind === "error" ? "#f7768e" : "#c0caf5"
-                                selectionColor: "#7aa2f7"
-                                selectedTextColor: "#1a1b26"
+                                color: kind === "error" ? "#f87171" : "#ececec"
+                                selectionColor: "#8ab4f8"
+                                selectedTextColor: "#171717"
                                 font.pixelSize: 15
                             }
 
@@ -398,7 +639,7 @@ ApplicationWindow {
                                 anchors.rightMargin: 6
                                 text: (toolState === "running" ? "◌  "
                                     : toolState === "failed" ? "!  " : "✓  ") + content
-                                color: toolState === "failed" ? "#f7768e" : "#7aa2f7"
+                                color: toolState === "failed" ? "#f87171" : "#8ab4f8"
                                 font.pixelSize: 14
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
@@ -413,7 +654,7 @@ ApplicationWindow {
                                 height: 30
                                 verticalAlignment: Text.AlignVCenter
                                 text: toolExpanded ? "⌃" : "⌄"
-                                color: "#565f89"
+                                color: "#737373"
                                 font.pixelSize: 14
                             }
 
@@ -427,7 +668,7 @@ ApplicationWindow {
                                 anchors.leftMargin: 27
                                 anchors.rightMargin: 12
                                 text: toolDetails
-                                color: "#a9b1d6"
+                                color: "#d1d1d1"
                                 font.pixelSize: 13
                                 lineHeight: 1.35
                                 wrapMode: Text.Wrap
@@ -470,9 +711,9 @@ ApplicationWindow {
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredHeight: Math.max(68, Math.min(150, composer.contentHeight + 28))
             radius: 14
-            color: "#16161e"
+            color: "#111111"
             border.width: 1
-            border.color: composer.activeFocus ? "#7aa2f7" : "#3b4261"
+            border.color: composer.activeFocus ? "#8ab4f8" : "#404040"
 
             RowLayout {
                 anchors.fill: parent
@@ -484,8 +725,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     placeholderText: "Message " + backend.assistantName + "…"
-                    color: "#c0caf5"
-                    placeholderTextColor: "#565f89"
+                    color: "#ececec"
+                    placeholderTextColor: "#737373"
                     wrapMode: TextArea.Wrap
                     background: null
                     font.pixelSize: 15
@@ -506,9 +747,9 @@ ApplicationWindow {
                 }
 
                 NightButton {
-                    visible: backend.captureAvailable
+                    visible: root.captureAvailable
                     enabled: root.captureState !== "transcribing"
-                    text: root.captureState === "recording" ? "Finish" : backend.captureLabel
+                    text: root.captureState === "recording" ? "Finish" : root.captureLabel
                     onClicked: root.captureState === "recording"
                         ? backend.finishCapture() : backend.startCapture()
                 }
@@ -524,7 +765,7 @@ ApplicationWindow {
         Label {
             Layout.alignment: Qt.AlignHCenter
             text: "Enter to send  ·  Shift+Enter for a new line"
-            color: "#565f89"
+            color: "#737373"
             font.pixelSize: 11
         }
     }

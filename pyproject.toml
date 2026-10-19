@@ -79,7 +79,7 @@ package-dir = {"" = "src"}
 include-package-data = true
 
 [tool.setuptools.package-data]
-"kayden.resources" = ["*.toml", "*.txt"]
+"kayden.resources" = ["*.toml", "*.txt", "icons/*.png"]
 "kayden.modules.frontend.tauri" = ["module.toml"]
 "kayden.modules.frontend.qt" = ["module.toml", "*.qml"]
 

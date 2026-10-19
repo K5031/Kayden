@@ -4,12 +4,18 @@ from time import sleep
 import math
 import os
 import threading
-import numpy as np
-import speech_recognition as sr
-import whisper
 from kayden.interfaces import InputInterface
 from kayden.klogger import get_logger
 from kayden.audio import resolve_pyaudio_input_device
+
+
+def _load_dependencies():
+    """Import the optional speech stack only when this module is selected."""
+    import numpy as np
+    import speech_recognition as sr
+    import whisper
+
+    return np, sr, whisper
 
 
 def _cuda_available():
@@ -70,12 +76,17 @@ class Module(InputInterface):
         self.max_no_speech_prob = float(max_no_speech_prob)
         self.max_compression_ratio = float(max_compression_ratio)
 
+        self.log.info("Loading Whisper dependencies")
+        self._np, self._speech_recognition, whisper = _load_dependencies()
         self._cuda = _cuda_available()
         self.log.info("CUDA available: %s", self._cuda)
 
         device_index = resolve_pyaudio_input_device(device=device)
         self.log.info("Using input device index: %s", device_index)
-        self.source = sr.Microphone(sample_rate=16000, device_index=device_index)
+        self.source = self._speech_recognition.Microphone(
+            sample_rate=16000,
+            device_index=device_index,
+        )
         self.recorder = self._setup_recorder()
 
         model = model or os.environ.get("KAYDEN_WHISPER_MODEL", "base.en")
@@ -94,7 +105,7 @@ class Module(InputInterface):
         self._start_lock = threading.Lock()
 
     def _setup_recorder(self):
-        recorder = sr.Recognizer()
+        recorder = self._speech_recognition.Recognizer()
         recorder.energy_threshold = self.energy_threshold
         recorder.dynamic_energy_threshold = False
         # Ambient-noise calibration itself happens in _run_loop, not here —
@@ -130,7 +141,7 @@ class Module(InputInterface):
         else:
             self.log.info("calibrated energy_threshold: %s", calibrated)
 
-    def _record_callback(self, _, audio: sr.AudioData):
+    def _record_callback(self, _, audio):
         self.data_queue.put(audio.get_raw_data())
 
     def _drain_audio_queue(self) -> bytes:
@@ -144,14 +155,18 @@ class Module(InputInterface):
 
     def _audio_to_numpy(self, audio_bytes):
         return (
-            np.frombuffer(audio_bytes, dtype=np.int16)
-            .astype(np.float32) / 32768.0
+            self._np.frombuffer(audio_bytes, dtype=self._np.int16)
+            .astype(self._np.float32) / 32768.0
         )
 
     def _usable_audio(self, audio):
         if audio.size / 16000 < self.min_seconds:
             return False
-        rms = float(np.sqrt(np.mean(np.square(audio)))) if audio.size else 0.0
+        rms = (
+            float(self._np.sqrt(self._np.mean(self._np.square(audio))))
+            if audio.size
+            else 0.0
+        )
         return rms >= self.min_rms
 
     def _usable_segment(self, segment):

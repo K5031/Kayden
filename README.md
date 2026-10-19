@@ -288,7 +288,7 @@ automatically normalized to `frontend = "tui"` when loaded, and obsolete
 | core | `chatgpt` | OpenAI Responses inference using an eligible ChatGPT Plus/Pro plan and browser sign-in |
 | context | `local` | Selects active context and requests compaction using a local tokenizer |
 | context | `cloud` | Selects active context and requests compaction using cloud usage reports |
-| memory | `continuity` | Owns the persistent transcript, summaries, named facts, history search, and memory actions in SQLite |
+| memory | `continuity` | Owns bounded recent conversation, summaries, named facts, history search, and memory actions in SQLite |
 | memory | `remis` | Legacy semantic memory — extracts facts with a local LLM and stores embeddings in Chroma |
 | action | `native` | Runs the inner model/tool loop using the core's native function-calling protocol |
 | tools | `clock` | Exposes the current local date and time |
@@ -301,7 +301,7 @@ automatically normalized to `frontend = "tui"` when loaded, and obsolete
 ## Continuous Memory
 
 Kayden's `continuity` memory module presents one ongoing conversation instead of
-requiring the user to manage sessions. Every user and assistant message is saved to
+requiring the user to manage sessions. Recent user and assistant messages are saved to
 `$XDG_DATA_HOME/kayden/continuity.sqlite3` (normally
 `~/.local/share/kayden/continuity.sqlite3`) and recent messages are restored when
 the app starts.
@@ -312,8 +312,23 @@ The cloud policy compacts by token budget rather than message count: for its def
 60k working context it targets roughly 35k tokens of recent conversation, a summary
 below 4k, up to 2k for durable memories, and 19k free after compaction. Compaction
 starts at a lower 10k free-space watermark so it does not run after every exchange.
-These are budgets rather than separate storage limits. The original messages remain
-in SQLite and can still be found through `search_history`.
+These are budgets rather than separate storage limits. After a summary is committed,
+continuity keeps the latest 200 compacted raw messages for short-term exact recall and
+deletes older compacted messages and their search-index entries. Active messages that
+have not been summarized are never pruned. Existing databases adopt this bound the
+next time continuity starts.
+
+The retained exact-history window is configurable. Set it to zero to discard raw
+messages as soon as they have been summarized:
+
+```toml
+[settings.memory.continuity]
+compacted_history_messages = 0
+```
+
+`search_history` searches only raw messages still inside that bounded window. Older
+conversation survives in consolidated summaries and explicitly saved facts rather
+than as a permanent verbatim archive.
 The selected memory module contributes its own actions automatically; continuity
 provides `remember`, `forget_memory`, `list_memories`, and `search_history`. Stable
 facts are saved explicitly under named keys. Each key owns one atomic value—for
@@ -337,6 +352,14 @@ can activate one or several prepared replacements atomically between turns:
 runtime.swap_configured({"core": "openai"})
 runtime.swap_configured({"core": "llama_cpp", "context": "local"})
 ```
+
+The Qt frontend exposes the same mechanism through its **Modules** dialog. It
+discovers installed core, context, memory, action, input, output, and tool modules
+without hardcoding their names. Changes are staged together, validated, activated
+at a turn boundary, and written back to `config.toml`. This allows compatible pairs
+such as a local core and local context policy to be changed atomically. The active
+frontend is intentionally excluded because it owns the window displaying the
+selector; frontend replacement still requires detaching that window first.
 
 A turn that is already running finishes with the exact module generation it began
 with. Later turns use the replacements. Failed preparation or compatibility checks

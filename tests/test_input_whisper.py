@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import inspect
+import importlib
+import builtins
 import logging
 import queue
 import threading
@@ -29,6 +31,8 @@ with patch.dict(sys.modules, {
 def _input():
     module = whisper_input.Module.__new__(whisper_input.Module)
     module.log = logging.getLogger("test-whisper")
+    module._np = fake_numpy
+    module._speech_recognition = fake_sr
     module.model = Mock()
     module._cuda = False
     module.data_queue = queue.Queue()
@@ -55,6 +59,26 @@ def _input():
 
 
 class WhisperInputTests(unittest.TestCase):
+    def test_import_does_not_load_optional_speech_dependencies(self):
+        imported = []
+        original = builtins.__import__
+
+        def track(name, globals=None, locals=None, fromlist=(), level=0):
+            imported.append(name)
+            return original(name, globals, locals, fromlist, level)
+
+        spec = importlib.util.spec_from_file_location(
+            "_kayden_whisper_import_test",
+            whisper_input.__file__,
+        )
+        module = importlib.util.module_from_spec(spec)
+        with patch.object(builtins, "__import__", side_effect=track):
+            spec.loader.exec_module(module)
+
+        self.assertNotIn("numpy", imported)
+        self.assertNotIn("speech_recognition", imported)
+        self.assertNotIn("whisper", imported)
+
     def test_default_silence_timeout_is_conversational(self):
         parameters = inspect.signature(whisper_input.Module).parameters
         self.assertEqual(parameters["record_timeout"].default, 1.5)

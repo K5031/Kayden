@@ -92,8 +92,8 @@ class MemoryActions(ToolInterface):
                 "function": {
                     "name": "search_history",
                     "description": (
-                        "Search earlier conversation when the user refers to something "
-                        "absent from the current context or durable memories."
+                        "Search retained recent conversation when the user refers to "
+                        "something absent from the active context or durable memories."
                     ),
                     "parameters": {
                         "type": "object",

@@ -2,7 +2,7 @@ import json
 import queue
 import threading
 
-from kayden.config import load_system_prompt
+from kayden.config import load_system_prompt, save_module_selections
 from kayden.events import (
     CoreTextDelta,
     TextDelta,
@@ -17,6 +17,17 @@ from kayden.klogger import get_logger
 
 log = get_logger("Application")
 _STOP = object()
+
+SWAPPABLE_CAPABILITIES = (
+    "core",
+    "context",
+    "memory",
+    "action",
+    "input",
+    "output",
+    "tools",
+)
+MULTI_SELECT_CAPABILITIES = {"output", "tools"}
 
 COMPACTION_PROMPT = """Condense the earlier conversation into a compact factual state for continuing it later.
 
@@ -232,6 +243,7 @@ class ApplicationRuntime:
             configure_identity(getattr(self.api, "assistant_name", "Kayden"))
 
         self._configure_models(frontend)
+        self._configure_modules(frontend)
 
         _restore_transcript(frontend, memory)
 
@@ -250,6 +262,27 @@ class ApplicationRuntime:
         if configure_models and available_models:
             configure_models(available_models, model_name, self.select_model)
         frontend.status(f"Model: {model_name}")
+
+    def _configure_modules(self, frontend):
+        discover = getattr(self.api, "available_modules", None)
+        selected = getattr(self.api, "selection", None)
+        configure = getattr(frontend, "configure_modules", None)
+        if not discover or not selected or not configure:
+            return
+        catalog = []
+        for capability in SWAPPABLE_CAPABILITIES:
+            choices = discover(capability)
+            current = selected(capability)
+            current = current if isinstance(current, list) else ([current] if current else [])
+            catalog.append({
+                "id": capability,
+                "name": capability.replace("_", " ").title(),
+                "multiple": capability in MULTI_SELECT_CAPABILITIES,
+                "optional": capability in {"input", "output"},
+                "options": choices,
+                "selected": current,
+            })
+        configure(catalog, self.apply_module_selections)
 
     def _configure_capture(self, frontend, speech_input):
         supported = frontend.configure_capture(
@@ -335,6 +368,10 @@ class ApplicationRuntime:
                     self._configure_capture(frontend, new_input)
                 except Exception:
                     log.exception("Failed to refresh frontend capture controls")
+            else:
+                clear_capture = getattr(frontend, "clear_capture", None)
+                if clear_capture:
+                    clear_capture()
 
         for capability, old_module in displaced.items():
             if capability == "input" or old_module is replacements.get(capability):
@@ -356,12 +393,19 @@ class ApplicationRuntime:
         candidates = {}
         try:
             for capability, names in selections.items():
+                if capability in {"input", "output"} and not names:
+                    candidates[capability] = None
+                    continue
                 candidates[capability] = prepare(
                     capability,
                     names,
                     settings.get(capability, {}),
                 )
-            return self.swap_modules(candidates)
+            displaced = self.swap_modules(candidates)
+            set_selections = getattr(self.api, "set_selections", None)
+            if set_selections:
+                set_selections(selections)
+            return displaced
         except Exception:
             for candidate in reversed(list(candidates.values())):
                 try:
@@ -369,6 +413,61 @@ class ApplicationRuntime:
                 except Exception:
                     log.exception("Failed to stop rejected module: %s", candidate)
             raise
+
+    def apply_module_selections(self, selections: dict):
+        """Validate, atomically apply, and persist a generic UI selection set."""
+        if not isinstance(selections, dict):
+            raise TypeError("module selections must be a mapping")
+        unknown = set(selections) - set(SWAPPABLE_CAPABILITIES)
+        if unknown:
+            raise ValueError(f"unsupported module capabilities: {sorted(unknown)}")
+
+        changes = {}
+        for capability, requested in selections.items():
+            names = requested if isinstance(requested, list) else [requested]
+            if any(not isinstance(name, str) or not name for name in names):
+                raise ValueError(f"invalid {capability} module selection")
+            if capability not in MULTI_SELECT_CAPABILITIES and len(names) > 1:
+                raise ValueError(f"{capability} accepts only one module")
+            if not names and capability not in {"input", "output", "tools"}:
+                raise ValueError(f"{capability} requires a module")
+            current = getattr(self.api, "selection")(capability)
+            current_names = current if isinstance(current, list) else ([current] if current else [])
+            if names != current_names:
+                changes[capability] = names if capability in MULTI_SELECT_CAPABILITIES else (names[0] if names else [])
+
+        if not changes:
+            return
+
+        configured_settings = getattr(self.api, "module_settings", {})
+        prepared_settings = {}
+        for capability, selected in changes.items():
+            names = selected if isinstance(selected, list) else ([selected] if selected else [])
+            capability_settings = configured_settings.get(capability, {})
+            if len(names) == 1:
+                prepared_settings[capability] = capability_settings.get(names[0], {})
+            elif len(names) > 1:
+                prepared_settings[capability] = {
+                    name: capability_settings.get(name, {}) for name in names
+                }
+
+        self.swap_configured(changes, prepared_settings)
+        config_path = getattr(self.api, "config_path", None)
+        if config_path:
+            persisted = {
+                capability: (
+                    None
+                    if capability in {"input", "output"} and selected == []
+                    else selected
+                )
+                for capability, selected in changes.items()
+            }
+            save_module_selections(persisted, path=config_path)
+
+        frontend = self._current_frontend()
+        if frontend:
+            self._configure_modules(frontend)
+            frontend.status("Modules updated")
 
     def select_model(self, model):
         if self.busy.is_set():

@@ -1,6 +1,9 @@
 import shutil
 import os
 import sys
+import json
+import re
+import tempfile
 from importlib.resources import files
 
 if sys.version_info >= (3, 11):
@@ -125,3 +128,91 @@ def load_system_prompt():
     ensure_config()
     with open(SYSTEM_PROMPT_PATH) as f:
         return f.read()
+
+
+def save_module_selections(selections: dict, path=None) -> None:
+    """Persist top-level module choices while preserving hand-written settings."""
+    if not isinstance(selections, dict) or not selections:
+        raise TypeError("selections must be a non-empty mapping")
+    target = os.fspath(path or CONFIG_PATH)
+    if path is None:
+        ensure_config()
+    with open(target, encoding="utf-8") as config_file:
+        lines = config_file.readlines()
+
+    table_start = next(
+        (index for index, line in enumerate(lines) if line.lstrip().startswith("[")),
+        len(lines),
+    )
+    preamble = lines[:table_start]
+    tables = lines[table_start:]
+    assignments = {}
+    for capability, selected in selections.items():
+        if not isinstance(capability, str) or not re.fullmatch(r"[a-z][a-z_]*", capability):
+            raise ValueError("capability names must be lowercase identifiers")
+        if selected is None:
+            assignments[capability] = None
+        elif isinstance(selected, str) and selected:
+            assignments[capability] = json.dumps(selected)
+        elif (
+            isinstance(selected, list)
+            and all(isinstance(name, str) and name for name in selected)
+        ):
+            assignments[capability] = json.dumps(selected)
+        else:
+            raise TypeError(f"invalid selection for {capability}")
+
+    found = set()
+    rewritten = []
+    pattern = re.compile(r"^\s*([a-z][a-z_]*)\s*=")
+    index = 0
+    while index < len(preamble):
+        line = preamble[index]
+        match = pattern.match(line)
+        capability = match.group(1) if match else None
+        if capability not in assignments:
+            rewritten.append(line)
+            index += 1
+            continue
+        found.add(capability)
+        value = assignments[capability]
+        if value is not None:
+            rewritten.append(f"{capability} = {value}\n")
+        original_value = line.split("=", 1)[1]
+        bracket_depth = original_value.count("[") - original_value.count("]")
+        index += 1
+        while bracket_depth > 0 and index < len(preamble):
+            bracket_depth += preamble[index].count("[")
+            bracket_depth -= preamble[index].count("]")
+            index += 1
+
+    missing = [
+        f"{capability} = {value}\n"
+        for capability, value in assignments.items()
+        if capability not in found and value is not None
+    ]
+    if missing and rewritten and rewritten[-1].strip():
+        rewritten.append("\n")
+    rewritten.extend(missing)
+    if tables and rewritten and rewritten[-1].strip():
+        rewritten.append("\n")
+
+    directory = os.path.dirname(os.path.abspath(target))
+    original_mode = os.stat(target).st_mode
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=directory,
+            prefix=".config.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary.writelines([*rewritten, *tables])
+            temporary_path = temporary.name
+        os.chmod(temporary_path, original_mode)
+        os.replace(temporary_path, target)
+    finally:
+        if temporary_path and os.path.exists(temporary_path):
+            os.unlink(temporary_path)
