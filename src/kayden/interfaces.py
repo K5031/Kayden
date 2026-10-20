@@ -9,6 +9,7 @@ from kayden.events import (
     TurnRequest,
 )
 from kayden.frontend_api import FrontendAPI
+from kayden.permissions import OperationDefinition
 
 
 @dataclass(frozen=True)
@@ -188,6 +189,11 @@ class ToolInterface(ABC):
     @abstractmethod
     def execute(self, name: str, arguments: dict) -> str:
         """Validate and run a named tool, returning text for the model."""
+
+    def operation(self, name: str, arguments: dict) -> OperationDefinition:
+        """Describe an invocation for runtime policy enforcement."""
+        label = " ".join(name.split("_")).capitalize() or "Tool operation"
+        return OperationDefinition(id=f"tool.{name}", label=label)
 
     def describe_activity(
         self,

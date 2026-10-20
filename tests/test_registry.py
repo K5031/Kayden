@@ -342,6 +342,30 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "assistant.name"):
             Registry.from_config(_config(assistant={"name": "  "}))
 
+    def test_exposes_exact_permission_rules_to_the_runtime(self):
+        modules = _modules()
+        with patch(
+            "kayden.runtime.registry.importlib.import_module",
+            side_effect=lambda name: SimpleNamespace(Module=modules[name]),
+        ):
+            registry = Registry.from_config(_config(permissions={
+                "tool.forget_memory": "deny",
+            }))
+
+        try:
+            self.assertEqual(
+                registry.permission_rules,
+                {"tool.forget_memory": "deny"},
+            )
+        finally:
+            registry.close()
+
+    def test_rejects_invalid_permission_rules(self):
+        with self.assertRaisesRegex(ValueError, "allow, ask, or deny"):
+            Registry.from_config(_config(permissions={
+                "tool.forget_memory": "sometimes",
+            }))
+
 
 if __name__ == "__main__":
     unittest.main()

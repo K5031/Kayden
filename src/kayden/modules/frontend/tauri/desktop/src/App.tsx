@@ -45,6 +45,27 @@ type BridgeEvent = {
   model?: string;
   label?: string;
   controls?: ControlDescriptor[];
+  requestId?: string;
+  operationId?: string;
+  arguments?: Record<string, unknown>;
+  effects?: string[];
+  origin?: string;
+  explicit?: boolean;
+  previewKind?: "diff" | "text" | null;
+  previewTitle?: string | null;
+  previewContent?: string | null;
+};
+
+type PermissionPrompt = {
+  requestId: string;
+  operationId: string;
+  label: string;
+  arguments: Record<string, unknown>;
+  effects: string[];
+  origin: string;
+  previewKind?: "diff" | "text";
+  previewTitle?: string;
+  previewContent?: string;
 };
 
 type EventBatch = {
@@ -205,6 +226,7 @@ export default function App() {
   const [expandedTools, setExpandedTools] = useState<Set<number>>(() => new Set());
   const [elapsed, setElapsed] = useState(0);
   const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
+  const [permission, setPermission] = useState<PermissionPrompt | null>(null);
   const nextMessageId = useRef(1);
   const nextToolId = useRef(1);
   const assistantId = useRef<number | null>(null);
@@ -356,6 +378,23 @@ export default function App() {
     }
     if (event.type === "controls" && Array.isArray(event.controls)) {
       setControls(event.controls);
+      return;
+    }
+    if (event.type === "permission"
+        && event.requestId
+        && event.operationId
+        && event.label) {
+      setPermission({
+        requestId: event.requestId,
+        operationId: event.operationId,
+        label: event.label,
+        arguments: event.arguments || {},
+        effects: event.effects || [],
+        origin: event.origin || "unknown",
+        previewKind: event.previewKind || undefined,
+        previewTitle: event.previewTitle || undefined,
+        previewContent: event.previewContent || undefined,
+      });
     }
   };
 
@@ -519,6 +558,20 @@ export default function App() {
     void request("/commands/control", { id: control.id, value });
   };
 
+  const resolvePermission = async (allow: boolean) => {
+    if (!permission) return;
+    const active = permission;
+    setPermission(null);
+    try {
+      await request("/commands/permission", {
+        requestId: active.requestId,
+        allow,
+      });
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <main className={config?.mode === "floaty" ? "app app-floaty" : "app"}>
       <section className="conversation">
@@ -662,6 +715,43 @@ export default function App() {
           </footer>
         </div>
       </section>
+      {permission && (
+        <div className="permission-backdrop" role="presentation">
+          <section className="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permission-title">
+            <h2 id="permission-title">Allow this operation?</h2>
+            <p>{permission.label}</p>
+            <dl>
+              <div><dt>Operation</dt><dd>{permission.operationId}</dd></div>
+              <div><dt>Origin</dt><dd>{permission.origin}</dd></div>
+              <div><dt>Effects</dt><dd>{permission.effects.join(", ") || "unspecified"}</dd></div>
+            </dl>
+            {permission.previewContent && (
+              <div className={`permission-preview ${permission.previewKind || "text"}`}>
+                <h3>{permission.previewTitle || "Preview"}</h3>
+                <pre>{permission.previewContent.split("\n").map((line, index) => (
+                  <span
+                    className={line.startsWith("+++") || line.startsWith("---")
+                      ? "diff-file"
+                      : line.startsWith("+")
+                        ? "diff-add"
+                        : line.startsWith("-")
+                          ? "diff-remove"
+                          : line.startsWith("@@")
+                            ? "diff-hunk"
+                            : undefined}
+                    key={`${index}-${line}`}
+                  >{line || " "}{"\n"}</span>
+                ))}</pre>
+              </div>
+            )}
+            <pre>{JSON.stringify(permission.arguments, null, 2)}</pre>
+            <div className="permission-actions">
+              <button type="button" onClick={() => void resolvePermission(false)}>Deny</button>
+              <button className="allow" type="button" onClick={() => void resolvePermission(true)}>Allow once</button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

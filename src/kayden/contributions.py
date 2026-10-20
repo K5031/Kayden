@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Callable
 
+from kayden.permissions import OperationDefinition
+
 
 CONTROL_KINDS = {"button", "toggle", "selection"}
 CONTROL_PLACEMENTS = {"header", "composer", "menu"}
@@ -21,6 +23,11 @@ class ControlContribution:
     icon: str | None = None
     placement: str = "header"
     options: tuple[dict, ...] = ()
+    operation: OperationDefinition | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self):
         if not isinstance(self.id, str) or "." not in self.id:
@@ -35,6 +42,11 @@ class ControlContribution:
             raise TypeError("control contribution handler must be callable")
         if self.kind == "toggle" and not isinstance(self.value, bool):
             raise TypeError("toggle contribution value must be boolean")
+        if self.operation is not None and not isinstance(
+            self.operation,
+            OperationDefinition,
+        ):
+            raise TypeError("control operation must be an OperationDefinition")
 
     def descriptor(self) -> dict:
         return {

@@ -34,6 +34,11 @@ ApplicationWindow {
     property var moduleDraft: ({})
     property bool moduleApplying: false
     property string moduleError: ""
+    property string permissionRequestId: ""
+    property string permissionLabel: ""
+    property string permissionDetails: ""
+    property string permissionPreviewTitle: ""
+    property string permissionPreviewContent: ""
     property real pageMargin: Math.min(80, Math.max(20, width * 0.052))
     property real feedWidth: width - pageMargin * 2
     property real assistantWidth: Math.min(1180, feedWidth)
@@ -277,6 +282,16 @@ ApplicationWindow {
 
         function onControlsReceived(controls) {
             root.controlCatalog = controls
+        }
+
+        function onPermissionRequested(requestId, label, details,
+                previewTitle, previewContent) {
+            root.permissionRequestId = requestId
+            root.permissionLabel = label
+            root.permissionDetails = details
+            root.permissionPreviewTitle = previewTitle
+            root.permissionPreviewContent = previewContent
+            permissionDialog.open()
         }
     }
 
@@ -560,6 +575,146 @@ ApplicationWindow {
                     text: root.moduleApplying ? "Applying…" : "Apply"
                     enabled: !root.moduleApplying
                     onClicked: backend.applyModules(JSON.stringify(root.moduleDraft))
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: permissionDialog
+        objectName: "permissionDialog"
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(root.width - 40, 560)
+        height: Math.min(root.height - 40,
+            root.permissionPreviewContent.length > 0 ? 680 : 500)
+        modal: true
+        focus: true
+        closePolicy: Popup.NoAutoClose
+        padding: 0
+
+        background: Rectangle {
+            radius: 14
+            color: "#111111"
+            border.width: 1
+            border.color: "#404040"
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 14
+
+            Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                Layout.topMargin: 20
+                text: "Allow this operation?"
+                color: "#ececec"
+                font.pixelSize: 18
+                font.bold: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                text: root.permissionLabel
+                color: "#d1d1d1"
+                font.pixelSize: 14
+                wrapMode: Text.Wrap
+            }
+
+            TextArea {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                Layout.preferredHeight: Math.min(150, contentHeight + 20)
+                readOnly: true
+                selectByMouse: true
+                text: root.permissionDetails
+                color: "#a3a3a3"
+                background: Rectangle {
+                    radius: 9
+                    color: "#171717"
+                    border.width: 1
+                    border.color: "#292929"
+                }
+                font.pixelSize: 12
+                wrapMode: TextArea.Wrap
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                visible: root.permissionPreviewContent.length > 0
+                text: root.permissionPreviewTitle
+                color: "#ececec"
+                font.pixelSize: 13
+                font.bold: true
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                Layout.minimumHeight: visible ? 120 : 0
+                visible: root.permissionPreviewContent.length > 0
+                radius: 9
+                color: "#0d0d0d"
+                border.width: 1
+                border.color: "#292929"
+
+                ScrollView {
+                    id: permissionPreviewScroll
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    clip: true
+
+                    Column {
+                        width: Math.max(permissionPreviewScroll.availableWidth,
+                            implicitWidth)
+                        spacing: 1
+
+                        Repeater {
+                            model: root.permissionPreviewContent.split("\n")
+
+                            delegate: Text {
+                                required property string modelData
+                                text: modelData.length > 0 ? modelData : " "
+                                color: modelData.startsWith("+++")
+                                        || modelData.startsWith("---") ? "#8ab4f8"
+                                    : modelData.startsWith("+") ? "#86efac"
+                                    : modelData.startsWith("-") ? "#fca5a5"
+                                    : modelData.startsWith("@@") ? "#c4b5fd"
+                                    : "#d1d1d1"
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                            }
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                Layout.bottomMargin: 18
+                Item { Layout.fillWidth: true }
+                NightButton {
+                    text: "Deny"
+                    onClicked: {
+                        backend.resolvePermission(root.permissionRequestId, false)
+                        permissionDialog.close()
+                    }
+                }
+                NightButton {
+                    text: "Allow once"
+                    onClicked: {
+                        backend.resolvePermission(root.permissionRequestId, true)
+                        permissionDialog.close()
+                    }
                 }
             }
         }

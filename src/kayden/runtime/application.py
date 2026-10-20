@@ -27,6 +27,8 @@ from kayden.frontend_api import (
     InvokeControl,
     ModelsConfigured,
     ModulesConfigured,
+    PermissionRequested,
+    ResolvePermission,
     SelectModel,
     StartCapture,
     StatusChanged,
@@ -38,6 +40,11 @@ from kayden.frontend_api import (
 )
 from kayden.interfaces import FrontendInterface, ManualInputInterface
 from kayden.klogger import get_logger
+from kayden.permissions import (
+    InvocationContext,
+    OperationDefinition,
+    PermissionBroker,
+)
 
 
 log = get_logger("Application")
@@ -265,6 +272,10 @@ class _LegacyFrontendAdapter:
             callback = getattr(self.frontend, "draft", None)
             if callback:
                 callback(event.text)
+        elif isinstance(event, PermissionRequested):
+            callback = getattr(self.frontend, "request_permission", None)
+            allowed = bool(callback(event)) if callback else False
+            self.api.send(ResolvePermission(event.request_id, allowed))
 
     def run(self):
         self.unsubscribe = self.api.subscribe(self._accept)
@@ -290,6 +301,7 @@ class ApplicationRuntime:
         self.stopping = threading.Event()
         self.capture_busy = threading.Event()
         self.capture_threads = []
+        self.control_threads = []
         self.turn_thread = None
         self.speech_thread = None
         self._started = False
@@ -300,6 +312,13 @@ class ApplicationRuntime:
         self._turn_gate = threading.Lock()
         self._memory_actions = None
         self._control_handlers = {}
+        self._permission_lock = threading.RLock()
+        self._permission_prompt_lock = threading.Lock()
+        self._permission_waiters = {}
+        self.permissions = PermissionBroker(
+            ask=self._ask_permission,
+            rules=getattr(api, "permission_rules", {}),
+        )
 
     def __enter__(self):
         self.start()
@@ -335,6 +354,7 @@ class ApplicationRuntime:
 
         memory = self.api.get("memory")
         tools = self.api.get("tools")
+        self._bind_tools(tools)
         add_tools = getattr(tools, "add", None)
         memory_actions = memory.actions()
         if memory_actions is not None and add_tools:
@@ -380,6 +400,7 @@ class ApplicationRuntime:
             else:
                 _LegacyFrontendAdapter(frontend, connection).run()
         finally:
+            self._cancel_permission_requests()
             with self._frontend_condition:
                 if self._frontend is connection:
                     self._frontend = None
@@ -402,7 +423,16 @@ class ApplicationRuntime:
         elif isinstance(command, CancelCapture):
             self.cancel_capture()
         elif isinstance(command, InvokeControl):
-            self.invoke_control(command.control_id, command.value)
+            thread = threading.Thread(
+                target=self._invoke_control_from_frontend,
+                args=(command.control_id, command.value),
+                name="kayden-control",
+                daemon=True,
+            )
+            self.control_threads.append(thread)
+            thread.start()
+        elif isinstance(command, ResolvePermission):
+            self.resolve_permission(command.request_id, command.allow)
         else:
             raise TypeError(f"unsupported frontend command: {type(command).__name__}")
 
@@ -447,7 +477,7 @@ class ApplicationRuntime:
                     raise ValueError(
                         f"duplicate contribution id: {contribution.id}"
                     )
-                handlers[contribution.id] = contribution.invoke
+                handlers[contribution.id] = contribution
                 controls.append(contribution.descriptor())
         self._control_handlers = handlers
         frontend = frontend or self._current_frontend()
@@ -458,11 +488,103 @@ class ApplicationRuntime:
         if not isinstance(control_id, str) or not control_id:
             raise ValueError("control id must be non-empty text")
         try:
-            handler = self._control_handlers[control_id]
+            contribution = self._control_handlers[control_id]
         except KeyError as error:
             raise ValueError(f"control is unavailable: {control_id}") from error
-        handler(value)
+        operation = contribution.operation or OperationDefinition(
+            id=f"control.{contribution.id}",
+            label=contribution.label,
+        )
+        self.permissions.require(
+            operation,
+            {"value": value},
+            InvocationContext(origin="user", explicit=True),
+        )
+        contribution.invoke(value)
         self._refresh_controls()
+
+    def _invoke_control_from_frontend(self, control_id, value):
+        try:
+            self.invoke_control(control_id, value)
+        except Exception as error:
+            log.exception("Frontend control failed: %s", control_id)
+            frontend = self._current_frontend()
+            if frontend:
+                frontend._publish(StatusChanged(f"[error] {error}"))
+
+    def _bind_tools(self, tools):
+        bind = getattr(tools, "bind_authorizer", None)
+        if bind:
+            bind(lambda operation, arguments: self.permissions.require(
+                operation,
+                arguments,
+                InvocationContext(origin="model", explicit=False),
+            ))
+
+    def _ask_permission(self, request):
+        # Frontends present one modal request at a time. Serialize prompts here
+        # so concurrent module activity cannot overwrite an unanswered request.
+        with self._permission_prompt_lock:
+            frontend = self._current_frontend()
+            if frontend is None or self.stopping.is_set():
+                return False
+            waiter = threading.Event()
+            state = {"allow": False}
+            with self._permission_lock:
+                self._permission_waiters[request.request_id] = (waiter, state)
+            frontend._publish(PermissionRequested(
+                request_id=request.request_id,
+                operation_id=request.operation.id,
+                label=request.operation.label,
+                arguments=request.arguments,
+                effects=tuple(sorted(request.operation.effects)),
+                origin=request.context.origin,
+                explicit=request.context.explicit,
+            preview_kind=(
+                request.operation.preview.kind
+                if request.operation.preview else None
+            ),
+            preview_title=(
+                request.operation.preview.title
+                if request.operation.preview else None
+            ),
+            preview_content=(
+                request.operation.preview.content
+                if request.operation.preview else None
+            ),
+            ))
+            try:
+                while not waiter.wait(0.1):
+                    if self.stopping.is_set():
+                        return False
+                    if (
+                        request.context.origin == "model"
+                        and self.interrupted.is_set()
+                    ):
+                        return False
+                return state["allow"]
+            finally:
+                with self._permission_lock:
+                    self._permission_waiters.pop(request.request_id, None)
+
+    def resolve_permission(self, request_id, allow):
+        if not isinstance(request_id, str) or not request_id:
+            raise ValueError("permission request id must be non-empty text")
+        if not isinstance(allow, bool):
+            raise TypeError("permission response must be boolean")
+        with self._permission_lock:
+            pending = self._permission_waiters.get(request_id)
+        if pending is None:
+            raise ValueError("permission request is no longer active")
+        waiter, state = pending
+        state["allow"] = allow
+        waiter.set()
+
+    def _cancel_permission_requests(self):
+        with self._permission_lock:
+            pending = list(self._permission_waiters.values())
+        for waiter, _state in pending:
+            waiter.set()
 
     def _configure_models(self, frontend):
         core = self.api.get("core")
@@ -518,6 +640,7 @@ class ApplicationRuntime:
 
         replacement_memory = replacements.get("memory", self.api.get("memory"))
         replacement_tools = replacements.get("tools", self.api.get("tools"))
+        self._bind_tools(replacement_tools)
         replacement_actions = replacement_memory.actions()
         if "tools" in replacements and replacement_actions is not None:
             add_tools = getattr(replacement_tools, "add", None)
@@ -882,6 +1005,7 @@ class ApplicationRuntime:
         if not self._started or self.stopping.is_set():
             return
         self.stopping.set()
+        self._cancel_permission_requests()
         with self._frontend_condition:
             self._frontend_condition.notify_all()
         with self._idle_condition:
@@ -898,6 +1022,8 @@ class ApplicationRuntime:
         if self.turn_thread:
             self.turn_thread.join(timeout=2)
         for thread in self.capture_threads:
+            thread.join(timeout=2)
+        for thread in self.control_threads:
             thread.join(timeout=2)
 
     def close(self):

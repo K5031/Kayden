@@ -51,6 +51,12 @@ class InvokeControl:
     value: object = None
 
 
+@dataclass(frozen=True)
+class ResolvePermission:
+    request_id: str
+    allow: bool
+
+
 # Events travel from the application runtime to a frontend.
 
 
@@ -127,6 +133,20 @@ class ControlsConfigured:
     controls: list[dict]
 
 
+@dataclass(frozen=True)
+class PermissionRequested:
+    request_id: str
+    operation_id: str
+    label: str
+    arguments: dict
+    effects: tuple[str, ...]
+    origin: str
+    explicit: bool
+    preview_kind: str | None = None
+    preview_title: str | None = None
+    preview_content: str | None = None
+
+
 FrontendCommand = (
     SubmitMessage
     | InterruptTurn
@@ -136,6 +156,7 @@ FrontendCommand = (
     | FinishCapture
     | CancelCapture
     | InvokeControl
+    | ResolvePermission
 )
 
 FrontendEvent = (
@@ -152,6 +173,7 @@ FrontendEvent = (
     | CaptureStateChanged
     | DraftChanged
     | ControlsConfigured
+    | PermissionRequested
 )
 
 

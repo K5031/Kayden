@@ -343,6 +343,60 @@ button { border: 0; }
 .icon-button svg, .send-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .conversation footer { padding: 9px 0 14px; color: #737373; font-size: 9px; text-align: center; }
 
+.permission-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.64);
+  backdrop-filter: blur(4px);
+}
+.permission-dialog {
+  width: min(520px, 100%);
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  color: var(--ink);
+  background: #171717;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.65);
+}
+.permission-dialog h2 { margin: 0 0 10px; font-size: 18px; }
+.permission-dialog > p { margin: 0 0 18px; color: var(--muted); }
+.permission-dialog dl { margin: 0 0 14px; font-size: 12px; }
+.permission-dialog dl div { display: grid; grid-template-columns: 84px 1fr; gap: 8px; margin: 6px 0; }
+.permission-dialog dt { color: var(--faint); }
+.permission-dialog dd { margin: 0; overflow-wrap: anywhere; }
+.permission-dialog pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 9px;
+  color: var(--muted);
+  background: #111111;
+  font-size: 11px;
+}
+.permission-preview { margin: 0 0 14px; }
+.permission-preview h3 { margin: 0 0 8px; font-size: 12px; }
+.permission-preview pre { max-height: 260px; color: var(--muted); }
+.permission-preview pre span { display: block; min-height: 1em; }
+.permission-preview .diff-file { color: var(--accent); }
+.permission-preview .diff-add { color: #86efac; }
+.permission-preview .diff-remove { color: #fca5a5; }
+.permission-preview .diff-hunk { color: #c4b5fd; }
+.permission-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+.permission-actions button {
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  color: var(--ink);
+  background: #292929;
+  cursor: pointer;
+}
+.permission-actions button.allow { color: var(--accent-ink); background: var(--accent); }
+
 .app-floaty { display: block; }
 .app-floaty .conversation { height: 100%; }
 .app-floaty .topbar { min-height: 64px; padding: 11px 18px; }

@@ -1,5 +1,6 @@
 import unittest
 
+from kayden.permissions import OperationDefinition, PermissionDenied
 from kayden.runtime.tools import ToolRuntime
 
 
@@ -94,6 +95,40 @@ class ToolRuntimeTests(unittest.TestCase):
             runtime.replace_borrowed(old, _Tool("owned", "conflict"))
 
         self.assertEqual(runtime.execute("memory", {}).content, "old")
+
+    def test_authorizes_at_execution_boundary_before_calling_tool(self):
+        class SensitiveTool(_Tool):
+            def __init__(self):
+                super().__init__("erase")
+                self.executed = False
+
+            def operation(self, name, arguments):
+                return OperationDefinition(
+                    "tool.erase",
+                    "Erase data",
+                    default_decision="ask",
+                )
+
+            def execute(self, name, arguments):
+                self.executed = True
+                return "erased"
+
+        tool = SensitiveTool()
+        runtime = ToolRuntime([tool])
+        seen = []
+
+        def deny(operation, arguments):
+            seen.append((operation, dict(arguments)))
+            raise PermissionDenied(operation.id)
+
+        runtime.bind_authorizer(deny)
+        result = runtime.execute("erase", {"target": "one"})
+
+        self.assertTrue(result.is_error)
+        self.assertIn("permission denied", result.content)
+        self.assertFalse(tool.executed)
+        self.assertEqual(seen[0][0].id, "tool.erase")
+        self.assertEqual(seen[0][1], {"target": "one"})
 
 
 if __name__ == "__main__":

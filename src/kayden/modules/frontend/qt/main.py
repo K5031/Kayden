@@ -19,6 +19,8 @@ from kayden.frontend_api import (
     InvokeControl,
     ModelsConfigured,
     ModulesConfigured,
+    PermissionRequested,
+    ResolvePermission,
     SelectModel,
     StartCapture,
     StatusChanged,
@@ -120,6 +122,8 @@ class Module(FrontendInterface):
             self.capture_state(event.state)
         elif isinstance(event, DraftChanged):
             self.draft(event.text)
+        elif isinstance(event, PermissionRequested):
+            self.permission_requested(event)
 
     def configure_identity(self, assistant_name: str) -> None:
         self.assistant_name = assistant_name
@@ -286,6 +290,33 @@ class Module(FrontendInterface):
 
     def draft(self, text: str) -> None:
         self._events.put(("draft", text))
+
+    def permission_requested(self, request) -> None:
+        arguments = json.dumps(request.arguments, ensure_ascii=False, indent=2)
+        effects = ", ".join(request.effects) or "unspecified"
+        details = (
+            f"Operation: {request.operation_id}\n"
+            f"Origin: {request.origin}\n"
+            f"Effects: {effects}\n\n"
+            f"Arguments:\n{arguments}"
+        )
+        preview_title = request.preview_title or "Preview"
+        preview_content = request.preview_content or ""
+        self._events.put((
+            "permission",
+            (
+                request.request_id,
+                request.label,
+                details,
+                preview_title,
+                preview_content,
+            ),
+        ))
+
+    def _resolve_permission(self, request_id: str, allow: bool) -> None:
+        if not self._api:
+            raise RuntimeError("frontend permission API is unavailable")
+        self._api.send(ResolvePermission(request_id, bool(allow)))
 
     def _drain_events(self):
         while True:

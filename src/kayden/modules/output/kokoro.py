@@ -45,6 +45,7 @@ class Module(OutputInterface):
         self.running = False
         self._stopped = False
         self._start_lock = threading.Lock()
+        self._stream_close_lock = threading.Lock()
 
         self.log.info("Loading Kokoro dependencies")
         self._sounddevice, pipeline_factory = _load_dependencies()
@@ -85,28 +86,46 @@ class Module(OutputInterface):
                 self.thread = threading.Thread(target=self._worker, daemon=True)
                 self.thread.start()
             except Exception:
-                if self.stream is not None:
-                    self.stream.close()
-                    self.stream = None
+                self._close_stream()
                 raise
 
     def _worker(self):
-        while self.running:
-            try:
-                gen, text = self.queue.get(timeout=0.2)
-            except Empty:
-                continue
+        try:
+            while self.running:
+                try:
+                    gen, text = self.queue.get(timeout=0.2)
+                except Empty:
+                    continue
 
-            if gen != self._generation:
-                continue
+                if gen != self._generation:
+                    continue
 
-            try:
-                for _, _, audio in self.pipeline(text, voice=self.voice):
-                    if not self.running or gen != self._generation:
-                        break
-                    self.stream.write(audio.reshape(-1, 1))
-            except Exception as e:
-                self.log.error("TTS synthesis failed for %r: %s", text, e)
+                try:
+                    for _, _, audio in self.pipeline(text, voice=self.voice):
+                        if not self.running or gen != self._generation:
+                            break
+                        self.stream.write(audio.reshape(-1, 1))
+                except Exception as e:
+                    self.log.error("TTS synthesis failed for %r: %s", text, e)
+        finally:
+            self.running = False
+            self._close_stream()
+
+    def _close_stream(self):
+        """Close the native stream once, preferably from its writer thread."""
+        with self._stream_close_lock:
+            stream = self.stream
+            self.stream = None
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception as error:
+            self.log.debug("audio stream stop failed: %s", error)
+        try:
+            stream.close()
+        except Exception as error:
+            self.log.debug("audio stream close failed: %s", error)
 
     def send(self, token: str):
         self.buffer += token
@@ -138,10 +157,12 @@ class Module(OutputInterface):
 
     def stop(self):
         self.log.info("stopping")
+        self.interrupt()
         self._stopped = True
         self.running = False
         if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=2)
-        if self.stream is not None:
-            self.stream.stop()
-            self.stream.close()
+            self.thread.join(timeout=0.1)
+        if self.thread is None or not self.thread.is_alive():
+            self._close_stream()
+        else:
+            self.log.debug("speech worker is still unwinding; deferring stream cleanup")

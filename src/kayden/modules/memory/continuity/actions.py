@@ -2,6 +2,7 @@ import json
 import re
 
 from kayden.interfaces import ToolInterface
+from kayden.permissions import OperationDefinition
 
 
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
@@ -143,6 +144,17 @@ class MemoryActions(ToolInterface):
         }
         running, finished, failed = descriptions[name]
         return {"running": running, "finished": finished, "failed": failed}[state]
+
+    def operation(self, name, arguments):
+        if name == "forget_memory":
+            key = " ".join(str(arguments.get("key", "")).split())[:72]
+            label = f"Forget memory “{key}”" if key else "Forget a memory"
+            return OperationDefinition(
+                id="tool.forget_memory",
+                label=label,
+                effects=frozenset({"memory.delete"}),
+            )
+        return super().operation(name, arguments)
 
     @staticmethod
     def _validate_arguments(arguments: dict, allowed: set[str]) -> None:

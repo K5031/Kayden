@@ -5,7 +5,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from kayden.interfaces import FrontendInterface
-from kayden.frontend_api import FrontendAPI, InvokeControl
+from kayden.frontend_api import (
+    FrontendAPI,
+    InvokeControl,
+    PermissionRequested,
+    ResolvePermission,
+)
 from kayden.modules.frontend.tauri import Module as TauriFrontend
 
 
@@ -146,6 +151,30 @@ class TauriFrontendTests(unittest.TestCase):
             commands,
             [InvokeControl("input.whisper.mute", True)],
         )
+
+    def test_bridges_permission_requests_and_responses(self):
+        frontend = TauriFrontend()
+        commands = []
+        frontend._desktop._api = FrontendAPI(commands.append)
+        frontend._desktop._accept_event(PermissionRequested(
+            "permission-1",
+            "tool.forget_memory",
+            "Forget memory",
+            {"key": "profile.name"},
+            ("memory.delete",),
+            "model",
+            False,
+        ))
+
+        event = frontend._desktop._event_log[-1]
+        self.assertEqual(event["type"], "permission")
+        self.assertEqual(event["arguments"], {"key": "profile.name"})
+
+        frontend._command(
+            "/commands/permission",
+            {"requestId": "permission-1", "allow": False},
+        )
+        self.assertEqual(commands, [ResolvePermission("permission-1", False)])
 
     def test_bridge_binds_only_to_loopback_and_routes_commands(self):
         frontend = TauriFrontend()

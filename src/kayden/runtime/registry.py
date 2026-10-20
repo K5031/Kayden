@@ -112,6 +112,7 @@ class Registry:
         self._lock = threading.RLock()
         self.assistant_name = assistant_name
         self.module_settings = {}
+        self.permission_rules = {}
         self.config_path = None
 
     def __enter__(self):
@@ -304,13 +305,28 @@ class Registry:
         assistant_name = assistant_name.strip()
         if len(assistant_name) > 64 or any(ord(char) < 32 for char in assistant_name):
             raise ValueError("assistant.name must be a single line of at most 64 characters")
+        permission_rules = config_values.get("permissions", {})
+        if not isinstance(permission_rules, dict):
+            raise TypeError("permissions must be a TOML table")
+        for operation_id, decision in permission_rules.items():
+            if not isinstance(operation_id, str) or "." not in operation_id:
+                raise ValueError("permission rule ids must be namespaced strings")
+            if decision not in {"allow", "ask", "deny"}:
+                raise ValueError(
+                    f"permission for '{operation_id}' must be allow, ask, or deny"
+                )
 
         # Controller modules existed before Kayden's application lifecycle became
         # fixed. Ignore the old key so existing user configs migrate in place.
         config_values = {
             capability: value
             for capability, value in config_values.items()
-            if capability not in {"assistant", "controller", "settings"}
+            if capability not in {
+                "assistant",
+                "controller",
+                "permissions",
+                "settings",
+            }
         }
         provided = set(config_values)
         missing = REQUIRED_CAPABILITIES - provided
@@ -366,6 +382,7 @@ class Registry:
 
         api = cls(assistant_name=assistant_name)
         api.module_settings = module_settings
+        api.permission_rules = dict(permission_rules)
         api.config_path = CONFIG_PATH if loaded_from_disk else None
         try:
             for capability in config_values:

@@ -24,6 +24,7 @@ class FrontendBridge(QObject):
     modulesReceived = Signal("QVariantList")
     modulesBusyReceived = Signal(bool, str)
     controlsReceived = Signal("QVariantList")
+    permissionRequested = Signal(str, str, str, str, str)
 
     def __init__(self, frontend, parent=None):
         super().__init__(parent)
@@ -105,6 +106,13 @@ class FrontendBridge(QObject):
         except Exception as error:
             self.statusReceived.emit(f"[error] {error}")
 
+    @Slot(str, bool)
+    def resolvePermission(self, request_id, allow):
+        try:
+            self._frontend._resolve_permission(request_id, allow)
+        except Exception as error:
+            self.statusReceived.emit(f"[error] {error}")
+
     @Slot()
     def startCapture(self):
         self._capture("start")
@@ -154,6 +162,8 @@ class FrontendBridge(QObject):
                 self.modulesBusyReceived.emit(*value)
             elif kind == "controls":
                 self.controlsReceived.emit(value)
+            elif kind == "permission":
+                self.permissionRequested.emit(*value)
             elif kind == "close":
                 QGuiApplication.quit()
 

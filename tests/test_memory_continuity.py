@@ -172,6 +172,16 @@ class ContinuityMemoryTests(MemoryContractTests, unittest.TestCase):
                 "[no durable memories]",
             )
 
+    def test_forgetting_one_memory_is_allowed_by_default(self):
+        operation = self.memory.actions().operation(
+            "forget_memory",
+            {"key": "profile.name"},
+        )
+
+        self.assertEqual(operation.id, "tool.forget_memory")
+        self.assertEqual(operation.default_decision, "allow")
+        self.assertEqual(operation.effects, frozenset({"memory.delete"}))
+
     def test_rejects_unstable_memory_keys(self):
         with tempfile.TemporaryDirectory() as directory:
             memory = ContinuityMemory(

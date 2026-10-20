@@ -1,6 +1,11 @@
 import unittest
 
-from kayden.frontend_api import ControlsConfigured, FrontendAPI, InvokeControl
+from kayden.frontend_api import (
+    ControlsConfigured,
+    FrontendAPI,
+    InvokeControl,
+    PermissionRequested,
+)
 from kayden.interfaces import FrontendInterface
 from kayden.modules.frontend.tui import Module as TuiFrontend
 
@@ -72,6 +77,24 @@ class TuiFrontendTests(unittest.TestCase):
             commands,
             [InvokeControl("input.whisper.mute", True)],
         )
+
+    def test_queues_permission_request_for_keyboard_confirmation(self):
+        frontend = TuiFrontend()
+        request = PermissionRequested(
+            "permission-1",
+            "tool.forget_memory",
+            "Forget memory",
+            {"key": "profile.name"},
+            ("memory.delete",),
+            "model",
+            False,
+        )
+
+        frontend._accept_event(request)
+        frontend._drain_events()
+
+        self.assertEqual(frontend._permission, request)
+        self.assertEqual(frontend._status, "Allow Forget memory?  y/n")
 
 if __name__ == "__main__":
     unittest.main()

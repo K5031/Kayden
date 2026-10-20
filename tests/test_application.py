@@ -339,6 +339,37 @@ class _ManualFrontend(_Frontend):
 
 
 class ApplicationTests(unittest.TestCase):
+    def test_all_output_modules_can_be_removed_at_runtime(self):
+        class Output(_SpeechOutput):
+            def __init__(self):
+                super().__init__()
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        output = Output()
+        registry = Registry()
+        registry.register("frontend", _PassiveFrontend())
+        registry.register("core", _SwappableCore("model"))
+        registry.register("context", _Context())
+        registry.register("memory", _Memory())
+        registry.register("action", _Action())
+        registry.register("tools", ToolRuntime([]))
+        registry.register("output", output, selection=["terminal", "kokoro"])
+        runtime = ApplicationRuntime(registry)
+
+        try:
+            runtime.start()
+            runtime.apply_module_selections({"output": []})
+
+            self.assertFalse(registry.has("output"))
+            self.assertEqual(registry.selection("output"), [])
+            self.assertTrue(output.stopped)
+        finally:
+            runtime.close()
+            registry.close()
+
     def test_ui_module_selection_uses_named_prepare_and_updates_selection(self):
         old_core = _SwappableCore("old-model")
         new_core = _SwappableCore("new-model")

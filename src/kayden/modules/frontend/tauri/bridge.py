@@ -23,6 +23,8 @@ from kayden.frontend_api import (
     InterruptTurn,
     InvokeControl,
     ModelsConfigured,
+    PermissionRequested,
+    ResolvePermission,
     SelectModel,
     StartCapture,
     StatusChanged,
@@ -114,6 +116,20 @@ class DesktopFrontend:
             self.capture_state(event.state)
         elif isinstance(event, DraftChanged):
             self.draft(event.text)
+        elif isinstance(event, PermissionRequested):
+            self._emit(
+                "permission",
+                requestId=event.request_id,
+                operationId=event.operation_id,
+                label=event.label,
+                arguments=event.arguments,
+                effects=list(event.effects),
+                origin=event.origin,
+                explicit=event.explicit,
+                previewKind=event.preview_kind,
+                previewTitle=event.preview_title,
+                previewContent=event.preview_content,
+            )
 
     def configure_identity(self, assistant_name: str) -> None:
         self.assistant_name = assistant_name
@@ -253,6 +269,14 @@ class DesktopFrontend:
             if not isinstance(control_id, str) or control_id not in available:
                 raise ValueError("control is unavailable")
             self._api.send(InvokeControl(control_id, payload.get("value")))
+        elif path == "/commands/permission" and self._api:
+            request_id = payload.get("requestId")
+            allow = payload.get("allow")
+            if not isinstance(request_id, str) or not request_id:
+                raise ValueError("permission request id is required")
+            if not isinstance(allow, bool):
+                raise ValueError("permission response must be boolean")
+            self._api.send(ResolvePermission(request_id, allow))
         elif path == "/commands/close":
             if self._on_capture_cancel:
                 self._on_capture_cancel()

@@ -81,11 +81,22 @@ tools = ["clock", "calculator", "filesystem", "web_fetch", "web_exa"]
 
 [assistant]
 name = "Kayden"
+
+[permissions]
+# Exact operation overrides: "allow", "ask", or "deny".
+# "tool.forget_memory" = "deny"
 ```
 
 `assistant.name` is the user-facing identity shown by every frontend. Changing
 it updates the window title, logo, assistant labels, and message composer; it
 does not rename the Kayden application or rewrite the system prompt.
+
+Kayden authorizes model tools and module-contributed controls at their actual
+execution boundaries. Ordinary operations, including forgetting one named
+memory, are allowed by default. Configure `tool.forget_memory` as `"ask"` or
+`"deny"` if you want a stricter policy. Each approval applies only to that
+request and its exact arguments. The broker governs cooperative module
+operations; it is not a sandbox for untrusted Python modules.
 
 For fully local inference, install the `local` extra and switch the relevant
 settings:
@@ -295,7 +306,7 @@ automatically normalized to `frontend = "tui"` when loaded, and obsolete
 | action | `native` | Runs the inner model/tool loop using the core's native function-calling protocol |
 | tools | `clock` | Exposes the current local date and time |
 | tools | `calculator` | Safely evaluates arithmetic and common mathematical functions |
-| tools | `filesystem` | Lists, reads, and searches visible files beneath a read-only root |
+| tools | `filesystem` | Reads, searches, creates, edits, moves, and deletes files beneath allowed roots |
 | tools | `web_fetch` | Extracts readable text from public pages, with a reader fallback |
 | tools | `web_exa` | Searches through Exa's hosted MCP endpoint |
 | tools | `web_searxng` | Searches through a configured SearXNG instance |
@@ -370,10 +381,30 @@ workers are moved to the new generation automatically. An active frontend must
 detach before its frontend module can be replaced, after which another frontend can
 attach to the still-running application.
 
-The filesystem tool uses the directory where Kayden was launched as its root.
-Set `KAYDEN_FILESYSTEM_ROOT` to choose another directory. Hidden paths, parent
-traversal, and files larger than 64 KiB are rejected. When using a cloud core,
-remember that file contents returned by the tool are sent to that model.
+The filesystem tool accepts relative paths beneath the directory where Kayden
+was launched and absolute paths beneath the user's home directory. Configure a
+different allowlist when needed:
+
+```toml
+[settings.tools.filesystem]
+roots = ["~/Projects", "~/Documents", "/tmp"]
+allow_hidden = false
+max_file_bytes = 262144
+```
+
+`KAYDEN_FILESYSTEM_ROOTS` provides the same allowlist as a platform-separated
+environment value; the older single `KAYDEN_FILESYSTEM_ROOT` remains supported.
+The module can list roots and directories, read files, search filenames and text,
+create or replace files, perform exact text edits, create directories, move paths,
+and delete paths. Reading, listing, and searching are allowed by default. Every
+filesystem mutation—creating, overwriting, editing, moving, or deleting—asks for
+permission by default. Exact `[permissions]` rules can make any operation always
+allow or deny.
+
+Paths are normalized before use, symlink escapes are rejected, configured roots
+cannot be moved or deleted, and hidden paths remain inaccessible unless
+`allow_hidden = true`. When using a cloud core, remember that file contents
+returned by the tool are sent to that model.
 
 ## Writing a Module
 

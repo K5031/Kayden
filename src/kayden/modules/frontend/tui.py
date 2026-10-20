@@ -16,6 +16,8 @@ from kayden.frontend_api import (
     IdentityConfigured,
     InterruptTurn,
     InvokeControl,
+    PermissionRequested,
+    ResolvePermission,
     StartCapture,
     StatusChanged,
     SubmitMessage,
@@ -51,6 +53,7 @@ class Module(FrontendInterface):
         self._api = None
         self._unsubscribe = None
         self._controls = []
+        self._permission = None
 
     def _accept_event(self, event) -> None:
         if isinstance(event, IdentityConfigured):
@@ -87,6 +90,8 @@ class Module(FrontendInterface):
             self.capture_state(event.state)
         elif isinstance(event, DraftChanged):
             self.draft(event.text)
+        elif isinstance(event, PermissionRequested):
+            self._events.put(("permission", event))
 
     def configure_identity(self, assistant_name: str) -> None:
         self._assistant_name = assistant_name
@@ -167,6 +172,16 @@ class Module(FrontendInterface):
                 self._editor += separator + value
             elif kind == "close":
                 self._closed = True
+            elif kind == "permission":
+                self._permission = value
+                self._status = f"Allow {value.label}?  y/n"
+                if value.preview_content:
+                    title = value.preview_title or "Preview"
+                    self._messages.append([
+                        "Permission",
+                        f"{value.label}\n\n{title}:\n{value.preview_content}",
+                    ])
+                    self._scroll = 0
 
     @staticmethod
     def _safe_add(window, row, col, text, width, style=0):
@@ -226,7 +241,9 @@ class Module(FrontendInterface):
         shown = self._editor[-max(1, width - len(prompt) - 2):]
         self._safe_add(screen, divider + 1, 1, prompt + shown, width - 2)
 
-        if self._capture_state == "recording":
+        if self._permission is not None:
+            hint = "Permission request  •  Y allow  •  N deny"
+        elif self._capture_state == "recording":
             hint = "Ctrl-Y finish  •  Esc cancel"
         elif self._capture_state == "transcribing":
             hint = "Transcribing  •  Ctrl-D quit"
@@ -304,6 +321,20 @@ class Module(FrontendInterface):
                     self._on_interrupt()
                     continue
                 return
+
+            if self._permission is not None:
+                if isinstance(key, str) and key.lower() in {"y", "n"}:
+                    request = self._permission
+                    self._permission = None
+                    self._status = "Thinking…" if self._busy else "Ready"
+                    try:
+                        self._api.send(ResolvePermission(
+                            request.request_id,
+                            key.lower() == "y",
+                        ))
+                    except Exception as error:
+                        self._status = f"Permission response failed: {error}"
+                continue
 
             if key in (curses.KEY_ENTER, "\n", "\r"):
                 message = self._editor.strip()

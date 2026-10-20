@@ -3,6 +3,7 @@ import threading
 from kayden.interfaces import ToolRuntimeInterface
 from kayden.events import ToolResult
 from kayden.klogger import get_logger
+from kayden.permissions import OperationDefinition, PermissionDenied
 
 
 class ToolRuntime(ToolRuntimeInterface):
@@ -13,6 +14,7 @@ class ToolRuntime(ToolRuntimeInterface):
         self._schemas = []
         self._owners = {}
         self._lock = threading.RLock()
+        self._authorizer = None
 
         for module in self._modules:
             self._register(module)
@@ -77,15 +79,39 @@ class ToolRuntime(ToolRuntimeInterface):
         with self._lock:
             return list(self._schemas)
 
+    def bind_authorizer(self, authorizer) -> None:
+        """Bind the runtime-owned authorization boundary for tool execution."""
+        if authorizer is not None and not callable(authorizer):
+            raise TypeError("tool authorizer must be callable")
+        with self._lock:
+            self._authorizer = authorizer
+
     def execute(self, name: str, arguments: dict) -> ToolResult:
         if not isinstance(arguments, dict):
             return ToolResult("Tool error: arguments must be an object", is_error=True)
         with self._lock:
             module = self._owners.get(name)
+            authorizer = self._authorizer
         if module is None:
             return ToolResult(f"Tool error: unknown tool '{name}'", is_error=True)
         try:
+            describe_operation = getattr(module, "operation", None)
+            operation = (
+                describe_operation(name, arguments)
+                if callable(describe_operation)
+                else OperationDefinition(
+                    id=f"tool.{name}",
+                    label=" ".join(name.split("_")).capitalize(),
+                )
+            )
+            if not isinstance(operation, OperationDefinition):
+                raise TypeError("tool operation metadata is invalid")
+            if authorizer is not None:
+                authorizer(operation, arguments)
             return ToolResult(str(module.execute(name, arguments)))
+        except PermissionDenied as error:
+            self.log.info("Tool %s denied by runtime policy", name)
+            return ToolResult(f"Tool error: {error}", is_error=True)
         except (ValueError, TypeError, KeyError) as error:
             self.log.debug("Tool %s failed: %s", name, error)
             return ToolResult(f"Tool error: {error}", is_error=True)

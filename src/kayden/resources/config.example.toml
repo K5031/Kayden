@@ -10,3 +10,12 @@ tools = ["clock", "calculator", "filesystem", "web_fetch", "web_exa"]
 
 [assistant]
 name = "Kayden"
+
+[permissions]
+# Exact operation overrides: "allow", "ask", or "deny".
+# "tool.forget_memory" = "ask"
+
+[settings.tools.filesystem]
+# roots = ["~/Projects", "~/Documents", "/tmp"]
+# allow_hidden = false
+# max_file_bytes = 262144

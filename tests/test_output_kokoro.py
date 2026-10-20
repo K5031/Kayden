@@ -3,6 +3,7 @@ import importlib
 import builtins
 import queue
 import sys
+import threading
 from types import ModuleType
 import unittest
 from unittest.mock import Mock, patch
@@ -27,6 +28,7 @@ def _output():
     output.thread = None
     output.stream = None
     output._stopped = False
+    output._stream_close_lock = threading.Lock()
     output._sounddevice = fake_sounddevice
     output._ensure_started = Mock()
     return output
@@ -129,10 +131,38 @@ class KokoroOutputTests(unittest.TestCase):
 
     def test_stop_closes_audio_stream(self):
         output = _output()
-        output.stream = Mock()
+        stream = Mock()
+        output.stream = stream
         output.stop()
-        output.stream.stop.assert_called_once_with()
-        output.stream.close.assert_called_once_with()
+        stream.stop.assert_called_once_with()
+        stream.close.assert_called_once_with()
+
+    def test_stop_does_not_close_stream_while_worker_is_synthesizing(self):
+        output = _output()
+        stream = Mock()
+        started = threading.Event()
+        release = threading.Event()
+
+        def pipeline(_text, voice):
+            started.set()
+            release.wait(timeout=2)
+            yield None, None, Mock()
+
+        output.pipeline = pipeline
+        output.stream = stream
+        output.running = True
+        output.queue.put((0, "speaking"))
+        output.thread = threading.Thread(target=output._worker, daemon=True)
+        output.thread.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        output.stop()
+
+        stream.close.assert_not_called()
+        release.set()
+        output.thread.join(timeout=1)
+        stream.stop.assert_called_once_with()
+        stream.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

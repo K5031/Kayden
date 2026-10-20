@@ -7,6 +7,8 @@ from kayden.frontend_api import (
     ControlsConfigured,
     FrontendAPI,
     IdentityConfigured,
+    PermissionRequested,
+    ResolvePermission,
     SubmitMessage,
 )
 from kayden.interfaces import FrontendInterface
@@ -106,6 +108,27 @@ class QtFrontendTests(unittest.TestCase):
 
         submit.assert_called_once_with("hello")
         interrupt.assert_called_once_with()
+
+    def test_presents_and_resolves_permission_requests_generically(self):
+        commands = []
+        frontend = QtFrontend()
+        frontend._api = FrontendAPI(commands.append)
+        frontend._accept_event(PermissionRequested(
+            "permission-1",
+            "tool.forget_memory",
+            "Forget memory “profile.name”",
+            {"key": "profile.name"},
+            ("memory.delete",),
+            "model",
+            False,
+        ))
+
+        event = next(frontend._drain_events())
+        self.assertEqual(event[0], "permission")
+        self.assertIn("profile.name", event[1][2])
+
+        frontend._resolve_permission("permission-1", True)
+        self.assertEqual(commands, [ResolvePermission("permission-1", True)])
 
     def test_tool_failures_are_human_readable_and_keep_the_call_id(self):
         frontend = QtFrontend()
