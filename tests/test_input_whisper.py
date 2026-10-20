@@ -49,6 +49,8 @@ def _input():
     module._stopped = False
     module._thread = None
     module._start_lock = threading.Lock()
+    module._muted = False
+    module._muted_lock = threading.Lock()
     module.energy_threshold = 1000.0
     module.calibrate = True
     module.calibration_duration = 1.0
@@ -187,6 +189,35 @@ class WhisperInputTests(unittest.TestCase):
 
         with self.assertRaises(EOFError):
             module.get_input()
+
+    def test_mute_contribution_discards_audio_and_updates_its_state(self):
+        module = _input()
+        module.data_queue.put(b"audio")
+        module.output_queue.put("pending words")
+        module.buffer = b"partial"
+
+        contribution = module.contributions()[0]
+        contribution.invoke(True)
+        updated = module.contributions()[0]
+
+        self.assertEqual(contribution.id, "input.whisper.mute")
+        self.assertEqual(contribution.placement, "composer")
+        self.assertFalse(contribution.value)
+        self.assertTrue(updated.value)
+        self.assertEqual(updated.label, "Unmute microphone")
+        self.assertTrue(module.data_queue.empty())
+        self.assertTrue(module.output_queue.empty())
+        self.assertEqual(module.buffer, b"")
+
+    def test_muted_microphone_callback_drops_new_audio(self):
+        module = _input()
+        module._set_muted(True)
+        audio = Mock()
+
+        module._record_callback(None, audio)
+
+        audio.get_raw_data.assert_not_called()
+        self.assertTrue(module.data_queue.empty())
 
 
 if __name__ == "__main__":

@@ -80,8 +80,24 @@ button { border: 0; }
 .topbar p { display: flex; align-items: center; gap: 7px; margin: 6px 0 0; color: var(--muted); font-size: 11px; }
 .status-dot { width: 5px; height: 5px; box-shadow: none; }
 .topbar-logo { margin-right: 24px; padding-right: 24px; border-right: 1px solid var(--line); }
+.topbar-actions { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
+.control-chip {
+  overflow: hidden;
+  max-width: 180px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--elevated);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.control-chip:hover:not(:disabled), .control-chip:focus-visible { border-color: rgba(138, 180, 248, 0.56); color: var(--ink); }
+.control-chip:disabled { cursor: default; opacity: 0.5; }
+.composer-control { max-width: 150px; }
 .model-chip {
-  margin-left: auto;
   max-width: 36vw;
   overflow: hidden;
   padding: 5px 9px;

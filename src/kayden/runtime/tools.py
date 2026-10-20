@@ -122,6 +122,16 @@ class ToolRuntime(ToolRuntimeInterface):
                 description += f" — {detail}"
         return description[:240]
 
+    def contributions(self):
+        with self._lock:
+            modules = list(self._modules)
+        contributed = []
+        for module in modules:
+            provide = getattr(module, "contributions", None)
+            if provide:
+                contributed.extend(provide() or [])
+        return contributed
+
     def stop(self) -> None:
         with self._lock:
             modules = list(self._modules)

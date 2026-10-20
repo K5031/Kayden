@@ -217,7 +217,9 @@ model is loaded lazily on the first completed recording.
 
 The original `input = "whisper"` module remains available for hands-free,
 always-listening input. Install `voice-dictation` for `dictation`, or
-`voice-input` for `whisper`.
+`voice-input` for `whisper`. Whisper contributes a microphone mute toggle to
+frontends that render generic controls. In the TUI, use `/mute`; `/controls`
+lists all controls contributed by the active modules.
 
 Check what Kayden can actually access before launching it:
 
@@ -375,29 +377,62 @@ remember that file contents returned by the tool are sent to that model.
 
 ## Writing a Module
 
-Every module is a Python file with a class named `Module` that implements the relevant interface:
+Every module is a Python file with a class named `Module` that implements the
+relevant interface. A frontend receives Kayden's stable typed API instead of
+runtime objects or feature-specific callbacks:
 
 ```python
+from kayden.frontend_api import AssistantText, SubmitMessage
 from kayden.interfaces import FrontendInterface
 
 class Module(FrontendInterface):
-    def run(self, on_submit, on_interrupt):
-        # Own the platform event loop and invoke these callbacks from UI events.
-        ...
+    frontend_api_version = 1
 
-    def user(self, message): ...
-    def assistant(self, token): ...
-    def status(self, message): ...
-    def finish(self, interrupted=False): ...
+    def run(self, api):
+        unsubscribe = api.subscribe(self.handle_event)
+        try:
+            # A UI action sends a typed command:
+            api.send(SubmitMessage("hello"))
+            self.run_platform_event_loop()
+        finally:
+            unsubscribe()
+
+    def handle_event(self, event):
+        if isinstance(event, AssistantText):
+            self.append_text(event.text)
 ```
 
 Place it under `src/kayden/modules/<capability>/your_module.py` and reference it
 by name in `config.toml`. Details about each interface can be found in
 `src/kayden/interfaces.py`.
 
+Modules can also expose optional controls without importing a frontend or
+expanding their category interface. The module owns the state and handler;
+frontends only render the descriptor and send its ID back through the API:
+
+```python
+from kayden.contributions import ControlContribution
+
+def contributions(self):
+    return [ControlContribution(
+        id="input.example.mute",
+        label="Mute microphone",
+        kind="toggle",
+        value=self.muted,
+        invoke=self.set_muted,
+    )]
+```
+
+Control IDs are globally namespaced. The runtime validates and routes them,
+refreshes their authoritative state after invocation, and removes displaced
+modules' controls during a hot swap. Built-in frontends can render `button` and
+`toggle` controls without knowing which module supplied them. This is the first
+typed contribution point; richer settings and panels can be added later without
+turning `FrontendInterface` into a list of every Kayden feature.
+
 ## Available Interfaces
 
-- `FrontendInterface` — owns the platform event loop, submits/interrupts through callbacks, and renders user, assistant, status, and completion events
+- `FrontendInterface` — owns the platform event loop and communicates only through typed `FrontendAPI` commands and events
 - `InputInterface` — optional streaming auxiliary input such as always-listening Whisper
 - `ManualInputInterface` — explicit start/finish/cancel capture that returns an editable frontend draft
 - `OutputInterface` — optional auxiliary output such as Kokoro

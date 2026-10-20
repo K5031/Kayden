@@ -5,11 +5,36 @@ import queue
 import threading
 from typing import Callable
 
+from kayden.frontend_api import (
+    ApplyModuleSelections,
+    AssistantText,
+    CancelCapture,
+    CaptureConfigured,
+    CaptureStateChanged,
+    ControlsConfigured,
+    DraftChanged,
+    FinishCapture,
+    IdentityConfigured,
+    InterruptTurn,
+    InvokeControl,
+    ModelsConfigured,
+    ModulesConfigured,
+    SelectModel,
+    StartCapture,
+    StatusChanged,
+    SubmitMessage,
+    ToolActivityFinished,
+    ToolActivityStarted,
+    TurnFinished,
+    UserMessage,
+)
 from kayden.interfaces import FrontendInterface
 
 
 class Module(FrontendInterface):
     """Native Qt Quick frontend backed by PySide6 and QML."""
+
+    frontend_api_version = 1
 
     def __init__(self, width=1000, height=760):
         if not isinstance(width, int) or width < 480:
@@ -27,6 +52,7 @@ class Module(FrontendInterface):
         self._on_modules_apply = None
         self._module_change_busy = False
         self._module_change_thread = None
+        self._controls = []
         self._capture_label = "Capture"
         self._on_capture_start = None
         self._on_capture_finish = None
@@ -37,6 +63,63 @@ class Module(FrontendInterface):
         self._tool_activities = {}
         self._tool_chain_open = False
         self._tool_group_id = 0
+        self._api = None
+        self._unsubscribe = None
+
+    def _accept_event(self, event) -> None:
+        if isinstance(event, IdentityConfigured):
+            self.configure_identity(event.assistant_name)
+        elif isinstance(event, ModelsConfigured):
+            self.configure_models(
+                event.models,
+                event.selected_model,
+                lambda model: self._api.send(SelectModel(model)),
+            )
+        elif isinstance(event, ModulesConfigured):
+            self.configure_modules(
+                event.modules,
+                lambda selections: self._api.send(
+                    ApplyModuleSelections(selections)
+                ),
+            )
+        elif isinstance(event, CaptureConfigured):
+            if event.available:
+                self.configure_capture(
+                    lambda: self._api.send(StartCapture()),
+                    lambda: self._api.send(FinishCapture()),
+                    lambda: self._api.send(CancelCapture()),
+                    event.label,
+                )
+            else:
+                self.clear_capture()
+        elif isinstance(event, ControlsConfigured):
+            self.configure_controls(event.controls)
+        elif isinstance(event, UserMessage):
+            self.user(event.text)
+        elif isinstance(event, AssistantText):
+            self.assistant(event.text)
+        elif isinstance(event, StatusChanged):
+            self.status(event.text)
+        elif isinstance(event, ToolActivityStarted):
+            self.tool_started(
+                event.call_id,
+                event.name,
+                event.arguments,
+                event.description,
+            )
+        elif isinstance(event, ToolActivityFinished):
+            self.tool_finished(
+                event.call_id,
+                event.name,
+                event.result,
+                event.description,
+            )
+        elif isinstance(event, TurnFinished):
+            self.finish(event.interrupted)
+        elif isinstance(event, CaptureStateChanged):
+            self.capture_state(event.state)
+        elif isinstance(event, DraftChanged):
+            self.draft(event.text)
 
     def configure_identity(self, assistant_name: str) -> None:
         self.assistant_name = assistant_name
@@ -113,6 +196,10 @@ class Module(FrontendInterface):
         self._capture_label = label
         self._events.put(("capture_config", (True, label)))
         return True
+
+    def configure_controls(self, controls) -> None:
+        self._controls = [dict(control) for control in controls]
+        self._events.put(("controls", list(self._controls)))
 
     def clear_capture(self) -> None:
         self._on_capture_start = None
@@ -289,6 +376,14 @@ class Module(FrontendInterface):
             raise ValueError("capture action is unavailable")
         callback()
 
+    def _invoke_control(self, control_id: str, value=None) -> None:
+        if not self._api:
+            raise RuntimeError("frontend control API is unavailable")
+        available = {control["id"] for control in self._controls}
+        if control_id not in available:
+            raise ValueError("control is unavailable")
+        self._api.send(InvokeControl(control_id, value))
+
     def _close_from_ui(self) -> None:
         if self._closed.is_set():
             return
@@ -299,24 +394,30 @@ class Module(FrontendInterface):
 
     def run(
         self,
-        on_submit: Callable[[str], None],
-        on_interrupt: Callable[[], None],
+        api,
     ) -> None:
-        self._on_submit = on_submit
-        self._on_interrupt = on_interrupt
+        self._api = api
+        self._on_submit = lambda text: api.send(SubmitMessage(text))
+        self._on_interrupt = lambda: api.send(InterruptTurn())
+        self._unsubscribe = api.subscribe(self._accept_event)
         self._closed.clear()
         try:
-            from .backend import run_qt
-        except ModuleNotFoundError as error:
-            if error.name == "PySide6" or error.name.startswith("PySide6."):
-                raise RuntimeError(
-                    "The Qt frontend requires PySide6. Install it with "
-                    "`pip install 'kayden[qt]'`."
-                ) from error
-            raise
-        run_qt(self)
-        if self._module_change_thread and self._module_change_thread.is_alive():
-            self._module_change_thread.join()
+            try:
+                from .backend import run_qt
+            except ModuleNotFoundError as error:
+                if error.name == "PySide6" or error.name.startswith("PySide6."):
+                    raise RuntimeError(
+                        "The Qt frontend requires PySide6. Install it with "
+                        "`pip install 'kayden[qt]'`."
+                    ) from error
+                raise
+            run_qt(self)
+            if self._module_change_thread and self._module_change_thread.is_alive():
+                self._module_change_thread.join()
+        finally:
+            self._unsubscribe()
+            self._unsubscribe = None
+            self._api = None
 
     def stop(self) -> None:
         if self._closed.is_set():

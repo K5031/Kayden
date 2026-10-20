@@ -16,11 +16,23 @@ type FrontendConfig = {
   captureLabel: string;
   models: ModelOption[];
   selectedModel: string | null;
+  controls: ControlDescriptor[];
 };
 
 type ModelOption = {
   id: string;
   name: string;
+};
+
+type ControlDescriptor = {
+  id: string;
+  label: string;
+  kind: "button" | "toggle" | "selection";
+  value: unknown;
+  enabled: boolean;
+  icon?: string | null;
+  placement: "header" | "composer" | "menu";
+  options: Record<string, unknown>[];
 };
 
 type BridgeEvent = {
@@ -32,6 +44,7 @@ type BridgeEvent = {
   state?: "idle" | "recording" | "transcribing";
   model?: string;
   label?: string;
+  controls?: ControlDescriptor[];
 };
 
 type EventBatch = {
@@ -184,6 +197,7 @@ export default function App() {
   const [composer, setComposer] = useState("");
   const [status, setStatus] = useState("Connecting…");
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [controls, setControls] = useState<ControlDescriptor[]>([]);
   const [busy, setBusy] = useState(false);
   const [captureState, setCaptureState] = useState("idle");
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -338,6 +352,10 @@ export default function App() {
     if (event.type === "model" && event.model) {
       setSelectedModel(event.model);
       setStatus("Ready");
+      return;
+    }
+    if (event.type === "controls" && Array.isArray(event.controls)) {
+      setControls(event.controls);
     }
   };
 
@@ -353,6 +371,7 @@ export default function App() {
         const frontendConfig = await invoke<FrontendConfig>("bridge_frontend_config");
         setConfig(frontendConfig);
         setSelectedModel(frontendConfig.selectedModel);
+        setControls(frontendConfig.controls || []);
         setConnectionError(null);
 
         let lastEvent = 0;
@@ -495,6 +514,11 @@ export default function App() {
     }
   };
 
+  const invokeControl = (control: ControlDescriptor) => {
+    const value = control.kind === "toggle" ? !control.value : null;
+    void request("/commands/control", { id: control.id, value });
+  };
+
   return (
     <main className={config?.mode === "floaty" ? "app app-floaty" : "app"}>
       <section className="conversation">
@@ -507,21 +531,37 @@ export default function App() {
               {connectionError || status}
             </p>
           </div>
-          {modelLabel && config && config.models.length > 1 ? (
-            <select
-              className="model-chip model-select"
-              aria-label="Model"
-              value={selectedModel || ""}
-              disabled={busy}
-              onChange={(event) => void changeModel(event.target.value)}
-            >
-              {config.models.map((model) => (
-                <option value={model.id} key={model.id}>{model.name}</option>
+          <div className="topbar-actions">
+            {controls
+              .filter((control) => control.placement === "header"
+                && (control.kind === "button" || control.kind === "toggle"))
+              .map((control) => (
+                <button
+                  className="control-chip"
+                  type="button"
+                  key={control.id}
+                  disabled={!control.enabled}
+                  onClick={() => invokeControl(control)}
+                >
+                  {control.label}
+                </button>
               ))}
-            </select>
-          ) : modelLabel ? (
-            <span className="model-chip">{modelLabel}</span>
-          ) : null}
+            {modelLabel && config && config.models.length > 1 ? (
+              <select
+                className="model-chip model-select"
+                aria-label="Model"
+                value={selectedModel || ""}
+                disabled={busy}
+                onChange={(event) => void changeModel(event.target.value)}
+              >
+                {config.models.map((model) => (
+                  <option value={model.id} key={model.id}>{model.name}</option>
+                ))}
+              </select>
+            ) : modelLabel ? (
+              <span className="model-chip">{modelLabel}</span>
+            ) : null}
+          </div>
         </header>
 
         <div className="transcript-shell">
@@ -582,6 +622,20 @@ export default function App() {
               autoFocus
             />
             <div className="composer-actions">
+              {controls
+                .filter((control) => control.placement === "composer"
+                  && (control.kind === "button" || control.kind === "toggle"))
+                .map((control) => (
+                  <button
+                    className="control-chip composer-control"
+                    type="button"
+                    key={control.id}
+                    disabled={!control.enabled}
+                    onClick={() => invokeControl(control)}
+                  >
+                    {control.label}
+                  </button>
+                ))}
               {config?.capture && (
                 <button
                   className={`icon-button mic ${captureState === "recording" ? "recording" : ""}`}

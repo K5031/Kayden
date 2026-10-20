@@ -4,6 +4,7 @@ from time import sleep
 import math
 import os
 import threading
+from kayden.contributions import ControlContribution
 from kayden.interfaces import InputInterface
 from kayden.klogger import get_logger
 from kayden.audio import resolve_pyaudio_input_device
@@ -103,6 +104,8 @@ class Module(InputInterface):
         self._stopped = False
         self._thread = None
         self._start_lock = threading.Lock()
+        self._muted = False
+        self._muted_lock = threading.Lock()
 
     def _setup_recorder(self):
         recorder = self._speech_recognition.Recognizer()
@@ -142,6 +145,9 @@ class Module(InputInterface):
             self.log.info("calibrated energy_threshold: %s", calibrated)
 
     def _record_callback(self, _, audio):
+        with self._muted_lock:
+            if self._muted:
+                return
         self.data_queue.put(audio.get_raw_data())
 
     def _drain_audio_queue(self) -> bytes:
@@ -215,6 +221,12 @@ class Module(InputInterface):
         return " ".join(texts) if texts else None
 
     def _process_audio(self):
+        with self._muted_lock:
+            if self._muted:
+                self._drain_audio_queue()
+                self.buffer = b""
+                self.last_audio_time = None
+                return
         now = datetime.now(timezone.utc)
         audio_data = self._drain_audio_queue()
         if audio_data:
@@ -280,3 +292,34 @@ class Module(InputInterface):
 
     def has_input(self) -> bool:
         return not self.output_queue.empty()
+
+    def _set_muted(self, value):
+        if value is not None and not isinstance(value, bool):
+            raise TypeError("microphone mute state must be boolean")
+        muted = not self._muted if value is None else bool(value)
+        with self._muted_lock:
+            self._muted = muted
+            if muted:
+                self._drain_audio_queue()
+                while True:
+                    try:
+                        self.output_queue.get_nowait()
+                    except Empty:
+                        break
+                self.buffer = b""
+                self.last_audio_time = None
+        self.log.info("microphone %s", "muted" if muted else "unmuted")
+        return muted
+
+    def contributions(self):
+        with self._muted_lock:
+            muted = self._muted
+        return [ControlContribution(
+            id="input.whisper.mute",
+            label="Unmute microphone" if muted else "Mute microphone",
+            kind="toggle",
+            value=muted,
+            icon="mic-off" if muted else "mic",
+            placement="composer",
+            invoke=self._set_muted,
+        )]

@@ -1,14 +1,36 @@
 import curses
+import json
 import queue
 import sys
 import textwrap
 from typing import Callable
 
+from kayden.frontend_api import (
+    AssistantText,
+    CancelCapture,
+    CaptureConfigured,
+    CaptureStateChanged,
+    ControlsConfigured,
+    DraftChanged,
+    FinishCapture,
+    IdentityConfigured,
+    InterruptTurn,
+    InvokeControl,
+    StartCapture,
+    StatusChanged,
+    SubmitMessage,
+    ToolActivityFinished,
+    ToolActivityStarted,
+    TurnFinished,
+    UserMessage,
+)
 from kayden.interfaces import FrontendInterface
 
 
 class Module(FrontendInterface):
     """A dependency-free, full-screen terminal frontend."""
+
+    frontend_api_version = 1
 
     def __init__(self):
         self._assistant_name = "Kayden"
@@ -26,6 +48,45 @@ class Module(FrontendInterface):
         self._on_capture_start = None
         self._on_capture_finish = None
         self._on_capture_cancel = None
+        self._api = None
+        self._unsubscribe = None
+        self._controls = []
+
+    def _accept_event(self, event) -> None:
+        if isinstance(event, IdentityConfigured):
+            self.configure_identity(event.assistant_name)
+        elif isinstance(event, CaptureConfigured):
+            if event.available:
+                self.configure_capture(
+                    lambda: self._api.send(StartCapture()),
+                    lambda: self._api.send(FinishCapture()),
+                    lambda: self._api.send(CancelCapture()),
+                    event.label,
+                )
+            else:
+                self.clear_capture()
+        elif isinstance(event, ControlsConfigured):
+            self._controls = [dict(control) for control in event.controls]
+        elif isinstance(event, UserMessage):
+            self.user(event.text)
+        elif isinstance(event, AssistantText):
+            self.assistant(event.text)
+        elif isinstance(event, StatusChanged):
+            self.status(event.text)
+        elif isinstance(event, ToolActivityStarted):
+            arguments = json.dumps(event.arguments, ensure_ascii=False)
+            self.status(f"[tool] {event.name}({arguments})")
+        elif isinstance(event, ToolActivityFinished):
+            if event.result.is_error:
+                self.status(f"[tool] {event.name} failed: {event.result.content}")
+            else:
+                self.status(f"[tool] {event.name} finished")
+        elif isinstance(event, TurnFinished):
+            self.finish(event.interrupted)
+        elif isinstance(event, CaptureStateChanged):
+            self.capture_state(event.state)
+        elif isinstance(event, DraftChanged):
+            self.draft(event.text)
 
     def configure_identity(self, assistant_name: str) -> None:
         self._assistant_name = assistant_name
@@ -186,6 +247,34 @@ class Module(FrontendInterface):
             pass
         screen.refresh()
 
+    def _run_control_command(self, message: str) -> bool:
+        if message == "/controls":
+            names = [
+                f"/{control['id'].rsplit('.', 1)[-1]}"
+                for control in self._controls
+            ]
+            self._status = "Controls: " + (", ".join(names) if names else "none")
+            return True
+        if not message.startswith("/"):
+            return False
+        name = message[1:]
+        matches = [
+            control for control in self._controls
+            if control["id"] == name or control["id"].rsplit(".", 1)[-1] == name
+        ]
+        if not matches:
+            return False
+        if len(matches) > 1:
+            self._status = f"Ambiguous control: {name}"
+            return True
+        control = matches[0]
+        value = not control["value"] if control["kind"] == "toggle" else None
+        try:
+            self._api.send(InvokeControl(control["id"], value))
+        except Exception as error:
+            self._status = f"Control failed: {error}"
+        return True
+
     def _main(self, screen):
         try:
             curses.curs_set(1)
@@ -220,9 +309,10 @@ class Module(FrontendInterface):
                 message = self._editor.strip()
                 if message:
                     self._editor = ""
-                    self._busy = True
-                    self._status = "Queued…"
-                    self._on_submit(message)
+                    if not self._run_control_command(message):
+                        self._busy = True
+                        self._status = "Queued…"
+                        self._on_submit(message)
             elif key == "\x19" and self._on_capture_start:
                 if self._capture_state == "recording":
                     self._on_capture_finish()
@@ -249,12 +339,18 @@ class Module(FrontendInterface):
 
     def run(
         self,
-        on_submit: Callable[[str], None],
-        on_interrupt: Callable[[], None],
+        api,
     ) -> None:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise RuntimeError("the tui frontend requires an interactive terminal")
-        self._on_submit = on_submit
-        self._on_interrupt = on_interrupt
+        self._api = api
+        self._on_submit = lambda text: api.send(SubmitMessage(text))
+        self._on_interrupt = lambda: api.send(InterruptTurn())
+        self._unsubscribe = api.subscribe(self._accept_event)
         self._closed = False
-        curses.wrapper(self._main)
+        try:
+            curses.wrapper(self._main)
+        finally:
+            self._unsubscribe()
+            self._unsubscribe = None
+            self._api = None

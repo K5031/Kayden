@@ -1,5 +1,6 @@
 import unittest
 
+from kayden.frontend_api import ControlsConfigured, FrontendAPI, InvokeControl
 from kayden.interfaces import FrontendInterface
 from kayden.modules.frontend.tui import Module as TuiFrontend
 
@@ -50,6 +51,27 @@ class TuiFrontendTests(unittest.TestCase):
 
         self.assertEqual(frontend._assistant_name, "Ahri")
         self.assertEqual(frontend._messages, [["Ahri", "hello"]])
+
+    def test_exposes_generic_controls_as_terminal_commands(self):
+        commands = []
+        frontend = TuiFrontend()
+        frontend._api = FrontendAPI(commands.append)
+        frontend._accept_event(ControlsConfigured([{
+            "id": "input.whisper.mute",
+            "label": "Mute microphone",
+            "kind": "toggle",
+            "value": False,
+            "enabled": True,
+            "icon": "mic",
+            "placement": "header",
+            "options": [],
+        }]))
+
+        self.assertTrue(frontend._run_control_command("/mute"))
+        self.assertEqual(
+            commands,
+            [InvokeControl("input.whisper.mute", True)],
+        )
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-import json
 from typing import Callable, Iterator
 
 from kayden.events import (
@@ -9,6 +8,7 @@ from kayden.events import (
     ToolResult,
     TurnRequest,
 )
+from kayden.frontend_api import FrontendAPI
 
 
 @dataclass(frozen=True)
@@ -77,99 +77,14 @@ class OutputInterface(ABC):
 
 
 class FrontendInterface(ABC):
-    """Interactive presentation layer for Kayden.
-
-    ``run`` owns the platform event loop. The other methods may be called from
-    the application's worker thread, so frontend implementations must marshal
-    rendering back to their UI thread.
-    """
-
-    def configure_identity(self, assistant_name: str) -> None:
-        """Configure the user-facing assistant identity before rendering."""
-
-    def configure_models(
-        self,
-        models: list[dict[str, str]],
-        selected_model: str,
-        on_select: Callable[[str], None],
-    ) -> bool:
-        """Attach an optional runtime model selector."""
-        return False
-
-    def configure_modules(
-        self,
-        modules: list[dict],
-        on_apply: Callable[[dict], None],
-    ) -> bool:
-        """Attach an optional generic selector for runtime module replacements."""
-        return False
+    """Interactive presentation layer connected through ``FrontendAPI``."""
 
     @abstractmethod
     def run(
         self,
-        on_submit: Callable[[str], None],
-        on_interrupt: Callable[[], None],
+        api: FrontendAPI,
     ) -> None:
-        """Run until the user closes the frontend."""
-
-    @abstractmethod
-    def user(self, message: str) -> None:
-        """Render a submitted user message."""
-
-    @abstractmethod
-    def assistant(self, token: str) -> None:
-        """Append streamed assistant text to the current turn."""
-
-    @abstractmethod
-    def status(self, message: str) -> None:
-        """Render transient activity such as a tool call."""
-
-    def tool_started(
-        self,
-        call_id: str,
-        name: str,
-        arguments: dict,
-        description: str | None = None,
-    ) -> None:
-        """Render a tool activity that may later be updated in place."""
-        serialized = json.dumps(arguments, ensure_ascii=False)
-        self.status(f"[tool] {name}({serialized})")
-
-    def tool_finished(
-        self,
-        call_id: str,
-        name: str,
-        result: ToolResult,
-        description: str | None = None,
-    ) -> None:
-        """Complete the matching tool activity."""
-        if result.is_error:
-            self.status(f"[tool] {name} failed: {result.content}")
-        else:
-            self.status(f"[tool] {name} finished")
-
-    @abstractmethod
-    def finish(self, interrupted: bool = False) -> None:
-        """Mark the current assistant turn as complete."""
-
-    def configure_capture(
-        self,
-        on_start: Callable[[], None],
-        on_finish: Callable[[], None],
-        on_cancel: Callable[[], None],
-        label: str = "Capture",
-    ) -> bool:
-        """Attach optional manual-input controls; return whether they are supported."""
-        return False
-
-    def clear_capture(self) -> None:
-        """Remove manual-input controls after the active input module changes."""
-
-    def capture_state(self, state: str) -> None:
-        """Render ``idle``, ``recording``, or ``transcribing`` capture state."""
-
-    def draft(self, text: str) -> None:
-        """Insert captured text into the editable composer for user review."""
+        """Subscribe to events, send commands, and run until the UI closes."""
 
 
 class CoreInterface(ABC):

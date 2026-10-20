@@ -11,6 +11,28 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
+from kayden.frontend_api import (
+    AssistantText,
+    CancelCapture,
+    CaptureConfigured,
+    CaptureStateChanged,
+    ControlsConfigured,
+    DraftChanged,
+    FinishCapture,
+    IdentityConfigured,
+    InterruptTurn,
+    InvokeControl,
+    ModelsConfigured,
+    SelectModel,
+    StartCapture,
+    StatusChanged,
+    SubmitMessage,
+    ToolActivityFinished,
+    ToolActivityStarted,
+    TurnFinished,
+    UserMessage,
+)
+
 MAX_COMMAND_BYTES = 64 * 1024
 
 
@@ -32,6 +54,7 @@ class DesktopFrontend:
         self._capture_label = "Capture"
         self._models = []
         self._selected_model = None
+        self._controls = []
         self._on_model_select = None
         self._on_capture_start = None
         self._on_capture_finish = None
@@ -47,6 +70,50 @@ class DesktopFrontend:
         self._process = None
         self._token = None
         self._bridge_url = None
+        self._api = None
+        self._unsubscribe = None
+
+    def _accept_event(self, event):
+        if isinstance(event, IdentityConfigured):
+            self.configure_identity(event.assistant_name)
+        elif isinstance(event, ModelsConfigured):
+            self.configure_models(
+                event.models,
+                event.selected_model,
+                lambda model: self._api.send(SelectModel(model)),
+            )
+        elif isinstance(event, CaptureConfigured):
+            if event.available:
+                self.configure_capture(
+                    lambda: self._api.send(StartCapture()),
+                    lambda: self._api.send(FinishCapture()),
+                    lambda: self._api.send(CancelCapture()),
+                    event.label,
+                )
+            else:
+                self.clear_capture()
+        elif isinstance(event, ControlsConfigured):
+            self.configure_controls(event.controls)
+        elif isinstance(event, UserMessage):
+            self.user(event.text)
+        elif isinstance(event, AssistantText):
+            self.assistant(event.text)
+        elif isinstance(event, StatusChanged):
+            self.status(event.text)
+        elif isinstance(event, ToolActivityStarted):
+            arguments = json.dumps(event.arguments, ensure_ascii=False)
+            self.status(f"[tool] {event.name}({arguments})")
+        elif isinstance(event, ToolActivityFinished):
+            if event.result.is_error:
+                self.status(f"[tool] {event.name} failed: {event.result.content}")
+            else:
+                self.status(f"[tool] {event.name} finished")
+        elif isinstance(event, TurnFinished):
+            self.finish(event.interrupted)
+        elif isinstance(event, CaptureStateChanged):
+            self.capture_state(event.state)
+        elif isinstance(event, DraftChanged):
+            self.draft(event.text)
 
     def configure_identity(self, assistant_name: str) -> None:
         self.assistant_name = assistant_name
@@ -109,6 +176,17 @@ class DesktopFrontend:
         self._capture_label = label
         return True
 
+    def clear_capture(self) -> None:
+        self._on_capture_start = None
+        self._on_capture_finish = None
+        self._on_capture_cancel = None
+        self._capture_label = "Capture"
+        self._emit("capture_config", available=False, label=self._capture_label)
+
+    def configure_controls(self, controls) -> None:
+        self._controls = [dict(control) for control in controls]
+        self._emit("controls", controls=list(self._controls))
+
     def capture_state(self, state: str) -> None:
         self._emit("capture_state", state=state)
 
@@ -140,6 +218,7 @@ class DesktopFrontend:
             "captureLabel": self._capture_label,
             "models": list(self._models),
             "selectedModel": self._selected_model,
+            "controls": list(self._controls),
         }
 
     def _command(self, path, payload):
@@ -168,6 +247,12 @@ class DesktopFrontend:
             self._on_capture_finish()
         elif path == "/commands/capture/cancel" and self._on_capture_cancel:
             self._on_capture_cancel()
+        elif path == "/commands/control" and self._api:
+            control_id = payload.get("id")
+            available = {control["id"] for control in self._controls}
+            if not isinstance(control_id, str) or control_id not in available:
+                raise ValueError("control is unavailable")
+            self._api.send(InvokeControl(control_id, payload.get("value")))
         elif path == "/commands/close":
             if self._on_capture_cancel:
                 self._on_capture_cancel()
@@ -303,14 +388,15 @@ class DesktopFrontend:
 
     def run(
         self,
-        on_submit: Callable[[str], None],
-        on_interrupt: Callable[[], None],
+        api,
     ) -> None:
-        self._on_submit = on_submit
-        self._on_interrupt = on_interrupt
+        self._api = api
+        self._on_submit = lambda text: api.send(SubmitMessage(text))
+        self._on_interrupt = lambda: api.send(InterruptTurn())
+        self._unsubscribe = api.subscribe(self._accept_event)
         self._closed.clear()
-        self._start_server()
         try:
+            self._start_server()
             command, cwd = self._launch_command()
             environment = os.environ.copy()
             environment.update({
@@ -336,6 +422,9 @@ class DesktopFrontend:
                 self._server.shutdown()
                 self._server.server_close()
                 self._server = None
+            self._unsubscribe()
+            self._unsubscribe = None
+            self._api = None
 
     def stop(self) -> None:
         self._closed.set()

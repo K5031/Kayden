@@ -1,8 +1,14 @@
 from pathlib import Path
 import struct
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+from kayden.frontend_api import (
+    ControlsConfigured,
+    FrontendAPI,
+    IdentityConfigured,
+    SubmitMessage,
+)
 from kayden.interfaces import FrontendInterface
 from kayden.events import ToolResult
 from kayden.modules.frontend.qt import Module as QtFrontend
@@ -21,6 +27,22 @@ class QtFrontendTests(unittest.TestCase):
             QtFrontend(width=400)
         with self.assertRaisesRegex(ValueError, "height"):
             QtFrontend(height=300)
+
+    def test_consumes_typed_frontend_api_and_sends_typed_commands(self):
+        commands = []
+        api = FrontendAPI(commands.append)
+        api._publish(IdentityConfigured("Ahri"))
+        api._publish(ControlsConfigured([]))
+        frontend = QtFrontend()
+
+        with patch(
+            "kayden.modules.frontend.qt.backend.run_qt",
+            side_effect=lambda active: active._submit("hello"),
+        ):
+            frontend.run(api)
+
+        self.assertEqual(frontend.assistant_name, "Ahri")
+        self.assertEqual(commands, [SubmitMessage("hello")])
 
     def test_queues_streaming_and_capture_events_before_event_loop_starts(self):
         frontend = QtFrontend()
@@ -302,6 +324,8 @@ class QtFrontendTests(unittest.TestCase):
         qml = (module / "view.qml").read_text()
         self.assertIn("backend.selectModel", qml)
         self.assertIn("backend.applyModules", qml)
+        self.assertIn("backend.invokeControl", qml)
+        self.assertIn("onControlsReceived", qml)
         self.assertIn("onModulesReceived", qml)
         self.assertIn("backend.startCapture", qml)
         self.assertIn("backend.interrupt", qml)

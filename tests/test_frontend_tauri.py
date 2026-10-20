@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from kayden.interfaces import FrontendInterface
+from kayden.frontend_api import FrontendAPI, InvokeControl
 from kayden.modules.frontend.tauri import Module as TauriFrontend
 
 
@@ -118,6 +119,33 @@ class TauriFrontendTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unavailable"):
             frontend._command("/commands/model", {"model": "gpt-hidden"})
+
+    def test_exposes_and_routes_generic_contributed_controls(self):
+        frontend = TauriFrontend()
+        commands = []
+        frontend._desktop._api = FrontendAPI(commands.append)
+        controls = [{
+            "id": "input.whisper.mute",
+            "label": "Mute microphone",
+            "kind": "toggle",
+            "value": False,
+            "enabled": True,
+            "icon": "mic",
+            "placement": "header",
+            "options": [],
+        }]
+        frontend._desktop.configure_controls(controls)
+
+        frontend._command(
+            "/commands/control",
+            {"id": "input.whisper.mute", "value": True},
+        )
+
+        self.assertEqual(frontend._configuration()["controls"], controls)
+        self.assertEqual(
+            commands,
+            [InvokeControl("input.whisper.mute", True)],
+        )
 
     def test_bridge_binds_only_to_loopback_and_routes_commands(self):
         frontend = TauriFrontend()

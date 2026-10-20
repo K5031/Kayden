@@ -3,6 +3,7 @@ import queue
 import threading
 
 from kayden.config import load_system_prompt, save_module_selections
+from kayden.contributions import ControlContribution
 from kayden.events import (
     CoreTextDelta,
     TextDelta,
@@ -11,7 +12,31 @@ from kayden.events import (
     TurnRequest,
     UsageReported,
 )
-from kayden.interfaces import ManualInputInterface
+from kayden.frontend_api import (
+    ApplyModuleSelections,
+    AssistantText,
+    CancelCapture,
+    CaptureConfigured,
+    CaptureStateChanged,
+    ControlsConfigured,
+    DraftChanged,
+    FinishCapture,
+    FrontendAPI,
+    IdentityConfigured,
+    InterruptTurn,
+    InvokeControl,
+    ModelsConfigured,
+    ModulesConfigured,
+    SelectModel,
+    StartCapture,
+    StatusChanged,
+    SubmitMessage,
+    ToolActivityFinished,
+    ToolActivityStarted,
+    TurnFinished,
+    UserMessage,
+)
+from kayden.interfaces import FrontendInterface, ManualInputInterface
 from kayden.klogger import get_logger
 
 
@@ -54,6 +79,23 @@ def _build_turn(system_prompt, context, memories, user_input):
     ])
 
 
+def _publish(frontend, event):
+    """Publish to the API, with compatibility for directly tested helpers."""
+    publish = getattr(frontend, "_publish", None)
+    if publish:
+        publish(event)
+    elif isinstance(event, UserMessage):
+        frontend.user(event.text)
+    elif isinstance(event, AssistantText):
+        frontend.assistant(event.text)
+    elif isinstance(event, StatusChanged):
+        frontend.status(event.text)
+    elif isinstance(event, TurnFinished):
+        frontend.finish(event.interrupted)
+    else:
+        raise TypeError(f"frontend cannot receive {type(event).__name__}")
+
+
 def _restore_transcript(frontend, memory):
     open_turn = False
     for message in memory.recent(50):
@@ -63,15 +105,15 @@ def _restore_transcript(frontend, memory):
             continue
         if role == "user":
             if open_turn:
-                frontend.finish(interrupted=True)
-            frontend.user(content)
+                _publish(frontend, TurnFinished(interrupted=True))
+            _publish(frontend, UserMessage(content))
             open_turn = True
         elif role == "assistant":
-            frontend.assistant(content)
-            frontend.finish()
+            _publish(frontend, AssistantText(content))
+            _publish(frontend, TurnFinished())
             open_turn = False
     if open_turn:
-        frontend.finish(interrupted=True)
+        _publish(frontend, TurnFinished(interrupted=True))
 
 
 def _compact_context(
@@ -97,7 +139,7 @@ def _compact_context(
     if plan is None:
         return
 
-    frontend.status("[context] compacting older conversation")
+    _publish(frontend, StatusChanged("[context] compacting older conversation"))
     summary = ""
     source = []
     if plan.previous_summary:
@@ -123,7 +165,7 @@ def _compact_context(
                 summary += event.text
     except Exception:
         log.exception("Context compaction failed")
-        frontend.status(finished_status)
+        _publish(frontend, StatusChanged(finished_status))
         return
 
     failed_markers = ("[request failed", "[api error", "[connection dropped")
@@ -133,7 +175,106 @@ def _compact_context(
         if memory.commit_compaction(plan, summary):
             context.compacted(memory.view())
             log.info("compacted older conversation into %d characters", len(summary.strip()))
-    frontend.status(finished_status)
+    _publish(frontend, StatusChanged(finished_status))
+
+
+class _LegacyFrontendAdapter:
+    """Temporary compatibility for frontends using the pre-API contract."""
+
+    def __init__(self, frontend, api):
+        self.frontend = frontend
+        self.api = api
+        self.unsubscribe = None
+
+    def _accept(self, event):
+        if isinstance(event, IdentityConfigured):
+            callback = getattr(self.frontend, "configure_identity", None)
+            if callback:
+                callback(event.assistant_name)
+        elif isinstance(event, ModelsConfigured):
+            callback = getattr(self.frontend, "configure_models", None)
+            if callback:
+                callback(
+                    event.models,
+                    event.selected_model,
+                    lambda model: self.api.send(SelectModel(model)),
+                )
+        elif isinstance(event, ModulesConfigured):
+            callback = getattr(self.frontend, "configure_modules", None)
+            if callback:
+                callback(
+                    event.modules,
+                    lambda selections: self.api.send(
+                        ApplyModuleSelections(selections)
+                    ),
+                )
+        elif isinstance(event, CaptureConfigured):
+            if event.available:
+                callback = getattr(self.frontend, "configure_capture", None)
+                if callback:
+                    callback(
+                        lambda: self.api.send(StartCapture()),
+                        lambda: self.api.send(FinishCapture()),
+                        lambda: self.api.send(CancelCapture()),
+                        event.label,
+                    )
+            else:
+                callback = getattr(self.frontend, "clear_capture", None)
+                if callback:
+                    callback()
+        elif isinstance(event, UserMessage):
+            self.frontend.user(event.text)
+        elif isinstance(event, AssistantText):
+            self.frontend.assistant(event.text)
+        elif isinstance(event, StatusChanged):
+            self.frontend.status(event.text)
+        elif isinstance(event, ToolActivityStarted):
+            callback = getattr(self.frontend, "tool_started", None)
+            if callback:
+                callback(
+                    event.call_id,
+                    event.name,
+                    event.arguments,
+                    event.description,
+                )
+            else:
+                arguments = json.dumps(event.arguments, ensure_ascii=False)
+                self.frontend.status(f"[tool] {event.name}({arguments})")
+        elif isinstance(event, ToolActivityFinished):
+            callback = getattr(self.frontend, "tool_finished", None)
+            if callback:
+                callback(
+                    event.call_id,
+                    event.name,
+                    event.result,
+                    event.description,
+                )
+            elif event.result.is_error:
+                self.frontend.status(
+                    f"[tool] {event.name} failed: {event.result.content}"
+                )
+            else:
+                self.frontend.status(f"[tool] {event.name} finished")
+        elif isinstance(event, TurnFinished):
+            self.frontend.finish(event.interrupted)
+        elif isinstance(event, CaptureStateChanged):
+            callback = getattr(self.frontend, "capture_state", None)
+            if callback:
+                callback(event.state)
+        elif isinstance(event, DraftChanged):
+            callback = getattr(self.frontend, "draft", None)
+            if callback:
+                callback(event.text)
+
+    def run(self):
+        self.unsubscribe = self.api.subscribe(self._accept)
+        try:
+            self.frontend.run(
+                lambda text: self.api.send(SubmitMessage(text)),
+                lambda: self.api.send(InterruptTurn()),
+            )
+        finally:
+            self.unsubscribe()
 
 
 class ApplicationRuntime:
@@ -158,6 +299,7 @@ class ApplicationRuntime:
         self._idle_condition = threading.Condition()
         self._turn_gate = threading.Lock()
         self._memory_actions = None
+        self._control_handlers = {}
 
     def __enter__(self):
         self.start()
@@ -221,26 +363,54 @@ class ApplicationRuntime:
         """Run one frontend attachment without giving it runtime ownership."""
         self.start()
         self.wait_until_idle()
+        connection = FrontendAPI(self._handle_frontend_command)
         with self._frontend_condition:
             if self._frontend is not None:
                 raise RuntimeError("a frontend is already attached")
-            self._frontend = frontend
+            self._frontend = connection
             self._frontend_condition.notify_all()
 
         try:
-            self._configure_frontend(frontend)
-            frontend.run(self.submit, self.interrupt)
+            self._configure_frontend(connection)
+            if (
+                isinstance(frontend, FrontendInterface)
+                and getattr(frontend, "frontend_api_version", 0) == 1
+            ):
+                frontend.run(connection)
+            else:
+                _LegacyFrontendAdapter(frontend, connection).run()
         finally:
             with self._frontend_condition:
-                if self._frontend is frontend:
+                if self._frontend is connection:
                     self._frontend = None
                 self._frontend_condition.notify_all()
+            connection._close()
+
+    def _handle_frontend_command(self, command):
+        if isinstance(command, SubmitMessage):
+            self.submit(command.text)
+        elif isinstance(command, InterruptTurn):
+            self.interrupt()
+        elif isinstance(command, SelectModel):
+            self.select_model(command.model)
+        elif isinstance(command, ApplyModuleSelections):
+            self.apply_module_selections(command.selections)
+        elif isinstance(command, StartCapture):
+            self.start_capture()
+        elif isinstance(command, FinishCapture):
+            self.finish_capture()
+        elif isinstance(command, CancelCapture):
+            self.cancel_capture()
+        elif isinstance(command, InvokeControl):
+            self.invoke_control(command.control_id, command.value)
+        else:
+            raise TypeError(f"unsupported frontend command: {type(command).__name__}")
 
     def _configure_frontend(self, frontend):
         memory = self.api.get("memory")
-        configure_identity = getattr(frontend, "configure_identity", None)
-        if configure_identity:
-            configure_identity(getattr(self.api, "assistant_name", "Kayden"))
+        frontend._publish(IdentityConfigured(
+            getattr(self.api, "assistant_name", "Kayden")
+        ))
 
         self._configure_models(frontend)
         self._configure_modules(frontend)
@@ -250,6 +420,49 @@ class ApplicationRuntime:
         speech_input = _optional(self.api, "input")
         if isinstance(speech_input, ManualInputInterface):
             self._configure_capture(frontend, speech_input)
+        else:
+            frontend._publish(CaptureConfigured(False))
+        self._refresh_controls(frontend)
+
+    def _refresh_controls(self, frontend=None):
+        controls = []
+        handlers = {}
+        for capability in SWAPPABLE_CAPABILITIES:
+            if not self.api.has(capability):
+                continue
+            module = self.api.get(capability)
+            provide = getattr(module, "contributions", None)
+            if not provide:
+                continue
+            provided = provide()
+            if provided is None:
+                continue
+            for contribution in provided:
+                if not isinstance(contribution, ControlContribution):
+                    raise TypeError(
+                        f"{capability} contributed unsupported value "
+                        f"{type(contribution).__name__}"
+                    )
+                if contribution.id in handlers:
+                    raise ValueError(
+                        f"duplicate contribution id: {contribution.id}"
+                    )
+                handlers[contribution.id] = contribution.invoke
+                controls.append(contribution.descriptor())
+        self._control_handlers = handlers
+        frontend = frontend or self._current_frontend()
+        if frontend:
+            frontend._publish(ControlsConfigured(controls))
+
+    def invoke_control(self, control_id, value=None):
+        if not isinstance(control_id, str) or not control_id:
+            raise ValueError("control id must be non-empty text")
+        try:
+            handler = self._control_handlers[control_id]
+        except KeyError as error:
+            raise ValueError(f"control is unavailable: {control_id}") from error
+        handler(value)
+        self._refresh_controls()
 
     def _configure_models(self, frontend):
         core = self.api.get("core")
@@ -258,16 +471,14 @@ class ApplicationRuntime:
             or getattr(core, "model_path", "unknown")
         )
         available_models = getattr(core, "available_models", lambda: [])()
-        configure_models = getattr(frontend, "configure_models", None)
-        if configure_models and available_models:
-            configure_models(available_models, model_name, self.select_model)
-        frontend.status(f"Model: {model_name}")
+        if available_models:
+            frontend._publish(ModelsConfigured(available_models, model_name))
+        frontend._publish(StatusChanged(f"Model: {model_name}"))
 
     def _configure_modules(self, frontend):
         discover = getattr(self.api, "available_modules", None)
         selected = getattr(self.api, "selection", None)
-        configure = getattr(frontend, "configure_modules", None)
-        if not discover or not selected or not configure:
+        if not discover or not selected:
             return
         catalog = []
         for capability in SWAPPABLE_CAPABILITIES:
@@ -282,19 +493,10 @@ class ApplicationRuntime:
                 "options": choices,
                 "selected": current,
             })
-        configure(catalog, self.apply_module_selections)
+        frontend._publish(ModulesConfigured(catalog))
 
     def _configure_capture(self, frontend, speech_input):
-        supported = frontend.configure_capture(
-            self.start_capture,
-            self.finish_capture,
-            self.cancel_capture,
-            label=speech_input.capture_label,
-        )
-        if not supported:
-            raise RuntimeError(
-                f"{type(frontend).__name__} does not support manual input capture"
-            )
+        frontend._publish(CaptureConfigured(True, speech_input.capture_label))
 
     @staticmethod
     def _stop_module(module):
@@ -369,9 +571,15 @@ class ApplicationRuntime:
                 except Exception:
                     log.exception("Failed to refresh frontend capture controls")
             else:
-                clear_capture = getattr(frontend, "clear_capture", None)
-                if clear_capture:
-                    clear_capture()
+                frontend._publish(CaptureConfigured(False))
+
+        if frontend:
+            try:
+                self._refresh_controls(frontend)
+            except Exception:
+                log.exception("Failed to refresh frontend contributions")
+                self._control_handlers = {}
+                frontend._publish(ControlsConfigured([]))
 
         for capability, old_module in displaced.items():
             if capability == "input" or old_module is replacements.get(capability):
@@ -467,7 +675,7 @@ class ApplicationRuntime:
         frontend = self._current_frontend()
         if frontend:
             self._configure_modules(frontend)
-            frontend.status("Modules updated")
+            frontend._publish(StatusChanged("Modules updated"))
 
     def select_model(self, model):
         if self.busy.is_set():
@@ -476,7 +684,7 @@ class ApplicationRuntime:
         core.select_model(model)
         frontend = self._current_frontend()
         if frontend:
-            frontend.status(f"Model: {core.model}")
+            frontend._publish(StatusChanged(f"Model: {core.model}"))
 
     def interrupt(self):
         if not self.busy.is_set():
@@ -510,10 +718,10 @@ class ApplicationRuntime:
             speech_input.start_capture()
         except Exception as error:
             log.exception("Input capture failed to start")
-            frontend.status(f"[error] {error}")
-            frontend.capture_state("idle")
+            frontend._publish(StatusChanged(f"[error] {error}"))
+            frontend._publish(CaptureStateChanged("idle"))
             return
-        frontend.capture_state("recording")
+        frontend._publish(CaptureStateChanged("recording"))
 
     def finish_capture(self):
         speech_input = _optional(self.api, "input")
@@ -526,23 +734,23 @@ class ApplicationRuntime:
         ):
             return
         self.capture_busy.set()
-        frontend.capture_state("transcribing")
+        frontend._publish(CaptureStateChanged("transcribing"))
 
         def transcribe():
             try:
                 text = speech_input.finish_capture()
                 if text and not self.stopping.is_set():
-                    frontend.draft(text)
+                    frontend._publish(DraftChanged(text))
                 elif not self.stopping.is_set():
-                    frontend.status("[voice] No speech detected")
+                    frontend._publish(StatusChanged("[voice] No speech detected"))
             except Exception as error:
                 if not self.stopping.is_set():
                     log.exception("Input transcription failed")
-                    frontend.status(f"[error] {error}")
+                    frontend._publish(StatusChanged(f"[error] {error}"))
             finally:
                 self.capture_busy.clear()
                 if not self.stopping.is_set():
-                    frontend.capture_state("idle")
+                    frontend._publish(CaptureStateChanged("idle"))
 
         thread = threading.Thread(
             target=transcribe,
@@ -562,7 +770,7 @@ class ApplicationRuntime:
             log.exception("Input capture failed to cancel")
         frontend = self._current_frontend()
         if frontend:
-            frontend.capture_state("idle")
+            frontend._publish(CaptureStateChanged("idle"))
 
     def _process_turn(self, user_input, frontend):
         core = self.api.get("core")
@@ -574,7 +782,7 @@ class ApplicationRuntime:
         report_usage = getattr(context, "usage_mode", None) == "reported"
 
         self.interrupted.clear()
-        frontend.user(user_input)
+        frontend._publish(UserMessage(user_input))
         if speech_output:
             speech_output.interrupt()
 
@@ -600,37 +808,24 @@ class ApplicationRuntime:
             should_interrupt=self.interrupted.is_set,
         ):
             if isinstance(event, TextDelta):
-                frontend.assistant(event.text)
+                frontend._publish(AssistantText(event.text))
                 if speech_output:
                     speech_output.send(event.text)
                 reply += event.text
             elif isinstance(event, ToolStarted):
-                tool_started = getattr(frontend, "tool_started", None)
-                if callable(tool_started):
-                    tool_started(
-                        event.call_id,
-                        event.name,
-                        event.arguments,
-                        event.description,
-                    )
-                else:
-                    arguments = json.dumps(event.arguments, ensure_ascii=False)
-                    frontend.status(f"[tool] {event.name}({arguments})")
+                frontend._publish(ToolActivityStarted(
+                    event.call_id,
+                    event.name,
+                    event.arguments,
+                    event.description,
+                ))
             elif isinstance(event, ToolFinished):
-                tool_finished = getattr(frontend, "tool_finished", None)
-                if callable(tool_finished):
-                    tool_finished(
-                        event.call_id,
-                        event.name,
-                        event.result,
-                        event.description,
-                    )
-                elif event.result.is_error:
-                    frontend.status(
-                        f"[tool] {event.name} failed: {event.result.content}"
-                    )
-                else:
-                    frontend.status(f"[tool] {event.name} finished")
+                frontend._publish(ToolActivityFinished(
+                    event.call_id,
+                    event.name,
+                    event.result,
+                    event.description,
+                ))
             elif isinstance(event, UsageReported):
                 reported = event.usage.get("prompt_tokens")
                 if isinstance(reported, int):
@@ -642,7 +837,7 @@ class ApplicationRuntime:
                 speech_output.interrupt()
             else:
                 speech_output.flush()
-        frontend.finish(was_interrupted)
+        frontend._publish(TurnFinished(was_interrupted))
 
         if report_usage and isinstance(prompt_tokens, int):
             context.report_usage(prompt_tokens)
@@ -664,8 +859,8 @@ class ApplicationRuntime:
                     self._process_turn(user_input, frontend)
                 except Exception as error:
                     log.exception("Turn failed")
-                    frontend.status(f"[error] {error}")
-                    frontend.finish(self.interrupted.is_set())
+                    frontend._publish(StatusChanged(f"[error] {error}"))
+                    frontend._publish(TurnFinished(self.interrupted.is_set()))
                 finally:
                     self.busy.clear()
                     self.interrupted.clear()

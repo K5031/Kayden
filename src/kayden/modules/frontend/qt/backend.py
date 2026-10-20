@@ -23,6 +23,7 @@ class FrontendBridge(QObject):
     modelReceived = Signal(str, str)
     modulesReceived = Signal("QVariantList")
     modulesBusyReceived = Signal(bool, str)
+    controlsReceived = Signal("QVariantList")
 
     def __init__(self, frontend, parent=None):
         super().__init__(parent)
@@ -54,6 +55,10 @@ class FrontendBridge(QObject):
     @Property("QVariantList", constant=True)
     def modules(self):
         return list(self._frontend._module_catalog)
+
+    @Property("QVariantList", constant=True)
+    def controls(self):
+        return list(self._frontend._controls)
 
     @Property(bool, constant=True)
     def captureAvailable(self):
@@ -92,6 +97,13 @@ class FrontendBridge(QObject):
             self._frontend._apply_modules(serialized)
         except Exception as error:
             self.modulesBusyReceived.emit(False, str(error))
+
+    @Slot(str, "QVariant")
+    def invokeControl(self, control_id, value):
+        try:
+            self._frontend._invoke_control(control_id, value)
+        except Exception as error:
+            self.statusReceived.emit(f"[error] {error}")
 
     @Slot()
     def startCapture(self):
@@ -140,6 +152,8 @@ class FrontendBridge(QObject):
                 self.modulesReceived.emit(value)
             elif kind == "modules_busy":
                 self.modulesBusyReceived.emit(*value)
+            elif kind == "controls":
+                self.controlsReceived.emit(value)
             elif kind == "close":
                 QGuiApplication.quit()
 

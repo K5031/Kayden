@@ -30,6 +30,7 @@ ApplicationWindow {
     property string captureLabel: backend.captureLabel
     property string statusText: "Ready"
     property var moduleCatalog: backend.modules
+    property var controlCatalog: backend.controls
     property var moduleDraft: ({})
     property bool moduleApplying: false
     property string moduleError: ""
@@ -273,6 +274,10 @@ ApplicationWindow {
             if (message.length > 0)
                 root.statusText = "Module change failed"
         }
+
+        function onControlsReceived(controls) {
+            root.controlCatalog = controls
+        }
     }
 
     header: Rectangle {
@@ -304,6 +309,23 @@ ApplicationWindow {
             anchors.rightMargin: root.pageMargin
             anchors.verticalCenter: parent.verticalCenter
             spacing: 10
+
+            Repeater {
+                model: root.controlCatalog
+
+                delegate: NightButton {
+                    required property var modelData
+                    visible: modelData.placement === "header"
+                        && (modelData.kind === "button"
+                            || modelData.kind === "toggle")
+                    enabled: modelData.enabled && !root.moduleApplying
+                    text: modelData.label
+                    onClicked: backend.invokeControl(
+                        modelData.id,
+                        modelData.kind === "toggle" ? !modelData.value : null
+                    )
+                }
+            }
 
             NightButton {
                 visible: root.moduleCatalog.length > 0
@@ -743,6 +765,23 @@ ApplicationWindow {
                                 backend.interrupt()
                             event.accepted = true
                         }
+                    }
+                }
+
+                Repeater {
+                    model: root.controlCatalog
+
+                    delegate: NightButton {
+                        required property var modelData
+                        visible: modelData.placement === "composer"
+                            && (modelData.kind === "button"
+                                || modelData.kind === "toggle")
+                        enabled: modelData.enabled && !root.moduleApplying
+                        text: modelData.label
+                        onClicked: backend.invokeControl(
+                            modelData.id,
+                            modelData.kind === "toggle" ? !modelData.value : null
+                        )
                     }
                 }
 

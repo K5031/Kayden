@@ -26,6 +26,8 @@ _WINDOWS = {
 class Module(FrontendInterface):
     """Installable React/Tauri frontend with full and floating layouts."""
 
+    frontend_api_version = 1
+
     def __init__(self, mode="gui"):
         mode = os.environ.get("KAYDEN_TAURI_MODE", mode).lower()
         try:
@@ -74,12 +76,8 @@ class Module(FrontendInterface):
     def draft(self, text: str) -> None:
         self._desktop.draft(text)
 
-    def run(
-        self,
-        on_submit: Callable[[str], None],
-        on_interrupt: Callable[[], None],
-    ) -> None:
-        self._desktop.run(on_submit, on_interrupt)
+    def run(self, api) -> None:
+        self._desktop.run(api)
 
     def stop(self) -> None:
         self._desktop.stop()

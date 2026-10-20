@@ -96,6 +96,14 @@ class _MultiModule:
                 except Exception:
                     log.exception("Failed to stop module instance: %s", instance)
 
+    def contributions(self):
+        contributed = []
+        for instance in self._instances:
+            provide = getattr(instance, "contributions", None)
+            if provide:
+                contributed.extend(provide() or [])
+        return contributed
+
 
 class Registry:
     def __init__(self, assistant_name="Kayden"):
