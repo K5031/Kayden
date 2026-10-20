@@ -366,6 +366,8 @@ class QtFrontendTests(unittest.TestCase):
         self.assertIn("Math.min(80, Math.max(20, width * 0.052))", qml)
         self.assertIn("property real assistantWidth: Math.min(1180, feedWidth)", qml)
         self.assertIn('x: kind === "user" ? parent.width - width : 0', qml)
+        self.assertIn("userMetrics.advanceWidth + 24", qml)
+        self.assertNotIn("Math.max(112, userMetrics.advanceWidth + 34)", qml)
         self.assertIn('modelOption.highlighted ? "#404040"', qml)
 
         backend = (module / "backend.py").read_text()

@@ -771,14 +771,14 @@ ApplicationWindow {
                         id: messageColumn
                         width: kind === "user"
                             ? Math.min(messageRow.conversationWidth * 0.72,
-                                Math.max(112, userMetrics.advanceWidth + 34))
+                                userMetrics.advanceWidth + 24)
                             : messageRow.conversationWidth
                         x: kind === "user" ? parent.width - width : 0
 
                         Rectangle {
                             width: parent.width
                             height: kind === "tool" ? messageRow.height - 4
-                                : body.contentHeight + (kind === "assistant" ? 8 : 20)
+                                : body.contentHeight + (kind === "assistant" ? 8 : 16)
                             radius: kind === "tool" ? 0 : 13
                             color: kind === "user" ? "#2f2f2f"
                                 : kind === "tool" ? "transparent"
@@ -790,7 +790,10 @@ ApplicationWindow {
                                 id: body
                                 visible: kind !== "tool"
                                 anchors.fill: parent
-                                anchors.margins: kind === "assistant" ? 4 : 10
+                                anchors.leftMargin: kind === "assistant" ? 4 : 12
+                                anchors.rightMargin: kind === "assistant" ? 4 : 12
+                                anchors.topMargin: kind === "assistant" ? 4 : 8
+                                anchors.bottomMargin: kind === "assistant" ? 4 : 8
                                 readOnly: true
                                 selectByMouse: true
                                 wrapMode: TextEdit.Wrap
