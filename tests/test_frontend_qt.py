@@ -283,17 +283,17 @@ class QtFrontendTests(unittest.TestCase):
                 "optional": False,
                 "options": [
                     {"id": "continuity", "name": "Continuity"},
-                    {"id": "remis", "name": "Remis"},
+                    {"id": "alternative", "name": "Alternative"},
                 ],
                 "selected": ["continuity"],
             },
         ], apply)
         list(frontend._drain_events())
 
-        frontend._apply_modules('{"memory":["remis"]}')
+        frontend._apply_modules('{"memory":["alternative"]}')
 
         self.assertTrue(completed.wait(timeout=2))
-        applied.assert_called_once_with({"memory": ["remis"]})
+        applied.assert_called_once_with({"memory": ["alternative"]})
         events = list(frontend._drain_events())
         self.assertEqual(events[0], ("modules_busy", (True, "Applying modules…")))
         self.assertEqual(events[-1], ("modules_busy", (False, "")))

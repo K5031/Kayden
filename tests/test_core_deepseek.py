@@ -89,8 +89,12 @@ class DeepSeekCoreTests(unittest.TestCase):
 
     def test_omits_tools_when_none_are_available(self):
         session = _Session(_Response(_event({"content": "ok"}), b"data: [DONE]"))
-        self.assertEqual(list(_core(session).stream([], tools=[])), [CoreTextDelta("ok")])
+        self.assertEqual(
+            list(_core(session).stream([], tools=[], max_output_tokens=2048)),
+            [CoreTextDelta("ok")],
+        )
         self.assertNotIn("tools", session.calls[0][1]["json"])
+        self.assertEqual(session.calls[0][1]["json"]["max_tokens"], 2048)
 
     def test_malformed_stream_events_are_ignored(self):
         response = _Response(b"data: {not-json", b"data: \xff", _event({"content": "still works"}))

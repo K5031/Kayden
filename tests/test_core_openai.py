@@ -102,11 +102,16 @@ class OpenAICoreTests(unittest.TestCase):
         session = _Session(response)
 
         events = list(_core(session).stream(
-            [{"role": "user", "content": "hi"}], tools=[]
+            [{"role": "user", "content": "hi"}],
+            tools=[],
+            max_output_tokens=2048,
         ))
 
         self.assertEqual(events, [CoreTextDelta("ok")])
         self.assertNotIn("tools", session.calls[0][1]["json"])
+        self.assertEqual(
+            session.calls[0][1]["json"]["max_completion_tokens"], 2048
+        )
 
     def test_request_failure_becomes_visible_text(self):
         session = _Session(error=requests.ConnectionError("offline"))

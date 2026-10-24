@@ -35,7 +35,6 @@ Install only the other optional features you need:
 
 ```bash
 python -m pip install "kayden[local]"         # local llama.cpp core
-python -m pip install "kayden[memory]"        # legacy Remis memory dependencies
 python -m pip install "kayden[voice-dictation]"  # push-to-talk with Faster Whisper
 python -m pip install "kayden[voice-input]"      # always-listening OpenAI Whisper
 python -m pip install "kayden[voice-output]"     # Kokoro speech output
@@ -301,8 +300,7 @@ automatically normalized to `frontend = "tui"` when loaded, and obsolete
 | core | `chatgpt` | OpenAI Responses inference using an eligible ChatGPT Plus/Pro plan and browser sign-in |
 | context | `local` | Selects active context and requests compaction using a local tokenizer |
 | context | `cloud` | Selects active context and requests compaction using cloud usage reports |
-| memory | `continuity` | Owns bounded recent conversation, summaries, named facts, history search, and memory actions in SQLite |
-| memory | `remis` | Legacy semantic memory — extracts facts with a local LLM and stores embeddings in Chroma |
+| memory | `continuity` | Owns active conversation, bounded working memory, and searchable historical summaries in SQLite |
 | action | `native` | Runs the inner model/tool loop using the core's native function-calling protocol |
 | tools | `clock` | Exposes the current local date and time |
 | tools | `calculator` | Safely evaluates arithmetic and common mathematical functions |
@@ -319,38 +317,44 @@ requiring the user to manage sessions. Recent user and assistant messages are sa
 `~/.local/share/kayden/continuity.sqlite3`) and recent messages are restored when
 the app starts.
 
-Near the model's context limit, the application asks the selected core to summarize
+Near the model's context limit, the application asks the selected core to consolidate
 older context while the memory module retains the latest complete turns verbatim.
 The cloud policy compacts by token budget rather than message count: for its default
-60k working context it targets roughly 35k tokens of recent conversation, a summary
-below 4k, up to 2k for durable memories, and 19k free after compaction. Compaction
+60k working context it targets roughly 33k tokens of recent conversation, a summary
+below 4k, up to 4k for durable memories, and 19k free after compaction. Compaction
 starts at a lower 10k free-space watermark so it does not run after every exchange.
-These are budgets rather than separate storage limits. After a summary is committed,
-continuity keeps the latest 200 compacted raw messages for short-term exact recall and
-deletes older compacted messages and their search-index entries. Active messages that
-have not been summarized are never pruned. Existing databases adopt this bound the
-next time continuity starts.
+Each appended historical summary has a separate 4k-token limit under the cloud policy;
+the archive as a whole has no configured size limit. Historical search requests three
+matches by default and returns at most roughly 8k tokens of archive text. These are
+budgets rather than separate storage limits.
 
-The retained exact-history window is configurable. Set it to zero to discard raw
-messages as soon as they have been summarized:
+Every consolidation produces three outputs in one model call. It replaces the rolling
+summary and long-term memory document, while permanently appending a standalone
+historical summary of only the newly consolidated messages. Repeated replacement gives
+working conversational detail gradual decay: old information can survive indefinitely
+when it remains relevant, but must compete with newer context for a fixed summary
+budget. Stable facts, preferences, meaningful experiences, decisions, and ongoing work
+are maintained separately as flexible Markdown long-term memory. Non-overlapping
+historical summaries form an unbounded compressed archive that can be searched later.
 
-```toml
-[settings.memory.continuity]
-compacted_history_messages = 0
-```
+Continuity validates all three generated documents against their token budgets and
+retries one rejected result. It commits the new summary, long-term memory, historical
+entry, and checkpoint in one SQLite transaction. Only after that transaction succeeds
+are the covered raw messages deleted. Failed, interrupted, malformed, or oversized
+consolidation never deletes source messages. Active messages that have not been
+consolidated are never pruned.
 
-`search_history` searches only raw messages still inside that bounded window. Older
-conversation survives in consolidated summaries and explicitly saved facts rather
-than as a permanent verbatim archive.
+Existing named key/value memories migrate once into the text memory document. The old
+`compacted_history_messages` setting is accepted for configuration compatibility but
+no longer retains a partial raw archive.
+
 The selected memory module contributes its own actions automatically; continuity
-provides `remember`, `forget_memory`, `list_memories`, and `search_history`. Stable
-facts are saved explicitly under named keys. Each key owns one atomic value—for
-example, `profile.university = UCL` and
-`profile.degree_subject = Computer Science`—so related facts do not duplicate
-one another. Ordinary messages do
-not launch a second model or embedding pipeline. Set `KAYDEN_DATA_DIR` to relocate
-the continuity database. The older `remis` module remains available and its Chroma
-data is not modified by the continuity module.
+provides `search_history`, `remember`, `forget_memory`, and `list_memories`.
+`search_history` queries the permanent compressed archive when an older experience is
+not in working memory. The other actions are immediate controls for explicit user
+requests. They are not the primary learning path: every message being removed from
+active context is reviewed during mandatory consolidation. Set `KAYDEN_DATA_DIR` to
+relocate the continuity database.
 
 ## Runtime Module Swapping
 

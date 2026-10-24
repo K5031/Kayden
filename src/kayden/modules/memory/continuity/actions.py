@@ -1,64 +1,62 @@
-import json
-import re
-
 from kayden.interfaces import ToolInterface
 from kayden.permissions import OperationDefinition
 
 
-KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
-NON_ATOMIC_VALUE_PATTERN = re.compile(
-    r"^(?:the\s+)?user\s+(?:"
-    r"is|has|had|likes?|loves?|prefers?|wants?|needs?|works?|"
-    r"stud(?:y|ies|ied)|attends?|goes?|lives?|uses?|owns?|"
-    r"knows?|speaks?|plays?|builds?"
-    r")\b",
-    re.IGNORECASE,
-)
-MAX_HISTORY_RESULT_CHARACTERS = 12000
-
-
 class MemoryActions(ToolInterface):
-    """Model-facing actions provided by the continuity memory backend."""
+    """Optional immediate actions for continuity's consolidated text memory."""
 
     def __init__(self, memory):
         self.memory = memory
 
     def schemas(self) -> list[dict]:
-        key = {
+        memory_content = {
             "type": "string",
             "description": (
-                "Stable lowercase key such as profile.name, preference.tone, "
-                "or plan.current_project. The key owns the subject of exactly "
-                "one fact; reuse that same key to update it."
+                "One concise, self-contained fact or preference in natural language. "
+                "Do not invent a key or include unrelated information."
             ),
         }
         return [
             {
                 "type": "function",
                 "function": {
-                    "name": "remember",
+                    "name": "search_history",
                     "description": (
-                        "Save or update exactly one atomic durable fact the user "
-                        "explicitly wants remembered, or a stable preference they "
-                        "clearly stated. Split independent facts across separate keys."
+                        "Search permanent summaries of older conversation when "
+                        "the user refers to a past discussion, decision, or experience."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "key": key,
-                            "value": {
+                            "query": {
                                 "type": "string",
-                                "description": (
-                                    "Only the value belonging to the key, not a sentence "
-                                    "and not facts owned by other keys. Examples: use "
-                                    "profile.university='UCL' and "
-                                    "profile.degree_subject='Computer Science'; never "
-                                    "profile.degree_subject='User studies Computer Science "
-                                    "at UCL'."
-                                ),
+                                "description": "Concise keywords describing the past topic.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20,
+                                "default": 3,
                             },
                         },
-                        "required": ["key", "value"],
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "remember",
+                    "description": (
+                        "Immediately add one explicit memory to long-term text memory. "
+                        "Ordinary important information is also reviewed automatically "
+                        "during context consolidation."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"content": memory_content},
+                        "required": ["content"],
                         "additionalProperties": False,
                     },
                 },
@@ -67,11 +65,14 @@ class MemoryActions(ToolInterface):
                 "type": "function",
                 "function": {
                     "name": "forget_memory",
-                    "description": "Delete one named durable memory at the user's request.",
+                    "description": (
+                        "Remove one exact line from long-term text memory at the "
+                        "user's request. Use list_memories first if its wording is unknown."
+                    ),
                     "parameters": {
                         "type": "object",
-                        "properties": {"key": key},
-                        "required": ["key"],
+                        "properties": {"content": memory_content},
+                        "required": ["content"],
                         "additionalProperties": False,
                     },
                 },
@@ -80,7 +81,7 @@ class MemoryActions(ToolInterface):
                 "type": "function",
                 "function": {
                     "name": "list_memories",
-                    "description": "List the durable facts currently remembered about the user.",
+                    "description": "Read the current consolidated long-term memory.",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -88,58 +89,42 @@ class MemoryActions(ToolInterface):
                     },
                 },
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_history",
-                    "description": (
-                        "Search retained recent conversation when the user refers to "
-                        "something absent from the active context or durable memories."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Important words likely used earlier.",
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 20,
-                                "description": "Maximum matches to return (default 8).",
-                            },
-                        },
-                        "required": ["query"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
         ]
 
+    @staticmethod
+    def _content(arguments: dict) -> str:
+        if set(arguments) != {"content"}:
+            raise ValueError("arguments must contain only content")
+        content = arguments.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("content must be non-empty text")
+        content = " ".join(content.split())
+        if len(content) > 1000:
+            raise ValueError("content is too long")
+        return content
+
     def describe_activity(self, name, arguments, state, result=None):
-        key = " ".join(str(arguments.get("key", "")).split())[:72]
-        query = " ".join(str(arguments.get("query", "")).split())[:72]
+        content = " ".join(str(arguments.get("content", "")).split())[:72]
         descriptions = {
+            "search_history": (
+                "Searching conversation history",
+                "Searched conversation history",
+                "Couldn’t search conversation history",
+            ),
             "remember": (
-                f"Saving memory “{key}”" if key else "Saving a memory",
-                f"Saved memory “{key}”" if key else "Saved a memory",
-                "Couldn’t save the memory",
+                f"Saving “{content}”" if content else "Saving a memory",
+                "Updated long-term memory",
+                "Couldn’t update long-term memory",
             ),
             "forget_memory": (
-                f"Forgetting memory “{key}”" if key else "Forgetting a memory",
-                f"Forgot memory “{key}”" if key else "Forgot a memory",
-                "Couldn’t forget the memory",
+                f"Forgetting “{content}”" if content else "Forgetting a memory",
+                "Updated long-term memory",
+                "Couldn’t update long-term memory",
             ),
             "list_memories": (
-                "Checking saved memories",
-                "Checked saved memories",
-                "Couldn’t check saved memories",
-            ),
-            "search_history": (
-                f"Searching conversation history for “{query}”",
-                f"Searched conversation history for “{query}”",
-                "Conversation search failed",
+                "Checking long-term memory",
+                "Checked long-term memory",
+                "Couldn’t check long-term memory",
             ),
         }
         running, finished, failed = descriptions[name]
@@ -147,8 +132,8 @@ class MemoryActions(ToolInterface):
 
     def operation(self, name, arguments):
         if name == "forget_memory":
-            key = " ".join(str(arguments.get("key", "")).split())[:72]
-            label = f"Forget memory “{key}”" if key else "Forget a memory"
+            content = " ".join(str(arguments.get("content", "")).split())[:72]
+            label = f"Forget “{content}”" if content else "Forget a memory"
             return OperationDefinition(
                 id="tool.forget_memory",
                 label=label,
@@ -156,91 +141,34 @@ class MemoryActions(ToolInterface):
             )
         return super().operation(name, arguments)
 
-    @staticmethod
-    def _validate_arguments(arguments: dict, allowed: set[str]) -> None:
-        if not set(arguments).issubset(allowed):
-            raise ValueError("unexpected arguments")
-
-    @staticmethod
-    def _key(arguments: dict) -> str:
-        key = arguments.get("key")
-        if not isinstance(key, str) or not KEY_PATTERN.fullmatch(key):
-            raise ValueError(
-                "key must start with a lowercase letter and contain only "
-                "lowercase letters, numbers, dots, dashes, or underscores"
-            )
-        return key
-
-    @staticmethod
-    def _value(arguments: dict) -> str:
-        value = arguments.get("value")
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("value must be a non-empty string")
-        value = value.strip()
-        if len(value) > 1000:
-            raise ValueError("value is too long")
-        if "\n" in value or "\r" in value:
-            raise ValueError("value must describe one atomic fact on one line")
-        if NON_ATOMIC_VALUE_PATTERN.match(value):
-            raise ValueError(
-                "value must contain only the atomic value owned by the key, "
-                "not a sentence about the user or facts from other keys"
-            )
-        return value
-
     def execute(self, name: str, arguments: dict) -> str:
-        if name == "remember":
-            self._validate_arguments(arguments, {"key", "value"})
-            key = self._key(arguments)
-            value = self._value(arguments)
-            self.memory.remember(key, value)
-            return f"Remembered {key}."
-
-        if name == "forget_memory":
-            self._validate_arguments(arguments, {"key"})
-            key = self._key(arguments)
-            if self.memory.forget(key):
-                return f"Forgot {key}."
-            return f"No memory named {key}."
-
-        if name == "list_memories":
-            self._validate_arguments(arguments, set())
-            memories = self.memory.remembered()
-            if not memories:
-                return "[no durable memories]"
-            return "\n".join(
-                f"{memory['key']}: {memory['value']}" for memory in memories
-            )
-
         if name == "search_history":
-            self._validate_arguments(arguments, {"query", "limit"})
+            if not isinstance(arguments, dict) or not set(arguments) <= {
+                "query", "limit"
+            }:
+                raise ValueError("arguments may contain only query and limit")
             query = arguments.get("query")
             if not isinstance(query, str) or not query.strip():
-                raise ValueError("query must be a non-empty string")
-            limit = arguments.get("limit", 8)
-            if (
-                not isinstance(limit, int)
-                or isinstance(limit, bool)
-                or not 1 <= limit <= 20
-            ):
-                raise ValueError("limit must be an integer from 1 to 20")
-            matches = self.memory.search(query, limit)
-            if not matches:
-                return "[no matching conversation]"
-            bounded = []
-            remaining = MAX_HISTORY_RESULT_CHARACTERS
-            for match in matches:
-                if remaining <= 0:
-                    break
-                content = match["content"]
-                if len(content) > remaining:
-                    content = content[:remaining] + "\n[message truncated]"
-                bounded.append({
-                    "role": match["role"],
-                    "content": content,
-                    "created_at": match["created_at"],
-                })
-                remaining -= len(content)
-            return json.dumps(bounded, ensure_ascii=False)
+                raise ValueError("query must be non-empty text")
+            limit = arguments.get("limit", 3)
+            if not isinstance(limit, int) or isinstance(limit, bool):
+                raise ValueError("limit must be an integer")
+            return self.memory.search_history(query, limit)
+
+        if name == "remember":
+            content = self._content(arguments)
+            added = self.memory.remember_text(content)
+            return "Remembered." if added else "Already remembered."
+
+        if name == "forget_memory":
+            content = self._content(arguments)
+            if self.memory.forget_text(content):
+                return "Forgot it."
+            return "No exact memory matched that text."
+
+        if name == "list_memories":
+            if arguments:
+                raise ValueError("list_memories does not accept arguments")
+            return self.memory.memory_document() or "[no durable memories]"
 
         raise ValueError(f"Unknown tool: {name}")

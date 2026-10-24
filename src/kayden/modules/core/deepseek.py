@@ -46,6 +46,7 @@ class Module(CoreInterface):
         messages: list[dict],
         tools: list[dict] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
+        max_output_tokens: int | None = None,
     ) -> Iterator[CoreEvent]:
         self._interrupted = False
         self.last_usage = None
@@ -61,7 +62,7 @@ class Module(CoreInterface):
             "stream_options": {"include_usage": True},
             "temperature": 0.45,
             "top_p": 0.85,
-            "max_tokens": 512,
+            "max_tokens": max(1, int(max_output_tokens or 512)),
             "thinking": {"type": self.thinking},
         }
         if tools:

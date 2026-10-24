@@ -1,3 +1,6 @@
+from kayden.interfaces import ConsolidationResult
+
+
 class MemoryContractTests:
     """Behavior every transcript-owning memory module must preserve."""
 
@@ -39,7 +42,14 @@ class MemoryContractTests:
             "one",
             "two",
         ])
-        self.assertTrue(self.memory.commit_compaction(plan, "older summary"))
+        self.assertTrue(self.memory.commit_compaction(
+            plan,
+            ConsolidationResult(
+                summary="older summary",
+                memory="",
+                historical_summary="one and two",
+            ),
+        ))
         self.assertEqual(self.memory.view().summary, "older summary")
         self.assertEqual(
             [message["content"] for message in self.memory.view().messages],

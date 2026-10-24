@@ -61,24 +61,13 @@ SWAPPABLE_CAPABILITIES = (
 )
 MULTI_SELECT_CAPABILITIES = {"output", "tools"}
 
-COMPACTION_PROMPT = """Condense the earlier conversation into a compact factual state for continuing it later.
-
-Preserve:
-- user preferences, decisions, corrections, and ongoing goals
-- project names, paths, technical details, and unresolved work
-- commitments made by the assistant
-- enough context to understand references in the recent conversation
-
-Do not add facts or commentary. Do not describe the summarization task. Use concise bullets with clear labels."""
-
-
 def _optional(api, capability):
     return api.get(capability) if api.has(capability) else None
 
 
 def _build_turn(system_prompt, context, memories, user_input):
     if memories:
-        system_prompt += f"\n\nRelevant memories about the user:\n{memories}"
+        system_prompt += f"\n\nLong-term memory:\n{memories}"
     return TurnRequest(messages=[
         {"role": "system", "content": system_prompt},
         *context,
@@ -146,42 +135,86 @@ def _compact_context(
     if plan is None:
         return
 
-    _publish(frontend, StatusChanged("[context] compacting older conversation"))
-    summary = ""
-    source = []
-    if plan.previous_summary:
-        source.append({
-            "role": "system",
-            "content": "Existing summary:\n" + plan.previous_summary,
-        })
-    source.extend(plan.messages)
-    summary_prompt = COMPACTION_PROMPT
+    _publish(frontend, StatusChanged("[context] consolidating memory"))
     summary_target = getattr(context, "summary_target_tokens", None)
-    if isinstance(summary_target, int) and summary_target > 0:
-        summary_prompt += (
-            f"\n\nKeep the resulting summary below {summary_target} tokens. "
-            "Rewrite and consolidate existing points rather than appending to them."
-        )
-    try:
-        for event in core.stream(
-            [{"role": "system", "content": summary_prompt}, *source],
-            tools=None,
-            should_interrupt=interrupted.is_set,
-        ):
-            if isinstance(event, CoreTextDelta):
-                summary += event.text
-    except Exception:
-        log.exception("Context compaction failed")
-        _publish(frontend, StatusChanged(finished_status))
-        return
-
+    memory_target = getattr(context, "durable_memory_tokens", None)
+    historical_target = getattr(context, "historical_summary_tokens", None)
+    consolidation_output_tokens = max(
+        512,
+        sum(
+            limit
+            for limit in (summary_target, memory_target, historical_target)
+            if isinstance(limit, int) and limit > 0
+        ) + 256,
+    )
     failed_markers = ("[request failed", "[api error", "[connection dropped")
-    constrain_summary = getattr(context, "constrain_summary", None)
-    summary = constrain_summary(summary) if constrain_summary else summary.strip()
-    if not interrupted.is_set() and summary and not summary.lower().startswith(failed_markers):
-        if memory.commit_compaction(plan, summary):
+    result = None
+    retry_reason = None
+    for attempt in range(2):
+        output = ""
+        request = memory.prepare_compaction(
+            plan,
+            summary_target,
+            memory_target,
+            historical_target,
+            retry_reason,
+        )
+        try:
+            for event in core.stream(
+                request,
+                tools=None,
+                should_interrupt=interrupted.is_set,
+                max_output_tokens=consolidation_output_tokens,
+            ):
+                if isinstance(event, CoreTextDelta):
+                    output += event.text
+        except Exception:
+            log.exception("Memory consolidation failed")
+            break
+
+        if interrupted.is_set() or output.lower().startswith(failed_markers):
+            break
+        try:
+            candidate = memory.parse_compaction(output)
+        except (TypeError, ValueError) as error:
+            retry_reason = str(error)
+            log.warning("Rejected memory consolidation: %s", retry_reason)
+            continue
+
+        problems = []
+        if not context.within_token_budget(candidate.summary, summary_target):
+            problems.append(f"conversation summary exceeds {summary_target} tokens")
+        if (
+            candidate.memory is not None
+            and not context.within_token_budget(candidate.memory, memory_target)
+        ):
+            problems.append(f"long-term memory exceeds {memory_target} tokens")
+        if (
+            candidate.historical_summary is not None
+            and not context.within_token_budget(
+                candidate.historical_summary, historical_target
+            )
+        ):
+            problems.append(
+                f"historical summary exceeds {historical_target} tokens"
+            )
+        if problems:
+            retry_reason = "; ".join(problems)
+            log.warning("Rejected memory consolidation: %s", retry_reason)
+            continue
+        result = candidate
+        break
+
+    if not interrupted.is_set() and result is not None:
+        if memory.commit_compaction(plan, result):
             context.compacted(memory.view())
-            log.info("compacted older conversation into %d characters", len(summary.strip()))
+            log.info(
+                "consolidated memory into %d summary, %d memory, and %d "
+                "historical characters",
+                len(result.summary),
+                len(result.memory or ""),
+                len(result.historical_summary or ""),
+            )
     _publish(frontend, StatusChanged(finished_status))
 
 
@@ -917,9 +950,10 @@ class ApplicationRuntime:
             self.interrupted,
             "Thinking…",
         )
-        prior_context = context.prepare(memory.view())
+        memory_view = memory.view()
+        prior_context = context.prepare(memory_view)
         memory.append([{"role": "user", "content": user_input}])
-        memories = memory.recall(user_input)
+        memories = memory_view.long_term_memory
         turn = _build_turn(self.system_prompt, prior_context, memories, user_input)
         reply = ""
         prompt_tokens = None

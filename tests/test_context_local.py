@@ -28,6 +28,9 @@ class LocalContextTests(unittest.TestCase):
         self.resolve.assert_called_once_with("test.gguf")
         self.llama.assert_called_once_with(model_path="/models/test.gguf", vocab_only=True, verbose=False)
         self.assertEqual(context.keep_recent_messages, 2)
+        self.assertEqual(context.summary_target_tokens, 2000)
+        self.assertEqual(context.durable_memory_tokens, 1000)
+        self.assertEqual(context.historical_summary_tokens, 500)
 
     def test_prepares_summary_and_copies_messages(self):
         context = local.Module()
@@ -43,6 +46,12 @@ class LocalContextTests(unittest.TestCase):
         context = local.Module(max_context_tokens=10)
         self.assertFalse(context.needs_compaction(MemoryView("", [{"role": "user", "content": "12345678"}])))
         self.assertTrue(context.needs_compaction(MemoryView("", [{"role": "user", "content": "123456789"}])))
+
+    def test_uses_local_tokenizer_for_generated_state_limits(self):
+        context = local.Module()
+
+        self.assertTrue(context.within_token_budget("1234", 4))
+        self.assertFalse(context.within_token_budget("12345", 4))
 
     def test_stop_closes_tokenizer(self):
         context = local.Module()

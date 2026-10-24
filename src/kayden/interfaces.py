@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import math
 from typing import Callable, Iterator
 
 from kayden.events import (
@@ -16,6 +17,7 @@ from kayden.permissions import OperationDefinition
 class MemoryView:
     summary: str
     messages: list[dict]
+    long_term_memory: str = ""
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,14 @@ class CompactionPlan:
     messages: list[dict]
     base_checkpoint: int
     through_checkpoint: int
+    previous_memory: str = ""
+
+
+@dataclass(frozen=True)
+class ConsolidationResult:
+    summary: str
+    memory: str | None = None
+    historical_summary: str | None = None
 
 
 class InputInterface(ABC):
@@ -111,6 +121,7 @@ class CoreInterface(ABC):
         messages: list[dict],
         tools: list[dict] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
+        max_output_tokens: int | None = None,
     ) -> Iterator[CoreEvent]:
         pass
 
@@ -123,6 +134,8 @@ class ContextPolicyInterface(ABC):
     usage_mode: str | None = None
     keep_recent_messages: int = 12
     summary_target_tokens: int | None = None
+    durable_memory_tokens: int | None = None
+    historical_summary_tokens: int | None = None
 
     @abstractmethod
     def prepare(self, view: MemoryView) -> list[dict]:
@@ -136,9 +149,13 @@ class ContextPolicyInterface(ABC):
         """Return how many newest transcript messages should remain verbatim."""
         return min(len(view.messages), max(2, int(self.keep_recent_messages)))
 
-    def constrain_summary(self, summary: str) -> str:
-        """Bound a generated summary to this policy's context budget."""
-        return summary.strip()
+    def estimate_tokens(self, text: str) -> int:
+        """Estimate tokens for hard validation of generated context state."""
+        return max(0, math.ceil(len(text) / 3.5))
+
+    def within_token_budget(self, text: str, limit: int | None) -> bool:
+        """Return whether text fits a configured token budget."""
+        return limit is None or self.estimate_tokens(text) <= limit
 
     def compacted(self, view: MemoryView) -> None:
         """Update token accounting after memory compacts its transcript."""
@@ -158,7 +175,7 @@ class MemoryInterface(ABC):
 
     @abstractmethod
     def recall(self, query: str) -> str:
-        """Return durable information relevant to a new user query."""
+        """Search archived memory for information relevant to a query."""
         pass
 
     @abstractmethod
@@ -171,7 +188,48 @@ class MemoryInterface(ABC):
     def plan_compaction(self, keep_recent: int) -> CompactionPlan | None:
         return None
 
-    def commit_compaction(self, plan: CompactionPlan, summary: str) -> bool:
+    def prepare_compaction(
+        self,
+        plan: CompactionPlan,
+        summary_target_tokens: int | None,
+        memory_target_tokens: int | None,
+        historical_target_tokens: int | None,
+        retry_reason: str | None = None,
+    ) -> list[dict]:
+        """Build the inference request used to consolidate a transcript segment."""
+        prompt = (
+            "Condense the earlier conversation into a compact factual state for "
+            "continuing it later. Preserve preferences, decisions, corrections, "
+            "ongoing goals, unresolved work, and necessary context. Do not invent "
+            "facts or describe the summarization task."
+        )
+        if summary_target_tokens:
+            prompt += f" Keep the result below {summary_target_tokens} tokens."
+        if historical_target_tokens:
+            prompt += (
+                f" Keep the historical summary below "
+                f"{historical_target_tokens} tokens."
+            )
+        if retry_reason:
+            prompt += f" The previous attempt was rejected: {retry_reason}."
+        messages = [{"role": "system", "content": prompt}]
+        if plan.previous_summary:
+            messages.append({
+                "role": "system",
+                "content": "Existing summary:\n" + plan.previous_summary,
+            })
+        messages.extend(dict(message) for message in plan.messages)
+        return messages
+
+    def parse_compaction(self, output: str) -> ConsolidationResult:
+        """Parse a model response into state the module can commit."""
+        return ConsolidationResult(summary=output.strip())
+
+    def commit_compaction(
+        self,
+        plan: CompactionPlan,
+        result: ConsolidationResult,
+    ) -> bool:
         return False
 
     def reset_context(self) -> None:

@@ -39,8 +39,12 @@ class LlamaCppCoreTests(unittest.TestCase):
             {"choices": [{"delta": {"content": " world"}}]},
         ])
         messages = [{"role": "user", "content": "hi"}]
-        self.assertEqual(list(_core(llm).stream(messages)), [CoreTextDelta("hello"), CoreTextDelta(" world")])
+        self.assertEqual(
+            list(_core(llm).stream(messages, max_output_tokens=2048)),
+            [CoreTextDelta("hello"), CoreTextDelta(" world")],
+        )
         self.assertEqual(llm.create_chat_completion.call_args.kwargs["messages"], messages)
+        self.assertEqual(llm.create_chat_completion.call_args.kwargs["max_tokens"], 2048)
 
     def test_rejects_tools(self):
         with self.assertRaisesRegex(NotImplementedError, "does not support tools"):

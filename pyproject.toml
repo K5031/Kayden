@@ -36,12 +36,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["build", "pytest", "twine"]
 local = ["llama-cpp-python[server]"]
-memory = [
-    "chromadb",
-    "llama-cpp-python[server]",
-    "sentence-transformers",
-    "torch",
-]
 voice-input = [
     "numpy",
     "openai-whisper",
@@ -52,7 +46,6 @@ voice-dictation = ["faster-whisper", "numpy", "PyAudio"]
 voice-output = ["kokoro", "sounddevice"]
 qt = ["PySide6>=6.8"]
 all = [
-    "chromadb",
     "faster-whisper",
     "kokoro",
     "llama-cpp-python[server]",
@@ -60,7 +53,6 @@ all = [
     "openai-whisper",
     "PySide6>=6.8",
     "PyAudio",
-    "sentence-transformers",
     "SpeechRecognition",
     "sounddevice",
     "torch",

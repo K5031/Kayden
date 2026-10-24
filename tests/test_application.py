@@ -20,6 +20,7 @@ from kayden.runtime.application import (
 )
 from kayden.interfaces import (
     CompactionPlan,
+    ConsolidationResult,
     CoreInterface,
     InputInterface,
     ManualInputInterface,
@@ -86,7 +87,9 @@ class _Memory:
         self.messages = [{"role": "assistant", "content": "earlier"}]
 
     def view(self):
-        return MemoryView("", list(self.messages))
+        return MemoryView(
+            "", list(self.messages), long_term_memory="likes concise answers"
+        )
 
     def append(self, messages):
         self.recorded.extend(messages)
@@ -687,7 +690,7 @@ class ApplicationTests(unittest.TestCase):
             {"role": "user", "content": "question"},
             {"role": "assistant", "content": "hello world"},
         ])
-        self.assertEqual(memory.queries, ["question"])
+        self.assertEqual(memory.queries, [])
         called_core, turn, called_tools, should_interrupt = action.calls[0]
         self.assertIs(called_core, core)
         self.assertIs(called_tools, tools)
@@ -695,7 +698,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(turn.messages, [
             {
                 "role": "system",
-                "content": "system\n\nRelevant memories about the user:\nlikes concise answers",
+                "content": "system\n\nLong-term memory:\nlikes concise answers",
             },
             {"role": "assistant", "content": "earlier"},
             {"role": "user", "content": "question"},
@@ -783,6 +786,9 @@ class ApplicationTests(unittest.TestCase):
             def compacted(self, view):
                 self.compacted_messages = view
 
+            def within_token_budget(self, text, limit):
+                return True
+
         class Memory:
             applied = None
 
@@ -797,15 +803,26 @@ class ApplicationTests(unittest.TestCase):
                     through_checkpoint=1,
                 )
 
-            def commit_compaction(self, plan, summary):
-                self.applied = summary
+            def prepare_compaction(
+                self, plan, summary_limit, memory_limit, historical_limit, retry
+            ):
+                return [{"role": "user", "content": "compact this"}]
+
+            def parse_compaction(self, output):
+                return ConsolidationResult(summary=output)
+
+            def commit_compaction(self, plan, result):
+                self.applied = result.summary
                 return True
 
         class Core:
             def __init__(self):
                 self.tools = "unset"
 
-            def stream(self, messages, tools=None, should_interrupt=None):
+            def stream(
+                self, messages, tools=None, should_interrupt=None,
+                max_output_tokens=None,
+            ):
                 self.tools = tools
                 yield CoreTextDelta("- retained old detail")
 
@@ -818,6 +835,126 @@ class ApplicationTests(unittest.TestCase):
         self.assertIsNone(core.tools)
         self.assertEqual(memory.applied, "- retained old detail")
         self.assertEqual(context.compacted_messages, memory.view())
+        self.assertEqual(frontend.events[-1], ("status", "Ready"))
+
+    def test_compaction_retries_oversized_output_before_committing(self):
+        frontend = _Frontend()
+        interrupted = threading.Event()
+
+        class Context:
+            keep_recent_messages = 2
+            summary_target_tokens = 5
+            durable_memory_tokens = 5
+            historical_summary_tokens = 5
+
+            def needs_compaction(self, view):
+                return True
+
+            def within_token_budget(self, text, limit):
+                return len(text) <= limit
+
+            def compacted(self, view):
+                pass
+
+        class Memory:
+            committed = None
+            retry_reasons = []
+
+            def view(self):
+                return MemoryView("", [{"role": "user", "content": "old"}])
+
+            def plan_compaction(self, keep_recent):
+                return CompactionPlan("", [{"role": "user", "content": "old"}], 0, 1)
+
+            def prepare_compaction(
+                self, plan, summary_limit, memory_limit, historical_limit, retry
+            ):
+                self.retry_reasons.append(retry)
+                return [{"role": "user", "content": "consolidate"}]
+
+            def parse_compaction(self, output):
+                summary, durable, historical = output.split("|")
+                return ConsolidationResult(summary, durable, historical)
+
+            def commit_compaction(self, plan, result):
+                self.committed = result
+                return True
+
+        class Core:
+            outputs = iter([
+                "far too long|fine|historical detail is too long",
+                "short|small|past",
+            ])
+
+            def stream(
+                self, messages, tools=None, should_interrupt=None,
+                max_output_tokens=None,
+            ):
+                yield CoreTextDelta(next(self.outputs))
+
+        memory = Memory()
+        _compact_context(Context(), memory, Core(), frontend, interrupted)
+
+        self.assertEqual(memory.retry_reasons[0], None)
+        self.assertIn("conversation summary exceeds 5 tokens", memory.retry_reasons[1])
+        self.assertIn("historical summary exceeds 5 tokens", memory.retry_reasons[1])
+        self.assertEqual(
+            memory.committed, ConsolidationResult("short", "small", "past")
+        )
+
+    def test_compaction_does_not_commit_two_malformed_attempts(self):
+        frontend = _Frontend()
+        interrupted = threading.Event()
+
+        class Context:
+            keep_recent_messages = 2
+            summary_target_tokens = 5
+            durable_memory_tokens = 5
+            historical_summary_tokens = 5
+
+            def needs_compaction(self, view):
+                return True
+
+            def within_token_budget(self, text, limit):
+                return True
+
+        class Memory:
+            commit_calls = 0
+
+            def view(self):
+                return MemoryView("", [{"role": "user", "content": "old"}])
+
+            def plan_compaction(self, keep_recent):
+                return CompactionPlan("", [{"role": "user", "content": "old"}], 0, 1)
+
+            def prepare_compaction(
+                self, plan, summary_limit, memory_limit, historical_limit, retry
+            ):
+                return [{"role": "user", "content": "consolidate"}]
+
+            def parse_compaction(self, output):
+                raise ValueError("missing consolidation output elements")
+
+            def commit_compaction(self, plan, result):
+                self.commit_calls += 1
+                return True
+
+        class Core:
+            calls = 0
+
+            def stream(
+                self, messages, tools=None, should_interrupt=None,
+                max_output_tokens=None,
+            ):
+                self.calls += 1
+                yield CoreTextDelta("malformed")
+
+        memory = Memory()
+        core = Core()
+        _compact_context(Context(), memory, core, frontend, interrupted)
+
+        self.assertEqual(core.calls, 2)
+        self.assertEqual(memory.commit_calls, 0)
         self.assertEqual(frontend.events[-1], ("status", "Ready"))
 
 if __name__ == "__main__":

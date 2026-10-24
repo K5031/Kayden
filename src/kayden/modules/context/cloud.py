@@ -1,10 +1,13 @@
+import math
+
 from kayden.interfaces import ContextPolicyInterface, MemoryView
 
 DEFAULT_MAX_CONTEXT_TOKENS = 60000
 CHARS_PER_TOKEN_ESTIMATE = 3.5
-DEFAULT_RECENT_VERBATIM_TOKENS = 35000
+DEFAULT_RECENT_VERBATIM_TOKENS = 33000
 DEFAULT_SUMMARY_TARGET_TOKENS = 4000
-DEFAULT_DURABLE_MEMORY_TOKENS = 2000
+DEFAULT_DURABLE_MEMORY_TOKENS = 4000
+DEFAULT_HISTORICAL_SUMMARY_TOKENS = 4000
 DEFAULT_TARGET_FREE_TOKENS = 19000
 DEFAULT_MINIMUM_FREE_TOKENS = 10000
 
@@ -18,12 +21,16 @@ class Module(ContextPolicyInterface):
         recent_verbatim_tokens: int = DEFAULT_RECENT_VERBATIM_TOKENS,
         summary_target_tokens: int = DEFAULT_SUMMARY_TARGET_TOKENS,
         durable_memory_tokens: int = DEFAULT_DURABLE_MEMORY_TOKENS,
+        historical_summary_tokens: int = DEFAULT_HISTORICAL_SUMMARY_TOKENS,
         target_free_tokens: int = DEFAULT_TARGET_FREE_TOKENS,
         minimum_free_tokens: int = DEFAULT_MINIMUM_FREE_TOKENS,
     ):
         self.max_context_tokens = max(1, int(max_context_tokens))
         self.summary_target_tokens = max(1, int(summary_target_tokens))
         self.durable_memory_tokens = max(0, int(durable_memory_tokens))
+        self.historical_summary_tokens = max(
+            1, int(historical_summary_tokens)
+        )
         self.target_free_tokens = max(1, int(target_free_tokens))
         self.minimum_free_tokens = max(1, int(minimum_free_tokens))
         configured_recent = max(1, int(recent_verbatim_tokens))
@@ -46,6 +53,9 @@ class Module(ContextPolicyInterface):
             sum(len(message.get("content", "")) for message in messages)
             / CHARS_PER_TOKEN_ESTIMATE
         ))
+
+    def estimate_tokens(self, text: str) -> int:
+        return max(0, math.ceil(len(text) / CHARS_PER_TOKEN_ESTIMATE))
 
     @staticmethod
     def _turns(messages: list[dict]) -> list[list[dict]]:
@@ -85,18 +95,6 @@ class Module(ContextPolicyInterface):
             retained += len(turn)
             used += turn_tokens
         return retained
-
-    def constrain_summary(self, summary: str) -> str:
-        summary = summary.strip()
-        max_characters = int(self.summary_target_tokens * CHARS_PER_TOKEN_ESTIMATE)
-        if len(summary) <= max_characters:
-            return summary
-        bounded = summary[:max_characters].rstrip()
-        if "\n" in bounded:
-            bounded = bounded.rsplit("\n", 1)[0].rstrip()
-        elif " " in bounded:
-            bounded = bounded.rsplit(" ", 1)[0].rstrip()
-        return bounded
 
     def compacted(self, view: MemoryView) -> None:
         self.last_known_tokens = self._estimate(self.prepare(view))

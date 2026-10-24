@@ -41,6 +41,7 @@ class Module(CoreInterface):
         messages: list[dict],
         tools: list[dict] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
+        max_output_tokens: int | None = None,
     ) -> Iterator[CoreEvent]:
         self._interrupted = False
         self.last_usage = None
@@ -54,7 +55,7 @@ class Module(CoreInterface):
             "messages": messages,
             "stream": True,
             "stream_options": {"include_usage": True},
-            "max_completion_tokens": 512,
+            "max_completion_tokens": max(1, int(max_output_tokens or 512)),
             "reasoning_effort": "none",
         }
         if tools:

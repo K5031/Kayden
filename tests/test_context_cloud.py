@@ -35,8 +35,9 @@ class CloudContextTests(unittest.TestCase):
         context = CloudContext()
 
         self.assertEqual(context.summary_target_tokens, 4000)
-        self.assertEqual(context.recent_verbatim_tokens, 35000)
-        self.assertEqual(context.durable_memory_tokens, 2000)
+        self.assertEqual(context.recent_verbatim_tokens, 33000)
+        self.assertEqual(context.durable_memory_tokens, 4000)
+        self.assertEqual(context.historical_summary_tokens, 4000)
         self.assertEqual(context.target_free_tokens, 19000)
         self.assertEqual(context.minimum_free_tokens, 10000)
 
@@ -61,7 +62,7 @@ class CloudContextTests(unittest.TestCase):
             2,
         )
 
-    def test_summary_is_bounded_to_its_target(self):
+    def test_generated_text_is_checked_against_its_hard_budget(self):
         context = CloudContext(
             max_context_tokens=100,
             recent_verbatim_tokens=40,
@@ -71,11 +72,8 @@ class CloudContextTests(unittest.TestCase):
             minimum_free_tokens=10,
         )
 
-        summary = "first useful line\nsecond line that exceeds the limit"
-        bounded = context.constrain_summary(summary)
-
-        self.assertLessEqual(len(bounded), 14)
-        self.assertEqual(bounded, "first useful")
+        self.assertTrue(context.within_token_budget("x" * 14, 4))
+        self.assertFalse(context.within_token_budget("x" * 15, 4))
 
     def test_compacted_and_reset_only_change_token_accounting(self):
         context = CloudContext(max_context_tokens=10000)

@@ -368,7 +368,7 @@ class ChatGPTCoreTests(unittest.TestCase):
 
         events = list(_core(session).stream([
             {"role": "user", "content": "hi"},
-        ]))
+        ], max_output_tokens=2048))
 
         self.assertEqual(events, [
             CoreTextDelta("hello"),
@@ -384,6 +384,7 @@ class ChatGPTCoreTests(unittest.TestCase):
         self.assertEqual(url, "https://api.openai.com/v1/responses")
         self.assertFalse(request["json"]["store"])
         self.assertTrue(request["json"]["stream"])
+        self.assertEqual(request["json"]["max_output_tokens"], 2048)
         self.assertTrue(response.closed)
 
     def test_stream_must_reach_response_completed(self):

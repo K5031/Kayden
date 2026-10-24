@@ -244,6 +244,7 @@ class Module(CoreInterface):
         messages: list[dict],
         tools: list[dict] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
+        max_output_tokens: int | None = None,
     ) -> Iterator[CoreEvent]:
         self._interrupted = False
         self.last_usage = None
@@ -252,6 +253,8 @@ class Module(CoreInterface):
             return
 
         payload = self._request_body(self.model, messages, tools)
+        if max_output_tokens is not None:
+            payload["max_output_tokens"] = max(1, int(max_output_tokens))
         try:
             response = self._request(
                 "post",

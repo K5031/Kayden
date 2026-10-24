@@ -51,6 +51,7 @@ class Module(CoreInterface):
         messages: list[dict],
         tools: list[dict] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
+        max_output_tokens: int | None = None,
     ) -> Iterator[CoreEvent]:
         if tools:
             raise NotImplementedError("The llama_cpp core does not support tools yet")
@@ -63,7 +64,7 @@ class Module(CoreInterface):
             temperature=0.45,
             top_p=0.85,
             repeat_penalty=1.1,
-            max_tokens=512,
+            max_tokens=max(1, int(max_output_tokens or 512)),
         ):
             if self._interrupted or (should_interrupt and should_interrupt()):
                 try:
