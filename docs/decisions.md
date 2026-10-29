@@ -242,3 +242,29 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   keeps the call shown as running in the background until its final ToolFinished or
   OperationResult. Refusals get a red "declined" line. The model shown follows
   `ModelSelected`.
+
+## Running Kayden
+
+```
+export ANTHROPIC_API_KEY=...
+cd <project to work in>          # shell/file tools are rooted here
+uv run --project <kayden checkout> python -m kayden [--mode session|continuous]
+    [--activation user_controlled|agent_controlled] [--conversation ID]
+    [--model MODEL_ID] [--maintenance-model MODEL_ID]
+    [--permissions ask|allow_read_only|deny] [--data-dir DIR]
+```
+
+`kayden/__main__.py` builds an `InstanceConfig`: `kayden.core.anthropic:factory`,
+`kayden.memory_sqlite:factory` (`<data dir>/memory.db`), `kayden.tools.shell_files:factory`
+rooted at the current directory, and `kayden.frontends.tui:factory`. The data directory
+defaults to `$KAYDEN_DATA_DIR` or `~/.kayden`. Without `--mode` the TUI's start screen asks
+for mode, activation, conversation and model. Without `ANTHROPIC_API_KEY` it exits with a
+message. Provider options and prices are not exposed as flags; set them in an
+`InstanceConfig` and call `kayden.runtime.run_instance` for that.
+
+`tests/test_e2e.py` is the end-to-end check. No API key was available, so it runs the real
+Memory, Tools and runtime against the scripted Core: once through `run_instance` with the
+config `python -m kayden` builds (Core and Frontend swapped for fakes), and once with the
+real TUI driven by Textual's test pilot (send, approve the shell call, see the answer).
+Both check the SQLite transcript and the file the shell call wrote. The live Core suites
+run with `KAYDEN_LIVE_TESTS=1` and a key.
