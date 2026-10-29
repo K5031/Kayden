@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,12 +14,15 @@ from kayden.api import (
     JSON,
     Block,
     Completed,
+    ContextOverflowError,
     Core,
     CoreError,
     CoreEvent,
     InferenceRequest,
+    InstancePaths,
     Message,
     ModelInfo,
+    OperationResult,
     Reasoning,
     ReasoningDelta,
     Role,
@@ -30,12 +33,22 @@ from kayden.api import (
     ToolCallDelta,
     ToolResult,
     ToolSpec,
-    ToolStatus,
     TransientCoreError,
     Usage,
     UsageReport,
 )
-from kayden.core._common import assistant_message, parse_arguments, result_text, retry_after
+from kayden.core._common import (
+    ERROR_STATUSES,
+    ModelConfig,
+    assistant_message,
+    configured,
+    model_configs,
+    operation_text,
+    parse_arguments,
+    request_options,
+    result_text,
+    retry_after,
+)
 
 PROVIDER = "anthropic"
 _INVALID_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")  # ids from other providers may break the API
@@ -44,11 +57,20 @@ _STOP_REASONS = {
     "tool_use": StopReason.TOOL_USE,
     "max_tokens": StopReason.MAX_TOKENS,
     "model_context_window_exceeded": StopReason.MAX_TOKENS,
+    "refusal": StopReason.REFUSAL,
 }
+_OVERFLOW_MESSAGES = ("prompt is too long", "exceed context limit", "context window")
+
+
+def factory(options: dict[str, Any], paths: InstancePaths) -> AnthropicCore:
+    """Options: api_key (default ANTHROPIC_API_KEY), base_url, options, models,
+    default_max_tokens; see AnthropicCore."""
+    return AnthropicCore(**options)
 
 
 class AnthropicCore(Core):
-    """`options` are merged verbatim into the request body (thinking, temperature, ...)."""
+    """`options` are merged verbatim into every request body (thinking, temperature,
+    tool_choice, ...); `models` adds per-model options, context windows and prices."""
 
     def __init__(
         self,
@@ -56,31 +78,34 @@ class AnthropicCore(Core):
         *,
         base_url: str | None = None,
         client: anthropic.AsyncAnthropic | None = None,
+        options: Mapping[str, Any] | None = None,
+        models: Mapping[str, ModelConfig | Mapping[str, Any]] | None = None,
         default_max_tokens: int = 8192,
-        default_context_window: int = 200_000,
     ) -> None:
         client = client or anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._client = client.with_options(max_retries=0)  # the runtime owns retries
+        self._options = dict(options or {})
+        self._models = model_configs(models)
         self._default_max_tokens = default_max_tokens
-        self._default_context_window = default_context_window
 
     async def list_models(self) -> Sequence[ModelInfo]:
         try:
             return [
-                ModelInfo(
+                configured(ModelInfo(
                     id=m.id,
                     name=m.display_name,
-                    context_window=m.max_input_tokens or self._default_context_window,
-                    max_output_tokens=m.max_tokens,
-                )
+                    context_window=getattr(m, "max_input_tokens", None),
+                    max_output_tokens=getattr(m, "max_tokens", None),
+                ), self._models.get(m.id))
                 async for m in self._client.models.list()
-                if m.lifecycle != "retired"
+                if getattr(m, "lifecycle", None) != "retired"
             ]
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
 
     async def count_tokens(self, request: InferenceRequest) -> int:
-        params: dict[str, Any] = {"model": request.model, "messages": to_messages(request.messages)}
+        params: dict[str, Any] = {"model": request.model,
+                                  "messages": to_messages(request.messages, request.model)}
         if request.system:
             params["system"] = request.system
         if request.tools:
@@ -94,16 +119,16 @@ class AnthropicCore(Core):
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
         params: dict[str, Any] = {
             "model": request.model,
-            "messages": to_messages(request.messages),
+            "messages": to_messages(request.messages, request.model),
             "max_tokens": request.max_output_tokens or self._default_max_tokens,
-            "extra_body": dict(request.options),
+            "extra_body": request_options(self._options, self._models.get(request.model)),
         }
         if request.system:
             params["system"] = request.system
         if request.tools:
             params["tools"] = [to_tool(t) for t in request.tools]
 
-        turn = _Turn()
+        turn = _Turn(request.model)
         try:
             async with await self._client.messages.create(**params, stream=True) as events:
                 async for event in events:
@@ -132,7 +157,8 @@ class _Block:
 class _Turn:
     """Accumulates raw stream events into Kayden events and the final message."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str) -> None:
+        self.model = model
         self.blocks: dict[int, _Block] = {}
         self.counts = {"input_tokens": 0, "output_tokens": 0,
                        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
@@ -209,12 +235,13 @@ class _Turn:
                     blocks.append(Text("".join(b.parts)))
                 case "thinking":
                     state = {"provider": PROVIDER, "signature": b.signature}
-                    blocks.append(Reasoning("".join(b.parts), state))
+                    blocks.append(Reasoning("".join(b.parts), state, self.model))
                 case "redacted_thinking":
-                    blocks.append(Reasoning("", {"provider": PROVIDER, "redacted": b.data}))
+                    state = {"provider": PROVIDER, "redacted": b.data}
+                    blocks.append(Reasoning("", state, self.model))
                 case "tool_use":
-                    arguments = parse_arguments("".join(b.parts), b.name)
-                    blocks.append(ToolCall(b.id, b.name, arguments))
+                    arguments, raw = parse_arguments("".join(b.parts))
+                    blocks.append(ToolCall(b.id, b.name, arguments, raw))
         stop = _STOP_REASONS.get(self.stop_reason or "", StopReason.END_TURN)
         return Completed(assistant_message(blocks), self.usage(), stop)
 
@@ -223,13 +250,14 @@ def to_tool(spec: ToolSpec) -> JSON:
     return {"name": spec.name, "description": spec.description, "input_schema": spec.parameters}
 
 
-def to_messages(messages: Sequence[Message]) -> list[JSON]:
+def to_messages(messages: Sequence[Message], model: str) -> list[JSON]:
     """Kayden messages to Anthropic turns: tool results ride in user turns, and adjacent
-    same-role turns are merged with tool results first, as the API requires."""
+    same-role turns are merged with tool results first, as the API requires. Reasoning is
+    replayed only to the model that produced it."""
     out: list[JSON] = []
     for message in messages:
         role = "assistant" if message.role is Role.ASSISTANT else "user"
-        content = [c for b in message.blocks if (c := _to_content(b)) is not None]
+        content = [c for b in message.blocks if (c := _to_content(b, model)) is not None]
         if not content:
             continue
         if out and out[-1]["role"] == role:
@@ -241,23 +269,27 @@ def to_messages(messages: Sequence[Message]) -> list[JSON]:
     return out
 
 
-def _to_content(block: Block) -> JSON | None:
+def _to_content(block: Block, model: str) -> JSON | None:
     match block:
         case Text(text=text):
             return {"type": "text", "text": text} if text else None
+        case Reasoning(model=produced_by) if produced_by != model:
+            return None  # another model's signature would be rejected
         case Reasoning(text=text, state={"provider": "anthropic", "signature": signature}):
             return {"type": "thinking", "thinking": text, "signature": signature}
         case Reasoning(state={"provider": "anthropic", "redacted": data}):
             return {"type": "redacted_thinking", "data": data}
         case Reasoning():
-            return None  # unsigned or foreign reasoning cannot be replayed
+            return None  # unsigned reasoning cannot be replayed
         case ToolCall(id=id, name=name, arguments=arguments):
             return {"type": "tool_use", "id": _INVALID_ID_CHARS.sub("_", id), "name": name,
                     "input": arguments}
         case ToolResult(call_id=call_id, status=status):
             return {"type": "tool_result", "tool_use_id": _INVALID_ID_CHARS.sub("_", call_id),
-                    "content": result_text(block), "is_error": status is not ToolStatus.OK}
-    return None
+                    "content": result_text(block), "is_error": status in ERROR_STATUSES}
+        case OperationResult():
+            return {"type": "text", "text": operation_text(block)}
+    return None  # OpaqueBlock
 
 
 def _map_error(error: Exception) -> CoreError:
@@ -267,7 +299,10 @@ def _map_error(error: Exception) -> CoreError:
         status = error.status_code
         transient = (status in (408, 409, 429) or status >= 500
                      or detail.get("type") in _TRANSIENT_ERROR_TYPES)
-        message = f"{status} {detail.get('type', '')}: {detail.get('message', error.message)}"
+        text = str(detail.get("message", error.message))
+        message = f"{status} {detail.get('type', '')}: {text}"
+        if status in (400, 413) and any(m in text.lower() for m in _OVERFLOW_MESSAGES):
+            return ContextOverflowError(message)
         if transient:
             return TransientCoreError(message, retry_after(error.response.headers))
         return CoreError(message)

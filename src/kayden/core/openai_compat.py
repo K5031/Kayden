@@ -17,12 +17,15 @@ from kayden.api import (
     JSON,
     Block,
     Completed,
+    ContextOverflowError,
     Core,
     CoreError,
     CoreEvent,
     InferenceRequest,
+    InstancePaths,
     Message,
     ModelInfo,
+    OperationResult,
     Reasoning,
     ReasoningDelta,
     Role,
@@ -37,7 +40,17 @@ from kayden.api import (
     Usage,
     UsageReport,
 )
-from kayden.core._common import assistant_message, parse_arguments, result_text, retry_after
+from kayden.core._common import (
+    ModelConfig,
+    assistant_message,
+    configured,
+    model_configs,
+    operation_text,
+    parse_arguments,
+    request_options,
+    result_text,
+    retry_after,
+)
 
 _CONTEXT_WINDOW_FIELDS = ("context_length", "max_model_len", "context_window")
 _REASONING_FIELDS = ("reasoning_content", "reasoning")  # non-standard, server-dependent
@@ -45,13 +58,24 @@ _STOP_REASONS = {
     "tool_calls": StopReason.TOOL_USE,
     "function_call": StopReason.TOOL_USE,
     "length": StopReason.MAX_TOKENS,
+    "content_filter": StopReason.REFUSAL,
 }
+_OVERFLOW_CODES = ("context_length_exceeded", "string_above_max_length")
+_OVERFLOW_MESSAGES = ("maximum context length", "context length", "context window",
+                      "too many tokens", "prompt is too long")
+
+
+def factory(options: dict[str, Any], paths: InstancePaths) -> OpenAICompatCore:
+    """Options: api_key (default OPENAI_API_KEY), base_url, options, models,
+    max_tokens_param, stream_usage; see OpenAICompatCore."""
+    return OpenAICompatCore(**options)
 
 
 class OpenAICompatCore(Core):
-    """`options` are merged verbatim into the request body (temperature, reasoning_effort,
-    tool_choice, ...). Reasoning text from servers that stream it is surfaced but never
-    sent back: chat completions has no input slot for it."""
+    """`options` are merged verbatim into every request body (temperature,
+    reasoning_effort, tool_choice, ...); `models` adds per-model options, context windows
+    and prices. Reasoning text from servers that stream it is surfaced but never sent
+    back: chat completions has no input slot for it."""
 
     def __init__(
         self,
@@ -59,8 +83,8 @@ class OpenAICompatCore(Core):
         *,
         base_url: str | None = None,
         client: openai.AsyncOpenAI | None = None,
-        context_windows: Mapping[str, int] | None = None,
-        default_context_window: int = 128_000,
+        options: Mapping[str, Any] | None = None,
+        models: Mapping[str, ModelConfig | Mapping[str, Any]] | None = None,
         max_tokens_param: str = "max_tokens",
         stream_usage: bool = True,
     ) -> None:
@@ -69,8 +93,8 @@ class OpenAICompatCore(Core):
             api_key = api_key or os.environ.get("OPENAI_API_KEY") or "unused"
             client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self._client = client.with_options(max_retries=0)  # the runtime owns retries
-        self._context_windows = dict(context_windows or {})
-        self._default_context_window = default_context_window
+        self._options = dict(options or {})
+        self._models = model_configs(models)
         self._max_tokens_param = max_tokens_param
         self._stream_usage = stream_usage
 
@@ -79,28 +103,15 @@ class OpenAICompatCore(Core):
             models = [m async for m in self._client.models.list()]
         except (openai.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
-        return [ModelInfo(id=m.id, name=m.id, context_window=self._context_window(m))
+        return [configured(ModelInfo(id=m.id, name=m.id, context_window=_context_window(m)),
+                           self._models.get(m.id))
                 for m in models]
-
-    def _context_window(self, model: Any) -> int:
-        if model.id in self._context_windows:
-            return self._context_windows[model.id]
-        extra = model.model_extra or {}
-        for name in _CONTEXT_WINDOW_FIELDS:
-            if isinstance(extra.get(name), int):
-                return extra[name]
-        return self._default_context_window
-
-    async def count_tokens(self, request: InferenceRequest) -> int:
-        payload = [to_messages(request.system, request.messages),
-                   [to_tool(t) for t in request.tools]]
-        return _estimate(json.dumps(payload))
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
         params: dict[str, Any] = {
             "model": request.model,
             "messages": to_messages(request.system, request.messages),
-            "extra_body": dict(request.options),
+            "extra_body": request_options(self._options, self._models.get(request.model)),
         }
         if request.tools:
             params["tools"] = [to_tool(t) for t in request.tools]
@@ -109,7 +120,7 @@ class OpenAICompatCore(Core):
         if request.max_output_tokens is not None:
             params["extra_body"].setdefault(self._max_tokens_param, request.max_output_tokens)
 
-        turn = _Turn()
+        turn = _Turn(request.model)
         try:
             async with await self._client.chat.completions.create(**params, stream=True) as chunks:
                 async for chunk in chunks:
@@ -120,8 +131,10 @@ class OpenAICompatCore(Core):
         if turn.finish_reason is None:
             raise TransientCoreError("stream ended without a finish_reason")
         if turn.usage is None:
+            payload = [to_messages(request.system, request.messages),
+                       [to_tool(t) for t in request.tools]]
             turn.usage = Usage(
-                input_tokens=await self.count_tokens(request),
+                input_tokens=_estimate(json.dumps(payload)),
                 output_tokens=_estimate("".join(turn.text) + "".join(turn.reasoning)
                                         + "".join("".join(c.args) for c in turn.calls.values())),
             )
@@ -129,6 +142,14 @@ class OpenAICompatCore(Core):
 
     async def aclose(self) -> None:
         await self._client.close()
+
+
+def _context_window(model: Any) -> int | None:
+    extra = model.model_extra or {}
+    for name in _CONTEXT_WINDOW_FIELDS:
+        if isinstance(extra.get(name), int):
+            return extra[name]
+    return None
 
 
 def _estimate(text: str) -> int:
@@ -144,7 +165,8 @@ class _Call:
 
 
 class _Turn:
-    def __init__(self) -> None:
+    def __init__(self, model: str) -> None:
+        self.model = model
         self.text: list[str] = []
         self.reasoning: list[str] = []
         self.calls: dict[int, _Call] = {}
@@ -198,16 +220,16 @@ class _Turn:
     def completed(self) -> Completed:
         blocks: list[Block] = []
         if self.reasoning:
-            blocks.append(Reasoning("".join(self.reasoning)))
+            blocks.append(Reasoning("".join(self.reasoning), model=self.model))
         if self.text:
             blocks.append(Text("".join(self.text)))
         for _, call in sorted(self.calls.items()):
             if call.name is None:
                 raise CoreError("model sent a tool call without a name")
-            blocks.append(ToolCall(call.id, call.name, parse_arguments("".join(call.args),
-                                                                       call.name)))
+            arguments, raw = parse_arguments("".join(call.args))
+            blocks.append(ToolCall(call.id, call.name, arguments, raw))
         stop = _STOP_REASONS.get(self.finish_reason or "", StopReason.END_TURN)
-        if self.calls and stop is StopReason.END_TURN:
+        if self.calls and stop in (StopReason.END_TURN, StopReason.REFUSAL):
             stop = StopReason.TOOL_USE
         return Completed(assistant_message(blocks), self.usage or Usage(), stop)
 
@@ -220,7 +242,7 @@ def to_tool(spec: ToolSpec) -> JSON:
 def to_messages(system: str, messages: Sequence[Message]) -> list[JSON]:
     out: list[JSON] = [{"role": "system", "content": system}] if system else []
     for message in messages:
-        texts = [b.text for b in message.blocks if isinstance(b, Text) and b.text]
+        texts = [text for b in message.blocks if (text := _text(b))]
         calls = [b for b in message.blocks if isinstance(b, ToolCall)]
         for result in (b for b in message.blocks if isinstance(b, ToolResult)):
             out.append({"role": "tool", "tool_call_id": result.call_id,
@@ -241,10 +263,23 @@ def to_messages(system: str, messages: Sequence[Message]) -> list[JSON]:
     return out
 
 
+def _text(block: Block) -> str | None:
+    match block:
+        case Text(text=text):
+            return text
+        case OperationResult():
+            return operation_text(block)
+    return None
+
+
 def _map_error(error: Exception) -> CoreError:
     if isinstance(error, openai.APIStatusError):
         status = error.status_code
         message = f"{status}: {error.message}"
+        code = str(getattr(error, "code", None) or "")
+        if status in (400, 413) and (code in _OVERFLOW_CODES or any(
+                m in str(error.message).lower() for m in _OVERFLOW_MESSAGES)):
+            return ContextOverflowError(message)
         if status in (408, 409, 429) or status >= 500:
             return TransientCoreError(message, retry_after(error.response.headers))
         return CoreError(message)

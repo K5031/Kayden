@@ -19,7 +19,8 @@ from kayden.api import (
     ToolStatus,
     Usage,
 )
-from kayden.core.anthropic import AnthropicCore
+from kayden.core._common import ModelConfig
+from kayden.core.anthropic import AnthropicCore, factory
 from tests.conformance.core_suite import (
     WEATHER_TOOL,
     CoreDriver,
@@ -89,7 +90,7 @@ ERROR_TYPES = {400: "invalid_request_error", 401: "authentication_error",
 
 
 class AnthropicDriver(CoreDriver):
-    def __init__(self) -> None:
+    def __init__(self, **config) -> None:
         self.stub = StubProvider("/v1/messages")
         self.stub.routes["/v1/messages/count_tokens"] = lambda r: httpx2.Response(
             200, json={"input_tokens": len(r.content) // 4}
@@ -101,7 +102,7 @@ class AnthropicDriver(CoreDriver):
             "has_more": False, "first_id": MODEL, "last_id": MODEL,
         })
         client = AsyncAnthropic(api_key="test", http_client=self.stub.client())
-        self.core = AnthropicCore(client=client)
+        self.core = AnthropicCore(client=client, **config)
         self.model = MODEL
 
     def queue_text(self) -> Expect:
@@ -133,7 +134,8 @@ class AnthropicDriver(CoreDriver):
                   *text_block(2, ["Done."]),
                   *finish("end_turn")]
         self.stub.queue(Reply(events=events))
-        expected = Reasoning("Let me think.", {"provider": "anthropic", "signature": "sig-abc"})
+        expected = Reasoning("Let me think.", {"provider": "anthropic", "signature": "sig-abc"},
+                             MODEL)
         return self.request([user("Think first")]), Expect(reasoning=expected)
 
     def queue_error(self, status, retry_after=None):
@@ -150,6 +152,23 @@ class AnthropicDriver(CoreDriver):
                                       hang=True))
         return lambda: reply.stream is not None and reply.stream.closed
 
+    def queue_raw_tool_call(self, raw_arguments):
+        self.stub.queue(Reply(events=[
+            message_start(),
+            *block(0, {"type": "tool_use", "id": "toolu_r", "name": "get_weather", "input": {}},
+                   [{"type": "input_json_delta", "partial_json": raw_arguments}]),
+            *finish("tool_use"),
+        ]))
+
+    def queue_context_overflow(self):
+        self.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
+            "type": "invalid_request_error",
+            "message": "prompt is too long: 300000 tokens > 200000 maximum"}}))
+
+    def queue_refusal(self):
+        self.stub.queue(Reply(events=[message_start(), *text_block(0, ["I can't help."]),
+                                      *finish("refusal")]))
+
     def requests_sent(self) -> int:
         return len(self.stub.bodies)
 
@@ -159,6 +178,8 @@ class AnthropicDriver(CoreDriver):
             content = message["content"]
             for b in content if isinstance(content, list) else []:
                 match b["type"]:
+                    case "text" if message["role"] == "user":
+                        sent.user_texts.append(b["text"])
                     case "thinking":
                         sent.reasoning_states.append(
                             {"provider": "anthropic", "signature": b["signature"]})
@@ -191,7 +212,9 @@ async def anthropic():
     await driver.core.aclose()
 
 
-async def test_request_translation(anthropic: AnthropicDriver) -> None:
+async def test_request_translation() -> None:
+    anthropic = AnthropicDriver(options={"temperature": 0.2, "max_tokens": 50},
+                                models={MODEL: ModelConfig(options={"max_tokens": 99})})
     call = ToolCall("toolu_9", "get_weather", {"city": "Rome"})
     messages = [
         user("first"),
@@ -202,9 +225,9 @@ async def test_request_translation(anthropic: AnthropicDriver) -> None:
         user("again"),
     ]
     anthropic.queue_text()
-    request = anthropic.request(messages, max_output_tokens=None,
-                                options={"temperature": 0.2, "max_tokens": 99})
+    request = anthropic.request(messages, max_output_tokens=None)
     await collect(anthropic.core, request)
+    await anthropic.core.aclose()
     body = anthropic.stub.bodies[-1]
     assert body["system"] == "You are a terse assistant."
     assert body["temperature"] == 0.2 and body["max_tokens"] == 99
@@ -244,15 +267,39 @@ async def test_truncated_stream_is_transient(anthropic: AnthropicDriver) -> None
         await collect(anthropic.core, anthropic.request([user("hi")]))
 
 
-async def test_context_overflow_is_permanent(anthropic: AnthropicDriver) -> None:
-    from kayden.api import CoreError, TransientCoreError
+async def test_other_invalid_requests_are_permanent(anthropic: AnthropicDriver) -> None:
+    from kayden.api import ContextOverflowError, CoreError, TransientCoreError
 
     anthropic.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
-        "type": "invalid_request_error", "message": "prompt is too long: 300000 tokens"}}))
+        "type": "invalid_request_error", "message": "tools.0: bad schema"}}))
     with pytest.raises(CoreError) as info:
         await collect(anthropic.core, anthropic.request([user("hi")]))
-    assert not isinstance(info.value, TransientCoreError)
-    assert "prompt is too long" in str(info.value)
+    assert not isinstance(info.value, (TransientCoreError, ContextOverflowError))
+
+
+async def test_model_configuration() -> None:
+    anthropic = AnthropicDriver(models={
+        MODEL: ModelConfig(context_window=100_000, input_usd_per_mtok=3.0,
+                           output_usd_per_mtok=15.0, cached_input_usd_per_mtok=0.3)})
+    [info] = await anthropic.core.list_models()
+    assert (info.context_window, info.max_output_tokens) == (100_000, 64_000)
+    assert (info.input_usd_per_mtok, info.output_usd_per_mtok,
+            info.cached_input_usd_per_mtok) == (3.0, 15.0, 0.3)
+    await anthropic.core.aclose()
+
+    plain = AnthropicDriver()
+    [info] = await plain.core.list_models()
+    assert info.context_window == 200_000 and info.input_usd_per_mtok is None
+    await plain.core.aclose()
+
+
+async def test_factory(tmp_path) -> None:
+    from kayden.api import InstancePaths
+
+    core = factory({"api_key": "k", "options": {"temperature": 0},
+                    "models": {MODEL: {"input_usd_per_mtok": 1.0}}}, InstancePaths(tmp_path))
+    assert isinstance(core, AnthropicCore)
+    await core.aclose()
 
 
 async def test_tool_call_without_arguments(anthropic: AnthropicDriver) -> None:
@@ -271,25 +318,29 @@ LIVE = os.environ.get("KAYDEN_LIVE_TESTS") == "1" and bool(os.environ.get("ANTHR
 
 
 class AnthropicLiveDriver(CoreDriver):
+    """Thinking is adapter configuration, so it is on for every live request."""
+
     scripted = False
 
     def __init__(self) -> None:
-        self.core = AnthropicCore()
+        thinking = json.loads(os.environ.get(
+            "KAYDEN_ANTHROPIC_THINKING", '{"type": "enabled", "budget_tokens": 1024}'))
+        self.core = AnthropicCore(options={"thinking": thinking})
         self.model = os.environ.get("KAYDEN_ANTHROPIC_MODEL", "claude-haiku-5-5")
+
+    def request(self, messages, **kwargs):
+        kwargs.setdefault("max_output_tokens", 4096)
+        return super().request(messages, **kwargs)
 
     def text_turn(self):
         return self.request([user("Reply with exactly: hello")]), Expect()
 
     def tool_turn(self):
-        options = {"tool_choice": {"type": "tool", "name": WEATHER_TOOL.name}}
-        return self.request([user("What's the weather in Paris?")], options=options), Expect()
+        prompt = "Use the get_weather tool to get the weather in Paris."
+        return self.request([user(prompt)]), Expect()
 
     def reasoning_turn(self):
-        thinking = json.loads(os.environ.get(
-            "KAYDEN_ANTHROPIC_THINKING", '{"type": "enabled", "budget_tokens": 1024}'))
-        request = self.request([user("What is 17 * 23? Answer with the number.")],
-                               max_output_tokens=4096, options={"thinking": thinking})
-        return request, Expect()
+        return self.request([user("What is 17 * 23? Answer with the number.")]), Expect()
 
 
 @pytest.mark.skipif(not LIVE, reason="set KAYDEN_LIVE_TESTS=1 and ANTHROPIC_API_KEY")

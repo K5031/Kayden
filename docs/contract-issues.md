@@ -586,6 +586,29 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
   Decoding legacy tags at read time instead would have kept the archive untouched; the
   migration was chosen because MODULES.md asks for it.
 
+### M8 (S) Recognising a context overflow
+- **Where:** `ContextOverflowError` "The request exceeded the model's context window".
+- **Problem:** Neither API has a dedicated status or type for it. Anthropic answers 400
+  `invalid_request_error` ("prompt is too long", "input length and `max_tokens` exceed
+  context limit"); OpenAI answers 400 with code `context_length_exceeded`, and compatible
+  servers (vLLM, llama.cpp, Ollama) only with messages that vary.
+- **Assumed:** Cores match those codes and message fragments on 400/413 responses. An
+  unrecognised wording stays a permanent CoreError, so the runtime's re-assembly retry
+  does not happen for it.
+
+### M9 (S) Refusal or content filter with tool calls
+- **Where:** `StopReason.REFUSAL` "treated like END_TURN".
+- **Problem:** A turn can carry tool calls and still end with a refusal/content-filter
+  reason. Treated like END_TURN, those calls would never get results.
+- **Assumed:** OpenAI-compatible: a turn with calls reports TOOL_USE whatever the finish
+  reason. Anthropic reports what the API says (it does not combine them in practice).
+
+### M10 (A) Reasoning without a `model`
+- **Where:** `Reasoning.model` "Cores drop state from other models".
+- **Problem:** Blocks persisted before the field existed have `model=None`.
+- **Assumed:** Unknown counts as another model: such reasoning is not replayed (an invalid
+  signature would make the request fail permanently).
+
 ## Material outside the allowed inputs
 
 None was consulted or encountered. The only out-of-tree output seen was a system-wide

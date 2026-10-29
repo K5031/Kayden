@@ -178,3 +178,31 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   thread; a second process opening the same file reads and writes alongside it (SQLite's
   default 5 s busy timeout). Token counting in `assemble`/`maintain` runs on the event loop
   (the counter is the runtime's fast estimate).
+
+### Core (`kayden.core.anthropic`, `kayden.core.openai_compat`)
+
+- Factories: `kayden.core.anthropic:factory`, `kayden.core.openai_compat:factory`; the
+  options are the constructor's keyword arguments (`api_key`, `base_url`, `options`,
+  `models`, ...). Keys default to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
+- Provider options (thinking, temperature, tool_choice, reasoning_effort, ...) are
+  configuration: `options` applies to every request, `models[<id>].options` overrides it
+  per model. They are merged into the request body as given, so they may also override
+  `max_tokens`.
+- `models[<id>]` (`ModelConfig`) also sets `context_window`, `max_output_tokens` and the
+  three prices. Configured values win over provider-reported ones. With nothing
+  configured, the context window is what the provider reports (Anthropic
+  `max_input_tokens`; OpenAI-compatible `context_length`/`max_model_len`/`context_window`
+  extras) or None.
+- `count_tokens`: Anthropic uses its counting endpoint; OpenAI-compatible returns None.
+  When an OpenAI-compatible server reports no usage, `Completed.usage` is a 4-chars-per-
+  token estimate.
+- Unparseable or non-object tool arguments give `ToolCall(arguments={}, raw_arguments=raw)`.
+  When replayed, such a call is sent with `{}` arguments.
+- Rendering: ToolResults with a status other than OK and ERROR are prefixed `[<status>]`
+  (OpenAI-compatible also prefixes ERROR, having no error flag). Anthropic `is_error` is
+  true for every status except OK and BACKGROUNDED. An OperationResult becomes the text
+  `[Background operation <id> finished: <status>]` plus its content. OpaqueBlock is skipped.
+- Reasoning: produced blocks carry `model=request.model`; only blocks whose `model`
+  equals the request's model are replayed (Anthropic), and OpenAI-compatible never
+  replays reasoning.
+- Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL.

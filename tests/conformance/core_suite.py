@@ -3,6 +3,8 @@
 Subclass `CoreSuite` and provide a `driver` fixture returning a `CoreDriver`. A scripted
 driver queues provider responses on a stub; a live driver talks to the real API and
 reports `scripted = False`, which skips the checks that need a scripted provider.
+Provider options (thinking, tool_choice, ...) are adapter configuration, so a driver
+builds its Core with whatever its scenarios need.
 """
 
 from __future__ import annotations
@@ -20,11 +22,13 @@ import pytest
 
 from kayden.api import (
     Completed,
+    ContextOverflowError,
     Core,
     CoreError,
     CoreEvent,
     InferenceRequest,
     Message,
+    OperationResult,
     Reasoning,
     ReasoningDelta,
     Role,
@@ -74,6 +78,7 @@ class Sent:
     reasoning_states: list[dict] = field(default_factory=list)
     tool_call_ids: list[str] = field(default_factory=list)
     tool_results: list[tuple[str, str, bool]] = field(default_factory=list)  # id, text, error
+    user_texts: list[str] = field(default_factory=list)  # text parts of user turns
 
 
 class CoreDriver(abc.ABC):
@@ -110,6 +115,18 @@ class CoreDriver(abc.ABC):
 
     def queue_hang(self) -> Callable[[], bool]:
         """Stream one text chunk, then stall. Returns a probe: was the response closed?"""
+        raise NotImplementedError
+
+    def queue_raw_tool_call(self, raw_arguments: str) -> None:
+        """A get_weather call (finish reason: tool use) whose arguments are `raw_arguments`."""
+        raise NotImplementedError
+
+    def queue_context_overflow(self) -> None:
+        """The provider's prompt-too-long rejection."""
+        raise NotImplementedError
+
+    def queue_refusal(self) -> None:
+        """Some text, then the provider's refusal / content-filter finish."""
         raise NotImplementedError
 
     def requests_sent(self) -> int:
@@ -167,6 +184,14 @@ def check_stream(events: Sequence[CoreEvent]) -> Completed:
         assert done.usage.output_tokens >= reports[-1].output_tokens
         assert done.usage.input_tokens >= reports[-1].input_tokens
     return done
+
+
+def check_stream_raw(events: Sequence[CoreEvent]) -> Completed:
+    """check_stream for calls whose argument fragments are not valid JSON."""
+    calls = [b for b in events[-1].message.blocks if isinstance(b, ToolCall)]
+    deltas = "".join(e.arguments_chunk for e in events if isinstance(e, ToolCallDelta))
+    assert not deltas or deltas == "".join(c.raw_arguments or "" for c in calls)
+    return check_stream([e for e in events if not isinstance(e, ToolCallDelta)])
 
 
 def check_expect(done: Completed, expect: Expect) -> None:
@@ -256,10 +281,11 @@ class CoreSuite:
         reasoning = [b for b in done.message.blocks if isinstance(b, Reasoning)]
         assert reasoning
 
+        assert all(r.model == request.model for r in reasoning)
+
         follow_up = driver.request(
             [*request.messages, done.message, user("Thanks. One word: and now?")],
             max_output_tokens=request.max_output_tokens,
-            options=request.options,
         )
         driver.queue_text()
         check_stream(await collect(driver.core, follow_up))
@@ -267,6 +293,72 @@ class CoreSuite:
         if sent is not None:
             expected = [r.state for r in reasoning] if driver.resends_reasoning else []
             assert sent.reasoning_states == expected
+
+    async def test_reasoning_state_of_other_models_is_dropped(self, driver: CoreDriver) -> None:
+        self.require_scripted(driver)
+        messages = [
+            user("first"),
+            Message("a", Role.ASSISTANT, (
+                Reasoning("theirs", {"provider": "anthropic", "signature": "s"}, "other-model"),
+                Reasoning("unknown", {"provider": "anthropic", "signature": "t"}),
+                Text("ok"),
+            ), time.time()),
+            user("second"),
+        ]
+        driver.queue_text()
+        check_stream(await collect(driver.core, driver.request(messages)))
+        sent = driver.last_sent()
+        assert sent is not None and sent.reasoning_states == []
+
+    async def test_unparseable_arguments_are_kept_raw(self, driver: CoreDriver) -> None:
+        self.require_scripted(driver)
+        driver.queue_raw_tool_call('{"city": "Par')
+        request = driver.request([user("Say hello")])
+        done = check_stream_raw(await collect(driver.core, request))
+        [call] = [b for b in done.message.blocks if isinstance(b, ToolCall)]
+        assert call.name == WEATHER_TOOL.name and call.arguments == {}
+        assert call.raw_arguments == '{"city": "Par'
+
+    async def test_context_overflow(self, driver: CoreDriver) -> None:
+        self.require_scripted(driver)
+        driver.queue_context_overflow()
+        request = driver.request([user("Say hello")])
+        with pytest.raises(ContextOverflowError):
+            await collect(driver.core, request)
+
+    async def test_refusal(self, driver: CoreDriver) -> None:
+        self.require_scripted(driver)
+        driver.queue_refusal()
+        request = driver.request([user("Say hello")])
+        done = check_stream(await collect(driver.core, request))
+        assert done.stop is StopReason.REFUSAL
+
+    async def test_runtime_statuses_and_operation_results_are_rendered(
+        self, driver: CoreDriver
+    ) -> None:
+        self.require_scripted(driver)
+        statuses = [s for s in ToolStatus if s is not ToolStatus.OK]
+        calls = tuple(ToolCall(f"call_{s}", WEATHER_TOOL.name, {"city": "Oslo"})
+                      for s in statuses)
+        results = tuple(ToolResult(c.id, s, f"content {s}") for c, s in zip(calls, statuses))
+        messages = [
+            user("Weather?"),
+            Message("a", Role.ASSISTANT, calls, time.time()),
+            Message("r", Role.TOOL, results, time.time()),
+            Message("u", Role.USER, (OperationResult("call_backgrounded", ToolStatus.OK,
+                                                     "bg finished"),), time.time()),
+        ]
+        driver.queue_text()
+        check_stream(await collect(driver.core, driver.request(messages)))
+        sent = driver.last_sent()
+        assert sent is not None
+        for (call_id, content, is_error), status in zip(sent.tool_results, statuses, strict=True):
+            assert call_id == f"call_{status}" and f"content {status}" in content
+            if status is not ToolStatus.ERROR:
+                assert str(status) in content, "runtime statuses must be visible to the model"
+            assert is_error == (status not in (ToolStatus.BACKGROUNDED,))
+        [rendered] = [t for t in sent.user_texts if "bg finished" in t]
+        assert "call_backgrounded" in rendered
 
     @pytest.mark.parametrize("retry_after", [None, 7.0])
     @pytest.mark.parametrize("status", [429, 500, 503, 529])
@@ -301,6 +393,17 @@ class CoreSuite:
                 events.append(event)
         assert not any(isinstance(e, Completed) for e in events)
 
+    async def test_aclose_closes_the_response(self, driver: CoreDriver) -> None:
+        self.require_scripted(driver)
+        closed = driver.queue_hang()
+        request = driver.request([user("Say hello")])
+        stream = driver.core.stream(request)
+        async for event in stream:
+            if isinstance(event, TextDelta):
+                break
+        await asyncio.wait_for(stream.aclose(), 1)
+        assert closed()
+
     async def test_cancel_stops_promptly(self, driver: CoreDriver) -> None:
         if driver.scripted:
             closed = driver.queue_hang()
@@ -330,6 +433,8 @@ class CoreSuite:
     async def test_count_tokens(self, driver: CoreDriver) -> None:
         request, _ = driver.text_turn()
         small = await driver.core.count_tokens(request)
+        if small is None:
+            pytest.skip("Core has no exact token counting")
         big = await driver.core.count_tokens(
             driver.request([*request.messages, user("lorem ipsum dolor " * 200)])
         )
@@ -339,4 +444,4 @@ class CoreSuite:
         models = await driver.core.list_models()
         assert models
         assert driver.model in {m.id for m in models}
-        assert all(m.context_window > 0 and m.name for m in models)
+        assert all((m.context_window is None or m.context_window > 0) and m.name for m in models)
