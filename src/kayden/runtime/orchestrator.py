@@ -264,7 +264,8 @@ class Runtime:
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
         self._unseen = False
-        self._flush_task: asyncio.Task[None] | None = None
+        self._flush_tasks: set[asyncio.Task[None]] = set()
+        self._inbox_before_stop = 0
 
     # ── Observation ──────────────────────────────────────────────────────
 
@@ -323,6 +324,8 @@ class Runtime:
         if model is None:
             raise ValueError("Core lists no models")
         self._check_model(model)
+        if (light := self._config.maintenance_model) is not None:
+            self._check_model(light)
 
         if self._mode is None:
             self._lock = InstanceLock.acquire(self._config.data_dir, options.mode)
@@ -392,6 +395,7 @@ class Runtime:
             return
         self._stopping = True
         self._stop_event.set()
+        self._inbox_before_stop = len(self._inbox)
         self._cycle_requested = False
         self._wake_set, self._immediate_wake = None, False
         self._log.decision("stop", state=state, operations=list(self._ops))
@@ -434,8 +438,11 @@ class Runtime:
             await self._stop_task
         if self._cycle_task is not None and not self._cycle_task.done():
             await asyncio.wait({self._cycle_task})
-        if self._flush_task is not None:
-            await asyncio.wait({self._flush_task})
+        if self._flush_tasks:
+            await asyncio.wait(self._flush_tasks)
+        if self._conversation is not None:
+            with contextlib.suppress(_AppendFailed):
+                await self._deliver_inbox()  # keep messages queued during a final Stop
         if self._loop_task is not None:
             self._loop_task.cancel()
             await asyncio.gather(self._loop_task, return_exceptions=True)
@@ -513,7 +520,7 @@ class Runtime:
 
     def _maintenance_info(self) -> ModelInfo:
         light = self._config.maintenance_model
-        return self._models.get(light, self._info()) if light else self._info()
+        return self._models[light] if light else self._info()
 
     def _window(self, info: ModelInfo) -> int:
         return info.context_window or self._config.context_windows[info.id]
@@ -657,8 +664,8 @@ class Runtime:
             self._wake.clear()
             if not self._cycle_requested or self._stopping or self._closed:
                 continue
-            if self._flush_task is not None and not self._flush_task.done():
-                await asyncio.wait({self._flush_task})
+            if self._flush_tasks:
+                await asyncio.wait(self._flush_tasks)
             self._cycle_requested = False
             self._cycle_active = True
             self._cycle_task = asyncio.create_task(self._cycle())
@@ -848,7 +855,8 @@ class Runtime:
             await self._calibrate(request)
             attempts += 1
             try:
-                return await self._attempt(request, self._info(), foreground=True)
+                return await self._attempt(request, self._models[request.model],
+                                           foreground=True)
             except _Stopped:
                 return None
             except _BudgetHit as e:
@@ -1123,7 +1131,9 @@ class Runtime:
                 ToolFinished(result, op.duration),
             ))
             if not self._cycle_active and not self._stopping:
-                self._flush_task = asyncio.create_task(self._flush_outside_cycle())
+                task = asyncio.create_task(self._flush_outside_cycle())
+                self._flush_tasks.add(task)
+                task.add_done_callback(self._flush_tasks.discard)
         self._update_state()
         return result
 
@@ -1198,10 +1208,17 @@ class Runtime:
         supervisors = [op.supervisor for op in self._ops.values() if op.supervisor]
         if supervisors:
             await asyncio.wait(supervisors)
-        if self._flush_task is not None and not self._flush_task.done():
-            await asyncio.wait({self._flush_task})
+        if self._flush_tasks:
+            await asyncio.wait(self._flush_tasks)
+        # Messages sent before Stop are kept but start nothing; those sent while
+        # stopping start a cycle once stopped.
+        early, self._inbox = self._inbox[: self._inbox_before_stop], self._inbox[
+            self._inbox_before_stop :]
         try:
             await self._flush_results()
+            for q in early:
+                await self._append(
+                    Message(q.message_id, Role.USER, (Text(q.text),), time.time()))
         except _AppendFailed:
             pass
         if self._stop_abandoned:

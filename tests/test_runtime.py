@@ -518,3 +518,55 @@ async def test_shutdown_cancels_calls(make: Any) -> None:
     ops = [b for m in conv.messages for b in m.blocks if isinstance(b, OperationResult)]
     assert [(o.call_id, o.status) for o in ops] == [("bg", ToolStatus.CANCELLED)]
     assert isinstance(h.rec.events[-1], ShuttingDown)
+
+
+async def test_stop_before_cycle_starts(make: Any) -> None:
+    h: Harness = await make()
+    await h.start()
+    await h.runtime.send("never answered")
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED)
+    await asyncio.sleep(0.1)
+    assert h.core.requests == []
+    assert [m.blocks for m in await h.transcript()] == [(Text("never answered"),)]
+
+
+async def test_stop_keeps_message_queued_before_stop(make: Any) -> None:
+    core = ScriptedCore([Step(text="thinking", hang=True)])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.runtime.send("first")
+    await eventually(lambda: core.requests)
+    await h.runtime.send("second")
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED)
+    await asyncio.sleep(0.1)
+    assert len(core.requests) == 1
+    texts = [b.text for m in await h.transcript() for b in m.blocks if isinstance(b, Text)]
+    assert texts == ["first", "thinking", "second"]
+
+
+async def test_maintenance_model(make: Any) -> None:
+    from kayden.api import Completion, Message
+
+    bad: Harness = await make(maintenance_model="nonexistent")
+    with pytest.raises(ValueError):
+        await bad.start()
+
+    h: Harness = await make(maintenance_model="fake-2")
+    windows: list[int] = []
+
+    async def maintain(complete: Completion) -> bool:
+        windows.append(complete.max_input_tokens(light=True))
+        await complete("Summarize.", [Message("m", Role.USER, (Text("x"),), 0.0)],
+                       max_tokens=20, light=True)
+        return True
+
+    h.memory.maintain_override = maintain
+    await h.start()
+    await h.turn("go")
+    assert windows == [50_000]
+    assert [r.model for r in h.core.requests] == ["fake-2", "fake-1"]
+    from kayden.api import MaintenanceFinished, MaintenanceStarted
+
+    assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 1

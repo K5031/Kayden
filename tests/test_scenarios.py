@@ -156,8 +156,9 @@ async def test_c_continuous_autonomy(make: Any) -> None:
     h: Harness = await make(core=core, tools=tools)
     await h.start(Mode.CONTINUOUS, AGENT_CTL)
     await h.runtime.send("go")
-    await eventually(lambda: len(core.requests) == 3)
-    await h.rec.wait_state(AgentState.IDLE, count=3)
+    await h.rec.wait_for(lambda r: any(
+        isinstance(e, MessageCommitted) and e.message.blocks == (Text("got the result"),)
+        for e in r.events))
     transcript = await h.transcript()
     assert [m.role for m in transcript] == [
         Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.USER,
