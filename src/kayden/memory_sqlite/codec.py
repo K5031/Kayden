@@ -1,84 +1,85 @@
-"""Generic, type-tagged JSON encoding of message blocks.
+"""Type-tagged JSON encoding of message blocks.
 
-A block is any module-level frozen dataclass. It is stored as
-{"type": "<module>:<qualname>", "data": {field: value}}, so block types added later
-round-trip without a storage migration.
+A block is stored as {"type": tag, "data": {field: value}} with the stable tags of
+`api.BLOCK_TYPES`. A tag this version does not know (or data its class cannot take)
+decodes to an `OpaqueBlock`, which re-encodes to exactly what was stored.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import functools
-import importlib
 import json
 import typing
 from collections.abc import Iterator, Sequence
 from enum import Enum
 from typing import Any
 
-from kayden.api import Block, Reasoning
+from kayden.api import BLOCK_TYPES, Block, OpaqueBlock
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # 1 = tags were Python import paths ("kayden.api:Text")
+
+_TAGS = {cls: tag for tag, cls in BLOCK_TYPES.items()}
+_HINTS = {tag: typing.get_type_hints(cls) for tag, cls in BLOCK_TYPES.items()}
+_SKIP_IN_SEARCH = {"reasoning": ("state", "model"), "tool_call": ("id", "raw_arguments"),
+                   "tool_result": ("call_id",), "operation_result": ("call_id",)}
 
 
 def encode_blocks(blocks: Sequence[Block]) -> str:
-    return json.dumps([_encode_block(b) for b in blocks], ensure_ascii=False)
+    return json.dumps([encode_block(b) for b in blocks], ensure_ascii=False)
 
 
 def decode_blocks(raw: str) -> tuple[Block, ...]:
-    return tuple(_decode_block(item) for item in json.loads(raw))
+    return tuple(decode_block(item) for item in json.loads(raw))
+
+
+def encode_block(block: Block) -> dict[str, Any]:
+    if isinstance(block, OpaqueBlock):
+        return {"type": block.type, "data": block.data}
+    tag = _TAGS.get(type(block))
+    if tag is None:
+        raise TypeError(f"{type(block).__name__} has no tag in BLOCK_TYPES")
+    return {"type": tag, "data": {f.name: getattr(block, f.name)
+                                  for f in dataclasses.fields(block)}}
+
+
+def decode_block(item: dict[str, Any]) -> Block:
+    tag, data = item["type"], item["data"]
+    cls = BLOCK_TYPES.get(tag)
+    if cls is None:
+        return OpaqueBlock(tag, data)
+    hints = _HINTS[tag]
+    try:
+        kwargs = {}
+        for name, value in data.items():
+            hint = hints[name]
+            kwargs[name] = hint(value) if isinstance(hint, type) and issubclass(hint, Enum) \
+                else value
+        return cls(**kwargs)
+    except (KeyError, TypeError, ValueError):
+        return OpaqueBlock(tag, data)  # e.g. a field added by a later version
+
+
+def legacy_tag(tag: str) -> str:
+    """Map a format-1 import-path tag ("kayden.api:Text") to its stable tag; other tags
+    (a plugin's, say) are kept and decode to OpaqueBlock."""
+    module, _, qualname = tag.partition(":")
+    if module == "kayden.api":
+        for stable, cls in BLOCK_TYPES.items():
+            if cls.__qualname__ == qualname:
+                return stable
+    return tag
 
 
 def searchable_text(raw: str) -> str:
-    """All string values of the encoded blocks, minus opaque provider state."""
+    """The string values of the encoded blocks, minus ids and opaque provider state."""
     parts: list[str] = []
     for item in json.loads(raw):
+        skip = _SKIP_IN_SEARCH.get(item["type"], ())
         data = item["data"]
-        parts.extend(_strings(data.get("text") if item["type"] == _REASONING_TAG else data))
+        if isinstance(data, dict):
+            data = {k: v for k, v in data.items() if k not in skip}
+        parts.extend(_strings(data))
     return "\n".join(parts)
-
-
-def _encode_block(block: Block) -> dict[str, Any]:
-    cls = type(block)
-    if not dataclasses.is_dataclass(block):
-        raise TypeError(f"block must be a dataclass instance, got {cls.__name__}")
-    tag = f"{cls.__module__}:{cls.__qualname__}"
-    if _resolve(tag)[0] is not cls:
-        raise TypeError(f"block type {tag} is not importable by its module path")
-    data = {f.name: getattr(block, f.name) for f in dataclasses.fields(block)}
-    return {"type": tag, "data": data}
-
-
-def _decode_block(item: dict[str, Any]) -> Block:
-    cls, hints = _resolve(item["type"])
-    kwargs = {}
-    for name, value in item["data"].items():
-        hint = hints.get(name)
-        if isinstance(hint, type) and issubclass(hint, Enum):
-            value = hint(value)
-        kwargs[name] = value
-    return cls(**kwargs)
-
-
-@functools.cache
-def _resolve(tag: str) -> tuple[type, dict[str, Any]]:
-    module_name, _, qualname = tag.partition(":")
-    try:
-        obj: Any = importlib.import_module(module_name)
-        for part in qualname.split("."):
-            obj = getattr(obj, part)
-    except (ImportError, AttributeError) as e:
-        raise LookupError(f"unknown block type {tag}") from e
-    if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
-        raise LookupError(f"block type {tag} is not a dataclass")
-    try:
-        hints = typing.get_type_hints(obj)
-    except (NameError, TypeError):
-        hints = {}
-    return obj, hints
-
-
-_REASONING_TAG = f"{Reasoning.__module__}:{Reasoning.__qualname__}"
 
 
 def _strings(value: Any) -> Iterator[str]:

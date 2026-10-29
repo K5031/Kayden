@@ -527,7 +527,73 @@ in section 9.
   may have started processing it.
 - **Fix:** Say whether cancellation is covered.
 
+## 10. Found while migrating the module implementations (MODULES.md)
+
+Against contract Draft 2.4. All **Open**; the stated assumption is what the module does.
+
+### M1 (C) Memory.assemble: "starts at a USER message" vs. "always includes the newest message"
+- **Where:** `Memory.assemble` docstring.
+- **Problem:** A transcript (or the part after the last compaction) may contain no USER
+  message at all, e.g. one written by an older runtime or by hand. Both rules cannot hold.
+- **Assumed:** The suffix starts at the latest USER message that splits no call from its
+  result; with none, at the latest such message of any role. Compaction only cuts before a
+  USER message, so the active part of a runtime-written transcript always starts with one.
+- **Fix:** "...starts at a USER message when the transcript has one".
+
+### M2 (C) Memory.assemble: a budget too small for the newest exchange
+- **Where:** `Memory.assemble` "Must fit request.max_tokens" and "always includes the
+  newest message".
+- **Problem:** From the last USER message on, the newest exchange may hold several
+  messages (tool calls, results). Truncated to their markers they can still exceed a tiny
+  budget; ToolCall arguments cannot be truncated without becoming invalid.
+- **Assumed:** Including the newest exchange wins: it is truncated as far as possible and
+  returned even if it still exceeds the budget. The runtime then gets ContextOverflowError
+  from Core, which it already handles.
+- **Fix:** State the priority, or give assemble a way to report that the budget is
+  infeasible.
+
+### M3 (S) Memory.history with an unknown `before` id
+- **Assumed:** KeyError, like an unknown conversation id.
+
+### M4 (S) Error type for a conflicting re-append
+- **Where:** `Memory.append` "the same id with different content raises".
+- **Assumed:** ValueError, and the whole batch is rejected (nothing from it is appended).
+
+### M5 (S) Truncating reasoning and tool calls in the assembled view
+- **Where:** `Memory.assemble` "A single oversized message is truncated in this view only".
+- **Problem:** Reasoning text cannot be shortened without invalidating its provider
+  signature; ToolCall arguments cannot be shortened without breaking their JSON.
+- **Assumed:** In a truncated message Reasoning blocks are dropped, Text, ToolResult and
+  OperationResult bodies are cut with a marker naming the message id and `recall`, and
+  ToolCall blocks are kept whole.
+
+### M6 (S) Output size of the light model
+- **Where:** `Completion.max_input_tokens`; `Completion.__call__(max_tokens=...)`.
+- **Problem:** Memory learns the light model's window but not its output limit, so it
+  cannot know whether its `max_tokens` request is accepted.
+- **Assumed:** Memory asks for its summary budget plus 256 tokens and sizes the input so
+  that input plus that output fits the window. The runtime is expected to clamp
+  `max_tokens` to the model's output limit.
+- **Fix:** Have `Completion` clamp, or expose `max_output_tokens(light=...)`.
+
+### M7 (A) Migrating an append-only archive
+- **Where:** api.py `BLOCK_TYPES` comment, MODULES.md "migrate rows already written with
+  import paths"; CLAUDE.md "Memory archive: append-only".
+- **Problem:** Rewriting stored tags is an update to an archive that must be append-only.
+- **Assumed:** A one-time, schema-versioned migration (store version 1 to 2) may rewrite
+  the type tag of stored blocks inside one transaction; the data of every block is left
+  byte-for-byte as decoded JSON. Ordinary operation never updates or deletes a message.
+  Decoding legacy tags at read time instead would have kept the archive untouched; the
+  migration was chosen because MODULES.md asks for it.
+
 ## Material outside the allowed inputs
 
 None was consulted or encountered. The only out-of-tree output seen was a system-wide
 `pip list` (unrelated packages) during the initial environment check.
+
+Update for the module migration: `MODULES.md` (added by the user after the clean-room
+build) explicitly directs importing the module implementations from
+`~/Projects/kayden-memory`, `~/Projects/kayden-core` and `~/Projects/kayden-tools`. Their
+`src/` and `tests/` were copied in (read-only use of those folders); their `api.py` copies
+were not, so this repository's contract stays the only one. Nothing else in those folders
+was used.

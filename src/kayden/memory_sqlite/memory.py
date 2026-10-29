@@ -2,12 +2,14 @@
 
 The archive is the single source of truth for messages. Active context is the archived
 messages after the latest summary's `through_seq`, so compaction removes nothing: it
-inserts one summary row (plus any long-term entries) in a single transaction.
+inserts one summary row (plus any long-term entries) in a single transaction. All token
+figures come from the runtime's `TokenCounter`; thresholds are fractions of the window.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sqlite3
 import time
@@ -16,9 +18,10 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
+from itertools import accumulate
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -26,46 +29,56 @@ from typing import Any
 from kayden.api import (
     ArchiveHit,
     AssembledContext,
+    Block,
     Completion,
     ContextRequest,
     ConversationId,
     ConversationInfo,
+    InstancePaths,
     Memory,
     MemoryView,
     Message,
     Mode,
+    OperationResult,
     Reasoning,
     Role,
     Text,
+    TokenCounter,
     ToolCall,
     ToolResult,
 )
 
 from . import codec
 
-SCHEMA_VERSION = 1
-CHARS_PER_TOKEN = 4
+SCHEMA_VERSION = 2  # 1 = blocks tagged with Python import paths
 # Output headroom on top of the summary budget for tags and new long-term entries.
-_LONG_TERM_OUTPUT_TOKENS = 512
+_LONG_TERM_OUTPUT_TOKENS = 256
 
 
 @dataclass(frozen=True, slots=True)
 class CompactionConfig:
-    """Token values are Memory's own estimates (CHARS_PER_TOKEN characters per token)."""
+    """Every value is a fraction of the context window (`ContextRequest.max_tokens`)."""
 
-    trigger_tokens: int = 48_000  # compact once the active verbatim context reaches this
+    trigger_fraction: float = 0.75  # compact once summary + active verbatim context exceed this
     remove_fraction: float = 0.5  # share of active tokens moved into the summary; 0.5 = cut-half
-    summary_tokens: int = 2_000  # fixed rolling-summary budget
-    long_term_tokens: int = 1_000  # budget for long-term entries rendered into the prompt
+    summary_fraction: float = 0.05  # rolling-summary budget
+    long_term_fraction: float = 0.05  # budget for long-term entries rendered into the prompt
 
     def __post_init__(self) -> None:
-        if not 0 < self.remove_fraction <= 1:
-            raise ValueError("remove_fraction must be in (0, 1]")
-        if min(self.trigger_tokens, self.summary_tokens, self.long_term_tokens) <= 0:
-            raise ValueError("token budgets must be positive")
+        for name in ("trigger_fraction", "remove_fraction", "summary_fraction",
+                     "long_term_fraction"):
+            if not 0 < getattr(self, name) <= 1:
+                raise ValueError(f"{name} must be in (0, 1]")
 
 
 CUT_HALF = CompactionConfig(remove_fraction=0.5)
+
+
+def factory(options: dict[str, Any], paths: InstancePaths) -> SqliteMemory:
+    """Options: `path` (default `<data_dir>/memory.db`) plus any CompactionConfig field."""
+    options = dict(options)
+    path = Path(options.pop("path", paths.data_dir / "memory.db"))
+    return SqliteMemory(path, CompactionConfig(**options))
 
 _SCHEMA = """
 CREATE TABLE conversations (
@@ -87,8 +100,7 @@ CREATE TABLE messages (
     UNIQUE (conversation_id, id)
 );
 CREATE INDEX messages_conversation ON messages(conversation_id, seq);
-CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages
-BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
+{no_update};
 CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
 BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
 CREATE VIRTUAL TABLE messages_fts USING fts5(
@@ -111,6 +123,13 @@ CREATE TABLE long_term (
 );
 CREATE INDEX long_term_mode ON long_term(mode, id);
 """
+_NO_UPDATE = """CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages
+BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END"""
+_SCHEMA = _SCHEMA.replace("{no_update}", _NO_UPDATE)
+_TRUNCATION_MARKER = (
+    "\n[{omitted} characters truncated in this view. The full message ({id}) is kept in the"
+    " archive; use recall with words from it to read the rest.]"
+)
 
 _SYSTEM_PROMPT = """\
 You maintain the rolling summary of a conversation between a user and an AI agent.
@@ -147,7 +166,6 @@ _WORD_RE = re.compile(r"\w+")
 class _Active:
     seq: int
     message: Message
-    tokens: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +177,8 @@ class _State:
 
 
 class SqliteMemory(Memory):
-    """Memory on one SQLite file. All database work runs on a single worker thread."""
+    """Memory on one SQLite file (WAL, so another process may read it concurrently). All
+    database work runs on a single worker thread."""
 
     def __init__(
         self, path: str | PathLike[str], config: CompactionConfig = CUT_HALF
@@ -201,21 +220,30 @@ class SqliteMemory(Memory):
     async def append(
         self, conversation_id: ConversationId, messages: Sequence[Message]
     ) -> None:
-        if not messages:
-            return
         rows = [
-            (m.id, m.role.value, m.created_at, codec.encode_blocks(m.blocks)) for m in messages
+            (m, m.role.value, m.created_at, codec.encode_blocks(m.blocks)) for m in messages
         ]
 
         def run(conn: sqlite3.Connection) -> None:
             now = time.time()
             with _transaction(conn):
                 _require_conversation(conn, conversation_id)
-                for message_id, role, created_at, blocks in rows:
+                for message, role, created_at, blocks in rows:
+                    stored = conn.execute(
+                        "SELECT id, role, created_at, blocks FROM messages"
+                        " WHERE conversation_id = ? AND id = ?",
+                        (conversation_id, message.id),
+                    ).fetchone()
+                    if stored is not None:
+                        if _message(stored) != message:
+                            raise ValueError(
+                                f"message {message.id} was already appended with other content"
+                            )
+                        continue
                     cursor = conn.execute(
                         "INSERT INTO messages (conversation_id, id, role, created_at, format,"
                         " blocks, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (conversation_id, message_id, role, created_at,
+                        (conversation_id, message.id, role, created_at,
                          codec.FORMAT_VERSION, blocks, now),
                     )
                     conn.execute(
@@ -230,35 +258,66 @@ class SqliteMemory(Memory):
         async with self._locks[conversation_id]:
             await self._run(run)
 
+    async def history(
+        self,
+        conversation_id: ConversationId,
+        *,
+        before: str | None = None,
+        limit: int | None = None,
+    ) -> Sequence[Message]:
+        def run(conn: sqlite3.Connection) -> list[Message]:
+            with _transaction(conn, "DEFERRED"):
+                _require_conversation(conn, conversation_id)
+                upper = None
+                if before is not None:
+                    row = conn.execute(
+                        "SELECT seq FROM messages WHERE conversation_id = ? AND id = ?",
+                        (conversation_id, before),
+                    ).fetchone()
+                    if row is None:
+                        raise KeyError(f"unknown message {before} in {conversation_id}")
+                    upper = row[0]
+                rows = conn.execute(
+                    "SELECT id, role, created_at, blocks FROM messages"
+                    " WHERE conversation_id = ? AND (? IS NULL OR seq < ?)"
+                    " ORDER BY seq DESC LIMIT ?",
+                    (conversation_id, upper, upper, -1 if limit is None else limit),
+                ).fetchall()
+            return [_message(row) for row in reversed(rows)]
+
+        return await self._run(run)
+
     async def assemble(self, request: ContextRequest) -> AssembledContext:
         state = await self._run(_read_state, request.conversation_id)
-        return _fit(state, request, self._config.long_term_tokens)
+        return _fit(state, request, self._config.long_term_fraction)
 
-    async def maintain(self, conversation_id: ConversationId, complete: Completion) -> None:
+    async def maintain(
+        self, conversation_id: ConversationId, complete: Completion, context: ContextRequest
+    ) -> bool:
+        config, count = self._config, context.count_tokens
         async with self._locks[conversation_id]:
             state = await self._run(_read_state, conversation_id)
-            cut = _choose_cut(state.active, self._config)
-            if cut is None:
-                return
-            selected = [a.message for a in state.active[:cut]]
+            sizes = [count([a.message]) for a in state.active]
+            total = sum(sizes) + (count(state.summary) if state.summary else 0)
+            if total <= config.trigger_fraction * context.max_tokens:
+                return False
+            summary_tokens = max(1, int(config.summary_fraction * context.max_tokens))
+            output_tokens = summary_tokens + _LONG_TERM_OUTPUT_TOKENS
             system = _SYSTEM_PROMPT.format(
-                summary_tokens=self._config.summary_tokens,
+                summary_tokens=summary_tokens,
                 summary=state.summary or "(none)",
                 long_term="\n".join(f"- {e}" for e in state.long_term) or "(none)",
             )
-            transcript = Message(
-                id=f"compaction-{uuid.uuid4().hex}",
-                role=Role.USER,
-                blocks=(Text(_render_transcript(selected)),),
-                created_at=time.time(),
-            )
+            allowance = complete.max_input_tokens(light=True) - output_tokens - count(system)
+            selection = _choose_cut(state.active, sizes, config.remove_fraction, allowance,
+                                    count)
+            if selection is None:
+                return False
+            cut, transcript = selection
             output = await complete(
-                system,
-                [transcript],
-                max_tokens=self._config.summary_tokens + _LONG_TERM_OUTPUT_TOKENS,
-                light=True,
+                system, [_user_message(transcript)], max_tokens=output_tokens, light=True
             )
-            summary, new_entries = _parse_output(output, self._config.summary_tokens)
+            summary, new_entries = _parse_output(output, summary_tokens, count)
             known = set(state.long_term)
             new_entries = [e for e in dict.fromkeys(new_entries) if e not in known]
             through_seq = state.active[cut - 1].seq
@@ -278,6 +337,7 @@ class SqliteMemory(Memory):
                     )
 
             await self._run(commit)
+            return True
 
     async def search(
         self,
@@ -288,8 +348,6 @@ class SqliteMemory(Memory):
         limit: int = 5,
     ) -> Sequence[ArchiveHit]:
         words = _WORD_RE.findall(query)
-        if not words or limit <= 0:
-            return []
         match = " OR ".join(f'"{w}"' for w in dict.fromkeys(words))
         sql = (
             "SELECT m.conversation_id, m.id, m.role, m.created_at, m.blocks,"
@@ -309,10 +367,15 @@ class SqliteMemory(Memory):
         params.append(limit)
 
         def run(conn: sqlite3.Connection) -> list[ArchiveHit]:
-            return [
-                ArchiveHit(row[0], _message(row[1:5]), -row[5])
-                for row in conn.execute(sql, params)
-            ]
+            with _transaction(conn, "DEFERRED"):
+                if conversation_id is not None:
+                    _require_conversation(conn, conversation_id)
+                if not words or limit <= 0:
+                    return []
+                return [
+                    ArchiveHit(row[0], _message(row[1:5]), -row[5])
+                    for row in conn.execute(sql, params)
+                ]
 
         return await self._run(run)
 
@@ -329,23 +392,6 @@ class SqliteMemory(Memory):
             await self._run(run)
         self._executor.shutdown(wait=False)
 
-    # ── Not in the Memory contract yet (see docs/memory-issues.md) ───────
-
-    async def history(self, conversation_id: ConversationId) -> Sequence[Message]:
-        """The full archived transcript in append order."""
-
-        def run(conn: sqlite3.Connection) -> list[Message]:
-            with _transaction(conn, "DEFERRED"):
-                _require_conversation(conn, conversation_id)
-                rows = conn.execute(
-                    "SELECT id, role, created_at, blocks FROM messages"
-                    " WHERE conversation_id = ? ORDER BY seq",
-                    (conversation_id,),
-                ).fetchall()
-            return [_message(row) for row in rows]
-
-        return await self._run(run)
-
     # ── Internals ─────────────────────────────────────────────────────────
 
     async def _run[T](self, fn: Callable[..., T], *args: Any) -> T:
@@ -359,6 +405,7 @@ class SqliteMemory(Memory):
 
 
 def _open(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, isolation_level=None)
     try:
         conn.execute("PRAGMA journal_mode = WAL")
@@ -371,16 +418,32 @@ def _open(path: Path) -> sqlite3.Connection:
                 for statement in _SCHEMA.split(";\n"):
                     if statement.strip():
                         conn.execute(statement)
-                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            elif version == 1:
+                _migrate_import_path_tags(conn)
             elif version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"{path}: memory schema version {version} is not supported"
                     f" (expected {SCHEMA_VERSION})"
                 )
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     except BaseException:
         conn.close()
         raise
     return conn
+
+
+def _migrate_import_path_tags(conn: sqlite3.Connection) -> None:
+    """Version 1 -> 2: rewrite "kayden.api:Text"-style tags to the stable BLOCK_TYPES tags.
+    The only update the archive ever receives; content is otherwise unchanged."""
+    conn.execute("DROP TRIGGER messages_no_update")
+    for seq, raw in conn.execute("SELECT seq, blocks FROM messages WHERE format = 1").fetchall():
+        blocks = [{"type": codec.legacy_tag(b["type"]), "data": b["data"]}
+                  for b in json.loads(raw)]
+        conn.execute(
+            "UPDATE messages SET blocks = ?, format = ? WHERE seq = ?",
+            (json.dumps(blocks, ensure_ascii=False), codec.FORMAT_VERSION, seq),
+        )
+    conn.execute(_NO_UPDATE)
 
 
 @contextmanager
@@ -411,6 +474,10 @@ def _message(row: Sequence[Any]) -> Message:
     return Message(row[0], Role(row[1]), codec.decode_blocks(row[3]), row[2])
 
 
+def _user_message(text: str) -> Message:
+    return Message(f"compaction-{uuid.uuid4().hex}", Role.USER, (Text(text),), time.time())
+
+
 def _read_state(
     conn: sqlite3.Connection, conversation_id: ConversationId, with_active: bool = True
 ) -> _State:
@@ -437,19 +504,16 @@ def _read_state(
             if with_active
             else []
         )
-    active = [_Active(r[0], _message(r[1:]), _estimate(r[4])) for r in rows]
+    active = [_Active(r[0], _message(r[1:])) for r in rows]
     return _State(mode, summary, long_term, active)
 
 
-def _estimate(text: str) -> int:
-    return len(text) // CHARS_PER_TOKEN + 4
-
-
 def _valid_starts(messages: Sequence[Message], *, pending_calls_block: bool) -> list[int]:
-    """Indices i where messages[i:] is a tail that orphans no tool result.
+    """Indices i of USER messages where messages[i:] orphans no tool result.
 
     With pending_calls_block, a call that has no result yet also pins the cut before it,
-    so its later result never lands after its compacted call.
+    so its later result never lands after its compacted call. Falls back to any role when
+    no USER message qualifies (a transcript the runtime would never write).
     """
     n = len(messages)
     blocked = [0] * (n + 2)
@@ -466,27 +530,41 @@ def _valid_starts(messages: Sequence[Message], *, pending_calls_block: bool) -> 
             blocked[i + 1] += 1
             blocked[n + 1] -= 1
     starts, depth = [], 0
-    for i in range(n + 1):
+    for i in range(n):
         depth += blocked[i]
         if depth == 0:
             starts.append(i)
-    return starts
+    return [i for i in starts if messages[i].role is Role.USER] or starts
 
 
-def _choose_cut(active: Sequence[_Active], config: CompactionConfig) -> int | None:
-    total = sum(a.tokens for a in active)
-    if total < config.trigger_tokens:
+def _choose_cut(
+    active: Sequence[_Active], sizes: Sequence[int], remove_fraction: float, allowance: int,
+    count: TokenCounter,
+) -> tuple[int, str] | None:
+    """The compaction cut and the transcript to summarize, whose message fits `allowance`."""
+    messages = [a.message for a in active]
+    candidates = [s for s in _valid_starts(messages, pending_calls_block=True) if s >= 1]
+    if not candidates or allowance <= 0:
         return None
-    starts = _valid_starts([a.message for a in active], pending_calls_block=True)
-    candidates = [s for s in starts if 1 <= s < len(active)]
-    if not candidates:
-        return None
-    target = total * config.remove_fraction
-    removed, cumulative = 0, [0]
-    for a in active:
-        removed += a.tokens
-        cumulative.append(removed)
-    return next((s for s in candidates if cumulative[s] >= target), candidates[-1])
+    target = sum(sizes) * remove_fraction
+    cumulative = list(accumulate(sizes, initial=0))
+    wanted = next((s for s in candidates if cumulative[s] >= target), candidates[-1])
+    candidates = [s for s in candidates if s <= wanted]
+
+    def transcript(cut: int) -> str:
+        return _render_transcript(messages[:cut])
+
+    def fits(text: str) -> bool:
+        return count([_user_message(text)]) <= allowance
+
+    fitting = _max_true(len(candidates), lambda k: k == 0 or
+                        fits(transcript(candidates[k - 1])))
+    if fitting:
+        cut = candidates[fitting - 1]
+        return cut, transcript(cut)
+    cut, text = candidates[0], transcript(candidates[0])  # one oversized exchange
+    keep = _max_true(len(text), lambda n: fits(text[:n]))
+    return (cut, text[:keep]) if keep else None
 
 
 def _render_transcript(messages: Sequence[Message]) -> str:
@@ -499,21 +577,22 @@ def _render_transcript(messages: Sequence[Message]) -> str:
                     lines.append(f"[{stamp} {message.role}] {text}")
                 case Reasoning():
                     continue
-                case ToolCall(_, name, arguments):
-                    lines.append(f"[{stamp} {message.role} calls {name}] {arguments}")
+                case ToolCall(_, name, arguments, raw):
+                    lines.append(f"[{stamp} {message.role} calls {name}] {raw or arguments}")
                 case ToolResult(_, status, content):
                     lines.append(f"[{stamp} tool result, {status}] {content}")
+                case OperationResult(call_id, status, content):
+                    lines.append(f"[{stamp} background operation {call_id}, {status}] {content}")
                 case _:
                     lines.append(f"[{stamp} {message.role}] {block}")
     return "\n".join(lines)
 
 
-def _parse_output(output: str, summary_tokens: int) -> tuple[str, list[str]]:
+def _parse_output(output: str, summary_tokens: int, count: TokenCounter) -> tuple[str, list[str]]:
     summary_match = _SUMMARY_RE.search(output)
     summary = (summary_match.group(1) if summary_match else output).strip()
-    limit = summary_tokens * CHARS_PER_TOKEN
-    if len(summary) > limit:
-        cut = summary[:limit]
+    if count(summary) > summary_tokens:
+        cut = summary[: _max_true(len(summary), lambda n: count(summary[:n]) <= summary_tokens)]
         summary = cut.rsplit(None, 1)[0] if " " in cut.strip() else cut
     entries: list[str] = []
     if summary_match and (long_term_match := _LONG_TERM_RE.search(output)):
@@ -533,50 +612,81 @@ def _render_addendum(summary: str, long_term: Sequence[str]) -> str:
     return "\n\n".join(parts)
 
 
-def _addendum_message(addendum: str) -> list[Message]:
-    return [Message("memory-addendum", Role.USER, (Text(addendum),), 0.0)] if addendum else []
-
-
-def _fit(state: _State, request: ContextRequest, long_term_tokens: int) -> AssembledContext:
-    """Fit summary, then long-term entries, then the newest verbatim tail into the budget.
-
-    The addendum is counted as one extra user message, since TokenCounter counts messages.
-    """
+def _fit(state: _State, request: ContextRequest, long_term_fraction: float) -> AssembledContext:
+    """The newest exchange (from the last USER message on) is always included, truncated in
+    view if it alone exceeds the budget. The addendum (summary, then the newest long-term
+    entries) gets what remains, and the verbatim tail extends back as far as still fits."""
     count, budget = request.count_tokens, request.max_tokens
-
-    def fits(addendum: str, tail: Sequence[Message] = ()) -> bool:
-        return count([*_addendum_message(addendum), *tail]) <= budget
-
-    entries = list(state.long_term)
-    used, keep = 0, 0
-    for entry in reversed(entries):
-        used += _estimate(entry)
-        if used > long_term_tokens:
-            break
-        keep += 1
-    entries = entries[len(entries) - keep :]
-
-    keep = _max_true(
-        len(entries), lambda k: fits(_render_addendum(state.summary, entries[len(entries) - k :]))
-    )
-    entries = entries[len(entries) - keep :]
-    summary = state.summary
-    if not fits(_render_addendum(summary, entries)):
-        length = _max_true(len(summary), lambda n: fits(_render_addendum(summary[:n], [])))
-        summary = summary[:length]
-    addendum = _render_addendum(summary, entries)
-
     messages = [a.message for a in state.active]
     starts = _valid_starts(messages, pending_calls_block=False)
-    # Smallest valid start whose tail fits; starts[-1] == len(messages) (empty tail).
-    lo, hi = 0, len(starts) - 1
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if fits(addendum, messages[starts[mid] :]):
-            hi = mid
-        else:
-            lo = mid + 1
-    return AssembledContext(system_addendum=addendum, messages=messages[starts[lo] :])
+    newest = list(messages[starts[-1]:]) if starts else []
+    view = _truncate_to_fit(newest, budget, count)
+    room = budget - (count(view) if view else 0)
+
+    def size(addendum: str) -> int:
+        return count(addendum) if addendum else 0
+
+    entries = list(state.long_term)
+    keep = _max_true(len(entries), lambda k: size(_render_addendum("", entries[-k:] if k else []))
+                     <= long_term_fraction * budget)
+    keep = _max_true(keep, lambda k: size(
+        _render_addendum(state.summary, entries[-k:] if k else [])) <= room)
+    entries = entries[-keep:] if keep else []
+    summary = state.summary
+    if size(_render_addendum(summary, entries)) > room:
+        summary = summary[: _max_true(len(summary),
+                                      lambda n: size(_render_addendum(summary[:n], [])) <= room)]
+    addendum = _render_addendum(summary, entries)
+    if view != newest:
+        return AssembledContext(addendum, view)
+
+    room = budget - size(addendum)
+    first = _max_true(len(starts) - 1, lambda k: count(messages[starts[-1 - k]:]) <= room)
+    return AssembledContext(addendum, messages[starts[-1 - first]:] if starts else [])
+
+
+def _truncate_to_fit(
+    messages: list[Message], budget: int, count: TokenCounter
+) -> list[Message]:
+    """Shrink the largest messages until the list fits, or nothing more can be cut."""
+    view = list(messages)
+    shrinkable = set(range(len(view)))
+    while shrinkable and count(view) > budget:
+        j = max(shrinkable, key=lambda k: count([view[k]]))
+        target = count([view[j]]) - (count(view) - budget)
+        view[j] = _shrink(messages[j], target, count)
+        shrinkable.discard(j)
+    return view
+
+
+def _shrink(message: Message, target: int, count: TokenCounter) -> Message:
+    """Cut every text-bearing block to the longest common length that keeps `message`
+    within `target` tokens. Reasoning is dropped: it cannot be cut and still verify."""
+    longest = max((len(_body(b)) for b in message.blocks if _body(b) is not None), default=0)
+
+    def cut(n: int) -> Message:
+        blocks: list[Block] = []
+        for block in message.blocks:
+            body = _body(block)
+            if isinstance(block, Reasoning):
+                continue
+            if body is None or len(body) <= n:
+                blocks.append(block)
+                continue
+            text = body[:n] + _TRUNCATION_MARKER.format(omitted=len(body) - n, id=message.id)
+            blocks.append(Text(text) if isinstance(block, Text) else replace(block, content=text))
+        return replace(message, blocks=tuple(blocks))
+
+    return cut(_max_true(longest, lambda n: count([cut(n)]) <= target))
+
+
+def _body(block: Block) -> str | None:
+    match block:
+        case Text(text):
+            return text
+        case ToolResult(content=content) | OperationResult(content=content):
+            return content
+    return None
 
 
 def _max_true(upper: int, predicate: Callable[[int], bool]) -> int:

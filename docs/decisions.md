@@ -138,3 +138,43 @@ timing flake, not a violation).
 |--------|-------|-------|
 | The activation notice is appended only when the transcript is empty or its newest message is ASSISTANT; a transcript ending on a TOOL message (e.g. after an append failure) is sent unchanged. | `Runtime._ensure_user_last` | `test_activate_after_tool_message_adds_no_notice`, `test_append_failure_stops_further_work` (updated) |
 | `op_status.wait_s` above 60 is no longer rejected by validation; the built-in clamps it to `_OP_STATUS_MAX_WAIT_S` (60 s). Implementation unchanged. | `Runtime._builtin` | `test_op_status_wait_clamped` (replaces `test_op_status_wait_capped`) |
+
+## Module migration (MODULES.md)
+
+Module streams were imported with `rsync -a --ignore-existing`, so this repository's
+`api.py`, `__init__.py` files and runtime were kept. Dependencies were merged into
+`pyproject.toml`: `anthropic`, `openai`, `httpx2` (the HTTP client both SDKs depend on),
+`textual`; `psutil` for tests.
+
+### Memory (`kayden.memory_sqlite`)
+
+- Factory: `kayden.memory_sqlite:factory`. Options: `path` (default
+  `<data_dir>/memory.db`, shared by both modes of a data directory) plus any
+  `CompactionConfig` field; an unknown option raises TypeError.
+- `CompactionConfig` is all fractions of `ContextRequest.max_tokens`: trigger 0.75
+  (summary plus active verbatim context), remove 0.5 (cut-half), summary 0.05, long-term
+  rendering 0.05. All token figures use the runtime's `TokenCounter`.
+- Compaction cuts only before a USER message that splits no call from its result (or
+  pending call). The request to the light model is sized so that system prompt, transcript
+  and requested output fit `max_input_tokens(light=True)`: the cut moves earlier if needed,
+  and a single oversized exchange is shown truncated (the archive keeps it whole). If not
+  even that fits, maintain does nothing and returns False.
+- `assemble` priority: the newest exchange (from the last USER message on, truncated in
+  view if it alone is too big), then the summary, then the newest long-term entries (at
+  most 5% of the budget), then older verbatim messages as far back as fits.
+- Storage format 2: blocks are `{"type": tag, "data": {...}}` with `BLOCK_TYPES` tags.
+  `OpaqueBlock(type, data)` is stored as exactly that. An unknown tag, or a known tag whose
+  data the current class cannot take (a field added later), decodes to `OpaqueBlock`, so it
+  re-encodes unchanged. Appending a block class without a tag raises TypeError.
+- Schema version 2 (`PRAGMA user_version`). Opening a version 1 store rewrites
+  `kayden.api:<Class>` tags to stable tags in one transaction (dropping and re-creating the
+  no-update trigger around it); other import-path tags stay and decode to `OpaqueBlock`.
+  Any other version is refused.
+- `append` compares a re-appended id with the stored message (decoded equality) and skips
+  it when equal; a conflict raises ValueError and rolls back the batch.
+- Search: FTS5 over the strings of each block minus ids and reasoning state, words ORed,
+  score = −bm25 (higher is better). Unknown `conversation_id` raises KeyError.
+- Concurrency: WAL journal, one connection per `SqliteMemory` on a dedicated worker
+  thread; a second process opening the same file reads and writes alongside it (SQLite's
+  default 5 s busy timeout). Token counting in `assemble`/`maintain` runs on the event loop
+  (the counter is the runtime's fast estimate).

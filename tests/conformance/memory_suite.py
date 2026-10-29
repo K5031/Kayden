@@ -2,9 +2,9 @@
 
 Subclass `MemoryConformance` and override the `memory_factory` fixture with a callable
 that opens the same persistent store on every call (calling it again = reopening the
-store, as after a restart). The store must be configured so that maintain() compacts
-whenever the active verbatim context holds more than ~2,000 characters of text, and
-keeps at least one recent message verbatim.
+store, as after a restart). maintain() is called with a window of `WINDOW` tokens; with
+it the store must compact once the active context holds more than ~750 tokens
+(`count_tokens`), and keep at least one recent message verbatim.
 
 Override `completion` to make the fake summarizer's output match the implementation's
 expected format. Whatever it renders, the summary must contain the tokens that
@@ -19,16 +19,19 @@ import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from itertools import count
+from typing import Any
 
 import pytest
 
 from kayden.api import (
-    JSON,
+    AssembledContext,
     BudgetExhausted,
     ContextRequest,
     Memory,
     Message,
     Mode,
+    OpaqueBlock,
+    OperationResult,
     Reasoning,
     Role,
     Text,
@@ -40,6 +43,7 @@ from kayden.api import (
 type MemoryFactory = Callable[[], Memory]
 
 UNLIMITED = 10**9
+WINDOW = 1_000
 TOKEN_RE = re.compile(r"\btok\d{4}\b")
 _FILLER = (
     "The quick brown fox jumps over the lazy dog while the committee reviews budgets, "
@@ -47,18 +51,15 @@ _FILLER = (
 )
 
 
-def count_tokens(messages: Sequence[Message]) -> int:
+def count_tokens(value: str | Sequence[Message]) -> int:
     """Deterministic stand-in for a provider tokenizer."""
-    return sum(4 + sum(len(repr(b)) // 4 for b in m.blocks) for m in messages)
+    if isinstance(value, str):
+        return len(value) // 4
+    return sum(4 + sum(len(repr(b)) // 4 for b in m.blocks) for m in value)
 
 
-@dataclass(frozen=True, slots=True)
-class FutureBlock:
-    """A block type the Memory implementation has never seen."""
-
-    kind: str
-    payload: JSON
-    ratio: float
+def context(conversation_id: str, max_tokens: int = WINDOW) -> ContextRequest:
+    return ContextRequest(conversation_id, max_tokens, count_tokens)
 
 
 @dataclass
@@ -70,8 +71,12 @@ class FakeCompletion:
 
     keep: int = 3
     render: Callable[[list[str], str], str] = lambda kept, _text: "Summary: " + " ".join(kept)
+    input_tokens: int = UNLIMITED  # max_input_tokens() of both models
     calls: list[dict] = field(default_factory=list)
     kept: list[str] = field(default_factory=list)  # tokens kept by the latest call
+
+    def max_input_tokens(self, *, light: bool = False) -> int:
+        return self.input_tokens
 
     async def __call__(
         self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False
@@ -92,6 +97,9 @@ class Hanging:
         self.inner = inner
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
+
+    def max_input_tokens(self, *, light: bool = False) -> int:
+        return self.inner.max_input_tokens(light=light)
 
     async def __call__(
         self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False
@@ -114,6 +122,9 @@ class Hanging:
 class Failing:
     def __init__(self, error: BaseException) -> None:
         self.error = error
+
+    def max_input_tokens(self, *, light: bool = False) -> int:
+        return UNLIMITED
 
     async def __call__(
         self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False
@@ -145,18 +156,22 @@ def tokens(start: int, n: int) -> list[str]:
 
 
 async def active(memory: Memory, conversation_id: str) -> list[Message]:
-    ctx = await memory.assemble(ContextRequest(conversation_id, UNLIMITED, count_tokens))
+    ctx = await memory.assemble(context(conversation_id, UNLIMITED))
     return list(ctx.messages)
 
 
 async def addendum(memory: Memory, conversation_id: str) -> str:
-    ctx = await memory.assemble(ContextRequest(conversation_id, UNLIMITED, count_tokens))
+    ctx = await memory.assemble(context(conversation_id, UNLIMITED))
     return ctx.system_addendum
 
 
 async def snapshot(memory: Memory, conversation_id: str) -> tuple:
-    ctx = await memory.assemble(ContextRequest(conversation_id, UNLIMITED, count_tokens))
+    ctx = await memory.assemble(context(conversation_id, UNLIMITED))
     return ctx.system_addendum, list(ctx.messages), await memory.inspect(conversation_id)
+
+
+def used_tokens(ctx: AssembledContext) -> int:
+    return count_tokens(ctx.system_addendum) + count_tokens(ctx.messages)
 
 
 def assert_well_formed(messages: Sequence[Message]) -> None:
@@ -211,6 +226,9 @@ class MemoryConformance:
             messages.extend(batch)
         return messages
 
+    async def maintain(self, memory: Memory, conversation_id: str, completion: Any) -> bool:
+        return await memory.maintain(conversation_id, completion, context(conversation_id))
+
     # ── Conversations ─────────────────────────────────────────────────────
 
     async def test_conversations_are_listed_per_mode(self, memory: Memory):
@@ -222,6 +240,21 @@ class MemoryConformance:
             continuous.id
         ]
 
+    async def test_unknown_conversation_raises_key_error(
+        self, memory: Memory, completion: FakeCompletion
+    ):
+        calls = [
+            memory.append("missing", [text_message("tok0001")]),
+            memory.history("missing"),
+            memory.assemble(context("missing")),
+            memory.maintain("missing", completion, context("missing")),
+            memory.search("tok0001", conversation_id="missing"),
+            memory.inspect("missing"),
+        ]
+        for call in calls:
+            with pytest.raises(KeyError):
+                await call
+
     # ── Durability ────────────────────────────────────────────────────────
 
     async def test_append_is_durable_across_reopen(self, open_memory: MemoryFactory):
@@ -232,6 +265,7 @@ class MemoryConformance:
 
         reopened = open_memory()
         assert await active(reopened, conv.id) == messages
+        assert await reopened.history(conv.id) == messages
         assert [c.id for c in await reopened.list_conversations(Mode.SESSION)] == [conv.id]
         await assert_archived(reopened, conv.id, messages)
 
@@ -242,12 +276,49 @@ class MemoryConformance:
         # No aclose(): a second process-like instance must already see everything.
         assert await active(open_memory(), conv.id) == messages
 
-    async def test_unknown_block_type_round_trips(self, open_memory: MemoryFactory):
+    async def test_second_instance_reads_while_first_writes(self, open_memory: MemoryFactory):
+        writer, reader = open_memory(), open_memory()
+        conv = await writer.create_conversation(Mode.CONTINUOUS)
+        await self.fill(writer, conv.id, tokens(0, 4))
+
+        async def write() -> None:
+            await self.fill(writer, conv.id, tokens(100, 20))
+
+        async def read() -> None:
+            for _ in range(20):
+                await reader.search("tok0001", mode=Mode.CONTINUOUS)
+                await reader.history(conv.id, limit=3)
+
+        await asyncio.gather(write(), read())
+        assert len(await reader.search("tok0118", mode=Mode.CONTINUOUS)) == 1
+
+    async def test_all_block_types_round_trip(self, open_memory: MemoryFactory):
+        memory = open_memory()
+        conv = await memory.create_conversation(Mode.SESSION)
+        messages = [
+            Message("u", Role.USER, (Text("tok0001 go"),
+                                     OperationResult("c0", ToolStatus.ABANDONED, "late")), 1.5),
+            Message("a", Role.ASSISTANT, (
+                Reasoning("hmm", {"signature": "s"}, "model-a"),
+                ToolCall("c1", "lookup", {"q": ["x", 1]}),
+                ToolCall("c2", "lookup", {}, raw_arguments="{not json"),
+            ), 1_700_000_000.123456),
+            Message("t", Role.TOOL, (ToolResult("c1", ToolStatus.OK, "found"),
+                                     ToolResult("c2", ToolStatus.ERROR, "bad args")), 2.0),
+        ]
+        await memory.append(conv.id, messages)
+        await memory.aclose()
+
+        reopened = open_memory()
+        assert await reopened.history(conv.id) == messages
+        assert [h.message for h in await reopened.search("tok0001")] == [messages[0]]
+
+    async def test_opaque_block_round_trips_unchanged(self, open_memory: MemoryFactory):
         memory = open_memory()
         conv = await memory.create_conversation(Mode.SESSION)
         message = Message(
-            "future", Role.ASSISTANT,
-            (Text("tok0001 before"), FutureBlock("image", {"w": 3, "tags": ["a"]}, 0.1),
+            "future", Role.USER,
+            (Text("tok0001 before"), OpaqueBlock("image", {"w": 3, "tags": ["a"], "r": 0.1}),
              Text("after")),
             1_700_000_000.123456,
         )
@@ -255,9 +326,34 @@ class MemoryConformance:
         await memory.aclose()
 
         reopened = open_memory()
-        assert await active(reopened, conv.id) == [message]
-        hits = await reopened.search("tok0001")
-        assert [h.message for h in hits] == [message]
+        assert await reopened.history(conv.id) == [message]
+        assert [h.message for h in await reopened.search("tok0001")] == [message]
+
+    async def test_append_is_idempotent_by_message_id(self, memory: Memory):
+        conv = await memory.create_conversation(Mode.SESSION)
+        first, second = text_message("tok0001"), text_message("tok0002", Role.ASSISTANT)
+        await memory.append(conv.id, [first])
+        await memory.append(conv.id, [first, second])  # a cancelled append may have landed
+        await memory.append(conv.id, [second])
+        assert await memory.history(conv.id) == [first, second]
+
+        changed = Message(first.id, Role.USER, (Text("tok0003 different"),), first.created_at)
+        with pytest.raises(ValueError):
+            await memory.append(conv.id, [changed])
+        assert await memory.history(conv.id) == [first, second]
+
+    # ── History ───────────────────────────────────────────────────────────
+
+    async def test_history_pagination(self, memory: Memory, completion: FakeCompletion):
+        conv = await memory.create_conversation(Mode.SESSION)
+        messages = await self.fill(memory, conv.id, tokens(0, 30))
+        assert await self.maintain(memory, conv.id, completion)
+        assert await memory.history(conv.id) == messages  # regardless of compaction
+        assert await memory.history(conv.id, limit=3) == messages[-3:]
+        assert await memory.history(conv.id, before=messages[10].id) == messages[:10]
+        assert await memory.history(conv.id, before=messages[10].id, limit=4) == messages[6:10]
+        assert await memory.history(conv.id, before=messages[0].id) == []
+        assert await memory.history(conv.id, limit=0) == []
 
     # ── Assemble ──────────────────────────────────────────────────────────
 
@@ -269,63 +365,90 @@ class MemoryConformance:
         conv = await memory.create_conversation(Mode.SESSION)
         await self.fill(memory, conv.id, tokens(0, 30))
         if maintained:
-            await memory.maintain(conv.id, completion)
+            assert await self.maintain(memory, conv.id, completion)
         # Deferred maintenance: far more history than compaction would normally allow.
         await self.fill(memory, conv.id, tokens(100, 30))
         full = await active(memory, conv.id)
 
-        ctx = await memory.assemble(ContextRequest(conv.id, budget, count_tokens))
-        rendered = [Message("a", Role.USER, (Text(ctx.system_addendum),), 0.0)]
-        used = count_tokens([*(rendered if ctx.system_addendum else []), *ctx.messages])
-        assert used <= budget
-        assert list(ctx.messages) == full[len(full) - len(ctx.messages):]
+        ctx = await memory.assemble(context(conv.id, budget))
+        if budget >= 150:  # below that even the truncated newest exchange cannot fit
+            assert used_tokens(ctx) <= budget
+        assert ctx.messages and ctx.messages[0].role is Role.USER
+        assert ctx.messages[-1].id == full[-1].id
+        assert [m.id for m in ctx.messages] == [m.id for m in full[len(full) - len(ctx.messages):]]
         assert_well_formed(ctx.messages)
         if budget == UNLIMITED:
-            assert len(ctx.messages) == len(full)
+            assert list(ctx.messages) == full
         elif budget >= 2_000:
-            assert ctx.messages, "a generous budget should keep some verbatim tail"
+            assert len(ctx.messages) > 3, "a generous budget should keep more than the minimum"
 
-    async def test_assemble_never_orphans_a_tool_result(self, memory: Memory):
-        conv = await memory.create_conversation(Mode.SESSION)
-        call, result = tool_exchange("tok0001")
-        final = text_message("tok0002", Role.ASSISTANT)
-        await memory.append(conv.id, [call, result, final])
-        for budget in range(count_tokens([final]), count_tokens([call, result, final]) + 1):
-            ctx = await memory.assemble(ContextRequest(conv.id, budget, count_tokens))
-            assert_well_formed(ctx.messages)
-            assert count_tokens(ctx.messages) <= budget
-
-    async def test_assemble_is_read_only(self, memory: Memory, completion: FakeCompletion):
+    async def test_assemble_counts_the_addendum(self, memory: Memory, completion: FakeCompletion):
         conv = await memory.create_conversation(Mode.SESSION)
         await self.fill(memory, conv.id, tokens(0, 30))
-        await memory.maintain(conv.id, completion)
-        before = await snapshot(memory, conv.id)
-        listed = await memory.list_conversations(Mode.SESSION)
-        for budget in (10, 300, UNLIMITED):
-            await memory.assemble(ContextRequest(conv.id, budget, count_tokens))
-        assert await snapshot(memory, conv.id) == before
-        assert await memory.list_conversations(Mode.SESSION) == listed
+        assert await self.maintain(memory, conv.id, completion)
+        summary = await addendum(memory, conv.id)
+        assert summary
+        tail = await active(memory, conv.id)
+        budget = count_tokens(summary) + count_tokens(tail)
+        assert await memory.assemble(context(conv.id, budget)) == AssembledContext(summary, tail)
+        ctx = await memory.assemble(context(conv.id, budget - 1))
+        assert used_tokens(ctx) <= budget - 1
+
+    async def test_assemble_starts_at_a_user_message(self, memory: Memory):
+        conv = await memory.create_conversation(Mode.SESSION)
+        call, result = tool_exchange("tok0001")
+        u1, u2 = text_message("tok0000"), text_message("tok0002")
+        final = text_message("tok0003", Role.ASSISTANT)
+        messages = [u1, call, result, u2, final]
+        await memory.append(conv.id, messages)
+        for budget in range(count_tokens([u2, final]), count_tokens(messages) + 1):
+            ctx = await memory.assemble(context(conv.id, budget))
+            assert list(ctx.messages) in ([u2, final], messages)
+            assert used_tokens(ctx) <= budget
+
+    async def test_oversized_newest_message_is_truncated_in_view_only(self, memory: Memory):
+        conv = await memory.create_conversation(Mode.SESSION)
+        earlier = await self.fill(memory, conv.id, tokens(0, 4))
+        huge = Message("huge", Role.USER, (Text("tok0500 " + "lorem ipsum " * 2_000),), 1.0)
+        await memory.append(conv.id, [huge])
+
+        ctx = await memory.assemble(context(conv.id, 500))
+        assert used_tokens(ctx) <= 500
+        assert [m.id for m in ctx.messages] == ["huge"]
+        shown = ctx.messages[0].blocks[0].text
+        assert shown.startswith("tok0500") and "huge" in shown and len(shown) < 2_000
+        assert await memory.history(conv.id) == [*earlier, huge]
 
     # ── Maintenance ───────────────────────────────────────────────────────
 
     async def test_maintain_skips_small_context(self, memory: Memory, completion: FakeCompletion):
         conv = await memory.create_conversation(Mode.SESSION)
         messages = await self.fill(memory, conv.id, tokens(0, 2))
-        await memory.maintain(conv.id, completion)
+        assert await self.maintain(memory, conv.id, completion) is False
         assert completion.calls == []
         assert await active(memory, conv.id) == messages
+
+    async def test_maintain_threshold_follows_the_window(
+        self, memory: Memory, completion: FakeCompletion
+    ):
+        conv = await memory.create_conversation(Mode.SESSION)
+        await self.fill(memory, conv.id, tokens(0, 30))
+        assert not await memory.maintain(conv.id, completion, context(conv.id, 100 * WINDOW))
+        assert completion.calls == []
+        assert await memory.maintain(conv.id, completion, context(conv.id, WINDOW))
 
     async def test_maintain_compacts_and_archives_first(
         self, memory: Memory, completion: FakeCompletion
     ):
         conv = await memory.create_conversation(Mode.SESSION)
         messages = await self.fill(memory, conv.id, tokens(0, 30))
-        await memory.maintain(conv.id, completion)
+        assert await self.maintain(memory, conv.id, completion) is True
 
         tail = await active(memory, conv.id)
         assert completion.calls, "maintain should have compacted"
         assert 0 < len(tail) < len(messages)
         assert tail == messages[len(messages) - len(tail):]
+        assert tail[0].role is Role.USER
         assert_well_formed(tail)
         summary = await addendum(memory, conv.id)
         assert completion.kept and all(t in summary for t in completion.kept)
@@ -336,6 +459,16 @@ class MemoryConformance:
         )
         await assert_archived(memory, conv.id, messages[: len(messages) - len(tail)])
 
+    async def test_maintain_sizes_its_request_to_the_light_model(self, memory: Memory):
+        conv = await memory.create_conversation(Mode.SESSION)
+        await self.fill(memory, conv.id, tokens(0, 60))
+        completion = FakeCompletion(input_tokens=1_200)
+        assert await self.maintain(memory, conv.id, completion)
+        [call] = completion.calls
+        assert call["light"] is True
+        sent = count_tokens(call["system"]) + count_tokens(call["messages"])
+        assert sent + call["max_tokens"] <= 1_200
+
     async def test_failed_completion_changes_nothing(
         self, memory: Memory, completion: FakeCompletion
     ):
@@ -343,11 +476,9 @@ class MemoryConformance:
         await self.fill(memory, conv.id, tokens(0, 30))
         before = await snapshot(memory, conv.id)
         with pytest.raises(RuntimeError):
-            await memory.maintain(conv.id, Failing(RuntimeError("provider down")))
-        try:
-            await memory.maintain(conv.id, Failing(BudgetExhausted("spent")))
-        except BudgetExhausted:
-            pass
+            await self.maintain(memory, conv.id, Failing(RuntimeError("provider down")))
+        with pytest.raises(BudgetExhausted):
+            await self.maintain(memory, conv.id, Failing(BudgetExhausted("spent")))
         assert await snapshot(memory, conv.id) == before
 
     async def test_crash_during_compaction_loses_nothing(
@@ -356,12 +487,12 @@ class MemoryConformance:
         memory = open_memory()
         conv = await memory.create_conversation(Mode.CONTINUOUS)
         messages = await self.fill(memory, conv.id, tokens(0, 30))
-        await memory.maintain(conv.id, completion)
+        await self.maintain(memory, conv.id, completion)
         messages += await self.fill(memory, conv.id, tokens(100, 30))
         before = await snapshot(memory, conv.id)
 
         hanging = Hanging(completion)
-        task = asyncio.create_task(memory.maintain(conv.id, hanging))
+        task = asyncio.create_task(self.maintain(memory, conv.id, hanging))
         await hanging.wait_entered(task)
         task.cancel()  # the process dies mid-compaction; nothing is shut down cleanly
         with pytest.raises(asyncio.CancelledError):
@@ -370,7 +501,7 @@ class MemoryConformance:
         survivor = open_memory()
         assert await snapshot(survivor, conv.id) == before
         await assert_archived(survivor, conv.id, messages)
-        await survivor.maintain(conv.id, completion)
+        await self.maintain(survivor, conv.id, completion)
         await assert_archived(survivor, conv.id, messages)
 
     async def test_archive_finds_messages_decayed_out_of_summary(
@@ -380,7 +511,7 @@ class MemoryConformance:
         messages = []
         for cycle in range(8):
             messages += await self.fill(memory, conv.id, tokens(cycle * 20, 20))
-            await memory.maintain(conv.id, completion)
+            await self.maintain(memory, conv.id, completion)
         assert len(completion.calls) >= 4
 
         tail = await active(memory, conv.id)
@@ -401,7 +532,7 @@ class MemoryConformance:
         await self.fill(memory, continuous.id, tokens(500, 30))
         before = await snapshot(memory, continuous.id)
 
-        await memory.maintain(session.id, completion)
+        await self.maintain(memory, session.id, completion)
         assert await snapshot(memory, continuous.id) == before
         assert not set(TOKEN_RE.findall(before[0])) & set(tokens(0, 30))
 
@@ -419,11 +550,11 @@ class MemoryConformance:
         session = await memory.create_conversation(Mode.SESSION)
         continuous = await memory.create_conversation(Mode.CONTINUOUS)
         await self.fill(memory, continuous.id, tokens(0, 30))
-        await memory.maintain(continuous.id, completion)
+        await self.maintain(memory, continuous.id, completion)
         before = await snapshot(memory, continuous.id)
         listed = await memory.list_conversations(Mode.CONTINUOUS)
 
-        for query in ("tok0001", "fox committee", "", "\"unbalanced ( * OR"):
+        for query in ("tok0001", "fox committee", "", "\"unbalanced ( * OR", "a:b NEAR(c)"):
             await memory.search(query, mode=Mode.CONTINUOUS)
         assert await snapshot(memory, continuous.id) == before
         assert await memory.list_conversations(Mode.CONTINUOUS) == listed
@@ -435,6 +566,17 @@ class MemoryConformance:
         assert len(await memory.search("fox", limit=3)) == 3
         assert await memory.search("nonexistentword") == []
 
+    async def test_search_higher_score_is_better(self, memory: Memory):
+        conv = await memory.create_conversation(Mode.SESSION)
+        await self.fill(memory, conv.id, tokens(0, 6))
+        both = Message("both", Role.USER, (Text("zebra giraffe"),), time.time())
+        one = Message("one", Role.USER, (Text("zebra and other words entirely"),), time.time())
+        await memory.append(conv.id, [one, both])
+        hits = await memory.search("zebra giraffe")
+        assert [h.message.id for h in hits] == ["both", "one"]
+        if hits[0].score is not None:
+            assert hits[0].score > hits[1].score
+
     # ── Inspect ───────────────────────────────────────────────────────────
 
     async def test_inspect(self, memory: Memory, completion: FakeCompletion):
@@ -445,7 +587,7 @@ class MemoryConformance:
             pytest.skip("inspect is optional and not implemented")
         assert view.summary == ""
 
-        await memory.maintain(conv.id, completion)
+        await self.maintain(memory, conv.id, completion)
         view = await memory.inspect(conv.id)
         assert view.summary and view.summary in await addendum(memory, conv.id)
         assert await memory.inspect(conv.id) == view
@@ -471,7 +613,7 @@ class MemoryConformance:
         before = await snapshot(memory, conv.id)
 
         hanging = Hanging(completion)
-        task = asyncio.create_task(memory.maintain(conv.id, hanging))
+        task = asyncio.create_task(self.maintain(memory, conv.id, hanging))
         await hanging.wait_entered(task)
         assert await snapshot(memory, conv.id) == before
         late = [text_message("tok0999")]
