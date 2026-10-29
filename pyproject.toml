@@ -3,11 +3,20 @@ name = "kayden"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=2.3.0",
+    "httpx2>=2.12",
     "jsonschema>=4.26.0",
+    "openai>=3.41.0",
+    "textual>=8.2.8",
 ]
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "ruff"]
+dev = [
+    "psutil>=7.2.2",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
 
 [build-system]
 requires = ["hatchling"]
