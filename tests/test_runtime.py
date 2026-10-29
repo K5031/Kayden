@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 from typing import Any
@@ -553,6 +554,45 @@ async def test_stop_keeps_message_queued_before_stop(make: Any) -> None:
     assert len(core.requests) == 1
     texts = [b.text for m in await h.transcript() for b in m.blocks if isinstance(b, Text)]
     assert texts == ["first", "thinking", "second"]
+
+
+async def test_message_queued_before_stop_appended_at_stopped(make: Any) -> None:
+    core = ScriptedCore([Step(text="thinking", hang=True)])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.runtime.send("first")
+    await eventually(lambda: core.requests)
+    await h.runtime.send("before stop")
+    queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED)
+    committed = [i for i, env in enumerate(h.rec.envelopes)
+                 if isinstance(env.event, MessageCommitted)
+                 and env.event.message.id == queued.message_id]
+    stopped = [i for i, env in enumerate(h.rec.envelopes)
+               if getattr(env.event, "state", None) == AgentState.STOPPED]
+    assert committed and committed[0] < stopped[0]
+    await asyncio.sleep(0.1)
+    assert len(core.requests) == 1
+    assert AgentState.THINKING not in h.rec.states[h.rec.states.index(AgentState.STOPPED):]
+    assert (await h.transcript())[-1].id == queued.message_id
+
+
+async def test_crash_loses_only_the_queued_message(make: Any) -> None:
+    core = ScriptedCore([Step(text="answer"), Step(text="thinking", hang=True)])
+    h: Harness = await make(core=core)
+    info = await h.start()
+    await h.turn("first")
+    await h.runtime.send("second")
+    await eventually(lambda: len(core.requests) == 2)
+    await h.runtime.send("lost")
+    await h.rec.wait_for(lambda r: r.of(MessageQueued))
+    crashed = copy.deepcopy(h.store)  # the archive as a crash would leave it
+
+    h2: Harness = await make(store=crashed)
+    await h2.start(conversation_id=info.id)
+    texts = [b.text for m in await h2.transcript() for b in m.blocks if isinstance(b, Text)]
+    assert texts == ["first", "answer", "second"]
 
 
 async def test_maintenance_model(make: Any) -> None:

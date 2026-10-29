@@ -1,7 +1,7 @@
 Kayden v1 — MVP Specification
 Status: Product spec with module contracts (Draft 2.4); implementation choices are recorded in docs/decisions.md and open contract issues in docs/contract-issues.md
 Purpose: Define the product, runtime responsibilities, module boundaries, and observable behavior before delegating implementation to coding agents.
-Repository strategy: Create a new repository; preserve the previous Kayden repository as a reference.
+Repository: this repository is the v1 implementation; the previous Kayden repository is kept as a reference.
 
 1. Product Vision
 Kayden is a complete, modular AI agent application, not a general-purpose framework for developers to assemble their own agent runtimes.
@@ -141,7 +141,7 @@ Preserve conversation and memory state.
 Report when outstanding operations have terminated.
 The frontend may display Stopping… while cancellation proceeds, without freezing its interface.
 If an operation cannot terminate promptly, Kayden must report the problem instead of hanging silently.
-After a grace period, calls that have not confirmed cancellation are abandoned: they are reported, recorded with an abandoned result stating they may still have effects, and the agent moves to Stopped. A late completion is logged and never appended. Messages sent while stopping are queued and start a cycle once stopped; messages queued before Stop are recorded but start nothing. Stop with nothing outstanding in Idle, Stopped or Failed is a no-op; with operations outstanding it performs a full Stop.
+After a grace period, calls that have not confirmed cancellation are abandoned: they are reported, recorded with an abandoned result stating they may still have effects, and the agent moves to Stopped. A late completion is logged and never appended. Messages sent while stopping are queued and start a cycle once stopped; messages queued before Stop are appended to the transcript when the agent reaches Stopped, and start nothing. Stop with nothing outstanding in Idle, Stopped or Failed is a no-op; with operations outstanding it performs a full Stop.
 Previously completed external actions may not be reversible.
 6. Tool Execution
 Kayden follows Codex-inspired long-running execution behavior.
@@ -391,7 +391,7 @@ Prioritize useful product progress over architectural sophistication.
 15. Remaining Design Work
 Resolved by the API design (section 16): the Core, Memory, Tools and Frontend contracts; the Runtime API exposed to frontends; the Memory-to-Core inference mechanism; streaming event representation; tool cancellation; permission model; module discovery (import-path factories).
 The storage formats and numeric defaults that are now decided are recorded in docs/decisions.md.
-These should be resolved through focused implementation work, recorded in a decisions log, without reopening settled product requirements unnecessarily.
+New decisions of this kind are recorded in the same log without reopening settled product requirements.
 
 16. Module API Contracts (Draft 2.4)
 Normative source: src/kayden/api.py (Python 3.12+, asyncio). Types and signatures live there, and so do the runtime guarantees in its module docstring (durability order, serialization, resume repair, validation, wrapping, turn boundary). This section records the rest of the behavior the code cannot express.
@@ -434,7 +434,7 @@ Tools that launch subprocesses pass the environment through unmodified.
 A Frontend implements run(runtime) and declares whether it can answer permission prompts.
 The valid commands per state are tabulated in api.py. The user can also cancel a single running operation. The runtime appends exactly one tool message per turn, directly after the assistant message. start may be called again only when no operations are outstanding.
 Recovery for a late-attaching frontend: subscribe, take the snapshot, drop events at or below its sequence number, load history, and de-duplicate by message id. Subscriber queues are bounded.
-send during a running cycle or while stopping queues the message until the next turn boundary. Queued messages are held in memory and lost on a crash.
+send during a running cycle or while stopping queues the message until the next turn boundary. A queued message is held in memory until it is appended to the transcript, at the next turn boundary, when the agent reaches Stopped, or at graceful shutdown; a crash before then loses it. MessageQueued is not a durability promise: only MessageCommitted is.
 Configuration is read-only to frontends; a later start() may change the activation policy but never the mode. The model is selectable at any time. A Continuous start with a conversation id other than the instance's single continuous conversation is refused.
 Permission policy is ask, allow read-only, or deny, with the exact meaning documented in api.py. Grants are once or per conversation, in memory only. Calls that need no prompt start immediately; while any prompt is open the state is awaiting permission and other operations keep running. Denied calls get a refused result. Resolution is first-wins. A barrier call's permission prompt opens when its turn comes, so prompts for mutating calls open one at a time in call order.
 A frontend that cannot answer prompts is never sent any; calls that would prompt are refused.
