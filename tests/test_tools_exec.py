@@ -186,14 +186,22 @@ async def test_op_status_unknown(make: Any) -> None:
     assert (await h.results())["s"].status == ToolStatus.ERROR
 
 
-async def test_op_status_wait_capped(make: Any) -> None:
-    core = ScriptedCore([Step(calls=[call("op_status", {"call_id": "x", "wait_s": 61}, id="s")]),
-                         Step(text="ok")])
-    h: Harness = await make(core=core)
+async def test_op_status_wait_clamped(make: Any, monkeypatch: Any) -> None:
+    from kayden.runtime import orchestrator
+
+    monkeypatch.setattr(orchestrator, "_OP_STATUS_MAX_WAIT_S", 0.2)
+    tools = FakeTools()
+    tools.slow("bg", 5)
+    core = ScriptedCore([
+        Step(calls=[call("bg", id="b1")]),
+        Step(calls=[call("op_status", {"call_id": "b1", "wait_s": 3600}, id="s")]),
+        Step(text="ok"),
+    ])
+    h: Harness = await make(core=core, tools=tools)
     await h.start()
-    await h.turn("go")
+    await asyncio.wait_for(h.turn("go"), timeout=3)
     result = (await h.results())["s"]
-    assert result.status == ToolStatus.ERROR and "Invalid arguments" in result.content
+    assert result.status == ToolStatus.OK and "Invalid arguments" not in result.content
 
 
 async def run_turn(make: Any, ids: list[str], **config: Any) -> tuple[Harness, list[Any]]:

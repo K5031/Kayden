@@ -656,11 +656,11 @@ class Runtime:
         return True
 
     async def _ensure_user_last(self) -> None:
-        """A cycle without a new user message starts with a runtime notice, so a request
-        never ends on an assistant message."""
+        """A cycle without a new user message starts with a runtime notice when the
+        transcript is empty or ends on an assistant message."""
         assert self._conversation is not None
         newest = await self._memory.history(self._conversation.id, limit=1)
-        if not newest or newest[-1].role != Role.USER:
+        if not newest or newest[-1].role == Role.ASSISTANT:
             self._log.decision("activation_notice")
             await self._append(
                 Message(_new_id(), Role.USER, (Text(ACTIVATION_NOTICE),), time.time()))

@@ -140,7 +140,7 @@ in section 9.
 - **Assumed:** Its real OK/ERROR result is recorded (the effect happened), not CANCELLED.
 
 ### 2.8 (S) Built-in tool execution
-- **Status:** Partly **Resolved**: `wait_s` is capped at 60 s (see N1). Runtime changed. Built-in timeouts and backgrounding remain open.
+- **Status:** Partly **Resolved**: `wait_s` is clamped to 60 s; since Draft 2.4 the schema accepts any non-negative value and the runtime clamps (see N1). Runtime changed. Built-in timeouts and backgrounding remain open.
 - **Problem:** Unspecified whether built-ins get the initial wait, backgrounding, timeouts.
   `op_status(wait_s)` has no upper bound, so the model can block its own turn for hours.
 - **Assumed:** Built-ins run inline, are never backgrounded or timed out, emit ToolStarted
@@ -244,7 +244,7 @@ in section 9.
   races with send. The state becomes THINKING synchronously, so a second send queues.
 
 ### 3.8 (S) Activation with nothing new / empty transcript
-- **Status:** **Resolved** (`activate()` docstring, SPEC 5.1). Runtime changed. See N5.
+- **Status:** **Resolved** (`activate()` docstring, SPEC 5.1). Runtime changed. See N5. Draft 2.4 narrows the notice to an empty transcript or one ending on an assistant message; a transcript ending on a TOOL message is sent as is.
 - **Problem:** `assemble` must return a suffix "that starts at a USER message ... and always
   includes the newest message". After `activate()` the newest message may be an assistant
   message (some providers reject a request ending with it). On a brand-new continuous
@@ -476,7 +476,7 @@ in section 9.
 ## 9. Found while adapting to Draft 2.3
 
 ### N1 (C) op_status: clamp vs. schema maximum
-- **Status:** **Open**
+- **Status:** **Resolved** (Draft 2.4: schema has no maximum; values above 60 are treated as 60). Runtime changed: `wait_s: 61` is now clamped, not rejected (`test_op_status_wait_clamped`).
 - **Where:** RUNTIME_FOLLOWUP "Clamp `wait_s` to 60 s"; `BUILTIN_TOOLS["op_status"]` schema
   `"maximum": 60`; SPEC 16.2 (arguments are validated against the schema).
 - **Problem:** Validation rejects `wait_s > 60` before the tool runs, so a clamp can never
@@ -486,12 +486,12 @@ in section 9.
 - **Fix:** Either drop `maximum` from the schema and document clamping, or say "rejected".
 
 ### N2 (A) Stale `ToolSpec.read_only` comment
-- **Status:** **Open**
+- **Status:** **Resolved** (Draft 2.4 uses the proposed wording).
 - **Where:** api.py `ToolSpec.read_only`: "read-only calls run concurrently; others run in order".
 - **Fix:** "consecutive read-only calls run concurrently; others are barriers".
 
 ### N3 (A) Barrier vs. permission prompts
-- **Status:** **Open**
+- **Status:** **Resolved** (Draft 2.4, SPEC 16.5: a barrier call's prompt opens when its turn comes). Matches the assumption; no runtime change.
 - **Where:** SPEC 16.4 barrier rule; SPEC 16.5 "Calls that need no prompt start immediately".
 - **Problem:** Unclear whether a waiting non-read-only call may prompt before the barrier
   opens, and "start immediately" no longer holds for a read after a write.
@@ -501,7 +501,7 @@ in section 9.
 - **Fix:** "Calls that need no prompt start as soon as the barrier rule allows."
 
 ### N4 (S) Agent state after duration exhaustion cancels operations
-- **Status:** **Open**
+- **Status:** Partly **Resolved** (Draft 2.4, SPEC 9: the agent fails with a budget error once the operations have terminated or been abandoned). Matches the assumption for the final state; STOPPING/StopStalled remain unspecified.
 - **Where:** SPEC 9 "An exhausted duration budget also cancels running operations as Stop does".
 - **Problem:** Silent about state: does the agent pass through STOPPING, is StopStalled
   emitted, what happens to an IDLE agent with only background operations?
@@ -512,7 +512,7 @@ in section 9.
 - **Fix:** State the resulting state and events.
 
 ### N5 (A) Which messages trigger the activation notice
-- **Status:** **Open**
+- **Status:** **Resolved** (Draft 2.4: only an empty transcript or one ending on an assistant message gets the notice). Runtime changed: the assumption below no longer holds; a TOOL message is sent as is.
 - **Where:** `activate()` "If the newest message is not a user message".
 - **Assumed:** Literal: a TOOL message is not a user message, so activating after Stop (which
   ends on a TOOL message) or after an append-failure replay adds the notice. The check runs

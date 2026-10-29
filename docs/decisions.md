@@ -131,3 +131,10 @@ Also: `test_append_failure_stops_further_work` now expects the activation notice
 replayed TOOL message, and `test_maintain_ordering_and_serialization` ignores tool start/end
 entries in its trace (a background call may end between maintain and assemble, which was a
 timing flake, not a violation).
+
+## Changes for contract Draft 2.4
+
+| Change | Where | Tests |
+|--------|-------|-------|
+| The activation notice is appended only when the transcript is empty or its newest message is ASSISTANT; a transcript ending on a TOOL message (e.g. after an append failure) is sent unchanged. | `Runtime._ensure_user_last` | `test_activate_after_tool_message_adds_no_notice`, `test_append_failure_stops_further_work` (updated) |
+| `op_status.wait_s` above 60 is no longer rejected by validation; the built-in clamps it to `_OP_STATUS_MAX_WAIT_S` (60 s). Implementation unchanged. | `Runtime._builtin` | `test_op_status_wait_clamped` (replaces `test_op_status_wait_capped`) |

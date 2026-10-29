@@ -620,6 +620,24 @@ async def test_activate_after_user_message_adds_no_notice(make: Any) -> None:
     assert [m.role for m in await h.transcript()] == [Role.USER, Role.ASSISTANT]
 
 
+async def test_activate_after_tool_message_adds_no_notice(make: Any) -> None:
+    from kayden.api import CoreError
+
+    tools = FakeTools()
+    tools.instant("t")
+    core = ScriptedCore([Step(calls=[call("t")]), Step(error=CoreError("boom")),
+                         Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools)
+    await h.start()
+    await h.runtime.send("go")
+    await h.rec.wait_state(AgentState.FAILED)
+    await h.runtime.activate()
+    await h.rec.wait_state(AgentState.IDLE, count=2)
+    assert [m.role for m in await h.transcript()] == [Role.USER, Role.ASSISTANT, Role.TOOL,
+                                                      Role.ASSISTANT]
+    assert h.core.requests[-1].messages[-1].role == Role.TOOL
+
+
 async def test_message_committed_carries_stop_reason(make: Any) -> None:
     tools = FakeTools()
     tools.instant("t")

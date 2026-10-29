@@ -104,8 +104,8 @@ async def test_append_failure_stops_further_work(make: Any) -> None:
     await h.runtime.activate()
     await h.rec.wait_state(AgentState.IDLE, count=2)
     transcript = await h.transcript()
-    # The replayed transcript ends on the TOOL message, so activation adds a notice.
-    assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT, Role.TOOL, Role.USER,
+    # The replayed transcript ends on the TOOL message, so activation adds no notice.
+    assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT, Role.TOOL,
                                             Role.ASSISTANT]
     assert transcript[2].blocks[0].status == ToolStatus.ERROR
     assert tools.started == []
