@@ -577,14 +577,13 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
 - **Fix:** Have `Completion` clamp, or expose `max_output_tokens(light=...)`.
 
 ### M7 (A) Migrating an append-only archive
+- **Status:** **Resolved**. There is no migration: stores use the stable `BLOCK_TYPES`
+  tags from the start, and no code reads or rewrites Python import-path tags. A version 1
+  store (written with import-path tags) is refused on open with a clear error ("memory
+  schema version 1 is not supported (expected 2)"). The archive is never updated.
 - **Where:** api.py `BLOCK_TYPES` comment, MODULES.md "migrate rows already written with
   import paths"; CLAUDE.md "Memory archive: append-only".
 - **Problem:** Rewriting stored tags is an update to an archive that must be append-only.
-- **Assumed:** A one-time, schema-versioned migration (store version 1 to 2) may rewrite
-  the type tag of stored blocks inside one transaction; the data of every block is left
-  byte-for-byte as decoded JSON. Ordinary operation never updates or deletes a message.
-  Decoding legacy tags at read time instead would have kept the archive untouched; the
-  migration was chosen because MODULES.md asks for it.
 
 ### M8 (S) Recognising a context overflow
 - **Where:** `ContextOverflowError` "The request exceeded the model's context window".
