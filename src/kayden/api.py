@@ -182,7 +182,7 @@ class ToolSpec:
     name: str
     description: str
     parameters: JSON  # JSON Schema object
-    read_only: bool = False  # read-only calls run concurrently; others run in order
+    read_only: bool = False  # consecutive read-only calls run concurrently; others are barriers
     stall_timeout: float | None = None  # seconds without progress() before the run is
     #                                     treated as hung; None = no stall detection
     timeout: float | None = None  # hard wall-clock limit; None = runtime default
@@ -486,12 +486,12 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     ),
     "op_status": ToolSpec(
         "op_status",
-        "Check a backgrounded call. Optionally wait up to wait_s seconds (at most 60) for it to finish.",
+        "Check a backgrounded call. Optionally wait up to wait_s seconds for it to finish (values above 60 are treated as 60).",
         {
             "type": "object",
             "properties": {
                 "call_id": _CALL_ID,
-                "wait_s": {"type": "number", "minimum": 0, "maximum": 60, "default": 0},
+                "wait_s": {"type": "number", "minimum": 0, "default": 0},
             },
             "required": ["call_id"],
         },
@@ -954,8 +954,8 @@ class RuntimeAPI(Protocol):
         turn boundary; a turn that ended without tool calls starts the next cycle."""
 
     async def activate(self) -> None:
-        """User-initiated cycle with no new message. If the newest message is not a user
-        message (or the transcript is empty), the runtime first appends a short runtime
+        """User-initiated cycle with no new message. If the transcript is empty or its
+        newest message is an assistant message, the runtime first appends a short runtime
         notice as a USER message, so requests never end on an assistant message."""
 
     async def stop(self) -> None:

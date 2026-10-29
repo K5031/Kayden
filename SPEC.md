@@ -122,7 +122,7 @@ Conversation context remains available.
 Pending asynchronous tools continue running.
 The runtime waits for an eligible activation event.
 If no tools are pending, the agent remains idle until user interaction.
-A model turn that ends without tool calls is treated as an implicit idle(); the runtime never re-prompts on its own. idle() may name the operations to wait for; by default it waits for all outstanding ones, including operations from earlier turns. Activating an agent without a new user message appends a short runtime notice as a user message, so a request never ends on an assistant message.
+A model turn that ends without tool calls is treated as an implicit idle(); the runtime never re-prompts on its own. idle() may name the operations to wait for; by default it waits for all outstanding ones, including operations from earlier turns. Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
 5.2 Batch Wake-Up
 When the agent has outstanding operations belonging to a pending batch, the runtime waits until all operations reach a terminal outcome.
 Under Agent-Controlled activation, batch completion may automatically reactivate the model.
@@ -265,7 +265,7 @@ Token budgets count input (cached tokens included) plus output. Cost budgets nee
 Duration counts wall-clock time while any inference or tool operation runs, background operations included, excluding permission waits and retry backoff.
 Built-in tools do not count as tool calls. Budgets are checked before each inference and tool start. Tool calls that cannot start because a budget is exhausted are recorded as refused.
 A hard budget exhausted mid-stream cancels the inference immediately, and the agent fails with a budget error.
-Exhausting any dimension stops all chargeable execution, inference included. An exhausted duration budget also cancels running operations as Stop does. A budget belongs to the (directory, mode); usage lives in usage-<mode>.json, which the user deletes, while no process runs that mode, to reset it. A model request that fails before streaming anything is not charged. start() and select_model refuse a model without prices when a cost budget is set.
+Exhausting any dimension stops all chargeable execution, inference included. An exhausted duration budget also cancels running operations as Stop does; the agent then fails with a budget error once they have terminated or been abandoned. A budget belongs to the (directory, mode); usage lives in usage-<mode>.json, which the user deletes, while no process runs that mode, to reset it. A model request that fails before streaming anything is not charged. start() and select_model refuse a model without prices when a cost budget is set.
 10. Multi-Instance Operation
 Multiple Kayden instances can run independently as separate operating-system processes.
 Each instance has its own:
@@ -438,7 +438,7 @@ The valid commands per state are tabulated in api.py. The user can also cancel a
 Recovery for a late-attaching frontend: subscribe, take the snapshot, drop events at or below its sequence number, load history, and de-duplicate by message id. Subscriber queues are bounded.
 send during a running cycle or while stopping queues the message until the next turn boundary. Queued messages are held in memory and lost on a crash.
 Configuration is read-only to frontends; a later start() may change the activation policy but never the mode. The model is selectable at any time. A Continuous start with a conversation id other than the instance's single continuous conversation is refused.
-Permission policy is ask, allow read-only, or deny, with the exact meaning documented in api.py. Grants are once or per conversation, in memory only. Calls that need no prompt start immediately; while any prompt is open the state is awaiting permission and other operations keep running. Denied calls get a refused result. Resolution is first-wins.
+Permission policy is ask, allow read-only, or deny, with the exact meaning documented in api.py. Grants are once or per conversation, in memory only. Calls that need no prompt start immediately; while any prompt is open the state is awaiting permission and other operations keep running. Denied calls get a refused result. Resolution is first-wins. A barrier call's permission prompt opens when its turn comes, so prompts for mutating calls open one at a time in call order.
 A frontend that cannot answer prompts is never sent any; calls that would prompt are refused.
 v1 has no conversation deletion or renaming.
 
