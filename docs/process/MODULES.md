@@ -1,7 +1,7 @@
 # Import and migrate the module implementations
 
 Three module implementations exist outside this repo, written against older drafts of the contract:
-`~/Projects/kayden-memory`, `~/Projects/kayden-core`, `~/Projects/kayden-tools` (Memory on SQLite; Anthropic and OpenAI-compatible Cores; shell/file Tools and a Textual TUI). Treat those folders as read-only.
+the sibling repositories `kayden-memory`, `kayden-core`, `kayden-tools` (Memory on SQLite; Anthropic and OpenAI-compatible Cores; shell/file Tools and a Textual TUI). Treat those folders as read-only.
 
 ## Steps
 1. Copy `src/` and `tests/` from each into this repo, never overwriting existing files (`rsync -a --ignore-existing --exclude __pycache__`). Merge their dependencies into `pyproject.toml`. Make sure `.gitignore` excludes `__pycache__`, `.pytest_cache`, `.venv`, `.ruff_cache`. Commit as "Import module streams (pre-migration)".

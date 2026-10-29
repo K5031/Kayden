@@ -139,7 +139,7 @@ timing flake, not a violation).
 | The activation notice is appended only when the transcript is empty or its newest message is ASSISTANT; a transcript ending on a TOOL message (e.g. after an append failure) is sent unchanged. | `Runtime._ensure_user_last` | `test_activate_after_tool_message_adds_no_notice`, `test_append_failure_stops_further_work` (updated) |
 | `op_status.wait_s` above 60 is no longer rejected by validation; the built-in clamps it to `_OP_STATUS_MAX_WAIT_S` (60 s). Implementation unchanged. | `Runtime._builtin` | `test_op_status_wait_clamped` (replaces `test_op_status_wait_capped`) |
 
-## Module migration (MODULES.md)
+## Module migration (docs/process/MODULES.md)
 
 Module streams were imported with `rsync -a --ignore-existing`, so this repository's
 `api.py`, `__init__.py` files and runtime were kept. Dependencies were merged into
