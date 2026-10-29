@@ -2,7 +2,9 @@
 name = "kayden"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "jsonschema>=4.26.0",
+]
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "ruff"]
