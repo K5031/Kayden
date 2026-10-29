@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from kayden.api import ToolCall
-from kayden.tools.shell_files import MAX_OUTPUT_CHARS, ShellFilesTools
+from kayden.api import InstancePaths, ToolCall
+from kayden.tools.shell_files import MAX_OUTPUT_CHARS, ShellFilesTools, factory
 from tests.conformance.tools_suite import RecordingContext, ToolCases, ToolsConformance
 
 # Two background children plus a ticking loop: cancellation must reach all of them.
@@ -38,6 +38,7 @@ class TestShellFilesConformance(ToolsConformance):
                 ToolCall("ls", "list_files", {}),
                 ToolCall("sh", "shell", {"command": "echo hi"}),
             ),
+            env_probe=ToolCall("e", "shell", {"command": "printenv KAYDEN_PERMISSION_CEILING"}),
         )
 
 
@@ -152,3 +153,28 @@ async def test_read_only_flags(tools):
     }
     stall = {spec.name: spec.stall_timeout for spec in await tools.list_tools()}
     assert stall["shell"] and all(v is None for k, v in stall.items() if k != "shell")
+
+
+async def test_file_walks_send_heartbeats_from_their_thread(tools, tmp_path):
+    for name, args in (("search_files", {"pattern": "answer"}), ("list_files", {})):
+        c = ctx(tmp_path)
+        out = await tools.execute(ToolCall("c", name, args), c)
+        assert not out.is_error
+        assert c.heartbeats >= 1 and c.foreign_thread_calls >= 1 and c.reports == []
+
+
+async def test_timeouts_are_configurable(workspace):
+    import math
+
+    specs = {s.name: s for s in await ShellFilesTools(workspace).list_tools()}
+    assert specs["shell"].timeout is None and specs["shell"].stall_timeout == 600
+    tools = ShellFilesTools(workspace, shell_timeout=math.inf, shell_stall_timeout=None)
+    shell = {s.name: s for s in await tools.list_tools()}["shell"]
+    assert shell.timeout == math.inf and shell.stall_timeout is None
+
+
+async def test_factory(workspace, tmp_path, monkeypatch):
+    tools = factory({"root": str(workspace), "shell_timeout": 60}, InstancePaths(tmp_path))
+    assert isinstance(tools, ShellFilesTools) and tools.root == workspace.resolve()
+    monkeypatch.chdir(workspace / "pkg")
+    assert factory({}, InstancePaths(tmp_path)).root == (workspace / "pkg").resolve()

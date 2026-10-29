@@ -206,3 +206,18 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   equals the request's model are replayed (Anthropic), and OpenAI-compatible never
   replays reasoning.
 - Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL.
+
+### Tools (`kayden.tools.shell_files`)
+
+- Factory: `kayden.tools.shell_files:factory`. Options: `root` (default: the process's
+  current directory), `shell_timeout` (default None = the runtime's default; `math.inf`
+  for none), `shell_stall_timeout` (default 600 s without output). File tools keep the
+  runtime defaults (no stall detection, default hard timeout).
+- Subprocesses get the process environment unchanged (`env` is never passed), so
+  `KAYDEN_PERMISSION_CEILING` reaches nested Kayden instances; covered by the
+  conformance suite's `env_probe` case.
+- `list_files`/`search_files` walk the tree in a worker thread and send a silent heartbeat
+  (`progress("")`) from it at most every 0.5 s. The shell never sends heartbeats: its stall
+  detection is meant to catch a command that stopped producing output.
+- The conformance suite's `RecordingContext` is thread-safe like the runtime's context and
+  counts heartbeats separately from visible progress.

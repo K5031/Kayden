@@ -28,7 +28,14 @@ import jsonschema
 import psutil
 import pytest
 
-from kayden.api import RESERVED_TOOL_NAMES, ToolCall, ToolOutput, Tools, ToolSpec
+from kayden.api import (
+    PERMISSION_CEILING_ENV,
+    RESERVED_TOOL_NAMES,
+    ToolCall,
+    ToolOutput,
+    Tools,
+    ToolSpec,
+)
 
 MAX_LOOP_LAG = 0.1  # seconds; a tool that holds the loop longer is blocking it
 CANCEL_DEADLINE = 3.0  # seconds from cancel() until execute() must have returned
@@ -42,27 +49,41 @@ class ToolCases:
     long_running: ToolCall  # runs >= 5 s, reports progress, may spawn child processes
     # Extra calls whose loop lag is measured (e.g. heavy file operations).
     extra: Sequence[ToolCall] = field(default_factory=tuple)
+    # A call that launches a subprocess and returns PERMISSION_CEILING_ENV as it sees it;
+    # None if the module launches no subprocesses.
+    env_probe: ToolCall | None = None
 
 
 @dataclass
 class RecordingContext:
-    """ToolContext test double that records progress and the thread it came from."""
+    """ToolContext test double. progress() is thread-safe, as the runtime's is; an empty
+    text is a silent heartbeat."""
 
     call_id: str
     data_dir: Path
-    reports: list[tuple[float, str]] = field(default_factory=list)
-    foreign_thread_reports: int = 0
+    reports: list[tuple[float, str]] = field(default_factory=list)  # visible progress
+    heartbeats: int = 0
+    foreign_thread_calls: int = 0
     first_report: asyncio.Event = field(default_factory=asyncio.Event)
 
     def __post_init__(self) -> None:
+        self._loop = asyncio.get_running_loop()
         self._loop_thread = threading.get_ident()
+        self._lock = threading.Lock()
 
     def progress(self, text: str) -> None:
         assert isinstance(text, str)
-        if threading.get_ident() != self._loop_thread:
-            self.foreign_thread_reports += 1
-        self.reports.append((time.monotonic(), text))
-        self.first_report.set()
+        with self._lock:
+            if threading.get_ident() != self._loop_thread:
+                self.foreign_thread_calls += 1
+            if not text:
+                self.heartbeats += 1
+                return
+            self.reports.append((time.monotonic(), text))
+        if threading.get_ident() == self._loop_thread:
+            self.first_report.set()
+        else:
+            self._loop.call_soon_threadsafe(self.first_report.set)
 
 
 class LoopLagProbe:
@@ -141,10 +162,12 @@ class ToolsConformance:
             jsonschema.validators.validator_for(spec.parameters).check_schema(spec.parameters)
             assert spec.parameters.get("type") == "object", f"{spec.name}: must be an object"
             assert spec.stall_timeout is None or spec.stall_timeout > 0
+            assert spec.timeout is None or spec.timeout > 0  # math.inf = no limit
 
     async def test_case_arguments_match_schemas(self, tools: Tools, cases: ToolCases) -> None:
         specs = await self._specs(tools)
-        for call in (cases.quick, cases.failing, cases.long_running, *cases.extra):
+        probes = [cases.env_probe] if cases.env_probe else []
+        for call in (cases.quick, cases.failing, cases.long_running, *cases.extra, *probes):
             assert call.name in specs, f"case uses undeclared tool {call.name}"
             jsonschema.validate(call.arguments, specs[call.name].parameters)
 
@@ -186,10 +209,20 @@ class ToolsConformance:
             await asyncio.wait_for(ctx.first_report.wait(), window)
             await asyncio.sleep(1.0)
             assert len(ctx.reports) >= 2, "progress should keep coming while work continues"
-            assert ctx.foreign_thread_reports == 0, "progress() must be called on the loop"
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+    # ── environment ──────────────────────────────────────────────────────
+
+    async def test_subprocesses_inherit_the_permission_ceiling(
+        self, cases, tools, make_ctx, monkeypatch
+    ) -> None:
+        if cases.env_probe is None:
+            pytest.skip("module launches no subprocesses")
+        monkeypatch.setenv(PERMISSION_CEILING_ENV, "deny")
+        out = await tools.execute(cases.env_probe, make_ctx(cases.env_probe))
+        assert not out.is_error and "deny" in out.content
 
     # ── cancellation ─────────────────────────────────────────────────────
 

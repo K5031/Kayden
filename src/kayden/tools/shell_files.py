@@ -1,7 +1,8 @@
 """Minimal Tools module: shell commands and file operations (POSIX only).
 
 Relative paths resolve against the workspace root, which is also the shell's working
-directory. Absolute paths are accepted: this is a convenience, not a sandbox.
+directory. Absolute paths are accepted: this is a convenience, not a sandbox. Commands
+inherit the process environment unchanged (PERMISSION_CEILING_ENV included).
 """
 
 from __future__ import annotations
@@ -14,15 +15,17 @@ import signal
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator, Sequence
+from dataclasses import replace
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 
-from kayden.api import ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kayden.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
+HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
 TERMINATE_GRACE = 2.0  # SIGTERM -> SIGKILL delay when a command is cancelled
 DRAIN_GRACE = 0.5  # how long to keep reading after the shell exits (background children)
 PROGRESS_INTERVAL = 0.2  # min seconds between progress reports
@@ -49,17 +52,17 @@ def _object(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[st
 
 _STRING = {"type": "string"}
 
-SPECS: tuple[ToolSpec, ...] = (
-    ToolSpec(
-        name="shell",
-        description=(
-            "Run a shell command (sh) in the workspace and return its combined stdout and "
-            "stderr plus the exit code. Output is truncated to the first and last part when "
-            "long. Non-zero exit codes are reported as errors."
-        ),
-        parameters=_object({"command": _STRING}, ["command"]),
-        stall_timeout=SHELL_STALL_TIMEOUT,
+SHELL = ToolSpec(
+    name="shell",
+    description=(
+        "Run a shell command (sh) in the workspace and return its combined stdout and "
+        "stderr plus the exit code. Output is truncated to the first and last part when "
+        "long. Non-zero exit codes are reported as errors."
     ),
+    parameters=_object({"command": _STRING}, ["command"]),
+    stall_timeout=SHELL_STALL_TIMEOUT,
+)
+FILE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="read_file",
         description=(
@@ -123,10 +126,27 @@ SPECS: tuple[ToolSpec, ...] = (
 )
 
 
+def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
+    """Options: root (default: the current directory), shell_timeout, shell_stall_timeout."""
+    options = dict(options)
+    return ShellFilesTools(Path(options.pop("root", Path.cwd())), **options)
+
+
 class ShellFilesTools(Tools):
-    def __init__(self, root: Path) -> None:
+    """`shell_timeout`: hard limit per command (None = runtime default, math.inf = none).
+    `shell_stall_timeout`: seconds without output before the command counts as hung."""
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        shell_timeout: float | None = None,
+        shell_stall_timeout: float | None = SHELL_STALL_TIMEOUT,
+    ) -> None:
         self.root = Path(root).expanduser().resolve()
-        self._specs = {spec.name: spec for spec in SPECS}
+        shell = replace(SHELL, timeout=shell_timeout, stall_timeout=shell_stall_timeout)
+        self._spec_list = (shell, *FILE_SPECS)
+        self._specs = {spec.name: spec for spec in self._spec_list}
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
             "shell": self._shell,
             "read_file": self._read_file,
@@ -137,7 +157,7 @@ class ShellFilesTools(Tools):
         }
 
     async def list_tools(self) -> Sequence[ToolSpec]:
-        return SPECS
+        return self._spec_list
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         spec = self._specs.get(call.name)
@@ -270,7 +290,7 @@ class ShellFilesTools(Tools):
 
         def list_(cancelled: threading.Event) -> list[str]:
             found = []
-            for path in _walk(base, cancelled):
+            for path in _walk(base, cancelled, ctx):
                 rel = path.relative_to(base).as_posix()
                 if fnmatch(rel if "/" in pattern else path.name, pattern):
                     found.append(rel)
@@ -296,7 +316,7 @@ class ShellFilesTools(Tools):
 
         def search(cancelled: threading.Event) -> list[str]:
             matches: list[str] = []
-            for path in _walk(base, cancelled):
+            for path in _walk(base, cancelled, ctx):
                 if name_glob and not fnmatch(path.name, name_glob):
                     continue
                 try:
@@ -376,10 +396,15 @@ async def _terminate_group(proc: asyncio.subprocess.Process) -> None:
         await proc.wait()
 
 
-def _walk(base: Path, cancelled: threading.Event) -> Iterator[Path]:
+def _walk(base: Path, cancelled: threading.Event, ctx: ToolContext) -> Iterator[Path]:
+    """Files under base, skipping hidden directories; sends silent heartbeats meanwhile."""
+    last_beat = 0.0
     for dirpath, dirnames, filenames in os.walk(base):
         if cancelled.is_set():
             return
+        if (now := time.monotonic()) - last_beat >= HEARTBEAT_INTERVAL:
+            ctx.progress("")
+            last_beat = now
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         for name in sorted(filenames):
             yield Path(dirpath, name)
