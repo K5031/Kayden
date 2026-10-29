@@ -97,3 +97,6 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Session may switch conversation only without outstanding ops | `test_session_switch_conversation` |
 | Background outcome appended immediately when no cycle runs | `test_background_result_appended_when_idle` |
 | Graceful shutdown cancels running calls (CANCELLED, not INTERRUPTED) | `test_shutdown_cancels_calls` |
+| Stop before a requested cycle begins: message kept, no inference | `test_stop_before_cycle_starts` |
+| Messages queued before Stop are kept but start nothing | `test_stop_keeps_message_queued_before_stop` |
+| Maintenance model validated; `Completion(light=True)` uses it; Maintenance events | `test_maintenance_model` |
