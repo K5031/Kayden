@@ -65,6 +65,8 @@ class Recorder:
         await self.wait_for(lambda r: r.states.count(state) >= count, timeout)
 
     async def close(self) -> None:
+        """Drain until the stream ends (after ShuttingDown), or give up after a moment."""
+        await asyncio.wait({self._task}, timeout=1.0)
         self._task.cancel()
         await asyncio.gather(self._task, return_exceptions=True)
 

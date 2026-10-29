@@ -17,9 +17,9 @@ from kayden.api import (
     Decision,
     MessageCommitted,
     MessageQueued,
+    Mode,
     ModelRetry,
     ModelSelected,
-    Mode,
     OperationResult,
     PermissionPolicy,
     PermissionRequested,
@@ -107,7 +107,7 @@ async def test_permission_ask_policy_and_grants(make: Any) -> None:
     req4 = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)[2:]))[0].request
     assert req4.call.id == "r4"
     await h.runtime.resolve_permission(req4.id, Decision.DENY)
-    await h.rec.wait_state(AgentState.IDLE, count=4)
+    await h.rec.wait_state(AgentState.IDLE, count=3)
     assert (await h.results())["r4"].status == ToolStatus.REFUSED
 
 
@@ -345,7 +345,7 @@ async def test_select_model(make: Any) -> None:
     with pytest.raises(ValueError):
         await h.runtime.select_model("nonexistent")
     await h.runtime.send("go")
-    await h.rec.wait_state(AgentState.THINKING)
+    await eventually(lambda: core.requests)
     await h.runtime.select_model("fake-2")
     await h.rec.wait_state(AgentState.IDLE, count=2)
     await h.turn("again")
@@ -389,11 +389,11 @@ async def test_stop_queue_while_stopping(make: Any) -> None:
     h: Harness = await make(core=core, tools=tools, initial_wait_s=10, cancel_grace_s=0.4)
     await h.start()
     await h.runtime.send("go")
-    await h.rec.wait_state(AgentState.RUNNING_TOOLS)
+    await eventually(lambda: tools.started)
     await h.runtime.stop()
     await h.rec.wait_state(AgentState.STOPPING)
     await h.runtime.send("queued while stopping")
-    queued = h.rec.of(MessageQueued)[0]
+    queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
     await h.rec.wait_state(AgentState.STOPPED)
     assert h.rec.of(StopStalled) == [StopStalled(["s"])]
     result = (await h.results())["s"]
@@ -452,7 +452,7 @@ async def test_idle_unseen_results_wake_immediately(make: Any) -> None:
         h: Harness = await make(core=core, tools=tools)
         await h.start(Mode.CONTINUOUS, activation)
         await h.runtime.send("go")
-        await eventually(lambda: len(core.requests) >= 2)
+        await eventually(lambda core=core: len(core.requests) >= 2)
         await asyncio.sleep(0.8)
         assert len(core.requests) == expected, activation
         await h.close()

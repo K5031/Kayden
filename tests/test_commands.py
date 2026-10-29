@@ -16,16 +16,17 @@ from kayden.api import (
     Decision,
     MessageCommitted,
     MessageQueued,
-    ModelSelected,
     Mode,
+    ModelSelected,
     PermissionPolicy,
     PermissionRequested,
     PermissionResolved,
     RuntimeStateError,
     StartOptions,
+    Text,
     Usage,
 )
-from tests.conftest import Harness
+from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
@@ -84,6 +85,10 @@ async def enter(make: Any, state: Any) -> Harness:
     await h.runtime.send("go")
     target = {X: T, S: R}.get(state, state)
     await h.rec.wait_state(target)
+    if target == T:  # the cycle has started, not merely been requested
+        await eventually(lambda: core.requests)
+    if target == R:  # the tool coroutine is actually running
+        await eventually(lambda: tools.started)
     if state in (X, S):
         await h.runtime.stop()
         await h.rec.wait_state(state)
@@ -117,6 +122,8 @@ async def test_command_state_cell(make: Any, command: str, state: Any) -> None:
     expected = TABLE[command][state]
     h = await enter(make, state)
     seq = h.runtime.snapshot().seq
+    if seq:  # let the recorder catch up
+        await h.rec.wait_for(lambda r: r.envelopes and r.envelopes[-1].seq >= seq)
     states_before = list(h.rec.states)
     if expected == RAISE:
         with pytest.raises(RuntimeStateError):
@@ -125,29 +132,32 @@ async def test_command_state_cell(make: Any, command: str, state: Any) -> None:
     await run_command(h, command)
     await asyncio.sleep(0.05)
     new = [env.event for env in h.rec.envelopes if env.seq > seq]
-    match command, expected:
-        case "send", QUEUE:
-            assert any(isinstance(e, MessageQueued) and e.text == "hello" for e in new)
-            assert not any(isinstance(e, MessageCommitted) and e.message.role == "user"
-                           for e in new)
-        case "send", OK:
-            assert any(isinstance(e, MessageCommitted) and e.message.role == "user" for e in new)
-            await h.rec.wait_for(lambda r: len(r.states) > len(states_before)
-                                 and AgentState.THINKING in r.states[len(states_before):])
-        case "activate", OK:
-            await h.rec.wait_for(lambda r: AgentState.THINKING in r.states[len(states_before):])
-        case "stop", OK:
-            await h.rec.wait_for(lambda r: AgentState.STOPPING in r.states[len(states_before):])
-        case "stop", NOOP:
-            assert h.rec.states == states_before
-            assert h.runtime.snapshot().state == (state if state != N else None)
-        case "select_model", OK:
-            assert ModelSelected("fake-2") in new
-            assert h.runtime.snapshot().model == "fake-2"
-        case "resolve_permission", OK:
-            assert any(isinstance(e, PermissionResolved) for e in new)
-        case "start", OK:
-            assert h.runtime.snapshot().conversation is not None
+    key = (command, expected)
+    if key == ("send", QUEUE):
+        assert any(isinstance(e, MessageQueued) and e.text == "hello" for e in new)
+        assert not any(isinstance(e, MessageCommitted) and e.message.blocks == (Text("hello"),)
+                       for e in new)
+    elif key == ("send", OK):
+        await h.rec.wait_for(lambda r: any(
+            isinstance(e, MessageCommitted) and e.message.blocks == (Text("hello"),)
+            for e in r.events))
+        await h.rec.wait_for(lambda r: AgentState.THINKING in r.states[len(states_before):])
+    elif key == ("activate", OK):
+        await h.rec.wait_for(lambda r: AgentState.THINKING in r.states[len(states_before):])
+    elif key == ("stop", OK):
+        await h.rec.wait_for(lambda r: AgentState.STOPPING in r.states[len(states_before):])
+    elif key == ("stop", NOOP):
+        assert h.rec.states == states_before, [e for e in new]
+        assert h.runtime.snapshot().state == (state if state != N else None)
+    elif key == ("select_model", OK):
+        assert ModelSelected("fake-2") in new
+        assert h.runtime.snapshot().model == "fake-2"
+    elif key == ("resolve_permission", OK):
+        assert any(isinstance(e, PermissionResolved) for e in new)
+    elif key == ("start", OK):
+        assert h.runtime.snapshot().conversation is not None
+    else:
+        raise AssertionError(f"unchecked cell {key}")
 
 
 # ── Footnotes ──

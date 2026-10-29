@@ -70,6 +70,7 @@ class InMemoryMemory(Memory):
         compact_at: float = 0.75,
         cut: float = 0.5,
         summary_tokens: int = 200,
+        maintain_delay: float = 0.0,
         trace: list[Any] | None = None,
     ):
         self.store = store if store is not None else MemoryStore()
@@ -79,7 +80,7 @@ class InMemoryMemory(Memory):
         self.trace = trace if trace is not None else []
         self.fail_append = 0  # number of upcoming appends that raise
         self.maintain_error: Exception | None = None
-        self.maintain_delay = 0.0
+        self.maintain_delay = maintain_delay
         self.maintain_calls = 0
         self.search_error: Exception | None = None
         self.mutating = 0

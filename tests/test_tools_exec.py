@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from kayden.api import (
-    AgentState,
     BUILTIN_TOOLS,
+    AgentState,
     Decision,
     OperationResult,
     PermissionPolicy,
@@ -100,7 +100,7 @@ async def test_abandon_and_late_completion(make: Any) -> None:
     h: Harness = await make(core=core, tools=tools, initial_wait_s=5)
     await h.start()
     await h.runtime.send("go")
-    await h.rec.wait_state(AgentState.RUNNING_TOOLS)
+    await eventually(lambda: tools.started)
     await h.runtime.stop()
     await h.rec.wait_state(AgentState.STOPPED, timeout=2)
     result = (await h.results())["s"]

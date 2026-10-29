@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
@@ -23,21 +24,22 @@ from kayden.api import (
     InferenceRequest,
     Message,
     MessageCommitted,
+    Mode,
     ModelInfo,
     ModelRetry,
-    Mode,
     OperationResult,
     Role,
     RuntimeAPI,
     RuntimeStateError,
     StartOptions,
+    StateChanged,
     StopReason,
     Text,
     ToolBackgrounded,
     ToolFinished,
     ToolOutput,
-    ToolStatus,
     ToolSpec,
+    ToolStatus,
     TransientCoreError,
     Usage,
 )
@@ -225,9 +227,10 @@ async def test_e_batch_wakeup_agent_controlled(make: Any) -> None:
     # Woken once, after all three reached terminal outcomes.
     finished_seq = max(env.seq for env in h.rec.envelopes
                        if isinstance(env.event, ToolFinished))
-    thinking = [env.seq for env in h.rec.envelopes
-                if getattr(env.event, "state", None) == AgentState.THINKING]
-    assert len(thinking) == 2 and thinking[1] > finished_seq
+    changes = [env for env in h.rec.envelopes if isinstance(env.event, StateChanged)]
+    wakes = [cur.seq for prev, cur in itertools.pairwise(changes)
+             if prev.event.state == AgentState.IDLE and cur.event.state == AgentState.THINKING]
+    assert len(wakes) == 2 and wakes[1] > finished_seq  # user send, then one batch wake
     woken = h.core.requests[2]
     assert {o.call_id for o in op_results(woken.messages)} == {"a", "b", "c"}
 
@@ -273,7 +276,7 @@ async def test_f_stop_during_tools(make: Any) -> None:
     h: Harness = await make(core=core, tools=tools, initial_wait_s=10)
     await h.start(Mode.CONTINUOUS, AGENT_CTL)
     await h.runtime.send("do work")
-    await h.rec.wait_state(AgentState.RUNNING_TOOLS)
+    await eventually(lambda: tools.started)
     await h.runtime.stop()
     await h.rec.wait_state(AgentState.STOPPED)
     assert tools.cancelled == ["w1"]
@@ -328,11 +331,11 @@ async def test_h_historical_recall(make: Any) -> None:
     def step(request: InferenceRequest) -> Step:
         if not request.tools:
             return Step(text="summary")
-        last = render(request.messages[-1])
-        if "what was the secret" in last:
-            return Step(calls=[call("recall", {"query": "secret launch code"}, id="r1")])
-        if "[ok]" in last:
+        last = request.messages[-1]
+        if last.role == Role.TOOL:
             return Step(text="found it")
+        if "what was the secret" in render(last):
+            return Step(calls=[call("recall", {"query": "secret launch code"}, id="r1")])
         return Step(text="ok")
 
     h: Harness = await make(core=ScriptedCore(default=step), memory_kw={"compact_at": 0.002})
@@ -343,7 +346,8 @@ async def test_h_historical_recall(make: Any) -> None:
     assert h.store.conversations[conv.id].compactions >= 2
     await h.turn("what was the secret?")
     recall_request = next(r for r in reversed(h.core.requests)
-                          if r.tools and "what was the secret" in render(r.messages[-1]))
+                          if r.tools and r.messages[-1].role == Role.USER
+                          and "what was the secret" in render(r.messages[-1]))
     assert not any("4417" in render(m) for m in recall_request.messages)
     result = (await h.results())["r1"]
     assert result.status == ToolStatus.OK and "4417" in result.content

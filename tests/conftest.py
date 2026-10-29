@@ -84,11 +84,13 @@ class Harness:
             if isinstance(b, ToolResult)
         }
 
-    async def turn(self, text: str, *, idle_count: int | None = None) -> None:
+    async def turn(self, text: str) -> None:
         """Send and wait until the agent is IDLE again."""
-        n = idle_count if idle_count is not None else self.rec.states.count(AgentState.IDLE) + 1
+        seq = self.runtime.snapshot().seq
         await self.runtime.send(text)
-        await self.rec.wait_state(AgentState.IDLE, count=n)
+        await self.rec.wait_for(lambda r: any(
+            env.seq > seq and getattr(env.event, "state", None) == AgentState.IDLE
+            for env in r.envelopes))
 
     def auto_approve(self, decision: Decision = Decision.ALLOW_ONCE) -> asyncio.Task[None]:
         async def approve() -> None:

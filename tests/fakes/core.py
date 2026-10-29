@@ -107,7 +107,7 @@ class ScriptedCore(Core):
         try:
             async for event in self._events(request, step):
                 yield event
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GeneratorExit):  # task cancelled or stream closed
             self.cancelled += 1
             raise
         finally:

@@ -8,8 +8,8 @@ from typing import Any
 from kayden.api import (
     Activation,
     AgentState,
-    BudgetExhausted,
     Budget,
+    BudgetExhausted,
     Completion,
     Failure,
     FailureKind,
@@ -162,7 +162,7 @@ async def test_budget_rechecked_after_maintain(make: Any) -> None:
     await h.start()
     await h.runtime.send("go")
     await h.rec.wait_state(AgentState.FAILED)
-    assert len(core.requests) == 1 and core.requests[0].tools == []
+    assert len(core.requests) == 1 and not core.requests[0].tools
     assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
 
 
@@ -315,7 +315,7 @@ async def test_single_cycle_at_a_time(make: Any) -> None:
     h: Harness = await make(core=core)
     await h.start()
     await h.runtime.send("one")
-    await h.rec.wait_state(AgentState.THINKING)
+    await eventually(lambda: core.requests)
     await asyncio.gather(h.runtime.send("two"), h.runtime.send("three"))
     assert len(h.rec.of(MessageQueued)) == 2
     await h.rec.wait_state(AgentState.IDLE, count=2)
