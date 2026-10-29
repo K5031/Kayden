@@ -1,6 +1,6 @@
 Kayden v1 — MVP Specification
-Status: Consolidated product draft — 27 October 2026
-Purpose: Define the product, runtime responsibilities, module boundaries, and observable behavior before delegating implementation to Codex.
+Status: Product spec with module contracts (Draft 2.4); implementation choices are recorded in docs/decisions.md and open contract issues in docs/contract-issues.md
+Purpose: Define the product, runtime responsibilities, module boundaries, and observable behavior before delegating implementation to coding agents.
 Repository strategy: Create a new repository; preserve the previous Kayden repository as a reference.
 
 1. Product Vision
@@ -156,7 +156,7 @@ The model may inspect progress, poll again, perform other work, or request cance
 This gives the model the ability to investigate slow operations without requiring every tool to finish before inference can continue.
 6.3 Tool Batches
 Multiple independent tool calls may execute concurrently.
-If the model calls idle() while a batch is outstanding, Kayden waits for all operations in that batch to finish or otherwise terminate before issuing the batch-completion wake-up.
+If the model calls idle() while a batch is outstanding, Kayden waits for all operations outstanding at the end of that turn (section 5.2) to finish or otherwise terminate before issuing the batch-completion wake-up.
 6.4 Tool Failures
 Failed operations return errors rather than silently disappearing.
 Unresponsive tools must have an appropriate timeout, cancellation, or failure-handling path.
@@ -233,7 +233,7 @@ Memory quality should be tested across repeated consolidation cycles.
 8.7 Model-Assisted Consolidation
 Memory decides when, what, and how to consolidate.
 It may need LLM inference for consolidation.
-The exact interaction between Memory, Runtime, and Core remains to be designed.
+Memory receives a metered one-shot inference callable from the runtime (section 16.3), so it never calls Core directly.
 The chosen mechanism must:
 Preserve Memory's responsibility for memory management.
 Respect runtime-enforced budgets.
@@ -367,7 +367,7 @@ Conversation deletion and renaming.
 Persistent cross-conversation permission grants.
 Running both operating modes in one process.
 14. Implementation Strategy
-Codex may determine:
+The implementer may determine:
 Idiomatic Python API signatures.
 Internal classes and data structures.
 Storage and indexing technologies.
@@ -390,12 +390,10 @@ Test end-to-end workflows.
 Prioritize useful product progress over architectural sophistication.
 15. Remaining Design Work
 Resolved by the API design (section 16): the Core, Memory, Tools and Frontend contracts; the Runtime API exposed to frontends; the Memory-to-Core inference mechanism; streaming event representation; tool cancellation; permission model; module discovery (import-path factories).
-Still open:
-Storage formats and indexing technology.
-Numeric defaults: timeouts, grace periods, queue sizes, retry counts, compaction thresholds, the base system prompt.
+The storage formats and numeric defaults that are now decided are recorded in docs/decisions.md.
 These should be resolved through focused implementation work, recorded in a decisions log, without reopening settled product requirements unnecessarily.
 
-16. Module API Contracts (Draft 2)
+16. Module API Contracts (Draft 2.4)
 Normative source: src/kayden/api.py (Python 3.12+, asyncio). Types and signatures live there, and so do the runtime guarantees in its module docstring (durability order, serialization, resume repair, validation, wrapping, turn boundary). This section records the rest of the behavior the code cannot express.
 
 16.1 Principles
@@ -420,7 +418,7 @@ The archive is append-only, full-fidelity and schema-versioned. Blocks are persi
 history returns the full transcript from the archive regardless of compaction. The runtime uses it for reopening conversations and for resume repair.
 assemble is read-only, performs no inference, and always fits the token budget. Its messages are a suffix that starts at a user message, never splits a call from its result, and includes the newest message. A single oversized message is truncated in the assembled view only.
 maintain runs only inside an authorized inference cycle, so it can never restart a User-Controlled agent. It receives the current context window, a metered Completion, and returns whether it acted. The Completion raises BudgetExhausted or CoreError. A maintain failure becomes a failure event without changing the agent state. Archive writes and compaction state are atomic.
-search backs recall (current conversation) and peek_other_mode (the other mode's archive, read-only). Queries are plain text. Long-term memory is per mode, shared by all conversations of that mode. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional.
+search backs recall (current conversation) and peek_other_mode (the other mode's archive, read-only). Queries are plain text. Long-term memory is per mode, shared by all conversations of that mode. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. The store must tolerate a second process (the other mode) reading it for peek_other_mode.
 
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.
@@ -447,7 +445,6 @@ Model failures are retried with backoff and never trigger a silent model switch.
 Budget semantics are in section 9.
 Each instance writes a JSONL event log of runtime decisions to its data directory, in addition to the event stream.
 Graceful shutdown cancels running calls. Only a crash produces interrupted results.
-Operations launched by a launched instance have their own independent budgets.
 
 Final Product Definition
 Kayden is a modular AI agent application whose runtime provides complete session-based and continuous orchestration.
