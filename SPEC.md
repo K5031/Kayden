@@ -122,13 +122,13 @@ Conversation context remains available.
 Pending asynchronous tools continue running.
 The runtime waits for an eligible activation event.
 If no tools are pending, the agent remains idle until user interaction.
-A model turn that ends without tool calls is treated as an implicit idle(); the runtime never re-prompts on its own. idle() may name the operations to wait for; by default it waits for all outstanding ones, including operations from earlier turns.
+A model turn that ends without tool calls is treated as an implicit idle(); the runtime never re-prompts on its own. idle() may name the operations to wait for; by default it waits for all outstanding ones, including operations from earlier turns. Activating an agent without a new user message appends a short runtime notice as a user message, so a request never ends on an assistant message.
 5.2 Batch Wake-Up
 When the agent has outstanding operations belonging to a pending batch, the runtime waits until all operations reach a terminal outcome.
 Under Agent-Controlled activation, batch completion may automatically reactivate the model.
 Under User-Controlled activation, results are retained until user initiation.
 The runtime does not need to invoke the model separately for every individual tool completion.
-The wake set is every operation outstanding when idle() is called, including operations from earlier turns. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, an Agent-Controlled agent starts the next cycle immediately and a User-Controlled agent retains them.
+The wake set is every operation outstanding at the end of the turn that contains idle(), including operations from earlier turns; unknown ids in wait_for are ignored. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, an Agent-Controlled agent starts the next cycle immediately and a User-Controlled agent retains them.
 5.3 Stop Control
 Kayden provides one user-facing Stop action.
 There is no separate Pause control in v1.
@@ -141,7 +141,7 @@ Preserve conversation and memory state.
 Report when outstanding operations have terminated.
 The frontend may display Stopping… while cancellation proceeds, without freezing its interface.
 If an operation cannot terminate promptly, Kayden must report the problem instead of hanging silently.
-After a grace period, calls that have not confirmed cancellation are abandoned: they are reported, recorded with an abandoned result stating they may still have effects, and the agent moves to Stopped. A late completion is logged and never appended. Messages sent while stopping are queued and start a cycle once stopped.
+After a grace period, calls that have not confirmed cancellation are abandoned: they are reported, recorded with an abandoned result stating they may still have effects, and the agent moves to Stopped. A late completion is logged and never appended. Messages sent while stopping are queued and start a cycle once stopped; messages queued before Stop are recorded but start nothing. Stop with nothing outstanding in Idle, Stopped or Failed is a no-op; with operations outstanding it performs a full Stop.
 Previously completed external actions may not be reversible.
 6. Tool Execution
 Kayden follows Codex-inspired long-running execution behavior.
@@ -265,6 +265,7 @@ Token budgets count input (cached tokens included) plus output. Cost budgets nee
 Duration counts wall-clock time while any inference or tool operation runs, background operations included, excluding permission waits and retry backoff.
 Built-in tools do not count as tool calls. Budgets are checked before each inference and tool start. Tool calls that cannot start because a budget is exhausted are recorded as refused.
 A hard budget exhausted mid-stream cancels the inference immediately, and the agent fails with a budget error.
+Exhausting any dimension stops all chargeable execution, inference included. An exhausted duration budget also cancels running operations as Stop does. A budget belongs to the (directory, mode); usage lives in usage-<mode>.json, which the user deletes, while no process runs that mode, to reset it. A model request that fails before streaming anything is not charged. start() and select_model refuse a model without prices when a cost budget is set.
 10. Multi-Instance Operation
 Multiple Kayden instances can run independently as separate operating-system processes.
 Each instance has its own:
@@ -408,7 +409,7 @@ One agent per process (section 4.4).
 
 16.2 Core
 The runtime retries TransientCoreError with backoff; Core never retries itself. CoreError is permanent. ContextOverflowError makes the runtime re-assemble with a 10% smaller budget and retry once.
-ToolCallDelta and UsageReport are optional. If a request is cancelled or fails before Completed, the runtime charges the last UsageReport, or an estimate.
+ToolCallDelta and UsageReport are optional. If a request is cancelled or fails before Completed, the runtime charges, per dimension, the larger of the last UsageReport and its own estimate; a failure before anything streamed is not charged.
 After a retry, frontends discard deltas received since the last committed message.
 Reasoning blocks record the model that produced them, and Core drops reasoning state from other models.
 A turn that stops at the token limit is committed; tool calls whose arguments did not parse are answered with an error result and the cycle continues.
@@ -424,7 +425,7 @@ search backs recall (current conversation) and peek_other_mode (the other mode's
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.
 A backgrounded call gets a placeholder result with status backgrounded; its outcome is recorded later as an operation result.
-Read-only calls in a turn run concurrently. Other calls run one at a time in emission order.
+Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
 stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. The model can exclude a deliberate long-runner with idle(wait_for).
 The built-in tools (idle, op_status, op_cancel, recall, peek_other_mode) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules.
@@ -436,7 +437,7 @@ A Frontend implements run(runtime) and declares whether it can answer permission
 The valid commands per state are tabulated in api.py. The user can also cancel a single running operation. The runtime appends exactly one tool message per turn, directly after the assistant message. start may be called again only when no operations are outstanding.
 Recovery for a late-attaching frontend: subscribe, take the snapshot, drop events at or below its sequence number, load history, and de-duplicate by message id. Subscriber queues are bounded.
 send during a running cycle or while stopping queues the message until the next turn boundary. Queued messages are held in memory and lost on a crash.
-Configuration is read-only after start. The model is selectable at any time.
+Configuration is read-only to frontends; a later start() may change the activation policy but never the mode. The model is selectable at any time. A Continuous start with a conversation id other than the instance's single continuous conversation is refused.
 Permission policy is ask, allow read-only, or deny, with the exact meaning documented in api.py. Grants are once or per conversation, in memory only. Calls that need no prompt start immediately; while any prompt is open the state is awaiting permission and other operations keep running. Denied calls get a refused result. Resolution is first-wins.
 A frontend that cannot answer prompts is never sent any; calls that would prompt are refused.
 v1 has no conversation deletion or renaming.
@@ -456,5 +457,3 @@ Tools provide executable capabilities.
 Frontend provides the user experience.
 Independent Kayden instances can operate and collaborate using ordinary tools.
 Kayden's value lies in being a useful, reliable AI agent—not in requiring developers to construct their own agent runtime.
-
-

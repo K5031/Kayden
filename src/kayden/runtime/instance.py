@@ -8,8 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from kayden.api import Core, Frontend, Memory, Mode, Tools
-from kayden.runtime.config import InstanceConfig, InstancePaths, ModuleSpec
+from kayden.api import Core, Frontend, InstancePaths, Memory, Mode, Tools
+from kayden.runtime.config import InstanceConfig, ModuleSpec
 
 
 class InstanceLockedError(RuntimeError):

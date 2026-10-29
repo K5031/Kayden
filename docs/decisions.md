@@ -58,7 +58,8 @@ Event log records:
 
 Decision kinds: `start`, `cycle_requested`, `cycle_start`, `cycle_end`, `budget_check`,
 `permission`, `backgrounded`, `cancel_operation`, `abandoned`, `late_completion`, `idle`,
-`stop`, `stopped`, `resume_repair`, `reserved_tool_dropped`, `maintenance_retry`.
+`stop`, `stopped`, `resume_repair`, `reserved_tool_dropped`, `maintenance_retry`,
+`activation_notice`, `duration_exhausted`.
 TextDelta, ReasoningDelta, ToolCallDelta and ToolProgress are not logged.
 
 ## Base system prompt
@@ -77,6 +78,9 @@ Memory's `system_addendum` follows, separated by a blank line.
   and was abandoned; it may still have effects." plus the last progress text.
 - INTERRUPTED (resume repair): "Interrupted: the process ended while this call was in
   flight." / "... while this operation was running."
+- Activation notice (USER message, `config.ACTIVATION_NOTICE`): "[Runtime notice] You were
+  activated without a new user message. Continue your work, or idle if there is nothing to
+  do."
 - REFUSED: names the reason (policy, denial, non-interactive frontend, or the exhausted
   budget dimension).
 - recall / peek_other_mode: one line per hit, `[conversation/message role ISO-time] text`,
@@ -107,3 +111,23 @@ instances (idempotent append, suffix assembly with in-view truncation, compactio
 `Completion`, word-overlap archive search, per-mode long-term memory), `ScriptedFrontend`
 whose `Recorder` keeps every envelope. Timing-based tests use 0.15 s initial wait and 0.2 s
 grace.
+
+## Changes for contract Draft 2.3
+
+| # | Change | Where | Tests |
+|---|--------|-------|-------|
+| 1 | Barrier ordering: consecutive read-only calls overlap; a non-read-only call waits for every earlier call to finish or be backgrounded, and later calls wait for it. The barrier precedes the permission gate. | `Runtime._run_tools` | `test_barrier_*`, `test_backgrounded_call_releases_barrier`, `test_permission_allow_read_only_policy` (rewritten) |
+| 2 | Duration exhaustion cancels running operations (grace, then abandon) via a watchdog task that runs while operations exist; an IDLE agent fails with `Failure(BUDGET)`. Inference keeps its own deadline. | `Runtime._duration_watchdog` | `test_duration_exhaustion_*` |
+| 3 | A request that fails before its first stream event is not charged; cancellations still are. | `_Stream.started`, `Runtime._attempt` | `test_failure_before_first_event_not_charged`, `test_failed_request_charged` (adjusted) |
+| 4 | At the start of each cycle, if the transcript is empty or its newest message is not USER, the runtime appends the activation notice. | `Runtime._ensure_user_last` | `test_activate_*` |
+| 5 | Continuous `start()` with a different `conversation_id` raises ValueError. | `Runtime._open_conversation` | `test_continuous_single_conversation` |
+| 6 | `op_status.wait_s` is capped at 60 s (schema validation rejects more; the built-in also clamps). | `_OP_STATUS_MAX_WAIT_S` | `test_op_status_wait_capped` |
+| 7 | `snapshot().state` is `NOT_STARTED` before `start()`. | `Runtime._base` | command table, `test_snapshot_recovery` |
+| 8 | `MessageCommitted.stop` carries the stop reason of complete assistant messages. | `Runtime._append` | `test_message_committed_carries_stop_reason` |
+| 9 | `InstancePaths` imported from api.py (local copy removed); the runtime relies on `inherited_ceiling()` failing closed and on `PermissionPolicy.clamp`. | `config.py`, `instance.py`, `_effective_policy` | `test_permission_ceiling` |
+| 10 | Python: `requires-python >= 3.12`, run on what `uv` provides (3.13.7). | `pyproject.toml` (unchanged) | — |
+
+Also: `test_append_failure_stops_further_work` now expects the activation notice after the
+replayed TOOL message, and `test_maintain_ordering_and_serialization` ignores tool start/end
+entries in its trace (a background call may end between maintain and assemble, which was a
+timing flake, not a violation).

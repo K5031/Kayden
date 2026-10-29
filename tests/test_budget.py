@@ -155,10 +155,51 @@ async def test_failed_request_charged(make: Any) -> None:
     assert usage.input_tokens == 100_000  # report beats the estimate
     assert usage.output_tokens == 5
 
-    core.add(Step(error=TransientCoreError("reset")))  # no report: estimate is charged
+    core.add(Step(text="x", error=TransientCoreError("reset")))  # no report: estimate
     await h.runtime.activate()
     await h.rec.wait_state(AgentState.FAILED, count=2)
     assert h.runtime.snapshot().usage.usage.input_tokens > 100_000
+
+
+async def test_failure_before_first_event_not_charged(make: Any) -> None:
+    core = ScriptedCore([Step(error=TransientCoreError("429")), Step(text="ok")])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.turn("go")
+    assert len(core.requests) == 2
+    usage = h.runtime.snapshot().usage.usage
+    assert (usage.input_tokens, usage.output_tokens) == (100, 10)  # the successful request only
+
+
+async def test_duration_exhaustion_cancels_foreground_call(make: Any) -> None:
+    tools = FakeTools()
+    tools.hanging("fg")
+    core = ScriptedCore([Step(calls=[call("fg", id="fg")]), Step(text="never")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=5,
+                            budget=Budget(max_duration_s=0.3))
+    await h.start()
+    await h.runtime.send("go")
+    await h.rec.wait_state(AgentState.FAILED, timeout=2)
+    assert (await h.results())["fg"].status == ToolStatus.CANCELLED
+    assert tools.cancelled == ["fg"]
+    assert len(core.requests) == 1
+    assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
+
+
+async def test_duration_exhaustion_abandons_background_call(make: Any) -> None:
+    tools = FakeTools()
+    tools.hanging("bg", honor_cancel=False)
+    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="started")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05,
+                            budget=Budget(max_duration_s=0.3))
+    await h.start()
+    await h.turn("go")
+    await h.rec.wait_state(AgentState.FAILED, timeout=2)
+    finished = await h.rec.wait_for(
+        lambda r: [e for e in r.of(ToolFinished) if e.result.call_id == "bg"])
+    assert finished[0].result.status == ToolStatus.ABANDONED
+    assert h.runtime.snapshot().operations == []
+    assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
 
 
 async def test_usage_persists(make: Any) -> None:

@@ -186,29 +186,58 @@ async def test_op_status_unknown(make: Any) -> None:
     assert (await h.results())["s"].status == ToolStatus.ERROR
 
 
-async def test_call_ordering(make: Any) -> None:
+async def test_op_status_wait_capped(make: Any) -> None:
+    core = ScriptedCore([Step(calls=[call("op_status", {"call_id": "x", "wait_s": 61}, id="s")]),
+                         Step(text="ok")])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.turn("go")
+    result = (await h.results())["s"]
+    assert result.status == ToolStatus.ERROR and "Invalid arguments" in result.content
+
+
+async def run_turn(make: Any, ids: list[str], **config: Any) -> tuple[Harness, list[Any]]:
+    """Run one turn calling ids in order; ids starting with "w" are non-read-only."""
     tools = FakeTools()
-    tools.slow("w1", 0.15, read_only=False)
-    tools.slow("w2", 0.05, read_only=False)
-    tools.slow("r1", 0.1)
-    tools.slow("r2", 0.1)
-    core = ScriptedCore([
-        Step(calls=[call("w1", id="w1"), call("r1", id="r1"), call("w2", id="w2"),
-                    call("r2", id="r2")]),
-        Step(text="ok"),
-    ])
-    h: Harness = await make(core=core, tools=tools, initial_wait_s=5)
+    for i in ids:
+        tools.slow(i, 0.1, read_only=not i.startswith("w"))
+    core = ScriptedCore([Step(calls=[call(i, id=i) for i in ids]), Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools, **{"initial_wait_s": 5, **config})
     approver = h.auto_approve(Decision.ALLOW_ONCE)
     await h.start()
     await h.turn("go")
     approver.cancel()
-    t = h.trace
-    assert t.index(("tool_end", "w1")) < t.index(("tool_start", "w2"))  # emission order
-    assert t.index(("tool_start", "r1")) < t.index(("tool_end", "r2"))
-    assert t.index(("tool_start", "r2")) < t.index(("tool_end", "r1"))  # concurrent
-    assert t.index(("tool_start", "r1")) < t.index(("tool_end", "w1"))
-    results = await h.results()
-    assert list(results) == ["w1", "r1", "w2", "r2"]  # results in emission order
+    assert list(await h.results()) == ids  # results in emission order
+    return h, h.trace
+
+
+def before(trace: list[Any], a: tuple[str, str], b: tuple[str, str]) -> bool:
+    return trace.index(a) < trace.index(b)
+
+
+async def test_barrier_write_then_read(make: Any) -> None:
+    _, t = await run_turn(make, ["w", "r"])
+    assert before(t, ("tool_end", "w"), ("tool_start", "r"))
+
+
+async def test_barrier_read_then_write(make: Any) -> None:
+    _, t = await run_turn(make, ["r", "w"])
+    assert before(t, ("tool_end", "r"), ("tool_start", "w"))
+
+
+async def test_barrier_reads_around_write(make: Any) -> None:
+    _, t = await run_turn(make, ["r1", "r2", "w", "r3"])
+    assert before(t, ("tool_start", "r2"), ("tool_end", "r1"))  # consecutive reads overlap
+    assert before(t, ("tool_end", "r1"), ("tool_start", "w"))
+    assert before(t, ("tool_end", "r2"), ("tool_start", "w"))
+    assert before(t, ("tool_end", "w"), ("tool_start", "r3"))
+
+
+async def test_backgrounded_call_releases_barrier(make: Any) -> None:
+    h, t = await run_turn(make, ["w1", "w2"], initial_wait_s=0.03)
+    await h.rec.wait_for(lambda r: len(r.of(ToolFinished)) == 2)
+    assert before(t, ("tool_start", "w2"), ("tool_end", "w1"))
+    assert (await h.results())["w1"].status == ToolStatus.BACKGROUNDED
 
 
 async def test_reserved_names_dropped(make: Any) -> None:

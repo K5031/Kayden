@@ -30,9 +30,8 @@ from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
-NOT_STARTED = "not_started"
 STATES = [
-    NOT_STARTED,
+    AgentState.NOT_STARTED,
     AgentState.IDLE,
     AgentState.THINKING,
     AgentState.RUNNING_TOOLS,
@@ -46,7 +45,7 @@ OK, RAISE, QUEUE, NOOP = "ok", "raise", "queue", "noop"
 I, T, R, A, S, X, F = (AgentState.IDLE, AgentState.THINKING, AgentState.RUNNING_TOOLS,
                        AgentState.AWAITING_PERMISSION, AgentState.STOPPING, AgentState.STOPPED,
                        AgentState.FAILED)
-N = NOT_STARTED
+N = AgentState.NOT_STARTED
 
 TABLE: dict[str, dict[Any, str]] = {
     "start": {N: OK, I: OK, T: RAISE, R: RAISE, A: RAISE, S: RAISE, X: OK, F: OK},
@@ -148,7 +147,7 @@ async def test_command_state_cell(make: Any, command: str, state: Any) -> None:
         await h.rec.wait_for(lambda r: AgentState.STOPPING in r.states[len(states_before):])
     elif key == ("stop", NOOP):
         assert h.rec.states == states_before, [e for e in new]
-        assert h.runtime.snapshot().state == (state if state != N else None)
+        assert h.runtime.snapshot().state == state
     elif key == ("select_model", OK):
         assert ModelSelected("fake-2") in new
         assert h.runtime.snapshot().model == "fake-2"

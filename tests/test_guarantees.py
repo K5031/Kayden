@@ -104,7 +104,9 @@ async def test_append_failure_stops_further_work(make: Any) -> None:
     await h.runtime.activate()
     await h.rec.wait_state(AgentState.IDLE, count=2)
     transcript = await h.transcript()
-    assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT]
+    # The replayed transcript ends on the TOOL message, so activation adds a notice.
+    assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT, Role.TOOL, Role.USER,
+                                            Role.ASSISTANT]
     assert transcript[2].blocks[0].status == ToolStatus.ERROR
     assert tools.started == []
 
@@ -124,7 +126,7 @@ async def test_maintain_ordering_and_serialization(make: Any) -> None:
     h: Harness = await make(core=core, tools=tools, memory_kw={"maintain_delay": 0.02})
     await h.start()
     await h.turn("go")
-    names = [t[0] for t in h.trace]
+    names = [t[0] for t in h.trace if not t[0].startswith("tool_")]  # bg may end anywhere
     assert h.memory.max_mutating == 1
     # Every inference is preceded by maintain then assemble; nothing mutates during inference.
     for i, name in enumerate(names):
@@ -135,7 +137,7 @@ async def test_maintain_ordering_and_serialization(make: Any) -> None:
     # maintain runs after the turn's results are appended
     tool_appends = [i for i, t in enumerate(h.trace) if t[0] == "append" and t[1] == Role.TOOL]
     for i in tool_appends:
-        assert "maintain_start" in names[i:]
+        assert "maintain_start" in [t[0] for t in h.trace[i:]]
 
 
 async def test_stop_cancels_maintain(make: Any) -> None:

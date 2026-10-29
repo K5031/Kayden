@@ -113,22 +113,25 @@ async def test_permission_ask_policy_and_grants(make: Any) -> None:
 
 async def test_permission_allow_read_only_policy(make: Any) -> None:
     tools = perm_tools()
-    tools.slow("scan", 0.3)
+    tools.slow("scan", 0.5)
     core = ScriptedCore([
-        Step(calls=[call("write", id="w"), call("scan", id="s"), call("read", id="r")]),
+        Step(calls=[call("scan", id="s"), call("read", id="r"), call("write", id="w")]),
         Step(text="ok"),
     ])
-    h: Harness = await make(core=core, tools=tools, initial_wait_s=2)
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.1)
     await h.start()
     await h.runtime.send("go")
     req = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)))[0].request
     assert req.call.id == "w" and not req.read_only
-    # Calls that need no prompt start immediately; other ops keep running.
-    await h.rec.wait_for(lambda r: {e.call.id for e in r.of(ToolStarted)} == {"s", "r"})
-    assert h.runtime.snapshot().state == AgentState.AWAITING_PERMISSION
+    # Read-only calls need no prompt; the backgrounded scan keeps running during the prompt.
+    assert {e.call.id for e in h.rec.of(ToolStarted)} == {"s", "r"}
+    snap = h.runtime.snapshot()
+    assert snap.state == AgentState.AWAITING_PERMISSION
+    assert [o.call.id for o in snap.operations] == ["s"]
     await h.runtime.resolve_permission(req.id, Decision.ALLOW_ONCE)
     await h.rec.wait_state(AgentState.IDLE, count=2)
-    assert all(r.status == ToolStatus.OK for r in (await h.results()).values())
+    statuses = {cid: r.status for cid, r in (await h.results()).items()}
+    assert statuses == {"s": ToolStatus.BACKGROUNDED, "r": ToolStatus.OK, "w": ToolStatus.OK}
     auto = {e.call_id: e.decision for e in h.rec.of(PermissionResolved)}
     assert auto["s"] == auto["r"] == Decision.ALLOW_ONCE
 
@@ -249,7 +252,8 @@ async def test_snapshot_recovery(make: Any) -> None:
     tools.hanging("work", progress="step 1")
     core = ScriptedCore([Step(calls=[call("work", id="w")])])
     h: Harness = await make(core=core, tools=tools, initial_wait_s=10)
-    assert h.runtime.snapshot().state is None and h.runtime.snapshot().conversation is None
+    snap = h.runtime.snapshot()
+    assert snap.state == AgentState.NOT_STARTED and snap.conversation is None
     conv = await h.start()
     await h.runtime.send("go")
     await h.rec.wait_for(lambda r: any(getattr(e, "text", None) == "step 1" for e in r.events))
@@ -485,9 +489,14 @@ async def test_session_switch_conversation(make: Any) -> None:
 
 async def test_continuous_single_conversation(make: Any) -> None:
     h: Harness = await make()
+    with pytest.raises(ValueError):
+        await h.start(Mode.CONTINUOUS, conversation_id="other")
     a = await h.start(Mode.CONTINUOUS)
     b = await h.start(Mode.CONTINUOUS)
-    assert a.id == b.id
+    c = await h.start(Mode.CONTINUOUS, conversation_id=a.id)
+    assert a.id == b.id == c.id
+    with pytest.raises(ValueError):
+        await h.start(Mode.CONTINUOUS, conversation_id="other")
     assert len(await h.runtime.list_conversations(Mode.CONTINUOUS)) == 1
 
 
@@ -570,3 +579,54 @@ async def test_maintenance_model(make: Any) -> None:
     from kayden.api import MaintenanceFinished, MaintenanceStarted
 
     assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 1
+
+
+# ── Activation notice, stop reason ──
+
+
+async def test_activate_appends_notice_after_assistant(make: Any) -> None:
+    h: Harness = await make()
+    await h.start()
+    await h.turn("hi")
+    await h.runtime.activate()
+    await h.rec.wait_state(AgentState.IDLE, count=3)
+    transcript = await h.transcript()
+    assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT, Role.USER, Role.ASSISTANT]
+    notice = transcript[2]
+    assert "runtime notice" in notice.blocks[0].text.lower()
+    assert h.core.requests[1].messages[-1].id == notice.id
+
+
+async def test_activate_empty_continuous_conversation(make: Any) -> None:
+    h: Harness = await make()
+    await h.start(Mode.CONTINUOUS, Activation.USER_CONTROLLED)
+    await h.runtime.activate()
+    await h.rec.wait_state(AgentState.IDLE, count=2)
+    transcript = await h.transcript()
+    assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT]
+    assert h.core.requests[0].messages[0].role == Role.USER
+
+
+async def test_activate_after_user_message_adds_no_notice(make: Any) -> None:
+    from kayden.api import CoreError
+
+    core = ScriptedCore([Step(error=CoreError("boom")), Step(text="ok")])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.runtime.send("go")
+    await h.rec.wait_state(AgentState.FAILED)
+    await h.runtime.activate()
+    await h.rec.wait_state(AgentState.IDLE, count=2)
+    assert [m.role for m in await h.transcript()] == [Role.USER, Role.ASSISTANT]
+
+
+async def test_message_committed_carries_stop_reason(make: Any) -> None:
+    tools = FakeTools()
+    tools.instant("t")
+    core = ScriptedCore([Step(calls=[call("t")]), Step(text="done")])
+    h: Harness = await make(core=core, tools=tools)
+    await h.start()
+    await h.turn("go")
+    stops = [(e.message.role, e.stop) for e in h.rec.of(MessageCommitted)]
+    assert stops == [(Role.USER, None), (Role.ASSISTANT, StopReason.TOOL_USE),
+                     (Role.TOOL, None), (Role.ASSISTANT, StopReason.END_TURN)]

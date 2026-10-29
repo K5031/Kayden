@@ -18,6 +18,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "operating mode."
 )
 
+ACTIVATION_NOTICE = (
+    "[Runtime notice] You were activated without a new user message. Continue your work, "
+    "or idle if there is nothing to do."
+)
+
 CONTINUOUS_PROMPT = (
     "You run continuously. When you have nothing more to do right now, call idle(); ending a "
     "turn without tool calls also idles. Background operations keep running while you are "
@@ -52,11 +57,6 @@ class ModuleSpec:
 
     factory: str
     options: Mapping[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class InstancePaths:
-    data_dir: Path
 
 
 @dataclass(frozen=True, slots=True)

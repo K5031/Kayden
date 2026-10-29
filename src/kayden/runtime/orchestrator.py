@@ -65,6 +65,7 @@ from kayden.api import (
     ShuttingDown,
     StartOptions,
     StateChanged,
+    StopReason,
     StopStalled,
     Text,
     TextDelta,
@@ -85,7 +86,7 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
-from kayden.runtime.config import CONTINUOUS_PROMPT, RuntimeConfig
+from kayden.runtime.config import ACTIVATION_NOTICE, CONTINUOUS_PROMPT, RuntimeConfig
 from kayden.runtime.events import EventBus, EventLog
 from kayden.runtime.instance import InstanceLock
 from kayden.runtime.operations import Context, Operation
@@ -94,6 +95,7 @@ logger = logging.getLogger(__name__)
 
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
 _HIT_PREVIEW_CHARS = 1000
+_OP_STATUS_MAX_WAIT_S = 60
 
 
 def _new_id() -> str:
@@ -101,10 +103,7 @@ def _new_id() -> str:
 
 
 def _effective_policy(configured: PermissionPolicy) -> PermissionPolicy:
-    try:
-        ceiling = PermissionPolicy.inherited_ceiling()
-    except ValueError:
-        ceiling = PermissionPolicy.DENY  # unreadable ceiling: fail closed
+    ceiling = PermissionPolicy.inherited_ceiling()
     return configured.clamp(ceiling) if ceiling is not None else configured
 
 
@@ -150,6 +149,7 @@ class _Stream:
     """Accumulated state of one model attempt."""
 
     input_estimate: int
+    started: bool = False  # at least one stream event arrived
     text: list[str] = field(default_factory=list)
     output_estimate: int = 0
     report: Usage | None = None
@@ -239,9 +239,9 @@ class Runtime:
         self._model: str | None = config.model
         self._calibration: dict[str, float] = {}
 
-        self._base: AgentState | None = None  # state outside a cycle
+        self._base = AgentState.NOT_STARTED  # state outside a cycle
         self._phase = AgentState.THINKING  # state inside a cycle
-        self._emitted: tuple[AgentState | None, int] = (None, 0)
+        self._emitted = (AgentState.NOT_STARTED, 0)
         self._cycle_requested = False
         self._cycle_active = False
         self._cycle_task: asyncio.Task[None] | None = None
@@ -254,7 +254,7 @@ class Runtime:
         self._closed = False
 
         self._mem_lock = asyncio.Lock()
-        self._backlog: deque[tuple[Message, list[RuntimeEvent]]] = deque()
+        self._backlog: deque[tuple[Message, list[RuntimeEvent], StopReason | None]] = deque()
         self._inbox: list[MessageQueued] = []
         self._pending_results: list[tuple[OperationResult, ToolFinished]] = []
         self._ops: dict[CallId, Operation] = {}  # running
@@ -265,6 +265,7 @@ class Runtime:
         self._immediate_wake = False
         self._unseen = False
         self._flush_tasks: set[asyncio.Task[None]] = set()
+        self._duration_task: asyncio.Task[None] | None = None
         self._inbox_before_stop = 0
 
     # ── Observation ──────────────────────────────────────────────────────
@@ -275,7 +276,7 @@ class Runtime:
     def snapshot(self) -> RuntimeSnapshot:
         return RuntimeSnapshot(
             seq=self._bus.seq,
-            state=self._state(),  # type: ignore[arg-type]  # None before start()
+            state=self._state(),
             conversation=self._conversation,
             config=self._agent_config,
             model=self._model,
@@ -313,7 +314,8 @@ class Runtime:
     async def start(self, options: StartOptions) -> ConversationInfo:
         if self._closed:
             raise RuntimeStateError("the runtime is shut down")
-        if self._state() not in (None, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
+        if self._state() not in (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED,
+                                 AgentState.FAILED):
             raise RuntimeStateError(f"cannot start while {self._state()}")
         if self._ops:
             raise RuntimeStateError("operations are still outstanding")
@@ -363,7 +365,7 @@ class Runtime:
 
     async def send(self, text: str) -> None:
         state = self._state()
-        if state is None:
+        if state == AgentState.NOT_STARTED:
             raise RuntimeStateError("not started")
         if state == AgentState.FAILED and (reason := self._budget.exhausted()):
             raise RuntimeStateError(f"budget exhausted: {reason}")
@@ -389,7 +391,7 @@ class Runtime:
 
     async def stop(self) -> None:
         state = self._state()
-        if state in (None, AgentState.STOPPING, AgentState.STOPPED):
+        if state in (AgentState.NOT_STARTED, AgentState.STOPPING, AgentState.STOPPED):
             return
         if state in (AgentState.IDLE, AgentState.FAILED) and not self._ops:
             return
@@ -443,9 +445,10 @@ class Runtime:
         if self._conversation is not None:
             with contextlib.suppress(_AppendFailed):
                 await self._deliver_inbox()  # keep messages queued during a final Stop
-        if self._loop_task is not None:
-            self._loop_task.cancel()
-            await asyncio.gather(self._loop_task, return_exceptions=True)
+        for task in (self._loop_task, self._duration_task):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         self._emit(ShuttingDown("shutdown"))
         for module in (self._core, self._memory, self._tools):
             try:
@@ -459,7 +462,7 @@ class Runtime:
 
     # ── State ────────────────────────────────────────────────────────────
 
-    def _state(self) -> AgentState | None:
+    def _state(self) -> AgentState:
         if self._stopping:
             return AgentState.STOPPING
         if self._cycle_active or self._cycle_requested:
@@ -468,7 +471,7 @@ class Runtime:
 
     def _update_state(self) -> None:
         current = (self._state(), len(self._ops))
-        if current != self._emitted and current[0] is not None:
+        if current != self._emitted:
             self._emitted = current
             self._emit(StateChanged(current[0], current[1]))
 
@@ -567,6 +570,10 @@ class Runtime:
     async def _open_conversation(self, options: StartOptions) -> tuple[ConversationInfo, bool]:
         existing = await self._memory.list_conversations(options.mode)
         if options.mode == Mode.CONTINUOUS:
+            if options.conversation_id is not None and (
+                    not existing or existing[0].id != options.conversation_id):
+                raise ValueError(f"{options.conversation_id} is not this instance's continuous "
+                                 "conversation")
             if existing:
                 return existing[0], True
             return await self._memory.create_conversation(Mode.CONTINUOUS), False
@@ -611,22 +618,23 @@ class Runtime:
     # ── Transcript writes ────────────────────────────────────────────────
 
     async def _append(self, message: Message | None = None,
-                      events: Sequence[RuntimeEvent] = ()) -> None:
+                      events: Sequence[RuntimeEvent] = (), stop: StopReason | None = None
+                      ) -> None:
         """Append in order behind any backlog; on failure the message stays queued and
         nothing further starts until an append succeeds."""
         assert self._conversation is not None
         async with self._mem_lock:
             if message is not None:
-                self._backlog.append((message, list(events)))
+                self._backlog.append((message, list(events), stop))
             while self._backlog:
-                msg, after = self._backlog[0]
+                msg, after, reason = self._backlog[0]
                 try:
                     await self._memory.append(self._conversation.id, [msg])
                 except Exception as e:
                     self._failure(FailureKind.INTERNAL, f"Memory.append failed: {e}")
                     raise _AppendFailed from e
                 self._backlog.popleft()
-                self._emit(MessageCommitted(msg))
+                self._emit(MessageCommitted(msg, reason))
                 for event in after:
                     self._emit(event)
 
@@ -646,6 +654,16 @@ class Runtime:
             q = self._inbox.pop(0)
             await self._append(Message(q.message_id, Role.USER, (Text(q.text),), time.time()))
         return True
+
+    async def _ensure_user_last(self) -> None:
+        """A cycle without a new user message starts with a runtime notice, so a request
+        never ends on an assistant message."""
+        assert self._conversation is not None
+        newest = await self._memory.history(self._conversation.id, limit=1)
+        if not newest or newest[-1].role != Role.USER:
+            self._log.decision("activation_notice")
+            await self._append(
+                Message(_new_id(), Role.USER, (Text(ACTIVATION_NOTICE),), time.time()))
 
     async def _flush_outside_cycle(self) -> None:
         try:
@@ -693,6 +711,7 @@ class Runtime:
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
+        await self._ensure_user_last()
         while True:
             if self._stopping:
                 return
@@ -710,13 +729,13 @@ class Runtime:
             assistant = completed.message
             calls = [b for b in assistant.blocks if isinstance(b, ToolCall)]
             try:
-                await self._append(assistant)
+                await self._append(assistant, stop=completed.stop)
             except _AppendFailed:
                 if calls:  # keep the transcript consistent when the backlog is replayed
                     self._backlog.append((Message(_new_id(), Role.TOOL, tuple(
                         ToolResult(c.id, ToolStatus.ERROR,
                                    "Not run: the assistant message could not be saved.")
-                        for c in calls), time.time()), []))
+                        for c in calls), time.time()), [], None))
                 raise
             idle: _IdleRequest | None = None
             if calls:
@@ -764,6 +783,28 @@ class Runtime:
         reason = self._budget.exhausted()
         self._log.decision("budget_check", before=before, ok=reason is None, reason=reason)
         return reason
+
+    def _watch_duration(self) -> None:
+        if self._config.budget.max_duration_s is not None and (
+                self._duration_task is None or self._duration_task.done()):
+            self._duration_task = asyncio.create_task(self._duration_watchdog())
+
+    async def _duration_watchdog(self) -> None:
+        """While operations run, cancel them all as Stop does once the duration budget is
+        exhausted. Inference has its own deadline (_race_stop_or_deadline)."""
+        while self._ops:
+            remaining = self._budget.seconds_until_duration_exhausted()
+            if remaining:
+                await asyncio.sleep(remaining)
+                continue
+            self._log.decision("duration_exhausted", operations=list(self._ops))
+            for op in self._ops.values():
+                op.request_cancel()
+            if (self._base == AgentState.IDLE and not self._cycle_active
+                    and not self._cycle_requested and not self._stopping):
+                self._fail(FailureKind.BUDGET, f"Budget exhausted: {self._budget.exhausted()}")
+                self._update_state()
+            return
 
     def _charge(self, usage: Usage, info: ModelInfo) -> None:
         self._budget.charge(usage, cost_of(usage, info))
@@ -916,7 +957,8 @@ class Runtime:
         if stream.completed is not None and exc is None:
             self._charge(stream.completed.usage, info)
             return stream.completed
-        self._charge(stream.estimate(), info)
+        if stream.started or exc is None:  # a failure before the first event is unbilled
+            self._charge(stream.estimate(), info)
         if isinstance(exc, _BudgetHit):
             await self._commit_partial(stream)
         if exc is None:
@@ -943,6 +985,7 @@ class Runtime:
         count = self._counter(request.model)
         async with contextlib.aclosing(self._core.stream(request)) as events:
             async for event in events:
+                st.started = True
                 match event:
                     case Completed():
                         st.completed = event
@@ -988,13 +1031,14 @@ class Runtime:
 
     async def _run_tools(self, calls: list[ToolCall], specs: dict[str, ToolSpec]
                          ) -> tuple[list[ToolResult], list[RuntimeEvent], _IdleRequest | None]:
-        """Read-only calls start at once; the others run one at a time in emission order.
+        """Consecutive read-only calls run concurrently; a non-read-only call starts once
+        every earlier call has finished or been backgrounded, and later calls wait for it.
         Returns results in emission order and the ToolFinished events to emit after the
         TOOL message is appended."""
         results: dict[CallId, tuple[ToolResult, float]] = {}
         idle: _IdleRequest | None = None
         tasks: dict[CallId, asyncio.Task[tuple[ToolResult, float]]] = {}
-        previous: asyncio.Task[Any] | None = None
+        barrier: asyncio.Task[Any] | None = None
         for call in calls:
             if error := self._validate(call, specs):
                 results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, error), 0.0)
@@ -1006,11 +1050,14 @@ class Runtime:
                                     0.0)
                 continue
             spec = specs[call.name]
-            after = None if spec.read_only else previous
+            if spec.read_only:
+                after = [barrier] if barrier is not None else []
+            else:
+                after = list(tasks.values())
             task = asyncio.create_task(self._run_call(call, spec, after))
             tasks[call.id] = task
             if not spec.read_only:
-                previous = task
+                barrier = task
         if tasks:
             await asyncio.wait(tasks.values())
         for call_id, task in tasks.items():
@@ -1020,10 +1067,10 @@ class Runtime:
                                         if r.status != ToolStatus.BACKGROUNDED]
         return [r for r, _ in ordered], finished, idle
 
-    async def _run_call(self, call: ToolCall, spec: ToolSpec, after: asyncio.Task[Any] | None
+    async def _run_call(self, call: ToolCall, spec: ToolSpec, after: list[asyncio.Task[Any]]
                         ) -> tuple[ToolResult, float]:
-        if after is not None:
-            await asyncio.wait({after})
+        if after:
+            await asyncio.wait(after)
         try:
             if call.name in BUILTIN_TOOLS:
                 return await self._run_builtin(call)
@@ -1107,6 +1154,7 @@ class Runtime:
         self._ops[call.id] = op
         self._known_ops[call.id] = op
         self._budget.begin_activity()
+        self._watch_duration()
         ctx = Context(op, self._scratch)
         self._emit(ToolStarted(call))
         op.supervisor = asyncio.create_task(self._supervise(op, ctx))
@@ -1166,7 +1214,7 @@ class Runtime:
                 op = self._known_ops.get(args["call_id"])
                 if op is None:
                     return ToolStatus.ERROR, f"Unknown operation {args['call_id']}."
-                wait_s = args.get("wait_s", 0)
+                wait_s = min(args.get("wait_s", 0), _OP_STATUS_MAX_WAIT_S)
                 if op.result is None and wait_s > 0:
                     assert op.supervisor is not None
                     await asyncio.wait({op.supervisor}, timeout=wait_s)

@@ -37,7 +37,9 @@ Runtime guarantees to modules:
 - Turn boundary: reached once the current turn's foreground ToolResults are appended.
   At a boundary the runtime appends, in order: foreground ToolResults; results of
   background operations that terminated (OperationResult, in one USER message);
-  queued user messages (one USER message).
+  queued user messages (one USER message each, in send order). idle() takes effect at
+  the end of its turn: the wake set (every operation outstanding then) is computed at
+  that boundary, and unknown wait_for ids are ignored.
 - Budgets are reserved atomically before each inference or tool start.
 """
 
@@ -57,6 +59,13 @@ type CallId = str  # also the operation id of a backgrounded call
 type TokenCounter = Callable[[str | Sequence[Message]], int]  # fast local estimate
 
 PERMISSION_CEILING_ENV = "KAYDEN_PERMISSION_CEILING"
+
+
+@dataclass(frozen=True, slots=True)
+class InstancePaths:
+    """Passed to every module factory: factory(options: dict, paths: InstancePaths)."""
+
+    data_dir: Path
 
 
 # ── Shared types ──────────────────────────────────────────────────────────
@@ -84,8 +93,8 @@ class ToolStatus(StrEnum):
     OK = "ok"
     ERROR = "error"
     BACKGROUNDED = "backgrounded"  # placeholder: the call is still running
-    CANCELLED = "cancelled"  # stopped by Stop or by the model, termination confirmed
-    ABANDONED = "abandoned"  # cancellation not confirmed; may still have effects
+    CANCELLED = "cancelled"  # stopped, termination confirmed (or never started: Stop)
+    ABANDONED = "abandoned"  # cancel or timeout not confirmed in time; may still have effects
     TIMED_OUT = "timed_out"  # stalled or over its hard timeout
     INTERRUPTED = "interrupted"  # process died while the call was in flight
     REFUSED = "refused"  # never started: permission denied or budget exhausted
@@ -281,8 +290,9 @@ class Core(abc.ABC):
         behind the stream (many providers report output only at the end), so if the
         request is cancelled or fails before Completed, the runtime charges, per
         dimension, the larger of the last report and its own estimate (input plus
-        streamed output). The runtime iterates with contextlib.aclosing. An empty
-        ToolCallDelta chunk is allowed, to announce a call before its arguments."""
+        streamed output); a failure before the first stream event is not charged. The
+        runtime iterates with contextlib.aclosing. An empty ToolCallDelta chunk is
+        allowed, to announce a call before its arguments."""
 
     async def count_tokens(self, request: InferenceRequest) -> int | None:
         """Optional exact count. The runtime only uses it to calibrate its own sync
@@ -367,7 +377,9 @@ class Memory(abc.ABC):
     are the only ones, so new block types round-trip without a storage migration.
 
     Every method that takes a conversation id raises KeyError for an unknown one.
-    Long-term memory is scoped per mode: all conversations of a mode share it.
+    Long-term memory is scoped per mode: all conversations of a mode share it. A second
+    process (the other mode) may open the same store read-only for peek_other_mode, so
+    the store must tolerate concurrent readers.
     """
 
     @abc.abstractmethod
@@ -474,12 +486,12 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     ),
     "op_status": ToolSpec(
         "op_status",
-        "Check a backgrounded call. Optionally wait up to wait_s seconds for it to finish.",
+        "Check a backgrounded call. Optionally wait up to wait_s seconds (at most 60) for it to finish.",
         {
             "type": "object",
             "properties": {
                 "call_id": _CALL_ID,
-                "wait_s": {"type": "number", "minimum": 0, "default": 0},
+                "wait_s": {"type": "number", "minimum": 0, "maximum": 60, "default": 0},
             },
             "required": ["call_id"],
         },
@@ -543,9 +555,10 @@ class Tools(abc.ABC):
 
     The runtime runs execute() as a task, backgrounds it (the model gets the call id
     as the operation id) if it outlives the initial wait, and polls or cancels via task
-    state. Read-only calls in a turn run concurrently; other calls run one at a time in
-    the order the model emitted them. Tools only need to handle asyncio.CancelledError
-    by cleaning up promptly.
+    state. Consecutive read-only calls in a turn run concurrently; a non-read-only call
+    is a barrier: it starts once every earlier call has finished or been backgrounded,
+    and later calls wait for it likewise. Tools only need to handle
+    asyncio.CancelledError by cleaning up promptly.
 
     Never block the event loop: blocking work goes through asyncio.to_thread or a
     subprocess. A blocked loop freezes Stop for the whole instance. A thread cannot be
@@ -576,6 +589,7 @@ class Tools(abc.ABC):
 
 
 class AgentState(StrEnum):
+    NOT_STARTED = "not_started"  # before start()
     IDLE = "idle"  # background ops may still run; see StateChanged.pending_ops
     THINKING = "thinking"
     RUNNING_TOOLS = "running_tools"
@@ -613,7 +627,12 @@ class PermissionPolicy(StrEnum):
     @classmethod
     def inherited_ceiling(cls) -> PermissionPolicy | None:
         value = os.environ.get(PERMISSION_CEILING_ENV)
-        return cls(value) if value else None
+        if not value:
+            return None
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.DENY  # fail closed on a garbled ceiling
 
 
 class FailureKind(StrEnum):
@@ -631,10 +650,13 @@ class Budget:
     """None = unlimited on that dimension.
 
     max_tokens counts input (cached included) plus output. max_cost_usd needs prices:
-    start() raises if it is set and the model has none and the provider reports no
-    cost. max_duration_s is wall-clock time while at least one inference or tool
-    operation runs (background included); permission waits and backoff don't count.
-    max_tool_calls excludes built-ins. Usage persists in the instance data dir.
+    start() and select_model raise ValueError for a model without input and output
+    prices whenever it is set. max_duration_s is wall-clock time while at least one
+    inference or tool operation runs (background included); permission waits and
+    backoff don't count, and exhausting it also cancels running operations as Stop does.
+    max_tool_calls excludes built-ins. Exhausting any dimension stops all chargeable
+    execution, inference included. A budget belongs to the (data dir, mode); usage
+    persists there in usage-<mode>.json.
     """
 
     max_tokens: int | None = None
@@ -679,7 +701,8 @@ class OperationInfo:
 @dataclass(frozen=True, slots=True)
 class StartOptions:
     """Session: conversation_id None = new, else resume. Continuous: None = resume the
-    instance's single continuous conversation, creating it if absent."""
+    instance's single continuous conversation, creating it if absent; a different
+    conversation_id raises ValueError."""
 
     mode: Mode
     activation: Activation = Activation.USER_CONTROLLED  # ignored in Session Mode
@@ -727,6 +750,7 @@ class MessageCommitted:
     """Emitted for every message appended to the transcript, of any role."""
 
     message: Message
+    stop: StopReason | None = None  # set on assistant messages
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,7 +771,9 @@ class ToolBackgrounded:
 
 @dataclass(frozen=True, slots=True)
 class ToolFinished:
-    """Final outcome. Not always preceded by ToolStarted (refused calls). For a
+    """Final outcome. For foreground calls it is emitted right after the turn's TOOL
+    message is committed (backgrounding bounds that wait). Not always preceded by
+    ToolStarted (refused calls). For a
     backgrounded call it fires at termination, not for the placeholder. Every refused
     call gets a ToolResult(REFUSED) and a ToolFinished. A late
     completion of an ABANDONED call fires it again for the log only; nothing is
@@ -804,7 +830,8 @@ class MaintenanceFinished:
 @dataclass(frozen=True, slots=True)
 class StopStalled:
     """Stop requested but these calls didn't confirm cancellation within the grace
-    period; they are abandoned and the agent moves on to STOPPED."""
+    period; they are abandoned and the agent moves on to STOPPED. A single call
+    abandoned through cancel_operation is reported by ToolFinished(ABANDONED) only."""
 
     call_ids: Sequence[CallId]
 
@@ -879,6 +906,9 @@ class RuntimeAPI(Protocol):
 
     resolve_permission is first-wins; an unknown or already-resolved id raises.
     cancel_operation raises unless the call is currently running.
+    stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
+    which case it performs a full Stop. A Session agent counts as User-Controlled
+    (activate is allowed in IDLE).
     """
 
     # Observation
@@ -924,7 +954,9 @@ class RuntimeAPI(Protocol):
         turn boundary; a turn that ended without tool calls starts the next cycle."""
 
     async def activate(self) -> None:
-        """User-initiated cycle with no new message."""
+        """User-initiated cycle with no new message. If the newest message is not a user
+        message (or the transcript is empty), the runtime first appends a short runtime
+        notice as a USER message, so requests never end on an assistant message."""
 
     async def stop(self) -> None:
         """Idempotent; returns immediately. Cancels inference, maintenance and running
