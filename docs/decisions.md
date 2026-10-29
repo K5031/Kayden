@@ -166,10 +166,12 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   `OpaqueBlock(type, data)` is stored as exactly that. An unknown tag, or a known tag whose
   data the current class cannot take (a field added later), decodes to `OpaqueBlock`, so it
   re-encodes unchanged. Appending a block class without a tag raises TypeError.
-- Schema version 2 (`PRAGMA user_version`). Opening a version 1 store rewrites
-  `kayden.api:<Class>` tags to stable tags in one transaction (dropping and re-creating the
-  no-update trigger around it); other import-path tags stay and decode to `OpaqueBlock`.
-  Any other version is refused.
+- Schema version 2 (`PRAGMA user_version`). Stores use only the stable tags from the
+  start; there is no migration and no code reads Python import-path tags. Any other
+  version, including version 1 stores written by the pre-migration module with
+  import-path tags, is refused rather than read as opaque blocks.
+- The archive is strictly append-only: the source never runs UPDATE or DELETE on
+  `messages`, and the no-update/no-delete triggers stay in place for the life of a store.
 - `append` compares a re-appended id with the stored message (decoded equality) and skips
   it when equal; a conflict raises ValueError and rolls back the batch.
 - Search: FTS5 over the strings of each block minus ids and reasoning state, words ORed,

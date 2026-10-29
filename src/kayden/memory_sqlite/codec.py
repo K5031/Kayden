@@ -16,7 +16,7 @@ from typing import Any
 
 from kayden.api import BLOCK_TYPES, Block, OpaqueBlock
 
-FORMAT_VERSION = 2  # 1 = tags were Python import paths ("kayden.api:Text")
+FORMAT_VERSION = 2  # per-row block encoding: stable BLOCK_TYPES tags
 
 _TAGS = {cls: tag for tag, cls in BLOCK_TYPES.items()}
 _HINTS = {tag: typing.get_type_hints(cls) for tag, cls in BLOCK_TYPES.items()}
@@ -57,17 +57,6 @@ def decode_block(item: dict[str, Any]) -> Block:
         return cls(**kwargs)
     except (KeyError, TypeError, ValueError):
         return OpaqueBlock(tag, data)  # e.g. a field added by a later version
-
-
-def legacy_tag(tag: str) -> str:
-    """Map a format-1 import-path tag ("kayden.api:Text") to its stable tag; other tags
-    (a plugin's, say) are kept and decode to OpaqueBlock."""
-    module, _, qualname = tag.partition(":")
-    if module == "kayden.api":
-        for stable, cls in BLOCK_TYPES.items():
-            if cls.__qualname__ == qualname:
-                return stable
-    return tag
 
 
 def searchable_text(raw: str) -> str:

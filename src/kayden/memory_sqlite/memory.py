@@ -9,7 +9,6 @@ figures come from the runtime's `TokenCounter`; thresholds are fractions of the 
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import sqlite3
 import time
@@ -50,7 +49,7 @@ from kayden.api import (
 
 from . import codec
 
-SCHEMA_VERSION = 2  # 1 = blocks tagged with Python import paths
+SCHEMA_VERSION = 2  # version 1 stores (import-path block tags) are not supported
 # Output headroom on top of the summary budget for tags and new long-term entries.
 _LONG_TERM_OUTPUT_TOKENS = 256
 
@@ -100,7 +99,8 @@ CREATE TABLE messages (
     UNIQUE (conversation_id, id)
 );
 CREATE INDEX messages_conversation ON messages(conversation_id, seq);
-{no_update};
+CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages
+BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
 CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
 BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
 CREATE VIRTUAL TABLE messages_fts USING fts5(
@@ -123,9 +123,6 @@ CREATE TABLE long_term (
 );
 CREATE INDEX long_term_mode ON long_term(mode, id);
 """
-_NO_UPDATE = """CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages
-BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END"""
-_SCHEMA = _SCHEMA.replace("{no_update}", _NO_UPDATE)
 _TRUNCATION_MARKER = (
     "\n[{omitted} characters truncated in this view. The full message ({id}) is kept in the"
     " archive; use recall with words from it to read the rest.]"
@@ -418,8 +415,6 @@ def _open(path: Path) -> sqlite3.Connection:
                 for statement in _SCHEMA.split(";\n"):
                     if statement.strip():
                         conn.execute(statement)
-            elif version == 1:
-                _migrate_import_path_tags(conn)
             elif version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"{path}: memory schema version {version} is not supported"
@@ -430,20 +425,6 @@ def _open(path: Path) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
-
-
-def _migrate_import_path_tags(conn: sqlite3.Connection) -> None:
-    """Version 1 -> 2: rewrite "kayden.api:Text"-style tags to the stable BLOCK_TYPES tags.
-    The only update the archive ever receives; content is otherwise unchanged."""
-    conn.execute("DROP TRIGGER messages_no_update")
-    for seq, raw in conn.execute("SELECT seq, blocks FROM messages WHERE format = 1").fetchall():
-        blocks = [{"type": codec.legacy_tag(b["type"]), "data": b["data"]}
-                  for b in json.loads(raw)]
-        conn.execute(
-            "UPDATE messages SET blocks = ?, format = ? WHERE seq = ?",
-            (json.dumps(blocks, ensure_ascii=False), codec.FORMAT_VERSION, seq),
-        )
-    conn.execute(_NO_UPDATE)
 
 
 @contextmanager

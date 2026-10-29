@@ -286,42 +286,6 @@ async def test_stored_tags_are_stable_names(open_store, db: Path):
     assert [b["type"] for b in _raw_blocks(db)[0]] == ["text", "reasoning", "tool_call"]
 
 
-async def test_version_1_archive_is_migrated(open_store, db: Path):
-    memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
-    messages = [
-        Message("u", Role.USER, (Text("tok0001 hello"),), 1.0),
-        Message("a", Role.ASSISTANT, (Reasoning("hm", {"sig": "x"}), ToolCall("c", "t", {})), 2.0),
-        Message("t", Role.TOOL, (ToolResult("c", ToolStatus.OK, "ok"),), 3.0),
-    ]
-    await memory.append(conv.id, messages)
-    await memory.aclose()
-    legacy = {"text": "Text", "reasoning": "Reasoning", "tool_call": "ToolCall",
-              "tool_result": "ToolResult"}
-    with sqlite3.connect(db) as conn:  # rewrite as a version 1 store would have written it
-        conn.execute("DROP TRIGGER messages_no_update")
-        for seq, raw in conn.execute("SELECT seq, blocks FROM messages").fetchall():
-            blocks = [{"type": f"kayden.api:{legacy[b['type']]}", "data": b["data"]}
-                      for b in json.loads(raw)]
-            blocks.append({"type": "kayden.plugins.img:Image", "data": {"w": 1}})
-            conn.execute("UPDATE messages SET blocks = ?, format = 1 WHERE seq = ?",
-                         (json.dumps(blocks), seq))
-        conn.execute("CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages"
-                     " BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END")
-        conn.execute("PRAGMA user_version = 1")
-
-    reopened = open_store()
-    plugin = OpaqueBlock("kayden.plugins.img:Image", {"w": 1})
-    expected = [Message(m.id, m.role, (*m.blocks, plugin), m.created_at) for m in messages]
-    assert await reopened.history(conv.id) == expected
-    assert [b["type"] for b in _raw_blocks(db)[0]] == ["text", "kayden.plugins.img:Image"]
-    with sqlite3.connect(db) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-            conn.execute("UPDATE messages SET blocks = '[]'")
-    assert [h.message.id for h in await reopened.search("tok0001")] == ["u"]
-
-
 async def test_known_tag_with_unknown_fields_stays_opaque(open_store, db: Path):
     memory = open_store()
     conv = await memory.create_conversation(Mode.SESSION)
