@@ -34,6 +34,7 @@ from kayden.api import (
     Failure,
     Frontend,
     FrontendInfo,
+    InstancePaths,
     MaintenanceFinished,
     MaintenanceStarted,
     Message,
@@ -42,6 +43,9 @@ from kayden.api import (
     Mode,
     ModelInfo,
     ModelRetry,
+    ModelSelected,
+    OperationInfo,
+    OperationResult,
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
@@ -53,6 +57,7 @@ from kayden.api import (
     ShuttingDown,
     StartOptions,
     StateChanged,
+    StopReason,
     StopStalled,
     TextDelta,
     ToolBackgrounded,
@@ -69,6 +74,7 @@ from kayden.api import (
 from kayden.api import Text as TextBlock
 
 STATE_LABELS = {
+    AgentState.NOT_STARTED: "Not started",
     AgentState.IDLE: "Idle",
     AgentState.THINKING: "Thinking…",
     AgentState.RUNNING_TOOLS: "Running tools…",
@@ -80,27 +86,29 @@ STATE_LABELS = {
 STATUS_ICONS = {
     ToolStatus.OK: ("✓", "green"),
     ToolStatus.ERROR: ("✗", "red"),
+    ToolStatus.BACKGROUNDED: ("⋯", "yellow"),
     ToolStatus.CANCELLED: ("⊘", "yellow"),
+    ToolStatus.ABANDONED: ("⊘", "red"),
     ToolStatus.TIMED_OUT: ("⏱", "yellow"),
     ToolStatus.INTERRUPTED: ("⚠", "yellow"),
+    ToolStatus.REFUSED: ("⛔", "red"),
 }
 DECISION_LABELS = {
     Decision.ALLOW_ONCE: "Allow once",
     Decision.ALLOW_CONVERSATION: "Allow for conversation",
-    Decision.ALLOW_ALWAYS: "Always allow",
     Decision.DENY: "Deny",
 }
 DECISION_ALIASES = {
     "once": Decision.ALLOW_ONCE,
     "conversation": Decision.ALLOW_CONVERSATION,
     "conv": Decision.ALLOW_CONVERSATION,
-    "always": Decision.ALLOW_ALWAYS,
 }
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), "
-    "/allow [once|conversation|always], /deny, /quit (Ctrl+Q). "
+    "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
+HISTORY_PAGE = 100  # messages loaded per history page
 MAX_ARGS_CHARS = 300
 MAX_RESULT_LINES = 6
 MAX_RESULT_CHARS = 600
@@ -119,9 +127,11 @@ def _format_args(arguments: Any) -> str:
 
 
 class UserEntry(Static):
-    def __init__(self, text: str, *, queued: bool = False) -> None:
+    def __init__(self, text: str, *, queued: bool = False, message_id: str | None = None
+                 ) -> None:
         super().__init__()
         self.message_text = text
+        self.message_id = message_id
         self.queued = queued
         self.refresh_content()
 
@@ -143,6 +153,7 @@ class AssistantEntry(Static):
         self.reasoning = reasoning
         self.final = final
         self.interrupted = False
+        self.refused = False
         self.refresh_content()
 
     def append(self, text: str, *, reasoning: bool) -> None:
@@ -156,6 +167,10 @@ class AssistantEntry(Static):
         self.interrupted = True
         self.refresh_content()
 
+    def mark_refused(self) -> None:
+        self.refused = True
+        self.refresh_content()
+
     def refresh_content(self) -> None:
         parts: list[RenderableType] = []
         if self.reasoning:
@@ -164,6 +179,8 @@ class AssistantEntry(Static):
             parts.append(Markdown(self.body) if self.final else Text(self.body))
         if self.interrupted:
             parts.append(Text("(interrupted)", style="dim"))
+        if self.refused:
+            parts.append(Text("⛔ The model declined to respond.", style="bold red"))
         self.update(Group(*parts))
 
 
@@ -175,8 +192,7 @@ class ToolEntry(Static):
         self.arguments = arguments
         self.phase = "requested"  # requested | running | background | done | not run
         self.progress: str | None = None
-        self.op_id: str | None = None
-        self.result: ToolResult | None = None
+        self.result: ToolResult | OperationResult | None = None
         self.duration: float | None = None
         self.notes: list[str] = []
         self.refresh_content()
@@ -187,16 +203,20 @@ class ToolEntry(Static):
         self.arguments = (self.arguments if isinstance(self.arguments, str) else "") + chunk
         self.refresh_content()
 
-    def set_phase(self, phase: str, *, op_id: str | None = None) -> None:
+    def set_phase(self, phase: str) -> None:
         self.phase = phase
-        self.op_id = op_id or self.op_id
         self.refresh_content()
 
     def set_progress(self, text: str) -> None:
         self.progress = text
         self.refresh_content()
 
-    def finish(self, result: ToolResult, duration: float | None = None) -> None:
+    def finish(self, result: ToolResult | OperationResult, duration: float | None = None
+               ) -> None:
+        if result.status is ToolStatus.BACKGROUNDED:  # placeholder: still running
+            if self.phase != "done":
+                self.set_phase("background")
+            return
         self.phase = "done"
         self.result = result
         self.duration = duration if duration is not None else self.duration
@@ -210,7 +230,7 @@ class ToolEntry(Static):
         out = Text.assemble(("⚙ ", "cyan"), (self.tool_name, "bold cyan"), " ")
         out.append(_format_args(self.arguments), style="dim")
         if self.phase in ("running", "background"):
-            label = "running" if self.phase == "running" else f"background {self.op_id}"
+            label = self.phase
             out.append(f"\n  ⋯ {label}", style="yellow")
             if self.progress:
                 out.append(f": {_clip(self.progress, 200)}", style="dim")
@@ -274,6 +294,32 @@ class PermissionPrompt(Vertical):
 
 
 # ── modal screens ────────────────────────────────────────────────────────
+
+
+class OperationsScreen(ModalScreen[str | None]):
+    """Picks a running call to cancel."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Close")]
+
+    def __init__(self, operations: Sequence[OperationInfo]) -> None:
+        super().__init__()
+        self.operations = operations
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label("Cancel a running call" if self.operations else "Nothing is running")
+            yield OptionList(
+                *(Option(f"{op.call.name} {_clip(_format_args(op.call.arguments), 60)}"
+                         f"  [{op.call.id}]"
+                         + (f"  {_clip(op.last_progress, 40)}" if op.last_progress else ""),
+                         id=op.call.id)
+                  for op in self.operations),
+                id="operations",
+            )
+
+    @on(OptionList.OptionSelected)
+    def _selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option.id)
 
 
 class ModelScreen(ModalScreen[str | None]):
@@ -386,7 +432,22 @@ class _Resync:
     pass
 
 
+class _LoadEarlier:
+    pass
+
+
 RESYNC = _Resync()
+
+
+def _next(container: Widget, child: Widget) -> Widget | None:
+    children = list(container.children)
+    index = children.index(child) + 1
+    return children[index] if index < len(children) else None
+
+
+class LoadEarlier(Button):
+    def __init__(self) -> None:
+        super().__init__("Load earlier messages", id="load-earlier", variant="default")
 
 
 class KaydenApp(App[None]):
@@ -411,6 +472,7 @@ class KaydenApp(App[None]):
         Binding("escape", "stop", "Stop"),
         Binding("ctrl+r", "activate", "Activate", priority=True),
         Binding("ctrl+o", "models", "Model", priority=True),
+        Binding("ctrl+k", "operations", "Cancel op", priority=True),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
 
@@ -419,7 +481,7 @@ class KaydenApp(App[None]):
         self.runtime = runtime
         self.start_options = start_options
         self.last_seq = -1
-        self.state = AgentState.IDLE
+        self.state = AgentState.NOT_STARTED
         self.pending_ops = 0
         self.config: AgentConfig | None = None
         self.conversation: ConversationInfo | None = None
@@ -429,9 +491,11 @@ class KaydenApp(App[None]):
         self._inbox: asyncio.Queue[EventEnvelope | _Resync | None] = asyncio.Queue()
         self._tool_entries: dict[str, ToolEntry] = {}
         self._stream: list[AssistantEntry | ToolEntry] = []
-        self._queued: list[UserEntry] = []
+        self._queued: dict[str, UserEntry] = {}
         self._rendered_ids: set[str] = set()
         self._prompts: dict[str, PermissionPrompt] = {}
+        self._oldest_id: str | None = None  # oldest history message loaded
+        self._insert_before: Widget | None = None  # mount point while loading older pages
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
@@ -466,6 +530,9 @@ class KaydenApp(App[None]):
             if isinstance(item, _Resync):
                 await self._resync()
                 continue
+            if isinstance(item, _LoadEarlier):
+                await self._load_earlier()
+                continue
             if item.seq <= self.last_seq:
                 continue
             if item.seq != self.last_seq + 1:
@@ -483,7 +550,8 @@ class KaydenApp(App[None]):
 
     async def _resync(self) -> None:
         snap = self.runtime.snapshot()
-        history = await self.runtime.history(snap.conversation.id) if snap.conversation else ()
+        history = (await self.runtime.history(snap.conversation.id, limit=HISTORY_PAGE)
+                   if snap.conversation else ())
         transcript = self.query_one("#transcript", VerticalScroll)
         await transcript.remove_children()
         await self.query_one("#permissions", Vertical).remove_children()
@@ -497,18 +565,52 @@ class KaydenApp(App[None]):
         self.pending_ops = len(snap.operations)
         self.config = snap.config
         self.conversation = snap.conversation
-        self.model = snap.config.model
+        self.model = snap.model
         self.usage = snap.usage
+        self._oldest_id = history[0].id if history else None
+        if len(history) == HISTORY_PAGE:
+            await self._mount(LoadEarlier())
         for message in history:
             await self._render_message(message)
         for op in snap.operations:
             entry = self._tool_entries.get(op.call.id) or await self._mount_tool(op.call)
-            entry.set_phase("background", op_id=op.op_id)
+            if entry.phase != "background":
+                entry.set_phase("running")
             if op.last_progress:
                 entry.set_progress(op.last_progress)
+        for queued in snap.queued_messages:
+            await self._apply(queued)
         for request in snap.pending_permissions:
             await self._add_prompt(request)
         self._render_status()
+
+    @on(Button.Pressed, "#load-earlier")
+    def _load_earlier_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        event.button.disabled = True
+        self._inbox.put_nowait(_LoadEarlier())
+
+    async def _load_earlier(self) -> None:
+        """Prepend the page of history before the oldest message shown."""
+        button = self.query_one(LoadEarlier)
+        if self.conversation is None or self._oldest_id is None:
+            await button.remove()
+            return
+        page = await self.runtime.history(self.conversation.id, before=self._oldest_id,
+                                          limit=HISTORY_PAGE)
+        transcript = self.query_one("#transcript", VerticalScroll)
+        self._insert_before = _next(transcript, button)
+        try:
+            for message in page:
+                await self._render_message(message)
+        finally:
+            self._insert_before = None
+        if page:
+            self._oldest_id = page[0].id
+        if len(page) < HISTORY_PAGE:
+            await button.remove()
+        else:
+            button.disabled = False
 
     async def _apply(self, event: RuntimeEvent) -> None:
         match event:
@@ -529,42 +631,45 @@ class KaydenApp(App[None]):
                     self._tool_entries[call_id] = entry
                     self._stream.append(entry)
                 entry.stream_arguments(name, chunk)
-            case MessageQueued(text=text):
-                self._queued.append(await self._mount(UserEntry(text, queued=True)))
-            case MessageCommitted(message=message):
-                await self._commit(message)
+            case MessageQueued(message_id=message_id, text=text):
+                if message_id not in self._queued:
+                    entry = UserEntry(text, queued=True, message_id=message_id)
+                    self._queued[message_id] = await self._mount(entry)
+            case MessageCommitted(message=message, stop=stop):
+                await self._commit(message, stop)
             case ToolStarted(call=call):
                 entry = self._tool_entries.get(call.id) or await self._mount_tool(call)
                 entry.set_phase("running")
             case ToolProgress(call_id=call_id, text=text):
                 if entry := self._tool_entries.get(call_id):
                     entry.set_progress(text)
-            case ToolBackgrounded(call_id=call_id, op_id=op_id):
+            case ToolBackgrounded(call_id=call_id):
                 if entry := self._tool_entries.get(call_id):
-                    entry.set_phase("background", op_id=op_id)
+                    entry.set_phase("background")
             case ToolFinished(result=result, duration_s=duration):
                 await self._finish_tool(result, duration)
             case PermissionRequested(request=request):
                 await self._add_prompt(request)
-            case PermissionResolved(request_id=request_id, decision=decision):
-                prompt = self._prompts.pop(request_id, None)
-                if prompt is not None:
+            case PermissionResolved(request_id=request_id, decision=decision, call_id=call_id):
+                if (prompt := self._prompts.pop(request_id, None)) is not None:
                     await prompt.remove()
-                    if entry := self._tool_entries.get(prompt.request.call.id):
-                        entry.note(f"permission: {DECISION_LABELS[decision].lower()}")
+                if entry := self._tool_entries.get(call_id):
+                    entry.note(f"permission: {DECISION_LABELS[decision].lower()}")
             case ModelRetry(attempt=attempt, max_attempts=max_attempts, delay_s=delay, error=err):
                 self.notice = f"model retry {attempt}/{max_attempts} in {delay:.0f}s: {err}"
                 await self._discard_stream()  # the retried request streams from scratch
+            case ModelSelected(model_id=model_id):
+                self.model = model_id
             case MaintenanceStarted():
                 self.notice = "maintaining memory…"
             case MaintenanceFinished():
                 self.notice = ""
-            case StopStalled(op_ids=op_ids):
-                self.notice = f"stop stalled on {', '.join(op_ids)}"
+            case StopStalled(call_ids=call_ids):
+                self.notice = f"stop stalled: abandoned {', '.join(call_ids)}"
                 await self._mount(
                     SystemEntry(
-                        f"Stop is waiting on operations that have not terminated: "
-                        f"{', '.join(op_ids)}",
+                        f"These calls did not confirm cancellation and were abandoned (they "
+                        f"may still have effects): {', '.join(call_ids)}",
                         severity="warning",
                     )
                 )
@@ -580,6 +685,9 @@ class KaydenApp(App[None]):
 
     async def _mount[W: Widget](self, widget: W) -> W:
         transcript = self.query_one("#transcript", VerticalScroll)
+        if self._insert_before is not None:
+            await transcript.mount(widget, before=self._insert_before)
+            return widget
         at_end = transcript.scroll_y >= transcript.max_scroll_y - 1
         await transcript.mount(widget)
         if at_end:
@@ -614,27 +722,33 @@ class KaydenApp(App[None]):
                 widget.set_phase("not run")
         self._stream.clear()
 
-    async def _commit(self, message: Message) -> None:
+    async def _commit(self, message: Message, stop: StopReason | None = None) -> None:
         if message.id in self._rendered_ids:
             return
-        if message.role is Role.USER:
-            text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
-            queued = next((e for e in self._queued if e.message_text == text), None)
-            if queued is not None:
-                self._queued.remove(queued)
-                queued.mark_committed()
-                self._rendered_ids.add(message.id)
-                return
-        elif message.role is Role.ASSISTANT:
+        if (queued := self._queued.pop(message.id, None)) is not None:
+            queued.mark_committed()
+            self._rendered_ids.add(message.id)
+            return
+        if message.role is Role.ASSISTANT:
             await self._discard_stream()  # replaced by the authoritative message
-        await self._render_message(message)
+        last = await self._render_message(message)
+        if stop is StopReason.REFUSAL:
+            if last is None:
+                last = await self._mount(AssistantEntry(final=True))
+            last.mark_refused()
 
-    async def _render_message(self, message: Message) -> None:
+    async def _render_message(self, message: Message) -> AssistantEntry | None:
+        """Mount a message's entries; returns its last assistant text entry, if any."""
         self._rendered_ids.add(message.id)
         if message.role is Role.USER:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
-            await self._mount(UserEntry(text))
-            return
+            if text:
+                await self._mount(UserEntry(text, message_id=message.id))
+            for block in message.blocks:
+                if isinstance(block, OperationResult):
+                    await self._finish_tool(block, None)
+            return None
+        last: AssistantEntry | None = None
         current: AssistantEntry | None = None
         for block in message.blocks:
             match block:
@@ -642,6 +756,7 @@ class KaydenApp(App[None]):
                     current = current or await self._mount(AssistantEntry(final=True))
                     current.body += text
                     current.refresh_content()
+                    last = current
                 case Reasoning(text=text):
                     current = current or await self._mount(AssistantEntry(final=True))
                     current.reasoning += text
@@ -652,8 +767,10 @@ class KaydenApp(App[None]):
                 case ToolResult() as result:
                     await self._finish_tool(result, None)
                     current = None
+        return last
 
-    async def _finish_tool(self, result: ToolResult, duration: float | None) -> None:
+    async def _finish_tool(self, result: ToolResult | OperationResult, duration: float | None
+                           ) -> None:
         entry = self._tool_entries.get(result.call_id)
         if entry is None:
             entry = await self._mount(ToolEntry(result.call_id, None))
@@ -739,9 +856,13 @@ class KaydenApp(App[None]):
             case "activate":
                 self.action_activate()
             case "model" if arg:
-                self._call(self._select_model(arg))
+                self._call(self.runtime.select_model(arg))
             case "model":
                 self.action_models()
+            case "cancel" if arg:
+                self._call(self.runtime.cancel_operation(arg))
+            case "cancel":
+                self.action_operations()
             case "allow" | "deny":
                 decision = Decision.DENY if name == "deny" else DECISION_ALIASES.get(arg or "once")
                 if decision is None:
@@ -767,8 +888,20 @@ class KaydenApp(App[None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "activate":
-            return self.config is not None and self.config.mode is Mode.CONTINUOUS
+            config = self.config
+            agent_controlled = (config is not None and config.mode is Mode.CONTINUOUS
+                                and config.activation is Activation.AGENT_CONTROLLED)
+            return config is not None and not (agent_controlled
+                                               and self.state is AgentState.IDLE)
         return True
+
+    def action_operations(self) -> None:
+        self.push_screen(OperationsScreen(self.runtime.snapshot().operations),
+                         self._on_operation_chosen)
+
+    def _on_operation_chosen(self, call_id: str | None) -> None:
+        if call_id is not None:
+            self._call(self.runtime.cancel_operation(call_id))
 
     def action_models(self) -> None:
         async def pick() -> None:
@@ -779,12 +912,7 @@ class KaydenApp(App[None]):
 
     def _on_model_chosen(self, model_id: str | None) -> None:
         if model_id is not None:
-            self._call(self._select_model(model_id))
-
-    async def _select_model(self, model_id: str) -> None:
-        await self.runtime.select_model(model_id)
-        self.model = model_id
-        self._render_status()
+            self._call(self.runtime.select_model(model_id))
 
     def resolve_permission(self, request_id: str, decision: Decision) -> None:
         prompt = self._prompts.get(request_id)
@@ -802,6 +930,19 @@ class KaydenApp(App[None]):
         self._call(resolve())
 
 
+def factory(options: dict[str, Any], paths: InstancePaths) -> TuiFrontend:
+    """Options: mode, activation, conversation_id, model. With a mode the agent starts
+    right away; without one the start screen asks."""
+    if "mode" not in options:
+        return TuiFrontend()
+    return TuiFrontend(StartOptions(
+        mode=Mode(options["mode"]),
+        activation=Activation(options.get("activation", Activation.USER_CONTROLLED)),
+        conversation_id=options.get("conversation_id"),
+        model=options.get("model"),
+    ))
+
+
 class TuiFrontend(Frontend):
     def __init__(self, start_options: StartOptions | None = None) -> None:
         self.start_options = start_options
@@ -811,4 +952,5 @@ class TuiFrontend(Frontend):
         return FrontendInfo(name="tui", interactive_permissions=True)
 
     async def run(self, runtime: RuntimeAPI) -> None:
+        """Returns when the user quits or the runtime's event stream ends."""
         await KaydenApp(runtime, self.start_options).run_async()

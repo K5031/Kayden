@@ -609,6 +609,22 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
 - **Assumed:** Unknown counts as another model: such reasoning is not replayed (an invalid
   signature would make the request fail permanently).
 
+### M11 (S) Refusals in history
+- **Where:** `MessageCommitted.stop`, `StopReason.REFUSAL` "shown distinctly".
+- **Problem:** The stop reason exists only on the live event; `Message` does not carry it,
+  so after a restart or a late attach (history) a refusal looks like ordinary text.
+- **Assumed:** The TUI marks refusals only when it sees `MessageCommitted`.
+- **Fix:** Persist the stop reason on assistant messages (e.g. `Message.stop`).
+
+### M12 (S) Which snapshot operations are backgrounded
+- **Where:** `RuntimeSnapshot.operations` "every running call, foreground included";
+  `OperationInfo` has no flag for it.
+- **Problem:** A late-attaching frontend cannot tell a backgrounded call from one still
+  in the foreground wait, unless history happens to contain its BACKGROUNDED placeholder.
+- **Assumed:** The TUI shows such calls as running and switches to "background" when the
+  placeholder is in history or `ToolBackgrounded` arrives.
+- **Fix:** Add `backgrounded: bool` to `OperationInfo`.
+
 ## Material outside the allowed inputs
 
 None was consulted or encountered. The only out-of-tree output seen was a system-wide

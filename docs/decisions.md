@@ -221,3 +221,24 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   detection is meant to catch a command that stopped producing output.
 - The conformance suite's `RecordingContext` is thread-safe like the runtime's context and
   counts heartbeats separately from visible progress.
+
+### TUI (`kayden.frontends.tui`)
+
+- Factory: `kayden.frontends.tui:factory`. Options `mode`, `activation`,
+  `conversation_id`, `model`: with a mode the agent starts at once, otherwise the start
+  screen asks. `run()` returns when the user quits or `events()` ends.
+- History is loaded `HISTORY_PAGE` (100) messages at a time; a "Load earlier messages"
+  button at the top of the transcript prepends the previous page (`history(before=...)`).
+  Late-attach recovery follows `RuntimeSnapshot`'s order and also restores queued messages.
+- Per-operation cancel: Ctrl+K lists `snapshot().operations` and cancels the chosen call;
+  `/cancel <call id>` does the same directly.
+- Permission choices are Allow once, Allow for conversation, Deny (`/allow once|conversation`,
+  `/deny`). Runtime-side decisions (policy, Stop) are noted on the call via
+  `PermissionResolved.call_id`.
+- Activate (Ctrl+R, `/activate`) is offered once started, except for an idle
+  agent-controlled Continuous agent; the runtime remains the authority and its errors are
+  shown as notifications.
+- Queued messages are matched to their commit by `message_id`. A BACKGROUNDED placeholder
+  keeps the call shown as running in the background until its final ToolFinished or
+  OperationResult. Refusals get a red "declined" line. The model shown follows
+  `ModelSelected`.

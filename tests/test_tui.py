@@ -27,7 +27,9 @@ from kayden.api import (
     Mode,
     ModelInfo,
     ModelRetry,
+    ModelSelected,
     OperationInfo,
+    OperationResult,
     PermissionPolicy,
     PermissionRequest,
     PermissionRequested,
@@ -40,6 +42,7 @@ from kayden.api import (
     ShuttingDown,
     StartOptions,
     StateChanged,
+    StopReason,
     StopStalled,
     Text,
     TextDelta,
@@ -59,6 +62,7 @@ from kayden.frontends.tui import (
     AssistantEntry,
     KaydenApp,
     ModelScreen,
+    OperationsScreen,
     PermissionPrompt,
     StartScreen,
     SystemEntry,
@@ -83,14 +87,18 @@ class StubRuntime:
         history: Sequence[Message] = (),
         operations: Sequence[OperationInfo] = (),
         pending_permissions: Sequence[PermissionRequest] = (),
+        queued: Sequence[MessageQueued] = (),
     ) -> None:
         self.seq = 0
-        self.state = AgentState.IDLE
+        self.state = AgentState.IDLE if started else AgentState.NOT_STARTED
         self.conversation = CONVERSATION if started else None
-        self.config = AgentConfig(mode, activation, "m1", Budget(), PermissionPolicy.ASK)
+        self.config = (AgentConfig(mode, activation, Budget(), PermissionPolicy.ASK)
+                       if started else None)
+        self.model = "m1"
         self.history_messages = list(history)
         self.operations = list(operations)
         self.pending_permissions = list(pending_permissions)
+        self.queued = list(queued)
         self.calls: list[tuple] = []
         self.command_delay = 0.0
         self.fail_with: dict[str, Exception] = {}
@@ -139,9 +147,11 @@ class StubRuntime:
             state=self.state,
             conversation=self.conversation,
             config=self.config,
+            model=self.model,
             usage=UsageSnapshot(Usage(), 0, 0.0),
             operations=list(self.operations),
             pending_permissions=list(self.pending_permissions),
+            queued_messages=list(self.queued),
         )
 
     async def list_models(self) -> Sequence[ModelInfo]:
@@ -153,11 +163,18 @@ class StubRuntime:
     async def list_conversations(self, mode: Mode) -> Sequence[ConversationInfo]:
         return [CONVERSATION] if mode is Mode.SESSION else []
 
-    async def history(self, conversation_id: str) -> Sequence[Message]:
-        self.calls.append(("history", conversation_id))
-        return list(self.history_messages)
+    async def history(self, conversation_id: str, *, before: str | None = None,
+                      limit: int | None = None) -> Sequence[Message]:
+        if before is None:
+            self.calls.append(("history", conversation_id))
+        else:
+            self.calls.append(("history_before", before))
+        messages = list(self.history_messages)
+        if before is not None:
+            messages = messages[: [m.id for m in messages].index(before)]
+        return messages[-limit:] if limit else messages
 
-    async def search_archive(self, query, *, mode=None, limit=10):
+    async def search_archive(self, query, *, mode=None, conversation_id=None, limit=10):
         return []
 
     async def inspect_memory(self, conversation_id):
@@ -166,10 +183,18 @@ class StubRuntime:
     async def start(self, options: StartOptions) -> ConversationInfo:
         await self._record("start", options)
         self.conversation = CONVERSATION
+        self.config = AgentConfig(options.mode, options.activation, Budget(),
+                                  PermissionPolicy.ASK)
+        self.emit(StateChanged(AgentState.IDLE))
         return CONVERSATION
 
     async def select_model(self, model_id: str) -> None:
         await self._record("select_model", model_id)
+        self.model = model_id
+        self.emit(ModelSelected(model_id))
+
+    async def cancel_operation(self, call_id: str) -> None:
+        await self._record("cancel_operation", call_id)
 
     async def send(self, text: str) -> None:
         await self._record("send", text)
@@ -279,9 +304,12 @@ async def test_tool_call_deltas_progress_and_results():
         assert "running: compiling 3/10" in plain(tool)
         assert "Running tools… · 1 ops" in status(app)
 
-        stub.emit(ToolBackgrounded("c1", "op-7"))
+        stub.emit(ToolBackgrounded("c1"))
+        stub.emit(MessageCommitted(msg("t0", Role.TOOL,
+                                       ToolResult("c1", ToolStatus.BACKGROUNDED, "op c1"))))
+        stub.emit(ToolProgress("c1", "compiling 9/10"))
         await caught_up(pilot, app, stub)
-        assert "background op-7" in plain(tool)
+        assert "background: compiling 9/10" in plain(tool)
 
         result = ToolResult("c1", ToolStatus.OK, "built\nok")
         stub.emit(ToolFinished(result, 1.5))
@@ -309,7 +337,8 @@ async def test_permission_prompt_offers_every_decision(decision: Decision):
         await until(pilot, lambda: ("resolve_permission", "p1", decision) in stub.calls)
         assert all(b.disabled for b in prompt.query(Button))
 
-        stub.emit(PermissionResolved("p1", decision), StateChanged(AgentState.RUNNING_TOOLS))
+        stub.emit(PermissionResolved("p1", decision, "c1"),
+                  StateChanged(AgentState.RUNNING_TOOLS))
         await caught_up(pilot, app, stub)
         assert not app.query(PermissionPrompt)
         assert "permission:" in plain(entries(app, ToolEntry)[0])
@@ -323,13 +352,14 @@ async def test_permission_commands_and_runtime_side_resolution():
         stub.emit(PermissionRequested(PermissionRequest("p1", call, read_only=False)))
         stub.emit(PermissionRequested(PermissionRequest("p2", call, read_only=False)))
         await caught_up(pilot, app, stub)
-        await type_text(pilot, "/allow always")
+        await type_text(pilot, "/allow conversation")
         await pilot.press("enter")
-        await until(pilot, lambda: ("resolve_permission", "p1", Decision.ALLOW_ALWAYS) in stub.calls)
+        await until(pilot, lambda: ("resolve_permission", "p1", Decision.ALLOW_CONVERSATION)
+                    in stub.calls)
 
         # Stop denies pending prompts runtime-side; the prompt must disappear.
-        stub.emit(PermissionResolved("p1", Decision.ALLOW_ALWAYS))
-        stub.emit(PermissionResolved("p2", Decision.DENY))
+        stub.emit(PermissionResolved("p1", Decision.ALLOW_CONVERSATION, "c1"))
+        stub.emit(PermissionResolved("p2", Decision.DENY, "c1"))
         await caught_up(pilot, app, stub)
         assert not app.query(PermissionPrompt)
 
@@ -357,15 +387,17 @@ async def test_send_while_running_is_queued_then_committed():
         await until(pilot, lambda: ("send", "also this") in stub.calls)
         assert app.query_one("#prompt", Input).value == ""
 
-        stub.emit(MessageQueued("also this"))
+        stub.emit(MessageQueued("q1", "also this"), MessageQueued("q2", "also this"))
         await caught_up(pilot, app, stub)
-        [entry] = entries(app, UserEntry)
-        assert entry.queued and "(queued)" in plain(entry)
+        first, second = entries(app, UserEntry)
+        assert first.queued and "(queued)" in plain(first) and second.queued
 
-        stub.emit(MessageCommitted(msg("u2", Role.USER, Text("also this"))))
+        stub.emit(MessageCommitted(msg("q2", Role.USER, Text("also this"))))
         await caught_up(pilot, app, stub)
-        [entry] = entries(app, UserEntry)
-        assert not entry.queued
+        assert [e.queued for e in entries(app, UserEntry)] == [True, False]
+        stub.emit(MessageCommitted(msg("q1", Role.USER, Text("also this"))))
+        await caught_up(pilot, app, stub)
+        assert [e.queued for e in entries(app, UserEntry)] == [False, False]
 
 
 async def test_stop_keeps_ui_responsive_and_reports_progress():
@@ -387,9 +419,9 @@ async def test_stop_keeps_ui_responsive_and_reports_progress():
         await caught_up(pilot, app, stub)
         assert "Stopping…" in status(app)
 
-        stub.emit(StopStalled(["op-1"]))
+        stub.emit(StopStalled(["c-9"]))
         await caught_up(pilot, app, stub)
-        assert "op-1" in plain(entries(app, SystemEntry)[-1])
+        assert "c-9" in plain(entries(app, SystemEntry)[-1])
         assert "stop stalled" in status(app)
 
         stub.emit(StateChanged(AgentState.STOPPED))
@@ -427,14 +459,27 @@ async def test_activate_for_continuous_user_controlled_agent():
         await until(pilot, lambda: stub.calls.count(("activate",)) == 2)
 
 
-async def test_activate_binding_disabled_in_session_mode():
+async def test_activate_allowed_in_session_mode():
     stub = StubRuntime(mode=Mode.SESSION)
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: ("activate",) in stub.calls)
+
+
+async def test_activate_disabled_for_idle_agent_controlled_agent():
+    stub = StubRuntime(mode=Mode.CONTINUOUS, activation=Activation.AGENT_CONTROLLED)
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
         await pilot.press("ctrl+r")
         await pilot.pause(0.05)
         assert ("activate",) not in stub.calls
+        stub.emit(StateChanged(AgentState.STOPPED))
+        await caught_up(pilot, app, stub)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: ("activate",) in stub.calls)
 
 
 async def test_late_attach_restores_history_operations_and_prompts():
@@ -445,16 +490,18 @@ async def test_late_attach_restores_history_operations_and_prompts():
             msg("u1", Role.USER, Text("hi")),
             msg("a1", Role.ASSISTANT, Text("on it"), call, ask),
         ],
-        operations=[OperationInfo("op-1", call, 0.0, "50%")],
+        operations=[OperationInfo(call, 0.0, "50%")],
         pending_permissions=[PermissionRequest("p1", ask, read_only=False)],
+        queued=[MessageQueued("q1", "later")],
     )
     stub.seq = 41
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
-        assert [e.message_text for e in entries(app, UserEntry)] == ["hi"]
+        assert [(e.message_text, e.queued) for e in entries(app, UserEntry)] == [
+            ("hi", False), ("later", True)]
         tools = entries(app, ToolEntry)
-        assert "background op-1: 50%" in plain(tools[0])
+        assert "running: 50%" in plain(tools[0])
         assert app.query_one(PermissionPrompt).request.id == "p1"
 
         # A message committed while history was loading is not rendered twice.
@@ -488,6 +535,7 @@ async def test_start_screen_starts_the_agent():
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
         [options] = [c[1] for c in stub.calls if c[0] == "start"]
         assert options == StartOptions(Mode.CONTINUOUS, Activation.AGENT_CONTROLLED, None, None)
+        await until(pilot, lambda: "continuous/agent" in status(app))
         await until(pilot, lambda: ("history", "conv-1") in stub.calls)
 
 
@@ -530,3 +578,132 @@ async def test_shutting_down_and_closed_stream_exit_the_app():
         await caught_up(pilot, app, stub)
         stub.close()
         await until(pilot, lambda: app._exit)
+
+
+async def test_not_started_state_is_shown():
+    stub = StubRuntime(started=False)
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await until(pilot, lambda: isinstance(app.screen, StartScreen))
+        assert "Not started" in status(app)
+
+
+async def test_model_selected_event_updates_the_status():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        assert "m1" in status(app)
+        stub.emit(ModelSelected("m2"))  # e.g. selected by another frontend
+        await caught_up(pilot, app, stub)
+        assert "m2" in status(app) and "m1" not in status(app)
+
+
+async def test_refusal_is_shown_distinctly():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, Text("No.")), StopReason.REFUSAL))
+        stub.emit(MessageCommitted(msg("a2", Role.ASSISTANT, Text("Yes.")), StopReason.END_TURN))
+        await caught_up(pilot, app, stub)
+        assert [e.refused for e in entries(app, AssistantEntry)] == [True, False]
+
+
+async def test_permission_auto_decision_is_noted_on_the_call():
+    stub = StubRuntime()
+    app = make(stub)
+    call = ToolCall("c1", "read_file", {"path": "x"})
+    async with app.run_test() as pilot:
+        stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, call)))
+        stub.emit(PermissionResolved("auto-1", Decision.DENY, "c1"))
+        await caught_up(pilot, app, stub)
+        assert "permission: deny" in plain(entries(app, ToolEntry)[0])
+
+
+async def test_always_allow_is_not_offered():
+    stub = StubRuntime()
+    app = make(stub)
+    call = ToolCall("c1", "shell", {"command": "rm x"})
+    async with app.run_test(notifications=True) as pilot:
+        stub.emit(PermissionRequested(PermissionRequest("p1", call, read_only=False)))
+        await caught_up(pilot, app, stub)
+        await type_text(pilot, "/allow always")
+        await pilot.press("enter")
+        await until(pilot, lambda: any("always" in n.message for n in app._notifications))
+        assert not any(c[0] == "resolve_permission" for c in stub.calls)
+
+
+async def test_every_status_renders():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        calls = [ToolCall(f"c-{s}", "shell", {}) for s in ToolStatus]
+        stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, *calls)))
+        stub.emit(MessageCommitted(msg("t1", Role.TOOL, *(
+            ToolResult(c.id, s, str(s)) for c, s in zip(calls, ToolStatus)))))
+        await caught_up(pilot, app, stub)
+        rendered = [plain(e) for e in entries(app, ToolEntry)]
+        assert len(rendered) == len(ToolStatus)
+        assert "abandoned" in rendered[list(ToolStatus).index(ToolStatus.ABANDONED)]
+
+
+async def test_operation_result_finishes_a_background_call():
+    call = ToolCall("c1", "shell", {"command": "make"})
+    stub = StubRuntime(history=[
+        msg("u1", Role.USER, Text("build")),
+        msg("a1", Role.ASSISTANT, call),
+        msg("t1", Role.TOOL, ToolResult("c1", ToolStatus.BACKGROUNDED, "running as c1")),
+        msg("u2", Role.USER, OperationResult("c1", ToolStatus.OK, "built")),
+    ])
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        [tool] = entries(app, ToolEntry)
+        assert "✓ ok" in plain(tool) and "built" in plain(tool)
+        assert [e.message_text for e in entries(app, UserEntry)] == ["build"]
+
+
+async def test_cancel_operation_dialog_and_command():
+    call = ToolCall("c1", "shell", {"command": "sleep 99"})
+    stub = StubRuntime(operations=[OperationInfo(call, 0.0, None)])
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        await pilot.press("ctrl+k")
+        await until(pilot, lambda: isinstance(app.screen, OperationsScreen))
+        await pilot.press("enter")
+        await until(pilot, lambda: ("cancel_operation", "c1") in stub.calls)
+
+        await type_text(pilot, "/cancel c1")
+        await pilot.press("enter")
+        await until(pilot, lambda: stub.calls.count(("cancel_operation", "c1")) == 2)
+
+
+async def test_history_is_paginated():
+    from kayden.frontends.tui import HISTORY_PAGE
+
+    stub = StubRuntime(history=[msg(f"u{i}", Role.USER, Text(f"m{i}"))
+                                for i in range(2 * HISTORY_PAGE + 10)])
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        shown = [e.message_text for e in entries(app, UserEntry)]
+        assert shown == [f"m{i}" for i in range(HISTORY_PAGE + 10, 2 * HISTORY_PAGE + 10)]
+
+        for expected in (2 * HISTORY_PAGE, 2 * HISTORY_PAGE + 10):
+            app.query_one("#load-earlier", Button).press()  # scrolled out of view
+            await until(pilot, lambda n=expected: len(entries(app, UserEntry)) == n)
+        assert [e.message_text for e in entries(app, UserEntry)] == [
+            f"m{i}" for i in range(2 * HISTORY_PAGE + 10)]
+        await pilot.pause()
+        assert not app.query("#load-earlier")
+
+
+async def test_factory_builds_start_options(tmp_path):
+    from kayden.api import InstancePaths
+    from kayden.frontends.tui import factory
+
+    assert factory({}, InstancePaths(tmp_path)).start_options is None
+    frontend = factory({"mode": "continuous", "activation": "agent_controlled"},
+                       InstancePaths(tmp_path))
+    assert frontend.start_options == StartOptions(Mode.CONTINUOUS, Activation.AGENT_CONTROLLED)
