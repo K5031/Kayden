@@ -33,13 +33,13 @@ completions. Generic code reads its fields and never a provider name. The factor
 | `models` | `deepseek-flash`, `deepseek-v4-pro`: `max_output_tokens` 64000 and peak prices |
 | `transient_finish_reasons` | `insufficient_system_resource`, `aborted` → `TransientCoreError` |
 | `reasoning_input_field` | `reasoning_content` |
-| `toolless_options` | `{"thinking": {"type": "disabled"}}` |
+| `maintenance_options` | `{"thinking": {"type": "disabled"}}` |
 
 - **Reasoning replay.** Every assistant message carries the field on every request: the
   same model's reasoning, else `""`. Reasoning from another model is never replayed (M10).
-- **Maintenance requests.** A request without tools is maintenance (the runtime offers
-  built-ins on every turn), so it runs with `toolless_options`: thinking off, so a summary
-  can't be all reasoning. User `options` override the profile.
+- **Maintenance requests.** A request marked `maintenance` runs with `maintenance_options`:
+  thinking off, so a summary can't be all reasoning. (Until M14 was resolved the Core
+  inferred maintenance from a request having no tools; see `maintenance-marker.md`.) User `options` override the profile.
 - **Model config.** User `models` entries merge over the profile's field by field, so
   overriding a context window keeps the prices.
 
@@ -63,14 +63,14 @@ completions. Generic code reads its fields and never a provider name. The factor
   and was changed after the live checks.
 - **Changing `_common.py` so configured prices survive.** Left alone on request; merging
   happens inside `openai_compat.py` instead.
-- **An explicit maintenance flag on requests.** Needs an `api.py` change; recorded as M14.
+- **An explicit maintenance flag on requests.** Needed an `api.py` change; recorded as M14
+  and later built (`maintenance-marker.md`).
 
 ## Open questions
 
 - M13: one price per model, but DeepSeek's off-peak price is half the peak price, so costs
   are overstated by up to 2x and cost budgets stop early.
-- M14: "no tools = maintenance" is an inference; a test fails if the runtime ever sends a
-  tool-less turn, but a real marker belongs in `api.py`.
+- M14: resolved by `InferenceRequest.maintenance` (`maintenance-marker.md`).
 - M15: empty compaction output is committed as a summary. Thinking off avoids it for
   DeepSeek only, and setting `thinking` in `options` re-exposes it.
 - Prices are dated 2026-10-30 and nothing refreshes them.

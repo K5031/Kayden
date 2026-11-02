@@ -293,7 +293,7 @@ async def test_f_stop_during_tools(make: Any) -> None:
 
 def summarizing_core(reply: str = "noted") -> ScriptedCore:
     def step(request: InferenceRequest) -> Step:
-        if not request.tools:  # maintenance completion
+        if request.maintenance:
             return Step(text="SUMMARY: " + render(request.messages[-1])[-80:])
         return Step(text=reply)
 

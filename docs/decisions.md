@@ -237,8 +237,9 @@ Design: `design/deepseek-profile.md`.
   with finish reason `length`. Hence the profile's `max_output_tokens` of 64000 (DeepSeek's
   default for thinking, against 393216 reported by `/models`). Replayed reasoning counts
   as input tokens, and the runtime's estimator counts it too.
-- Requests without tools are maintenance (see M14) and run with thinking disabled, unless
-  `options` says otherwise, so reasoning cannot use up a summary's token limit.
+- Maintenance requests (`InferenceRequest.maintenance`, design: `design/maintenance-marker.md`)
+  run with thinking disabled, unless `options` says otherwise, so reasoning cannot use up a
+  summary's token limit.
 - `insufficient_system_resource` and `aborted` are transient. Neither was seen live.
 - Prices are the peak rates of 2026-10-30 (see M13). They are not in `/models`.
 - Overflow: 400 with code-less wording "This model's maximum context length is ...", which

@@ -211,6 +211,8 @@ class InferenceRequest:
     messages: Sequence[Message]
     tools: Sequence[ToolSpec]
     max_output_tokens: int | None = None
+    # Set on Memory maintenance (requests made through Completion), never on a turn.
+    maintenance: bool = False
 
 
 class StopReason(StrEnum):

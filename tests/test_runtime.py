@@ -622,10 +622,9 @@ async def test_maintenance_model(make: Any) -> None:
 
 
 @pytest.mark.parametrize("mode", [Mode.SESSION, Mode.CONTINUOUS])
-async def test_only_maintenance_requests_have_no_tools(make: Any, mode: Mode) -> None:
-    """InferenceRequest has no maintenance marker, so the OpenAI-compatible Core's
-    `toolless_options` read "no tools" as maintenance. Built-ins must keep every other
-    request tool-bearing, even with no module tools and everything denied."""
+async def test_only_completion_requests_are_maintenance(make: Any, mode: Mode) -> None:
+    """Requests made through Memory's Completion are marked maintenance; turns, retries and
+    overflow recovery are not, whatever tools they carry."""
     from kayden.api import Completion, Message
 
     core = ScriptedCore([Step(error=ContextOverflowError("too long")),
@@ -647,7 +646,7 @@ async def test_only_maintenance_requests_have_no_tools(make: Any, mode: Mode) ->
     assert len(requests) >= 6
     assert any(r.system == "Summarize." for r in requests)
     for request in requests:
-        assert bool(request.tools) == (request.system != "Summarize."), request
+        assert request.maintenance == (request.system == "Summarize."), request
 
 
 # ── Activation notice, stop reason ──

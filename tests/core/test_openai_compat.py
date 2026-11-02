@@ -352,16 +352,18 @@ async def test_stock_profile_never_replays_reasoning(oai: OpenAIDriver) -> None:
     assert "reasoning_content" not in sent
 
 
-async def test_toolless_options_apply_only_without_tools(deepseek: DeepSeekDriver) -> None:
-    await sent_assistants(deepseek, [user("summarize")], tools=[])
+async def test_maintenance_options_apply_only_to_maintenance(deepseek: DeepSeekDriver) -> None:
+    await sent_assistants(deepseek, [user("summarize")], maintenance=True)
     assert deepseek.stub.bodies[-1]["thinking"] == {"type": "disabled"}
+    await sent_assistants(deepseek, [user("work")], tools=[])
+    assert "thinking" not in deepseek.stub.bodies[-1]
     await sent_assistants(deepseek, [user("work")])
     assert "thinking" not in deepseek.stub.bodies[-1]
 
 
-async def test_configured_options_win_over_toolless_options() -> None:
+async def test_configured_options_win_over_maintenance_options() -> None:
     driver = DeepSeekDriver(options={"thinking": {"type": "enabled"}})
-    await sent_assistants(driver, [user("summarize")], tools=[])
+    await sent_assistants(driver, [user("summarize")], maintenance=True)
     assert driver.stub.bodies[-1]["thinking"] == {"type": "enabled"}
     await driver.core.aclose()
 

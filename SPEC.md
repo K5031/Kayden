@@ -412,6 +412,7 @@ After a retry, frontends discard deltas received since the last committed messag
 Reasoning blocks record the model that produced them, and Core drops reasoning state from other models.
 A turn that stops at the token limit is committed; tool calls whose arguments did not parse are answered with an error result and the cycle continues.
 Tool calling is mandatory. Token counting is a fast local estimate; Core's exact count is optional and used only for calibration.
+Requests made through Memory's Completion carry maintenance=True; turns never do. A Core may use different provider options for maintenance (e.g. reasoning off).
 
 16.3 Memory
 The archive is append-only, full-fidelity and schema-versioned. Blocks are persisted generically so new block types need no migration.

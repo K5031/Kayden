@@ -637,13 +637,14 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
   calculation (its docstring now says "when the provider doesn't report it").
 
 ### M14 (S) No maintenance marker on inference requests
-- **Status:** Open.
+- **Status:** Resolved (2026-11-02): `InferenceRequest.maintenance`. Design:
+  `design/maintenance-marker.md`.
 - **Where:** `InferenceRequest` has no field for it; `Completion` has `light`, which the
   runtime does not pass on.
 - **Problem:** A Core cannot tell maintenance from a turn, yet a provider may need different
   options for it (thinking off on DeepSeek).
-- **Assumed:** A request without tools is maintenance, because the runtime always offers
-  built-ins on a turn. `test_only_maintenance_requests_have_no_tools` guards this.
+- **Assumed (until resolved):** A request without tools is maintenance, because the runtime
+  always offers built-ins on a turn.
 - **Fix:** Add `InferenceRequest.maintenance: bool`.
 
 ### M15 (S) Empty compaction output
@@ -652,8 +653,9 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
 - **Problem:** A Completion may return "" (a thinking model that spends its whole token limit
   on reasoning). SqliteMemory commits that as the summary, so the messages it replaces drop
   out of the context view, and the previous summary with them. The archive keeps them.
-- **Assumed:** Nothing is changed in Memory. The DeepSeek profile disables thinking on these
-  requests; any other provider that thinks by default stays exposed.
+- **Assumed:** Nothing is changed in Memory. The DeepSeek profile disables thinking on
+  maintenance requests (`InferenceRequest.maintenance`, M14); any other provider that
+  thinks by default stays exposed.
 - **Fix:** State that empty output means no compaction, or have Completion raise CoreError.
 
 ## Material outside the allowed inputs

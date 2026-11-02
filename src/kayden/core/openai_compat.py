@@ -76,7 +76,7 @@ class Profile:
     models: Mapping[str, ModelConfig] = field(default_factory=dict)  # defaults under `models`
     transient_finish_reasons: frozenset[str] = frozenset()  # interrupted, worth retrying
     reasoning_input_field: str | None = None  # assistant field that replays reasoning
-    toolless_options: Mapping[str, Any] = field(default_factory=dict)  # under `options`
+    maintenance_options: Mapping[str, Any] = field(default_factory=dict)  # under `options`
 
 
 # Prices are the peak rates of 2026-10-30: off-peak is half, and ModelInfo holds one price.
@@ -96,7 +96,7 @@ _PROFILES = {
         },
         transient_finish_reasons=frozenset({"insufficient_system_resource", "aborted"}),
         reasoning_input_field="reasoning_content",
-        toolless_options={"thinking": {"type": "disabled"}},
+        maintenance_options={"thinking": {"type": "disabled"}},
     ),
 }
 
@@ -149,8 +149,9 @@ class OpenAICompatCore(Core):
                 for m in models]
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
-        options = self._options if request.tools else {
-            **self._profile.toolless_options, **self._options}
+        options = self._options
+        if request.maintenance:
+            options = {**self._profile.maintenance_options, **options}
         params: dict[str, Any] = {
             "model": request.model,
             "messages": to_messages(request.system, request.messages,
