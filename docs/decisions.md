@@ -185,7 +185,8 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 
 - Factories: `kayden.core.anthropic:factory`, `kayden.core.openai_compat:factory`; the
   options are the constructor's keyword arguments (`api_key`, `base_url`, `options`,
-  `models`, ...). Keys default to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
+  `models`, ...). Keys default to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, or the variable
+  of the selected profile.
 - Provider options (thinking, temperature, tool_choice, reasoning_effort, ...) are
   configuration: `options` applies to every request, `models[<id>].options` overrides it
   per model. They are merged into the request body as given, so they may also override
@@ -194,7 +195,7 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   three prices. Configured values win over provider-reported ones. With nothing
   configured, the context window is what the provider reports (Anthropic
   `max_input_tokens`; OpenAI-compatible `context_length`/`max_model_len`/`context_window`
-  extras) or None.
+  extras) or None. OpenAI-compatible also reads a `max_output_tokens` extra.
 - `count_tokens`: Anthropic uses its counting endpoint; OpenAI-compatible returns None.
   When an OpenAI-compatible server reports no usage, `Completed.usage` is a 4-chars-per-
   token estimate.
@@ -205,9 +206,46 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   true for every status except OK and BACKGROUNDED. An OperationResult becomes the text
   `[Background operation <id> finished: <status>]` plus its content. OpaqueBlock is skipped.
 - Reasoning: produced blocks carry `model=request.model`; only blocks whose `model`
-  equals the request's model are replayed (Anthropic), and OpenAI-compatible never
-  replays reasoning.
+  equals the request's model are replayed (Anthropic, and OpenAI-compatible profiles with
+  a `reasoning_input_field`). The stock OpenAI-compatible profile never replays reasoning.
 - Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL.
+
+### OpenAI-compatible profiles (`profile` option of `kayden.core.openai_compat:factory`)
+
+- A `Profile` is plain data in `openai_compat.py`; generic code reads its fields and never
+  a provider name. `"openai"` (default) is stock behavior. `models` entries in the
+  configuration merge over the profile's field by field.
+- A profile with its own `base_url` takes nothing from the OpenAI environment: no
+  `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID` or `OPENAI_PROJECT_ID`.
+
+**`deepseek`.** Results of the live checks of 2026-10-30, against `deepseek-flash`
+(DeepSeek-V4.1-Flash-1017) and `deepseek-v4-pro`, some of which differ from DeepSeek's docs:
+
+- Replay: omitting `reasoning_content` from an assistant tool-call turn answers 400 when
+  the call id is unknown to the server. A known id is accepted and billed as if replayed, so
+  the server keeps recent reasoning itself, and a test using fresh ids would miss the 400.
+  The 400 also occurs on a request without `tools` while thinking is on, though the docs
+  say reasoning is ignored there. It did not occur with thinking off, for a tool turn
+  followed by later messages, or for text-only turns, though the docs say all turns.
+- The Core therefore sends the field on every assistant message, on every request: the
+  same model's reasoning, else `""`, which both models accept. Reasoning of another model
+  is not replayed, in line with M10.
+- A turn holding only reasoning is dropped; consecutive user messages are accepted.
+- Thinking counts against `max_tokens`: at `max_tokens=20`, the answer is reasoning only
+  with finish reason `length`. Hence the profile's `max_output_tokens` of 64000 (DeepSeek's
+  default for thinking, against 393216 reported by `/models`). Replayed reasoning counts
+  as input tokens, and the runtime's estimator counts it too.
+- Requests without tools are maintenance (see M14) and run with thinking disabled, unless
+  `options` says otherwise, so reasoning cannot use up a summary's token limit.
+- `insufficient_system_resource` and `aborted` are transient. Neither was seen live.
+- Prices are the peak rates of 2026-10-30 (see M13). They are not in `/models`.
+- Overflow: 400 with code-less wording "This model's maximum context length is ...", which
+  the existing message match recognises (`ContextOverflowError`).
+- Cached tokens: `prompt_tokens_details.cached_tokens` equals `prompt_cache_hit_tokens`.
+- Usage arrives only on the last chunk, so a cancelled stream yields no `UsageReport` and
+  the runtime charges its estimate, all of it at the uncached price.
+- `tool_choice` set to `required` or a function fails with 400 in thinking mode, per the
+  docs (not tried live). It is configuration, so it surfaces as a permanent error.
 
 ### Tools (`kayden.tools.shell_files`)
 

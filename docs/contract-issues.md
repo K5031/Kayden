@@ -624,6 +624,36 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
   placeholder is in history or `ToolBackgrounded` arrives.
 - **Fix:** Add `backgrounded: bool` to `OperationInfo`.
 
+### M13 (S) Time-of-day prices
+- **Status:** Open.
+- **Where:** `ModelInfo.input_usd_per_mtok` and siblings hold one price per model.
+- **Problem:** DeepSeek's off-peak rates are half its peak rates, on a UTC schedule that
+  also depends on Chinese public holidays.
+- **Assumed:** The DeepSeek profile lists peak prices. Costs read up to 2x high, so
+  `max_cost_usd` can stop a run early but cannot overspend.
+- **Fix:** None needed for v1. Otherwise allow a Core to fill `Usage.cost_usd` with its own
+  calculation (its docstring now says "when the provider doesn't report it").
+
+### M14 (S) No maintenance marker on inference requests
+- **Status:** Open.
+- **Where:** `InferenceRequest` has no field for it; `Completion` has `light`, which the
+  runtime does not pass on.
+- **Problem:** A Core cannot tell maintenance from a turn, yet a provider may need different
+  options for it (thinking off on DeepSeek).
+- **Assumed:** A request without tools is maintenance, because the runtime always offers
+  built-ins on a turn. `test_only_maintenance_requests_have_no_tools` guards this.
+- **Fix:** Add `InferenceRequest.maintenance: bool`.
+
+### M15 (S) Empty compaction output
+- **Status:** Open.
+- **Where:** `Completion` and `Memory.maintain`; `SqliteMemory.maintain`.
+- **Problem:** A Completion may return "" (a thinking model that spends its whole token limit
+  on reasoning). SqliteMemory commits that as the summary, so the messages it replaces drop
+  out of the context view, and the previous summary with them. The archive keeps them.
+- **Assumed:** Nothing is changed in Memory. The DeepSeek profile disables thinking on these
+  requests; any other provider that thinks by default stays exposed.
+- **Fix:** State that empty output means no compaction, or have Completion raise CoreError.
+
 ## Material outside the allowed inputs
 
 None was consulted or encountered. The only out-of-tree output seen was a system-wide

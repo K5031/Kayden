@@ -34,6 +34,7 @@ class Reply:
     headers: dict[str, str] = field(default_factory=dict)
     hang: bool = False
     stream: SSEStream | None = None
+    raw: bytes | None = None  # sent verbatim instead of `events`
 
 
 class StubProvider:
@@ -65,6 +66,8 @@ class StubProvider:
             payload = data if isinstance(data, str) else json.dumps(data)
             prefix = f"event: {event}\n" if event else ""
             chunks.append(f"{prefix}data: {payload}\n\n".encode())
+        if reply.raw is not None:
+            chunks = [reply.raw]
         reply.stream = SSEStream(chunks, reply.hang)
         return httpx2.Response(
             200, headers={"content-type": "text/event-stream"}, stream=reply.stream

@@ -1,4 +1,4 @@
-"""Core for OpenAI-compatible chat completions (OpenAI, vLLM, llama.cpp, Ollama, ...)."""
+"""Core for OpenAI-compatible chat completions (OpenAI, DeepSeek, vLLM, llama.cpp, Ollama, ...)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import math
 import os
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 import httpx2
@@ -53,6 +53,7 @@ from kayden.core._common import (
 )
 
 _CONTEXT_WINDOW_FIELDS = ("context_length", "max_model_len", "context_window")
+_MAX_OUTPUT_FIELDS = ("max_output_tokens",)
 _REASONING_FIELDS = ("reasoning_content", "reasoning")  # non-standard, server-dependent
 _STOP_REASONS = {
     "tool_calls": StopReason.TOOL_USE,
@@ -65,22 +66,59 @@ _OVERFLOW_MESSAGES = ("maximum context length", "context length", "context windo
                       "too many tokens", "prompt is too long")
 
 
+@dataclass(frozen=True, slots=True)
+class Profile:
+    """What a server does differently from stock OpenAI chat completions."""
+
+    base_url: str | None = None  # set: nothing is taken from the OpenAI environment
+    api_key_env: str = "OPENAI_API_KEY"
+    api_key_required: bool = False  # a missing key fails at construction
+    models: Mapping[str, ModelConfig] = field(default_factory=dict)  # defaults under `models`
+    transient_finish_reasons: frozenset[str] = frozenset()  # interrupted, worth retrying
+    reasoning_input_field: str | None = None  # assistant field that replays reasoning
+    toolless_options: Mapping[str, Any] = field(default_factory=dict)  # under `options`
+
+
+# Prices are the peak rates of 2026-10-30: off-peak is half, and ModelInfo holds one price.
+_PROFILES = {
+    "openai": Profile(),
+    "deepseek": Profile(
+        base_url="https://api.deepseek.com",
+        api_key_env="DEEPSEEK_API_KEY",
+        api_key_required=True,
+        models={
+            "deepseek-flash": ModelConfig(
+                max_output_tokens=64_000, input_usd_per_mtok=0.30, output_usd_per_mtok=1.20,
+                cached_input_usd_per_mtok=0.006),
+            "deepseek-v4-pro": ModelConfig(
+                max_output_tokens=64_000, input_usd_per_mtok=1.32, output_usd_per_mtok=3.96,
+                cached_input_usd_per_mtok=0.044),
+        },
+        transient_finish_reasons=frozenset({"insufficient_system_resource", "aborted"}),
+        reasoning_input_field="reasoning_content",
+        toolless_options={"thinking": {"type": "disabled"}},
+    ),
+}
+
+
 def factory(options: dict[str, Any], paths: InstancePaths) -> OpenAICompatCore:
-    """Options: api_key (default OPENAI_API_KEY), base_url, options, models,
-    max_tokens_param, stream_usage; see OpenAICompatCore."""
+    """Options: profile (default "openai"), api_key (default: the profile's variable),
+    base_url, options, models, max_tokens_param, stream_usage; see OpenAICompatCore."""
     return OpenAICompatCore(**options)
 
 
 class OpenAICompatCore(Core):
     """`options` are merged verbatim into every request body (temperature,
     reasoning_effort, tool_choice, ...); `models` adds per-model options, context windows
-    and prices. Reasoning text from servers that stream it is surfaced but never sent
-    back: chat completions has no input slot for it."""
+    and prices. `profile` names the server's differences (see Profile). Reasoning text from
+    servers that stream it is surfaced, and sent back only if the profile says how: stock
+    chat completions has no input slot for it."""
 
     def __init__(
         self,
         api_key: str | None = None,
         *,
+        profile: str = "openai",
         base_url: str | None = None,
         client: openai.AsyncOpenAI | None = None,
         options: Mapping[str, Any] | None = None,
@@ -88,13 +126,14 @@ class OpenAICompatCore(Core):
         max_tokens_param: str = "max_tokens",
         stream_usage: bool = True,
     ) -> None:
+        if profile not in _PROFILES:
+            raise ValueError(f"unknown profile {profile!r}; known: {', '.join(_PROFILES)}")
+        self._profile = _PROFILES[profile]
         if client is None:
-            # Local servers usually need no key, but the SDK insists on one.
-            api_key = api_key or os.environ.get("OPENAI_API_KEY") or "unused"
-            client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+            client = _client(self._profile, api_key, base_url)
         self._client = client.with_options(max_retries=0)  # the runtime owns retries
         self._options = dict(options or {})
-        self._models = model_configs(models)
+        self._models = _merged(self._profile.models, model_configs(models))
         self._max_tokens_param = max_tokens_param
         self._stream_usage = stream_usage
 
@@ -103,15 +142,21 @@ class OpenAICompatCore(Core):
             models = [m async for m in self._client.models.list()]
         except (openai.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
-        return [configured(ModelInfo(id=m.id, name=m.id, context_window=_context_window(m)),
+        return [configured(ModelInfo(id=m.id, name=m.id, context_window=_extra_int(
+                               m, _CONTEXT_WINDOW_FIELDS), max_output_tokens=_extra_int(
+                               m, _MAX_OUTPUT_FIELDS)),
                            self._models.get(m.id))
                 for m in models]
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
+        options = self._options if request.tools else {
+            **self._profile.toolless_options, **self._options}
         params: dict[str, Any] = {
             "model": request.model,
-            "messages": to_messages(request.system, request.messages),
-            "extra_body": request_options(self._options, self._models.get(request.model)),
+            "messages": to_messages(request.system, request.messages,
+                                    reasoning_field=self._profile.reasoning_input_field,
+                                    model=request.model),
+            "extra_body": request_options(options, self._models.get(request.model)),
         }
         if request.tools:
             params["tools"] = [to_tool(t) for t in request.tools]
@@ -130,6 +175,8 @@ class OpenAICompatCore(Core):
             raise _map_error(e) from e
         if turn.finish_reason is None:
             raise TransientCoreError("stream ended without a finish_reason")
+        if turn.finish_reason in self._profile.transient_finish_reasons:
+            raise TransientCoreError(f"generation interrupted: {turn.finish_reason}")
         if turn.usage is None:
             payload = [to_messages(request.system, request.messages),
                        [to_tool(t) for t in request.tools]]
@@ -144,9 +191,35 @@ class OpenAICompatCore(Core):
         await self._client.close()
 
 
-def _context_window(model: Any) -> int | None:
+def _client(profile: Profile, api_key: str | None, base_url: str | None) -> openai.AsyncOpenAI:
+    api_key = api_key or os.environ.get(profile.api_key_env)
+    if not api_key and profile.api_key_required:
+        raise ValueError(f"set {profile.api_key_env} or the api_key option")
+    # Local servers usually need no key, but the SDK insists on one.
+    api_key = api_key or "unused"
+    if profile.base_url is None:
+        return openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+    # The SDK would still read these from the environment and send them.
+    return openai.AsyncOpenAI(
+        api_key=api_key, base_url=base_url or profile.base_url,
+        default_headers={"OpenAI-Organization": openai.Omit(), "OpenAI-Project": openai.Omit()})
+
+
+def _merged(defaults: Mapping[str, ModelConfig], configs: Mapping[str, ModelConfig]
+            ) -> dict[str, ModelConfig]:
+    """`configs` over `defaults`, field by field."""
+    merged = dict(defaults)
+    for model_id, config in configs.items():
+        base = merged.get(model_id, ModelConfig())
+        changes = {f.name: value for f in fields(config) if f.name != "options"
+                   and (value := getattr(config, f.name)) is not None}
+        merged[model_id] = replace(base, options={**base.options, **config.options}, **changes)
+    return merged
+
+
+def _extra_int(model: Any, names: Sequence[str]) -> int | None:
     extra = model.model_extra or {}
-    for name in _CONTEXT_WINDOW_FIELDS:
+    for name in names:
         if isinstance(extra.get(name), int):
             return extra[name]
     return None
@@ -239,7 +312,10 @@ def to_tool(spec: ToolSpec) -> JSON:
         "name": spec.name, "description": spec.description, "parameters": spec.parameters}}
 
 
-def to_messages(system: str, messages: Sequence[Message]) -> list[JSON]:
+def to_messages(system: str, messages: Sequence[Message], *,
+                reasoning_field: str | None = None, model: str | None = None) -> list[JSON]:
+    """With `reasoning_field`, every assistant entry carries it: the text of `model`'s own
+    Reasoning blocks, or "" for turns without any (cut short, shrunk, another model's)."""
     out: list[JSON] = [{"role": "system", "content": system}] if system else []
     for message in messages:
         texts = [text for b in message.blocks if (text := _text(b))]
@@ -251,6 +327,10 @@ def to_messages(system: str, messages: Sequence[Message]) -> list[JSON]:
             if not texts and not calls:
                 continue
             entry: JSON = {"role": "assistant", "content": "\n\n".join(texts) or None}
+            if reasoning_field:
+                entry[reasoning_field] = "".join(
+                    b.text for b in message.blocks
+                    if isinstance(b, Reasoning) and b.model == model)
             if calls:
                 entry["tool_calls"] = [
                     {"id": c.id, "type": "function",

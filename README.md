@@ -40,7 +40,8 @@ what the agent will do.
 (`kayden.core.anthropic`). The OpenAI-compatible Core (`kayden.core.openai_compat`, for
 OpenAI or any server speaking the chat completions API) is selected by building an
 `InstanceConfig` with `core=ModuleSpec("kayden.core.openai_compat:factory", {...})` and
-calling `kayden.runtime.run_instance`; see `src/kayden/__main__.py` for the shape.
+calling `kayden.runtime.run_instance`; see `src/kayden/__main__.py` for the shape. For
+DeepSeek, pass `{"profile": "deepseek"}`; the key comes from `DEEPSEEK_API_KEY`.
 
 ## Layout
 
@@ -65,7 +66,8 @@ uv run ruff check
 The suite runs offline against scripted fakes. The live Core conformance tests are skipped
 unless `KAYDEN_LIVE_TESTS=1` is set together with `ANTHROPIC_API_KEY` (Anthropic) or
 `KAYDEN_OPENAI_MODEL` (OpenAI-compatible; `OPENAI_API_KEY` and `KAYDEN_OPENAI_BASE_URL` as
-the server needs).
+the server needs) or `DEEPSEEK_API_KEY` (DeepSeek profile; `KAYDEN_DEEPSEEK_MODEL` defaults
+to `deepseek-flash`).
 
 ## Limits
 

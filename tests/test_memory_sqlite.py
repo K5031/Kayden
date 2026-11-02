@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from kayden.api import (
+    ContextRequest,
     InstancePaths,
     Message,
     Mode,
@@ -21,6 +22,7 @@ from kayden.api import (
     ToolStatus,
 )
 from kayden.memory_sqlite import SCHEMA_VERSION, CompactionConfig, SqliteMemory, factory
+from kayden.runtime.budget import estimate_tokens
 from tests.conformance.memory_suite import (
     TOKEN_RE,
     WINDOW,
@@ -395,3 +397,22 @@ async def test_repeated_consolidation(open_store, capsys):
             f" summary_tokens={sorted(in_summary)} long_term={view.long_term}"
             f" archive_only={len(archive_only)} max_summary_tokens={max(summary_tokens)}"
         )
+
+
+async def test_replayed_reasoning_counts_against_the_context_budget(open_store):
+    """DeepSeek needs reasoning replayed, so the runtime's estimator must count it."""
+    memory = open_store()
+    conv = await memory.create_conversation(Mode.SESSION)
+    thinking = Reasoning("x" * 4000, model="m")
+    older = Message("a1", Role.ASSISTANT, (thinking, Text("ok")), 1.0)
+    messages = [Message("u1", Role.USER, (Text("first"),), 0.0), older,
+                Message("u2", Role.USER, (Text("second"),), 2.0)]
+    await memory.append(conv.id, messages)
+    assert estimate_tokens([older]) >= 1000
+
+    roomy = await memory.assemble(ContextRequest(conv.id, 2000, estimate_tokens))
+    assert thinking in next(m for m in roomy.messages if m.id == "a1").blocks
+
+    tight = await memory.assemble(ContextRequest(conv.id, 500, estimate_tokens))
+    assert [m.id for m in tight.messages] == ["u2"]
+    assert estimate_tokens(tight.messages) <= 500

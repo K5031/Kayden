@@ -621,6 +621,35 @@ async def test_maintenance_model(make: Any) -> None:
     assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 1
 
 
+@pytest.mark.parametrize("mode", [Mode.SESSION, Mode.CONTINUOUS])
+async def test_only_maintenance_requests_have_no_tools(make: Any, mode: Mode) -> None:
+    """InferenceRequest has no maintenance marker, so the OpenAI-compatible Core's
+    `toolless_options` read "no tools" as maintenance. Built-ins must keep every other
+    request tool-bearing, even with no module tools and everything denied."""
+    from kayden.api import Completion, Message
+
+    core = ScriptedCore([Step(error=ContextOverflowError("too long")),
+                         Step(calls=[call("recall", {"query": "x"})]),
+                         Step(error=TransientCoreError("busy"))])
+    h: Harness = await make(core=core, tools=FakeTools(),
+                            permissions=PermissionPolicy.DENY)
+
+    async def maintain(complete: Completion) -> bool:
+        await complete("Summarize.", [Message("m", Role.USER, (Text("x"),), 0.0)], max_tokens=20)
+        return False
+
+    h.memory.maintain_override = maintain
+    await h.start(mode)
+    await h.turn("go")
+    await h.runtime.activate()
+    await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
+    requests = core.requests
+    assert len(requests) >= 6
+    assert any(r.system == "Summarize." for r in requests)
+    for request in requests:
+        assert bool(request.tools) == (request.system != "Summarize."), request
+
+
 # ── Activation notice, stop reason ──
 
 
