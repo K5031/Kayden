@@ -19,6 +19,9 @@ Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, r
 ## Ambiguity
 If the spec or `api.py` is ambiguous, contradictory or wrong, do not silently work around it. Record it in `docs/contract-issues.md` (what, where, proposed fix) and continue with the most reasonable reading. Record implementation choices the spec leaves open (storage formats, timeouts, defaults, base system prompt) in `docs/decisions.md`.
 
+## Design docs
+Whenever you plan or build a feature or a change of design, write the design to `docs/design/<topic>.md` before implementing: the problem, the chosen design and why, alternatives rejected, and open questions. Update it when the design changes during the work or live results contradict it, so it describes what was built. Small choices still go in `docs/decisions.md`; link the design doc from there.
+
 ## Code style
 Professional, typed, concise. Comments only where needed to understand the code.
 

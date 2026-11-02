@@ -212,6 +212,8 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 
 ### OpenAI-compatible profiles (`profile` option of `kayden.core.openai_compat:factory`)
 
+Design: `design/deepseek-profile.md`.
+
 - A `Profile` is plain data in `openai_compat.py`; generic code reads its fields and never
   a provider name. `"openai"` (default) is stock behavior. `models` entries in the
   configuration merge over the profile's field by field.
@@ -284,6 +286,8 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   `ModelSelected`.
 
 ## Running Kayden
+
+Design of the config file: `design/config-file.md`.
 
 ```
 export ANTHROPIC_API_KEY=...
