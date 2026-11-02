@@ -302,6 +302,15 @@ async def test_factory(tmp_path) -> None:
     await core.aclose()
 
 
+async def test_missing_key_fails_at_construction(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+        AnthropicCore()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    await AnthropicCore().aclose()
+
+
 async def test_tool_call_without_arguments(anthropic: AnthropicDriver) -> None:
     anthropic.stub.queue(Reply(events=[
         message_start(),

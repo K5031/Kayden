@@ -21,7 +21,7 @@ from kayden.api import (
     ToolResult,
     ToolStatus,
 )
-from kayden.memory_sqlite import SCHEMA_VERSION, CompactionConfig, SqliteMemory, factory
+from kayden.memory.sqlite import SCHEMA_VERSION, CompactionConfig, SqliteMemory, factory
 from kayden.runtime.budget import estimate_tokens
 from tests.conformance.memory_suite import (
     TOKEN_RE,
@@ -317,7 +317,7 @@ async def test_history_before_unknown_message_raises(open_store):
 _CRASH_SCRIPT = """
 import asyncio, os, sys
 from kayden.api import ContextRequest
-from kayden.memory_sqlite import SqliteMemory
+from kayden.memory.sqlite import SqliteMemory
 
 class Complete:
     def __init__(self, memory):

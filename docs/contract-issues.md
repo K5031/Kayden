@@ -458,7 +458,9 @@ in section 9.
   tool providers is the Tools module's job.
 
 ### 8.3 (S) Where runtime settings live
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (implementation): `RuntimeConfig`, with model, maintenance
+  model, permissions and budget read from `[runtime]` in the instance config file
+  (decisions.md, "Running Kayden").
 - **Problem:** Retries, timeouts, maintenance model, context-window overrides, budgets and
   the policy are "instance configuration" but have no defined type.
 - **Assumed:** `RuntimeConfig` (see decisions.md).

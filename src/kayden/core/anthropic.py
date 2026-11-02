@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -82,6 +83,9 @@ class AnthropicCore(Core):
         models: Mapping[str, ModelConfig | Mapping[str, Any]] | None = None,
         default_max_tokens: int = 8192,
     ) -> None:
+        if client is None and not (api_key or os.environ.get("ANTHROPIC_API_KEY")
+                                   or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+            raise ValueError("ANTHROPIC_API_KEY is not set")
         client = client or anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._client = client.with_options(max_retries=0)  # the runtime owns retries
         self._options = dict(options or {})

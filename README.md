@@ -26,22 +26,37 @@ cd <scratch directory>        # shell/file tools are rooted here
 uv run --project <kayden checkout> python -m kayden
 ```
 
-Options: `--mode session|continuous`, `--activation user_controlled|agent_controlled`,
-`--conversation ID`, `--model MODEL_ID`, `--maintenance-model MODEL_ID`,
-`--permissions ask|allow_read_only|deny` and `--data-dir DIR` (default `$KAYDEN_DATA_DIR`
-or `~/.kayden`). Without `--mode` the TUI asks at startup.
+Options: `--config FILE`, `--mode session|continuous`,
+`--activation user_controlled|agent_controlled`, `--conversation ID`, `--model MODEL_ID`,
+`--maintenance-model MODEL_ID`, `--permissions ask|allow_read_only|deny` and
+`--data-dir DIR` (default `$KAYDEN_DATA_DIR` or `~/.kayden`). Without `--mode` the TUI asks
+at startup.
 
 **Run it in a scratch directory.** The agent's shell and file tools use the current
 directory as their working directory, but they are not a sandbox: commands can reach
 anything your user account can. Keep `--permissions ask` (the default) unless you trust
 what the agent will do.
 
-**Core choices.** `python -m kayden` always uses the Anthropic Core
-(`kayden.core.anthropic`). The OpenAI-compatible Core (`kayden.core.openai_compat`, for
-OpenAI or any server speaking the chat completions API) is selected by building an
-`InstanceConfig` with `core=ModuleSpec("kayden.core.openai_compat:factory", {...})` and
-calling `kayden.runtime.run_instance`; see `src/kayden/__main__.py` for the shape. For
-DeepSeek, pass `{"profile": "deepseek"}`; the key comes from `DEEPSEEK_API_KEY`.
+**Config file.** A TOML file configures the instance: `--config FILE`, else
+`<data dir>/config.toml`. Each of `[core]`, `[memory]`, `[tools]` and `[frontend]` takes a
+`factory` ("package.module:factory") and `options`; a module left out gets its default
+(Anthropic Core, SQLite Memory, shell/file Tools rooted at the current directory, TUI).
+`[runtime]` takes `model`, `maintenance_model`, `permissions` and a `[runtime.budget]` table
+(`max_tokens`, `max_cost_usd`, `max_duration_s`, `max_tool_calls`); command-line flags
+override it. API keys stay in the environment. DeepSeek with a $5 limit, the key in
+`DEEPSEEK_API_KEY`:
+
+```toml
+[core]
+factory = "kayden.core.openai_compat:factory"
+options = { profile = "deepseek" }
+
+[runtime]
+model = "deepseek-flash"
+
+[runtime.budget]
+max_cost_usd = 5.0
+```
 
 ## Layout
 
@@ -49,7 +64,7 @@ DeepSeek, pass `{"profile": "deepseek"}`; the key comes from `DEEPSEEK_API_KEY`.
 src/kayden/api.py            module contracts (normative)
 src/kayden/runtime/          orchestration, budgets, operations, event log, instance lock
 src/kayden/core/             Anthropic and OpenAI-compatible Cores
-src/kayden/memory_sqlite/    Memory on SQLite (FTS5)
+src/kayden/memory/           SQLite Memory (FTS5)
 src/kayden/tools/            shell and file Tools
 src/kayden/frontends/        Textual TUI
 tests/                       runtime, scenario and module tests; fakes/ and conformance/

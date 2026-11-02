@@ -1,11 +1,13 @@
-"""End-to-end wiring: `python -m kayden` builds SqliteMemory, the Anthropic Core,
-ShellFilesTools rooted at the current directory and the TUI. Without ANTHROPIC_API_KEY the
-Core is replaced by the scripted fake; everything else is the real module."""
+"""End-to-end wiring: `python -m kayden` builds the modules named in the config file, by
+default SqliteMemory, the Anthropic Core, ShellFilesTools rooted at the current directory and
+the TUI. Without an API key the Core is replaced by the scripted fake; everything else is the
+real module."""
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -15,15 +17,17 @@ from typing import Any
 import pytest
 from textual.widgets import Input
 
-from kayden.__main__ import build_config, main
+from kayden.__main__ import build_config
 from kayden.api import (
     AgentState,
+    Budget,
     Core,
     Decision,
     Frontend,
     InstancePaths,
     Memory,
     Mode,
+    PermissionPolicy,
     PermissionRequested,
     Role,
     StartOptions,
@@ -34,8 +38,9 @@ from kayden.api import (
     ToolStatus,
 )
 from kayden.core.anthropic import AnthropicCore
+from kayden.core.openai_compat import OpenAICompatCore
 from kayden.frontends.tui import AssistantEntry, KaydenApp, PermissionPrompt, TuiFrontend
-from kayden.memory_sqlite import SqliteMemory
+from kayden.memory.sqlite import SqliteMemory
 from kayden.runtime import ModuleSpec, Runtime, load_module, run_instance
 from kayden.tools.shell_files import ShellFilesTools
 from tests.fakes.core import ScriptedCore, Step, call
@@ -91,10 +96,121 @@ def test_build_config_wires_the_real_modules(workspace, tmp_path, monkeypatch):
     assert frontend.start_options == StartOptions(Mode.SESSION)
 
 
-def test_main_requires_an_api_key(workspace, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
-        main(["--data-dir", "data"])
+DEEPSEEK_CORE = """
+[core]
+factory = "kayden.core.openai_compat:factory"
+options = { profile = "deepseek" }
+"""
+
+
+def test_config_file_in_the_data_dir_selects_the_core(workspace, tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "config.toml").write_text(DEEPSEEK_CORE)
+    config = build_config(["--data-dir", str(data_dir)])
+    assert config.core == ModuleSpec("kayden.core.openai_compat:factory", {"profile": "deepseek"})
+    assert isinstance(load_module(config.core, Core, InstancePaths(data_dir)), OpenAICompatCore)
+    default = build_config(["--data-dir", str(tmp_path / "data")])
+    assert default.memory == ModuleSpec("kayden.memory.sqlite:factory")
+    assert default.tools == ModuleSpec("kayden.tools.shell_files:factory",
+                                       {"root": str(workspace)})
+    assert default.frontend == ModuleSpec("kayden.frontends.tui:factory")
+
+
+def test_explicit_config_file_wins_over_the_data_dir(workspace, tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "config.toml").write_text(DEEPSEEK_CORE)
+    explicit = tmp_path / "other.toml"
+    explicit.write_text('[core]\nfactory = "kayden.core.anthropic:factory"\n'
+                        '[tools]\noptions = { root = "/srv", shell_timeout = 5 }\n')
+    config = build_config(["--data-dir", str(data_dir), "--config", str(explicit)])
+    assert config.core == ModuleSpec("kayden.core.anthropic:factory")
+    assert config.tools == ModuleSpec("kayden.tools.shell_files:factory",
+                                      {"root": "/srv", "shell_timeout": 5})
+
+
+def test_command_line_start_options_override_the_frontend_options(workspace, tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[frontend]\noptions = { mode = "continuous", model = "m" }\n')
+    config = build_config(["--data-dir", str(tmp_path), "--config", str(path),
+                           "--mode", "session"])
+    assert config.frontend.options == {"mode": "session", "model": "m",
+                                       "activation": "user_controlled"}
+
+
+RUNTIME = """
+[runtime]
+model = "deepseek-flash"
+maintenance_model = "deepseek-flash"
+permissions = "deny"
+
+[runtime.budget]
+max_cost_usd = 2.5
+max_tokens = 1000000
+max_duration_s = 600
+max_tool_calls = 50
+"""
+
+
+def test_runtime_settings_come_from_the_config_file(workspace, tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(RUNTIME)
+    runtime = build_config(["--data-dir", str(tmp_path), "--config", str(path)]).runtime
+    assert runtime.model == runtime.maintenance_model == "deepseek-flash"
+    assert runtime.permissions is PermissionPolicy.DENY
+    assert runtime.budget == Budget(max_tokens=1_000_000, max_cost_usd=2.5,
+                                    max_duration_s=600, max_tool_calls=50)
+
+
+def test_command_line_flags_override_the_runtime_section(workspace, tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(RUNTIME)
+    runtime = build_config(["--data-dir", str(tmp_path), "--config", str(path),
+                            "--model", "deepseek-v4-pro", "--maintenance-model", "m",
+                            "--permissions", "ask"]).runtime
+    assert (runtime.model, runtime.maintenance_model) == ("deepseek-v4-pro", "m")
+    assert runtime.permissions is PermissionPolicy.ASK
+    assert runtime.budget.max_cost_usd == 2.5
+
+
+def test_runtime_defaults_without_a_runtime_section(workspace, tmp_path):
+    runtime = build_config(["--data-dir", str(tmp_path)]).runtime
+    assert runtime.model is None and runtime.maintenance_model is None
+    assert runtime.permissions is PermissionPolicy.ASK
+    assert runtime.budget == Budget()
+
+
+@pytest.mark.parametrize(("content", "message"), [
+    ("[runtime]\nretries = 3\n", "unknown key 'retries' in [runtime]"),
+    ("[runtime]\nmodel = 3\n", "[runtime] model must be a string"),
+    ("[runtime]\npermissions = 'yes'\n", "[runtime] permissions must be one of"),
+    ("[runtime]\nbudget = 5\n", "[runtime.budget] must be a table"),
+    ("[runtime.budget]\nmax_usd = 5\n", "unknown key 'max_usd' in [runtime.budget]"),
+    ("[runtime.budget]\nmax_tokens = 1.5\n", "max_tokens must be a non-negative integer"),
+    ("[runtime.budget]\nmax_tool_calls = true\n",
+     "max_tool_calls must be a non-negative integer"),
+    ("[runtime.budget]\nmax_cost_usd = -1\n", "max_cost_usd must be a non-negative number"),
+    ("[runtime.budget]\nmax_duration_s = 'x'\n",
+     "max_duration_s must be a non-negative number"),
+    ("[agent]\n", "unknown section 'agent'"),
+    ("[core]\nmodel = 'x'\n", "unknown key 'model' in [core]"),
+    ("[core]\nfactory = 3\n", "[core] factory must be a string"),
+    ("[core]\noptions = 'x'\n", "[core] options must be a table"),
+    ("core = 'x'\n", "[core] must be a table"),
+    ("[core\n", "invalid TOML"),
+])
+def test_invalid_config_files_are_refused(workspace, tmp_path, content, message):
+    path = tmp_path / "config.toml"
+    path.write_text(content)
+    with pytest.raises(SystemExit, match=re.escape(message)):
+        build_config(["--data-dir", str(tmp_path), "--config", str(path)])
+
+
+def test_missing_explicit_config_file_is_refused(workspace, tmp_path):
+    with pytest.raises(SystemExit, match="not found"):
+        build_config(["--data-dir", str(tmp_path), "--config", str(tmp_path / "none.toml")])
 
 
 def test_module_entry_point_help():

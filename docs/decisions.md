@@ -146,9 +146,9 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 `pyproject.toml`: `anthropic`, `openai`, `httpx2` (the HTTP client both SDKs depend on),
 `textual`; `psutil` for tests.
 
-### Memory (`kayden.memory_sqlite`)
+### Memory (`kayden.memory.sqlite`)
 
-- Factory: `kayden.memory_sqlite:factory`. Options: `path` (default
+- Factory: `kayden.memory.sqlite:factory`. Options: `path` (default
   `<data_dir>/memory.db`, shared by both modes of a data directory) plus any
   `CompactionConfig` field; an unknown option raises TypeError.
 - `CompactionConfig` is all fractions of `ContextRequest.max_tokens`: trigger 0.75
@@ -288,19 +288,30 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 ```
 export ANTHROPIC_API_KEY=...
 cd <project to work in>          # shell/file tools are rooted here
-uv run --project <kayden checkout> python -m kayden [--mode session|continuous]
+uv run --project <kayden checkout> python -m kayden [--config FILE] [--mode session|continuous]
     [--activation user_controlled|agent_controlled] [--conversation ID]
     [--model MODEL_ID] [--maintenance-model MODEL_ID]
     [--permissions ask|allow_read_only|deny] [--data-dir DIR]
 ```
 
-`kayden/__main__.py` builds an `InstanceConfig`: `kayden.core.anthropic:factory`,
-`kayden.memory_sqlite:factory` (`<data dir>/memory.db`), `kayden.tools.shell_files:factory`
-rooted at the current directory, and `kayden.frontends.tui:factory`. The data directory
-defaults to `$KAYDEN_DATA_DIR` or `~/.kayden`. Without `--mode` the TUI's start screen asks
-for mode, activation, conversation and model. Without `ANTHROPIC_API_KEY` it exits with a
-message. Provider options and prices are not exposed as flags; set them in an
-`InstanceConfig` and call `kayden.runtime.run_instance` for that.
+`kayden/__main__.py` builds an `InstanceConfig`. The modules come from a TOML file:
+`--config FILE` (must exist), else `<data dir>/config.toml` (optional). Sections `[core]`,
+`[memory]`, `[tools]`, `[frontend]`, each with `factory` and `options`; anything else is
+refused at startup. A module left out gets its default: `kayden.core.anthropic:factory`,
+`kayden.memory.sqlite:factory` (`<data dir>/memory.db`), `kayden.tools.shell_files:factory`
+rooted at the current directory (only when no tools options are given), and
+`kayden.frontends.tui:factory`. The file is read with stdlib `tomllib`. `[runtime]` holds the
+per-instance settings: `model`, `maintenance_model`, `permissions` and `[runtime.budget]`
+(the `Budget` fields, non-negative). Keeping the budget limit in the data directory, next to
+the usage it limits, is the point: a flag alone would let each launch pick or forget the
+limit. `--model`, `--maintenance-model` and `--permissions` override the file. The other
+`RuntimeConfig` fields (retries, timeouts, system prompt, ...) are tuning and stay at their
+defaults until someone needs them. `--mode`, `--activation` and
+`--conversation` are merged over the frontend options. The data directory defaults to
+`$KAYDEN_DATA_DIR` or `~/.kayden`. Without `--mode` the TUI's start screen asks for mode,
+activation, conversation and model. The launcher checks no API keys: each Core refuses a
+missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
+`ANTHROPIC_AUTH_TOKEN`).
 
 `tests/test_e2e.py` is the end-to-end check. No API key was available, so it runs the real
 Memory, Tools and runtime against the scripted Core: once through `run_instance` with the
