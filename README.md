@@ -13,8 +13,8 @@ Modules never call each other; the runtime connects them. `SPEC.md` is the produ
 
 ## Status
 
-Early MVP, version 0.0.0. The runtime and one implementation of each module exist and
-pass the offline test suite. No release has been made and the API may still change.
+Early MVP, version 0.0.0. The runtime and at least one implementation of each module
+exist and pass the offline test suite. No release has been made and the API may still change.
 
 ## Running
 
@@ -25,6 +25,20 @@ export ANTHROPIC_API_KEY=...
 cd <scratch directory>        # shell/file tools are rooted here
 uv run --project <kayden checkout> python -m kayden
 ```
+
+Without uv, install it with pip into a virtual environment (distributions such as Arch
+refuse system-wide `pip install`):
+
+```
+python -m venv ~/.venvs/kayden
+~/.venvs/kayden/bin/pip install git+https://github.com/K5031/Kayden.git
+cd <scratch directory>
+~/.venvs/kayden/bin/python -m kayden
+```
+
+From a checkout, `pip install -e <kayden checkout>` makes code changes take effect without
+reinstalling. pip does not use `uv.lock`, so it may pick newer dependency versions than the
+ones tested. There is no `kayden` command yet; run it as `python -m kayden`.
 
 Options: `--config FILE`, `--mode session|continuous`,
 `--activation user_controlled|agent_controlled`, `--conversation ID`, `--model MODEL_ID`,
@@ -43,8 +57,7 @@ what the agent will do.
 (Anthropic Core, SQLite Memory, shell/file Tools rooted at the current directory, TUI).
 `[runtime]` takes `model`, `maintenance_model`, `permissions` and a `[runtime.budget]` table
 (`max_tokens`, `max_cost_usd`, `max_duration_s`, `max_tool_calls`); command-line flags
-override it. API keys stay in the environment. DeepSeek with a $5 limit, the key in
-`DEEPSEEK_API_KEY`:
+override it. DeepSeek with a $5 limit, the key in `DEEPSEEK_API_KEY`:
 
 ```toml
 [core]
@@ -57,6 +70,12 @@ model = "deepseek-flash"
 [runtime.budget]
 max_cost_usd = 5.0
 ```
+
+**API keys.** Each Core reads its key from the environment (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`) and refuses to start without one. An `api_key` in
+`[core]` options also works but keeps the key in plain text; if you do that, make the file
+private (`chmod 600`) and never commit it. The system prompt is built in and not yet
+configurable.
 
 ## Layout
 
@@ -87,9 +106,10 @@ to `deepseek-flash`).
 ## Limits
 
 - POSIX only: the instance lock uses `fcntl` and the shell tool uses process groups.
-- The live provider tests have not been run yet, so neither Core has been checked
-  against a real API. The end-to-end test uses the real Memory, Tools, runtime and TUI
-  with a scripted Core.
+- The OpenAI-compatible Core has been checked live against DeepSeek (results in
+  `docs/decisions.md`); the Anthropic Core has not been run against the real API yet.
+  The end-to-end test uses the real Memory, Tools, runtime and TUI with a scripted Core.
+- A missing API key ends startup with a Python traceback rather than a short message.
 - Known spec and contract issues are recorded in `docs/contract-issues.md`.
 
 ## License
