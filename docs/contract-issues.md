@@ -58,7 +58,8 @@ in section 9.
 - **Assumed:** api.py (the normative source): per dimension max(report, estimate).
 
 ### 1.5 (C) "Remains idle until user interaction" vs. "starts the next cycle immediately"
-- **Status:** **Open**. SPEC 5.1 still says "remains idle until user interaction"; the assumption stands.
+- **Status:** **Resolved** (2026-11-02). SPEC 5.1 now defers to 5.2, and 5.2 says when the
+  rule is checked; the assumption below is the spec.
 - **Where:** SPEC 5.1 "If no tools are pending, the agent remains idle until user
   interaction"; SPEC 5.2 "If results the model has not seen exist and nothing is
   outstanding, an Agent-Controlled agent starts the next cycle immediately".
@@ -471,7 +472,8 @@ in section 9.
 - **Assumed:** On graceful shutdown they are appended, not lost.
 
 ### 8.5 (C) Graceful shutdown statuses
-- **Status:** **Open**. `Frontend.run` still says CANCELLED only; the assumption stands.
+- **Status:** **Resolved** (2026-11-02). `Frontend.run` now states the Stop rule;
+  `test_shutdown_abandons_calls_that_ignore_cancel` covers the ABANDONED case.
 - **Where:** `Frontend.run` "running calls are CANCELLED".
 - **Assumed:** CANCELLED when confirmed, ABANDONED otherwise (same grace rule as Stop).
 

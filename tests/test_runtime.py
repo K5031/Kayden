@@ -530,6 +530,22 @@ async def test_shutdown_cancels_calls(make: Any) -> None:
     assert isinstance(h.rec.events[-1], ShuttingDown)
 
 
+async def test_shutdown_abandons_calls_that_ignore_cancel(make: Any) -> None:
+    tools = FakeTools()
+    tools.hanging("stubborn", honor_cancel=False)
+    core = ScriptedCore([Step(calls=[call("stubborn", id="s")]), Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools, cancel_grace_s=0.2)
+    await h.start()
+    await h.turn("go")
+    await h.runtime.aclose()  # h.close() would first release the stubborn tool
+    await h.close()
+    conv = h.store.conversations[h.conversation.id]
+    [op] = [b for m in conv.messages for b in m.blocks if isinstance(b, OperationResult)]
+    assert (op.call_id, op.status) == ("s", ToolStatus.ABANDONED)
+    assert "may still have effects" in op.content
+    assert isinstance(h.rec.events[-1], ShuttingDown)
+
+
 async def test_stop_before_cycle_starts(make: Any) -> None:
     h: Harness = await make()
     await h.start()

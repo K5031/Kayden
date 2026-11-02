@@ -431,7 +431,8 @@ class Runtime:
         self._update_state()
 
     async def aclose(self) -> None:
-        """Graceful shutdown: running calls are cancelled, never recorded as interrupted."""
+        """Graceful shutdown: running calls end as by Stop (cancelled or abandoned), never
+        interrupted."""
         if self._closed:
             return
         self._closed = True

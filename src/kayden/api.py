@@ -990,8 +990,9 @@ class Frontend(abc.ABC):
 
     @abc.abstractmethod
     async def run(self, runtime: RuntimeAPI) -> None:
-        """Return when the user quits; the runtime then shuts the instance down
-        (running calls are CANCELLED; only a crash produces INTERRUPTED)."""
+        """Return when the user quits; the runtime then shuts the instance down. Running
+        calls end as by Stop: CANCELLED when confirmed within the grace period, ABANDONED
+        otherwise; only a crash produces INTERRUPTED."""
 
     async def aclose(self) -> None:
         pass

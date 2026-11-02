@@ -121,14 +121,14 @@ The agent enters Idle.
 Conversation context remains available.
 Pending asynchronous tools continue running.
 The runtime waits for an eligible activation event.
-If no tools are pending, the agent remains idle until user interaction.
+If no tools are pending, the agent remains idle until user interaction, unless it is Agent-Controlled and has results it has not seen (see 5.2).
 A model turn that ends without tool calls is treated as an implicit idle(); the runtime never re-prompts on its own. idle() may name the operations to wait for; by default it waits for all outstanding ones, including operations from earlier turns. Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
 5.2 Batch Wake-Up
 When the agent has outstanding operations belonging to a pending batch, the runtime waits until all operations reach a terminal outcome.
 Under Agent-Controlled activation, batch completion may automatically reactivate the model.
 Under User-Controlled activation, results are retained until user initiation.
 The runtime does not need to invoke the model separately for every individual tool completion.
-The wake set is every operation outstanding at the end of the turn that contains idle(), including operations from earlier turns; unknown ids in wait_for are ignored. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, an Agent-Controlled agent starts the next cycle immediately and a User-Controlled agent retains them.
+The wake set is every operation outstanding at the end of the turn that contains idle(), including operations from earlier turns; unknown ids in wait_for are ignored. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, an Agent-Controlled agent starts the next cycle immediately and a User-Controlled agent retains them. This is checked when the agent goes idle; operations that complete later but are outside the wake set do not wake it.
 5.3 Stop Control
 Kayden provides one user-facing Stop action.
 There is no separate Pause control in v1.
