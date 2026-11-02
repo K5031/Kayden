@@ -219,6 +219,30 @@ def test_module_entry_point_help():
     assert "--data-dir" in out.stdout
 
 
+@pytest.mark.parametrize(("config", "message"), [
+    ("", "kayden.core.anthropic:factory: ANTHROPIC_API_KEY is not set"),
+    ("[core]\nfactory = 'kayden.core.openai_compat:factory'\noptions = {profile = 'deepseek'}\n",
+     "kayden.core.openai_compat:factory: set DEEPSEEK_API_KEY or the api_key option"),
+    ("[core]\nfactory = 'kayden.core.nowhere:factory'\n",
+     "kayden.core.nowhere:factory: No module named 'kayden.core.nowhere'"),
+    ("[core]\nfactory = 'kayden.core.anthropic:nothing'\n",
+     "kayden.core.anthropic:nothing: module 'kayden.core.anthropic' has no attribute 'nothing'"),
+    ("[core]\noptions = {api_key = 'x', colour = 'red'}\n",
+     "kayden.core.anthropic:factory: "),
+])
+def test_module_startup_errors_are_one_line(workspace, tmp_path, config, message):
+    (tmp_path / "config.toml").write_text(config)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY")}
+    out = subprocess.run([sys.executable, "-m", "kayden", "--data-dir", str(tmp_path)],
+                         check=False, capture_output=True, text=True, env=env,
+                         timeout=60)
+    assert out.returncode == 1
+    assert out.stdout == ""
+    assert out.stderr.startswith(f"kayden: {message}")
+    assert out.stderr.count("\n") == 1
+
+
 async def test_instance_runs_on_the_scripted_core(workspace, tmp_path):
     async def script(runtime, frontend) -> None:
         recorder = frontend.recorder

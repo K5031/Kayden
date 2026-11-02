@@ -16,6 +16,11 @@ class InstanceLockedError(RuntimeError):
     """Another process holds this (data directory, mode)."""
 
 
+class ModuleLoadError(Exception):
+    """A module could not be built from its configuration (bad factory path, bad options,
+    missing credentials). The message names the factory and fits on one line."""
+
+
 class InstanceLock:
     """OS-level advisory lock per (data directory, mode); released on close or process exit."""
 
@@ -51,8 +56,11 @@ def load_module[T](spec: ModuleSpec, kind: type[T], paths: InstancePaths) -> T:
     module_name, sep, attr = spec.factory.partition(":")
     if not sep or not attr:
         raise ValueError(f"module path must be 'package.module:factory', got {spec.factory!r}")
-    factory: Any = getattr(importlib.import_module(module_name), attr)
-    module = factory(dict(spec.options), paths)
+    try:
+        factory: Any = getattr(importlib.import_module(module_name), attr)
+        module = factory(dict(spec.options), paths)
+    except (ImportError, AttributeError, ValueError, TypeError) as e:
+        raise ModuleLoadError(f"{spec.factory}: {e}") from e
     if not isinstance(module, kind):
         raise TypeError(f"{spec.factory} returned {type(module).__name__}, not {kind.__name__}")
     return module

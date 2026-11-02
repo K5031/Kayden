@@ -12,13 +12,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sys
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from kayden.api import Activation, Budget, Mode, PermissionPolicy
-from kayden.runtime import InstanceConfig, ModuleSpec, RuntimeConfig, run_instance
+from kayden.runtime import (
+    InstanceConfig,
+    ModuleLoadError,
+    ModuleSpec,
+    RuntimeConfig,
+    run_instance,
+)
 
 DEFAULT_DATA_DIR = Path("~/.kayden")
 CONFIG_FILE = "config.toml"
@@ -145,7 +152,11 @@ def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    asyncio.run(run_instance(build_config(argv)))
+    try:
+        asyncio.run(run_instance(build_config(argv)))
+    except ModuleLoadError as e:
+        print(f"kayden: {e}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

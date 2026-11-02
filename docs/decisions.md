@@ -317,6 +317,12 @@ activation, conversation and model. The launcher checks no API keys: each Core r
 missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
 `ANTHROPIC_AUTH_TOKEN`).
 
+Module startup errors are one line. `load_module` turns an `ImportError` or
+`AttributeError` from resolving the factory path, and a `ValueError` or `TypeError` from
+calling the factory (missing key, unknown option), into `ModuleLoadError("<factory>: <message>")`;
+`python -m kayden` prints `kayden: <message>` to stderr and exits 1. Other exceptions keep
+their traceback, since they are bugs rather than configuration mistakes.
+
 `tests/test_e2e.py` is the end-to-end check. No API key was available, so it runs the real
 Memory, Tools and runtime against the scripted Core: once through `run_instance` with the
 config `python -m kayden` builds (Core and Frontend swapped for fakes), and once with the
