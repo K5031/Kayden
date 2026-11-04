@@ -40,7 +40,9 @@ Runtime guarantees to modules:
   queued user messages (one USER message each, in send order). idle() takes effect at
   the end of its turn: the wake set (every operation outstanding then) is computed at
   that boundary, and unknown wait_for ids are ignored.
-- Budgets are reserved atomically before each inference or tool start.
+- Budgets: a tool start checks every dimension and counts the call in one atomic step.
+  Inference checks every dimension before it starts (nothing is reserved, since its cost
+  is unknown) and is cancelled as soon as in-flight usage exhausts one.
 """
 
 from __future__ import annotations
@@ -292,9 +294,10 @@ class Core(abc.ABC):
         behind the stream (many providers report output only at the end), so if the
         request is cancelled or fails before Completed, the runtime charges, per
         dimension, the larger of the last report and its own estimate (input plus
-        streamed output); a failure before the first stream event is not charged. The
-        runtime iterates with contextlib.aclosing. An empty ToolCallDelta chunk is
-        allowed, to announce a call before its arguments."""
+        streamed output). A failure before the first stream event is not charged; a
+        cancellation (Stop, duration budget) always is, since the provider may have
+        started processing. The runtime iterates with contextlib.aclosing. An empty
+        ToolCallDelta chunk is allowed, to announce a call before its arguments."""
 
     async def count_tokens(self, request: InferenceRequest) -> int | None:
         """Optional exact count. The runtime only uses it to calibrate its own sync
@@ -906,8 +909,9 @@ class RuntimeAPI(Protocol):
       **  only for a User-Controlled agent.
       *** not while FAILED because a hard budget is exhausted (send raises there too).
 
-    resolve_permission is first-wins; an unknown or already-resolved id raises.
-    cancel_operation raises unless the call is currently running.
+    resolve_permission is first-wins; an unknown or already-resolved id raises
+    RuntimeStateError. cancel_operation raises RuntimeStateError unless the call is
+    currently running.
     stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
     which case it performs a full Stop. A Session agent counts as User-Controlled
     (activate is allowed in IDLE).

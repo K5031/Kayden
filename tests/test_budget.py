@@ -22,7 +22,7 @@ from kayden.api import (
     TransientCoreError,
     Usage,
 )
-from tests.conftest import Harness
+from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
@@ -169,6 +169,18 @@ async def test_failure_before_first_event_not_charged(make: Any) -> None:
     assert len(core.requests) == 2
     usage = h.runtime.snapshot().usage.usage
     assert (usage.input_tokens, usage.output_tokens) == (100, 10)  # the successful request only
+
+
+async def test_cancel_before_first_event_charges_the_input_estimate(make: Any) -> None:
+    core = ScriptedCore([Step(hang=True)])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: core.active == 1)
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED)
+    usage = h.runtime.snapshot().usage.usage
+    assert usage.input_tokens > 0 and usage.output_tokens == 0
 
 
 async def test_duration_exhaustion_cancels_foreground_call(make: Any) -> None:

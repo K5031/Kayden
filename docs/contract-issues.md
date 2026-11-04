@@ -256,7 +256,8 @@ in section 9.
 ## 4. Budgets
 
 ### 4.1 (A) What "reserved atomically" means for inference
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-04). The api.py module docstring now states the
+  assumption below.
 - **Where:** api.py "Budgets are reserved atomically before each inference or tool start".
 - **Problem:** Inference cost is unknown in advance.
 - **Assumed:** Tool start: an atomic check-all-dimensions-and-count-one-call. Inference: a
@@ -336,7 +337,7 @@ in section 9.
 - **Assumed:** Fail closed: treated as DENY.
 
 ### 5.3 (A) Error type for resolve_permission / cancel_operation
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-04). `RuntimeAPI` now names RuntimeStateError.
 - **Where:** "an unknown or already-resolved id raises"; "cancel_operation raises unless the
   call is currently running".
 - **Assumed:** RuntimeStateError for both, as for invalid states.
@@ -524,7 +525,8 @@ in section 9.
   practice only activate() adds it.
 
 ### N6 (A) Cancelled before the first stream event
-- **Status:** **Open**
+- **Status:** **Resolved** (2026-11-04). `Core.stream` now states the assumption below;
+  `test_cancel_before_first_event_charges_the_input_estimate` covers it.
 - **Where:** api.py `Core.stream` "a failure before the first stream event is not charged".
 - **Assumed:** Only failures (exceptions) are unbilled. A request cancelled by Stop or by the
   duration budget before any event is still charged the input estimate, since the provider
