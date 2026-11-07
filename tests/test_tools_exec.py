@@ -37,7 +37,11 @@ async def test_backgrounding(make: Any) -> None:
     core = ScriptedCore([Step(calls=[call("slow", id="s")]), Step(text="meanwhile")])
     h: Harness = await make(core=core, tools=tools, initial_wait_s=0.1)
     await h.start()
-    await h.turn("go")
+    await h.runtime.send("go")
+    await eventually(lambda: h.runtime.snapshot().operations)
+    assert [o.backgrounded for o in h.runtime.snapshot().operations] == [False]
+    await h.rec.wait_state(AgentState.IDLE, count=2)
+    assert [o.backgrounded for o in h.runtime.snapshot().operations] == [True]
     placeholder = (await h.results())["s"]
     assert placeholder.status == ToolStatus.BACKGROUNDED and "s" in placeholder.content
     assert h.rec.of(ToolBackgrounded) == [ToolBackgrounded("s")]

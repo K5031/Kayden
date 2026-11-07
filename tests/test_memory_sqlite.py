@@ -134,6 +134,19 @@ async def test_compaction_uses_light_model_and_summary_budget(open_store):
     assert "tok0039" not in call["messages"][0].blocks[0].text
 
 
+@pytest.mark.parametrize("output", [
+    "", "   \n", "<summary>  </summary>\n<long_term>\n- likes tea\n</long_term>"])
+async def test_an_empty_summary_compacts_nothing(open_store, output: str):
+    memory = open_store()
+    conv = await memory.create_conversation(Mode.SESSION)
+    messages = await fill(memory, conv.id, tokens(0, 40))
+    assert not await maintain(memory, conv.id, FakeCompletion(render=lambda kept, text: output))
+    view = await memory.assemble(context(conv.id, 10_000_000))
+    assert [m.id for m in view.messages] == [m.id for m in messages]
+    assert view.system_addendum == ""
+    assert await maintain(memory, conv.id, FakeCompletion(render=tagged))  # a later pass works
+
+
 async def test_compaction_of_one_huge_message_is_truncated_to_fit(open_store):
     memory = open_store()
     conv = await memory.create_conversation(Mode.SESSION)

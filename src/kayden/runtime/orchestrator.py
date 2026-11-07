@@ -300,7 +300,7 @@ class Runtime:
             config=self._agent_config,
             model=self._model,
             usage=self._budget.snapshot(),
-            operations=[OperationInfo(op.call, op.started_at, op.last_progress)
+            operations=[OperationInfo(op.call, op.started_at, op.last_progress, op.backgrounded)
                         for op in self._ops.values()],
             pending_permissions=[req for req, _ in self._prompts.values()],
             queued_messages=list(self._inbox),

@@ -394,7 +394,8 @@ class Completion(Protocol):
     capped at that model's output limit. Requests carry no tools and maintenance=True.
     Transient errors are retried with the runtime's backoff but emit no ModelRetry
     (nothing streams to frontends). The first call of a maintain emits MaintenanceStarted;
-    MaintenanceFinished follows when maintain returns.
+    MaintenanceFinished follows when maintain returns. The result may be empty (a model that
+    spends its whole output limit on reasoning); Memory must then change nothing.
     """
 
     def max_input_tokens(self, *, light: bool = False) -> int:
@@ -758,6 +759,7 @@ class OperationInfo:
     call: ToolCall  # call.id is the operation id
     started_at: float
     last_progress: str | None = None
+    backgrounded: bool = False  # past the initial wait; the model got a placeholder
 
 
 @dataclass(frozen=True, slots=True)

@@ -694,6 +694,16 @@ async def test_operation_result_finishes_a_background_call():
         assert [e.message_text for e in entries(app, UserEntry)] == ["build"]
 
 
+async def test_late_attach_shows_backgrounded_calls():
+    call = ToolCall("c1", "shell", {"command": "sleep 99"})
+    stub = StubRuntime(history=[msg("a1", Role.ASSISTANT, call)],  # placeholder not in history
+                       operations=[OperationInfo(call, 0.0, None, backgrounded=True)])
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        assert "background" in plain(entries(app, ToolEntry)[0])
+
+
 async def test_cancel_operation_dialog_and_command():
     call = ToolCall("c1", "shell", {"command": "sleep 99"})
     stub = StubRuntime(operations=[OperationInfo(call, 0.0, None)])

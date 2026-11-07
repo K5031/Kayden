@@ -9,6 +9,7 @@ figures come from the runtime's `TokenCounter`; thresholds are fractions of the 
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import sqlite3
 import time
@@ -49,6 +50,7 @@ from kayden.api import (
 
 from . import codec
 
+logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 2  # version 1 stores (import-path block tags) are not supported
 # Output headroom on top of the summary budget for tags and new long-term entries.
 _LONG_TERM_OUTPUT_TOKENS = 256
@@ -315,6 +317,10 @@ class SqliteMemory(Memory):
                 system, [_user_message(transcript)], max_tokens=output_tokens, light=True
             )
             summary, new_entries = _parse_output(output, summary_tokens, count)
+            if not summary:  # e.g. reasoning used the whole output limit: keep the context
+                logger.warning("compaction of %s returned no summary; nothing compacted",
+                               conversation_id)
+                return False
             known = set(state.long_term)
             new_entries = [e for e in dict.fromkeys(new_entries) if e not in known]
             through_seq = state.active[cut - 1].seq

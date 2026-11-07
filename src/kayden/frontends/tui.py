@@ -784,8 +784,7 @@ class KaydenApp(App[None]):
             await self._render_message(message)
         for op in snap.operations:
             entry = self._tool_entries.get(op.call.id) or await self._mount_tool(op.call)
-            if entry.phase != "background":
-                entry.set_phase("running")
+            entry.set_phase("background" if op.backgrounded else "running")
             if op.last_progress:
                 entry.set_progress(op.last_progress)
         for queued in snap.queued_messages:

@@ -632,7 +632,8 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Fix:** Persist the stop reason on assistant messages (e.g. `Message.stop`).
 
 ### M12 (S) Which snapshot operations are backgrounded
-- **Status:** Open. Known limitation, left for later.
+- **Status:** **Resolved** (2026-11-07). `OperationInfo.backgrounded`; the TUI uses it on
+  attach (`test_late_attach_shows_backgrounded_calls`).
 - **Where:** `RuntimeSnapshot.operations` "every running call, foreground included";
   `OperationInfo` has no flag for it.
 - **Problem:** A late-attaching frontend cannot tell a backgrounded call from one still
@@ -663,7 +664,9 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Fix:** Add `InferenceRequest.maintenance: bool`.
 
 ### M15 (S) Empty compaction output
-- **Status:** Open.
+- **Status:** **Resolved** (2026-11-07). `Completion` says Memory must change nothing on an
+  empty result; SqliteMemory skips the compaction and logs it
+  (`test_an_empty_summary_compacts_nothing`).
 - **Where:** `Completion` and `Memory.maintain`; `SqliteMemory.maintain`.
 - **Problem:** A Completion may return "" (a thinking model that spends its whole token limit
   on reasoning). SqliteMemory commits that as the summary, so the messages it replaces drop

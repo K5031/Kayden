@@ -66,8 +66,9 @@ Live results: `docs/decisions.md`, "OpenAI-compatible profiles".
   393216, which would let the runtime reserve a quarter of the window for output.
 - One price per model (M13): DeepSeek's off-peak price is half the peak price, so costs
   read up to 2x high and cost budgets stop early.
-- Setting `thinking` in the Core's `options` turns thinking back on for maintenance and
-  re-exposes empty summaries (M15).
+- Setting `thinking` in the Core's `options` turns thinking back on for maintenance; a
+  summary that comes back empty then compacts nothing (M15), so the pass is wasted, not
+  harmful.
 - Prices are dated 2026-10-30 and nothing refreshes them.
 - `insufficient_system_resource`, `aborted` and `tool_choice` with thinking were not seen
   live.
