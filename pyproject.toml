@@ -15,6 +15,9 @@ dependencies = [
     "textual>=8.2.8",
 ]
 
+[project.scripts]
+kayden = "kayden.__main__:main"
+
 [dependency-groups]
 dev = [
     "psutil>=7.2.2",

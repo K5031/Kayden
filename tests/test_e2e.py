@@ -219,6 +219,18 @@ def test_module_entry_point_help():
     assert "--data-dir" in out.stdout
 
 
+def test_kayden_command_runs_main():
+    from importlib.metadata import entry_points
+
+    from kayden.__main__ import main
+
+    [script] = entry_points(group="console_scripts", name="kayden")
+    assert script.load() is main
+    exe = Path(sys.executable).parent / "kayden"
+    out = subprocess.run([str(exe), "--help"], capture_output=True, text=True, check=True)
+    assert out.stdout.startswith("usage: kayden ")
+
+
 @pytest.mark.parametrize(("config", "message"), [
     ("", "kayden.core.anthropic:factory: ANTHROPIC_API_KEY is not set"),
     ("[core]\nfactory = 'kayden.core.openai_compat:factory'\noptions = {profile = 'deepseek'}\n",

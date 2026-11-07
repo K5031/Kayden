@@ -21,10 +21,16 @@ exist and pass the offline test suite. No release has been made and the API may 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```
+uv tool install --editable <kayden checkout>   # once: puts `kayden` on your PATH
 export ANTHROPIC_API_KEY=...
 cd <scratch directory>        # shell/file tools are rooted here
-uv run --project <kayden checkout> python -m kayden
+kayden
 ```
+
+The editable install runs the checkout as it is, so code changes take effect without
+reinstalling; a dependency change in `pyproject.toml` needs `uv tool install --editable
+--reinstall <kayden checkout>`. Without installing, `uv run --project <kayden checkout>
+kayden` (or `python -m kayden`) works too.
 
 Without uv, install it with pip into a virtual environment (distributions such as Arch
 refuse system-wide `pip install`):
@@ -33,12 +39,12 @@ refuse system-wide `pip install`):
 python -m venv ~/.venvs/kayden
 ~/.venvs/kayden/bin/pip install git+https://github.com/K5031/Kayden.git
 cd <scratch directory>
-~/.venvs/kayden/bin/python -m kayden
+~/.venvs/kayden/bin/kayden
 ```
 
 From a checkout, `pip install -e <kayden checkout>` makes code changes take effect without
 reinstalling. pip does not use `uv.lock`, so it may pick newer dependency versions than the
-ones tested. There is no `kayden` command yet; run it as `python -m kayden`.
+ones tested.
 
 Options: `--config FILE`, `--mode session|continuous`,
 `--activation user_controlled|agent_controlled`, `--conversation ID`, `--model MODEL_ID`,

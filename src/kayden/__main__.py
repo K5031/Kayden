@@ -1,4 +1,4 @@
-"""Run Kayden in a terminal: python -m kayden [options].
+"""Run Kayden in a terminal: kayden [options] (or python -m kayden).
 
 Builds one instance from an InstanceConfig. A TOML config file (--config, else
 <data dir>/config.toml) names the modules and the per-instance runtime settings (model,
@@ -109,7 +109,7 @@ def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
-    parser = argparse.ArgumentParser(prog="python -m kayden", description=__doc__)
+    parser = argparse.ArgumentParser(prog="kayden", description=__doc__)
     parser.add_argument("--data-dir", type=Path,
                         default=Path(os.environ.get("KAYDEN_DATA_DIR", DEFAULT_DATA_DIR)),
                         help="instance data directory (default: $KAYDEN_DATA_DIR or ~/.kayden)")

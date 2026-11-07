@@ -293,13 +293,14 @@ Design of the config file: `design/config-file.md`.
 ```
 export ANTHROPIC_API_KEY=...
 cd <project to work in>          # shell/file tools are rooted here
-uv run --project <kayden checkout> python -m kayden [--config FILE] [--mode session|continuous]
+kayden [--config FILE] [--mode session|continuous]
     [--activation user_controlled|agent_controlled] [--conversation ID]
     [--model MODEL_ID] [--maintenance-model MODEL_ID]
     [--permissions ask|allow_read_only|deny] [--data-dir DIR]
 ```
 
-`kayden/__main__.py` builds an `InstanceConfig`. The modules come from a TOML file:
+The `kayden` command (`[project.scripts]`, installed with `uv tool install --editable`) and
+`python -m kayden` both run `kayden.__main__:main`. `kayden/__main__.py` builds an `InstanceConfig`. The modules come from a TOML file:
 `--config FILE` (must exist), else `<data dir>/config.toml` (optional). Sections `[core]`,
 `[memory]`, `[tools]`, `[frontend]`, each with `factory` and `options`; anything else is
 refused at startup. A module left out gets its default: `kayden.core.anthropic:factory`,
