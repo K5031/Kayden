@@ -79,7 +79,8 @@ command-line flags, each overriding the previous; `--show-config` shows the resu
 
 ### Separate notes (not part of this one)
 
-- A graphical frontend (desktop or web) that non-technical users can use.
+- A desktop app frontend that non-technical users can use. It comes first, before any web
+  frontend.
 - Installation without Python or a terminal.
 
 ## Alternatives considered
@@ -127,7 +128,3 @@ command-line flags, each overriding the previous; `--show-config` shows the resu
   the key must come from an environment variable, with a clear message.
 - **Scope.** This goes beyond the v1 MVP and needs the graphical frontend to pay off for the
   target user.
-
-## Open questions
-
-- Which graphical frontend comes first: a local web page or a desktop app?
