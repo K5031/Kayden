@@ -1,15 +1,11 @@
 # Kayden
 
-An AI agent for your terminal that can keep working on its own. Use it as a chat
-assistant, or start it in continuous mode: it runs long tasks in the background and can
-pick up again on its own when they finish.
+A terminal AI agent that runs as a chat or as a long-running background agent. It asks
+before using tools and stops at hard spending limits. Works with Anthropic, DeepSeek and
+OpenAI-compatible models.
 
-It asks before running a command or touching a file, stops at the spending limit you
-set, and remembers past conversations. Bring your own key for Claude, DeepSeek or
-OpenAI.
-
-Kayden is a small runtime plus four swappable modules (model, memory, tools,
-interface). The contracts are in `src/kayden/api.py`; the product spec is `SPEC.md`.
+A runtime drives four swappable modules (Core, Memory, Tools, Frontend); see
+`src/kayden/api.py` and `SPEC.md`.
 
 ## Quick start
 
