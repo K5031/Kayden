@@ -65,7 +65,8 @@ TextDelta, ReasoningDelta, ToolCallDelta and ToolProgress are not logged.
 ## Base system prompt
 
 `config.DEFAULT_SYSTEM_PROMPT` explains backgrounded operations, `op_status`/`op_cancel`,
-`recall` and `peek_other_mode`. Continuous Mode appends `CONTINUOUS_PROMPT` (how to idle).
+`recall` and `peek_other_mode`. `[runtime] system_prompt` or `system_prompt_file` replaces
+it. Continuous Mode appends `CONTINUOUS_PROMPT` (how to idle) to either.
 Memory's `system_addendum` follows, separated by a blank line.
 
 ## Runtime-authored texts
@@ -307,12 +308,13 @@ refused at startup. A module left out gets its default: `kayden.core.anthropic:f
 `kayden.memory.sqlite:factory` (`<data dir>/memory.db`), `kayden.tools.shell_files:factory`
 rooted at the current directory (only when no tools options are given), and
 `kayden.frontends.tui:factory`. The file is read with stdlib `tomllib`. `[runtime]` holds the
-per-instance settings: `model`, `maintenance_model`, `permissions` and `[runtime.budget]`
-(the `Budget` fields, non-negative). Keeping the budget limit in the data directory, next to
+per-instance settings: `model`, `maintenance_model`, `permissions`, `system_prompt` or
+`system_prompt_file`, and `[runtime.budget]` (the `Budget` fields, non-negative). Keeping the budget limit in the data directory, next to
 the usage it limits, is the point: a flag alone would let each launch pick or forget the
 limit. `--model`, `--maintenance-model` and `--permissions` override the file. The other
-`RuntimeConfig` fields (retries, timeouts, system prompt, ...) are tuning and stay at their
-defaults until someone needs them. `--mode`, `--activation` and
+`RuntimeConfig` fields (retries, timeouts, ...) are tuning and stay at their defaults
+until someone needs them. `--show-config` prints the effective config as TOML (`tomli-w`)
+and exits. `--mode`, `--activation` and
 `--conversation` are merged over the frontend options. The data directory defaults to
 `$KAYDEN_DATA_DIR` or `~/.kayden`. Without `--mode` the TUI's start screen asks for mode,
 activation, conversation and model. The launcher checks no API keys: each Core refuses a

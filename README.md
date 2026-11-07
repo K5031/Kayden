@@ -61,9 +61,10 @@ what the agent will do.
 `<data dir>/config.toml`. Each of `[core]`, `[memory]`, `[tools]` and `[frontend]` takes a
 `factory` ("package.module:factory") and `options`; a module left out gets its default
 (Anthropic Core, SQLite Memory, shell/file Tools rooted at the current directory, TUI).
-`[runtime]` takes `model`, `maintenance_model`, `permissions` and a `[runtime.budget]` table
-(`max_tokens`, `max_cost_usd`, `max_duration_s`, `max_tool_calls`); command-line flags
-override it. DeepSeek with a $5 limit, the key in `DEEPSEEK_API_KEY`:
+`[runtime]` takes `model`, `maintenance_model`, `permissions`, a system prompt and a
+`[runtime.budget]` table (`max_tokens`, `max_cost_usd`, `max_duration_s`,
+`max_tool_calls`); command-line flags override it. DeepSeek with a $5 limit, the key in
+`DEEPSEEK_API_KEY`:
 
 ```toml
 [core]
@@ -77,11 +78,19 @@ model = "deepseek-flash"
 max_cost_usd = 5.0
 ```
 
+**System prompt.** `system_prompt = "..."` or `system_prompt_file = "prompt.md"` (relative
+to the config file) in `[runtime]` replaces the built-in prompt; Continuous Mode still adds
+its instructions on how to idle. The built-in prompt explains background operations,
+`recall` and `peek_other_mode`, so start from it: `kayden --show-config` prints it.
+
+**Effective config.** `kayden --show-config` prints the config the instance would run with,
+defaults filled in and secrets redacted, as TOML you can copy into a config file. It builds
+no module and needs no API key.
+
 **API keys.** Each Core reads its key from the environment (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`) and refuses to start without one. An `api_key` in
 `[core]` options also works but keeps the key in plain text; if you do that, make the file
-private (`chmod 600`) and never commit it. The system prompt is built in and not yet
-configurable.
+private (`chmod 600`) and never commit it.
 
 ## Layout
 

@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from typing import Any
 import pytest
 from textual.widgets import Input
 
-from kayden.__main__ import build_config
+from kayden.__main__ import build_config, main
 from kayden.api import (
     AgentState,
     Budget,
@@ -42,6 +43,7 @@ from kayden.core.openai_compat import OpenAICompatCore
 from kayden.frontends.tui import AssistantEntry, KaydenApp, PermissionPrompt, TuiFrontend
 from kayden.memory.sqlite import SqliteMemory
 from kayden.runtime import ModuleSpec, Runtime, load_module, run_instance
+from kayden.runtime.config import DEFAULT_SYSTEM_PROMPT
 from kayden.tools.shell_files import ShellFilesTools
 from tests.fakes.core import ScriptedCore, Step, call
 
@@ -180,6 +182,57 @@ def test_runtime_defaults_without_a_runtime_section(workspace, tmp_path):
     assert runtime.model is None and runtime.maintenance_model is None
     assert runtime.permissions is PermissionPolicy.ASK
     assert runtime.budget == Budget()
+    assert runtime.system_prompt == DEFAULT_SYSTEM_PROMPT
+
+
+def test_system_prompt_replaces_the_default(workspace, tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[runtime]\nsystem_prompt = "Be brief."\n')
+    runtime = build_config(["--data-dir", str(tmp_path), "--config", str(path)]).runtime
+    assert runtime.system_prompt == "Be brief."
+
+
+def test_system_prompt_file_is_relative_to_the_config_file(workspace, tmp_path):
+    folder = tmp_path / "conf"
+    folder.mkdir()
+    (folder / "prompt.md").write_text("You are terse.\n")
+    path = folder / "config.toml"
+    path.write_text('[runtime]\nsystem_prompt_file = "prompt.md"\n')
+    runtime = build_config(["--data-dir", str(tmp_path), "--config", str(path)]).runtime
+    assert runtime.system_prompt == "You are terse.\n"
+
+
+def test_show_config_prints_the_effective_config_without_building_modules(
+        workspace, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)  # no module may be built
+    (tmp_path / "config.toml").write_text(
+        '[core]\noptions = { api_key = "sk-secret", models = { m = { auth_token = "t" } } }\n'
+        '[runtime.budget]\nmax_cost_usd = 10.0\n')
+    main(["--data-dir", str(tmp_path), "--show-config"])
+    out = capsys.readouterr().out
+    assert "sk-secret" not in out and '"t"' not in out
+    shown = tomllib.loads(out)
+    assert shown["core"]["factory"] == "kayden.core.anthropic:factory"
+    assert shown["core"]["options"]["api_key"] == "<redacted>"
+    assert shown["core"]["options"]["models"]["m"]["auth_token"] == "<redacted>"
+    assert shown["tools"]["options"] == {"root": str(workspace)}
+    assert shown["runtime"]["permissions"] == "ask"
+    assert shown["runtime"]["system_prompt"] == DEFAULT_SYSTEM_PROMPT
+    assert shown["runtime"]["budget"] == {"max_cost_usd": 10.0}
+    assert "model" not in shown["runtime"]
+    assert "# model: not set, the first model the Core lists" in out
+    assert str(tmp_path / "config.toml") in out
+
+
+def test_shown_config_loads_back_to_the_same_instance(workspace, tmp_path, capsys):
+    path = tmp_path / "config.toml"
+    path.write_text(RUNTIME + '[core]\nfactory = "kayden.core.openai_compat:factory"\n'
+                    'options = { profile = "deepseek" }\n')
+    args = ["--data-dir", str(tmp_path), "--config", str(path)]
+    original = build_config(args)
+    main([*args, "--show-config"])
+    path.write_text(capsys.readouterr().out)
+    assert build_config(args) == original
 
 
 @pytest.mark.parametrize(("content", "message"), [
@@ -200,6 +253,11 @@ def test_runtime_defaults_without_a_runtime_section(workspace, tmp_path):
     ("[core]\noptions = 'x'\n", "[core] options must be a table"),
     ("core = 'x'\n", "[core] must be a table"),
     ("[core\n", "invalid TOML"),
+    ("[runtime]\nsystem_prompt = 3\n", "[runtime] system_prompt must be a string"),
+    ("[runtime]\nsystem_prompt = \"  \"\n", "[runtime] system_prompt must not be empty"),
+    ("[runtime]\nsystem_prompt = \"a\"\nsystem_prompt_file = \"p.md\"\n",
+     "set system_prompt or system_prompt_file, not both"),
+    ("[runtime]\nsystem_prompt_file = \"missing.md\"\n", "missing.md: not found"),
 ])
 def test_invalid_config_files_are_refused(workspace, tmp_path, content, message):
     path = tmp_path / "config.toml"

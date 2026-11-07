@@ -13,6 +13,7 @@ dependencies = [
     "jsonschema>=4.26.0",
     "openai>=3.41.0",
     "textual>=8.2.8",
+    "tomli-w>=1.2.0",
 ]
 
 [project.scripts]

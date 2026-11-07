@@ -2,9 +2,10 @@
 
 Builds one instance from an InstanceConfig. A TOML config file (--config, else
 <data dir>/config.toml) names the modules and the per-instance runtime settings (model,
-maintenance model, permissions, budget); command-line flags override it. Anything it leaves
-out is a default: SQLite Memory, the Anthropic Core, shell/file Tools rooted at the current
-directory, the Textual TUI and no budget.
+maintenance model, permissions, budget, system prompt); command-line flags override it.
+Anything it leaves out is a default: SQLite Memory, the Anthropic Core, shell/file Tools
+rooted at the current directory, the Textual TUI and no budget. --show-config prints the
+result.
 """
 
 from __future__ import annotations
@@ -15,8 +16,11 @@ import os
 import sys
 import tomllib
 from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+
+import tomli_w
 
 from kayden.api import Activation, Budget, Mode, PermissionPolicy
 from kayden.runtime import (
@@ -35,7 +39,9 @@ DEFAULT_FACTORIES = {
     "tools": "kayden.tools.shell_files:factory",
     "frontend": "kayden.frontends.tui:factory",
 }
-RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget")
+RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_prompt",
+                "system_prompt_file")
+SECRET_WORDS = ("key", "token", "secret", "password")
 BUDGET_INTS = ("max_tokens", "max_tool_calls")
 BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
 
@@ -82,14 +88,29 @@ def load_modules(path: Path, data: dict[str, Any]) -> dict[str, ModuleSpec]:
 
 
 def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
-    """RuntimeConfig fields from [runtime]: model, maintenance_model, permissions, budget."""
+    """RuntimeConfig fields from [runtime]: model, maintenance_model, permissions, budget,
+    and system_prompt (inline, or system_prompt_file relative to the config file)."""
     section = table(path, data, "runtime", RUNTIME_KEYS)
     settings: dict[str, Any] = {}
+    for key in ("model", "maintenance_model", "system_prompt", "system_prompt_file"):
+        if key in section and not isinstance(section[key], str):
+            raise SystemExit(f"{path}: [runtime] {key} must be a string")
     for key in ("model", "maintenance_model"):
         if key in section:
-            if not isinstance(section[key], str):
-                raise SystemExit(f"{path}: [runtime] {key} must be a string")
             settings[key] = section[key]
+    if "system_prompt" in section and "system_prompt_file" in section:
+        raise SystemExit(f"{path}: [runtime] set system_prompt or system_prompt_file, not both")
+    if "system_prompt_file" in section:
+        prompt_path = path.parent / Path(section["system_prompt_file"]).expanduser()
+        try:
+            settings["system_prompt"] = prompt_path.read_text()
+        except FileNotFoundError:
+            raise SystemExit(f"{path}: [runtime] system_prompt_file {prompt_path}: not found"
+                             ) from None
+    elif "system_prompt" in section:
+        settings["system_prompt"] = section["system_prompt"]
+    if "system_prompt" in settings and not settings["system_prompt"].strip():
+        raise SystemExit(f"{path}: [runtime] system_prompt must not be empty")
     if "permissions" in section:
         try:
             settings["permissions"] = PermissionPolicy(section["permissions"])
@@ -108,7 +129,41 @@ def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
-def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
+def redact(options: Any) -> Any:
+    """Options with string values under secret-sounding keys replaced."""
+    if not isinstance(options, dict):
+        return options
+    return {k: "<redacted>" if isinstance(v, str) and any(w in k.lower() for w in SECRET_WORDS)
+            else redact(v) for k, v in options.items()}
+
+
+def show_config(config: InstanceConfig, path: Path) -> str:
+    """The effective config as TOML that loads back to the same instance."""
+    found = "" if path.is_file() else " (not found, defaults only)"
+    header = ["# Effective Kayden config", f"# data dir: {config.runtime.data_dir}",
+              f"# config file: {path}{found}"]
+    data: dict[str, Any] = {
+        name: {"factory": spec.factory, "options": redact(dict(spec.options))}
+        for name, spec in (("core", config.core), ("memory", config.memory),
+                           ("tools", config.tools), ("frontend", config.frontend))
+    }
+    runtime = config.runtime
+    section: dict[str, Any] = {}
+    for key, unset in (("model", "the first model the Core lists"),
+                       ("maintenance_model", "the main model")):
+        if (value := getattr(runtime, key)) is None:
+            header.append(f"# {key}: not set, {unset}")
+        else:
+            section[key] = value
+    section["permissions"] = runtime.permissions.value
+    section["system_prompt"] = runtime.system_prompt
+    if budget := {k: v for k, v in asdict(runtime.budget).items() if v is not None}:
+        section["budget"] = budget
+    data["runtime"] = section
+    return "\n".join(header) + "\n\n" + tomli_w.dumps(data, multiline_strings=True)
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="kayden", description=__doc__)
     parser.add_argument("--data-dir", type=Path,
                         default=Path(os.environ.get("KAYDEN_DATA_DIR", DEFAULT_DATA_DIR)),
@@ -125,10 +180,24 @@ def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
     parser.add_argument("--maintenance-model", help="cheaper model for memory maintenance")
     parser.add_argument("--permissions", choices=[p.value for p in PermissionPolicy],
                         help="tool permission policy (default: ask)")
-    args = parser.parse_args(argv)
+    parser.add_argument("--show-config", action="store_true",
+                        help="print the effective config as TOML and exit")
+    return parser.parse_args(argv)
 
+
+def config_path(args: argparse.Namespace) -> Path:
+    if args.config:
+        return args.config.expanduser()
+    return args.data_dir.expanduser() / CONFIG_FILE
+
+
+def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
+    return load_config(parse_args(argv))
+
+
+def load_config(args: argparse.Namespace) -> InstanceConfig:
     data_dir = args.data_dir.expanduser()
-    path = args.config.expanduser() if args.config else data_dir / CONFIG_FILE
+    path = config_path(args)
     data = read_config(path, required=args.config is not None)
     modules = load_modules(path, data)
     runtime = load_runtime(path, data)
@@ -152,8 +221,13 @@ def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    config = load_config(args)
+    if args.show_config:
+        print(show_config(config, config_path(args)), end="")
+        return
     try:
-        asyncio.run(run_instance(build_config(argv)))
+        asyncio.run(run_instance(config))
     except ModuleLoadError as e:
         print(f"kayden: {e}", file=sys.stderr)
         raise SystemExit(1) from None
