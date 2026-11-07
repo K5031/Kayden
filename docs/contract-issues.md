@@ -116,7 +116,7 @@ in section 9.
 - **Fix:** "outstanding when the turn containing idle() ends".
 
 ### 2.4 (S) idle() alongside other calls; idle() with queued messages
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, turn boundary.
 - **Assumed:** Other calls in the turn run normally; the cycle ends after the turn. If user
   messages were queued and delivered at that boundary, the cycle continues (they authorize a
   turn), mirroring the "turn without tool calls" rule in `send`.
@@ -137,7 +137,7 @@ in section 9.
   is confirmed within the grace period.
 
 ### 2.7 (S) A tool that returns normally after cancellation was requested
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `Tools` docstring.
 - **Assumed:** Its real OK/ERROR result is recorded (the effect happened), not CANCELLED.
 
 ### 2.8 (S) Built-in tool execution
@@ -149,13 +149,13 @@ in section 9.
 - **Fix:** Cap `wait_s` (e.g. at the initial wait) or define built-in timeouts.
 
 ### 2.9 (S) op_cancel semantics
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `BUILTIN_TOOLS` comment.
 - **Assumed:** Waits for termination (bounded by the grace period) and reports the final
   status; unknown or not-running ids return ERROR. The operation's outcome still arrives as
   an OperationResult.
 
 ### 2.10 (S) op_status after a restart
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `BUILTIN_TOOLS` comment.
 - **Assumed:** Operations from before a restart are unknown to op_status (ERROR); their
   outcome is the INTERRUPTED OperationResult from resume repair.
 
@@ -168,33 +168,33 @@ in section 9.
 - **Fix:** Say which event reports it.
 
 ### 2.12 (S) In which states cancel_operation is valid
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `RuntimeAPI` docstring.
 - **Where:** not in the command table.
 - **Assumed:** Any state, as long as the call is running (RuntimeStateError otherwise).
 
 ### 2.13 (S) Validation "known name"
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, validation.
 - **Assumed:** Known = offered in this turn's request: built-ins for the mode plus the
   module tools listed this turn. `idle` in Session Mode is therefore an unknown tool (ERROR).
   Tools.list_tools is called once per turn ("each cycle" read as "each request").
 
 ### 2.14 (S) Module tools redeclaring reserved names
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, validation.
 - **Where:** SPEC 16.4 "cannot be redeclared by modules".
 - **Assumed:** Dropped from the offered set and logged; no Failure event.
 
 ### 2.15 (S) Tools.list_tools failure
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, validation.
 - **Assumed:** Failure(INTERNAL) and the turn proceeds with built-ins only.
 
 ### 2.16 (S) Built-in output size
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `BUILTIN_TOOLS` comment.
 - **Where:** `Tools` "the runtime does not truncate [results]".
 - **Assumed:** That applies to module tools. recall/peek_other_mode format hits as text and
   cap each hit's preview at 1000 characters.
 
 ### 2.17 (S) Duplicate call ids in one turn, colliding message ids
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, durability order.
 - **Assumed:** Not handled specially; a message-id collision surfaces as an append failure.
 
 ## 3. Idle, activation, Stop
@@ -217,7 +217,7 @@ in section 9.
   `test_stop_before_cycle_starts`.
 
 ### 3.3 (S) Initial state at start()
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `RuntimeAPI` docstring.
 - **Assumed:** Session: IDLE. Continuous with a newly created conversation: IDLE.
   Continuous resuming its conversation (restart, or a second start() in the same process):
   STOPPED, whatever the activation policy (SPEC 11).
@@ -227,18 +227,18 @@ in section 9.
 - **Assumed:** Ignored; the single continuous conversation is used.
 
 ### 3.5 (S) Background completions while FAILED
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `RuntimeAPI` docstring.
 - **Assumed:** Results are appended immediately; no wake-up from FAILED.
 
 ### 3.6 (S) Hung inference or Memory call during Stop
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, Memory calls.
 - **Where:** SPEC 5.3 "report the problem instead of hanging silently" (stated for
   operations).
 - **Assumed:** Inference, maintain and built-in module calls get the same grace period;
   if they don't stop, Failure(INTERNAL) is emitted and Stop proceeds without them.
 
 ### 3.7 (S) send() in IDLE: when is the message persisted?
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `RuntimeAPI` docstring.
 - **Assumed:** `send()` authorizes a cycle and returns; the message is appended at the start
   of that cycle (before MessageCommitted, as required). This prevents a user message from
   landing between an assistant message and its TOOL message when an autonomous wake-up
@@ -274,13 +274,13 @@ in section 9.
 - **Fix:** Say whether dimensions gate only the work that consumes them.
 
 ### 4.3 (S) Threshold
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `Budget` docstring.
 - **Assumed:** Exhausted ⇔ used ≥ limit. Mid-stream, after every event, in-flight usage is
   max(last report, estimate). A request whose Completed pushes usage over the limit is
   committed (it is no longer mid-stream); the next check refuses.
 
 ### 4.4 (S) Partial output on mid-stream budget exhaustion
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `Budget` docstring.
 - **Assumed:** Like Stop: streamed text is committed (text only); the agent fails with
   Failure(BUDGET).
 
@@ -321,13 +321,13 @@ in section 9.
 - **Fix:** Let Core mark a failure as unbilled.
 
 ### 4.10 (S) Elapsed time of abandoned calls
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `Budget` docstring.
 - **Assumed:** Duration stops counting when a call is abandoned.
 
 ## 5. Permissions and instance safety
 
 ### 5.1 (S) PermissionResolved decisions for automatic outcomes
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `PermissionResolved` docstring.
 - **Assumed:** Read-only auto-allow → ALLOW_ONCE; covered by a grant → ALLOW_CONVERSATION;
   DENY policy or non-interactive refusal → DENY. Each with a fresh request id.
 
@@ -343,13 +343,13 @@ in section 9.
 - **Assumed:** RuntimeStateError for both, as for invalid states.
 
 ### 5.4 (S) When the lock is taken
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in SPEC 10.4 and `RuntimeAPI` docstring.
 - **Where:** SPEC 10.4 lock per (directory, mode); the mode is known only at `start()`.
 - **Assumed:** Acquired at the first start(), released at shutdown. `fcntl.flock` (POSIX
   only); the holder is named by the pid written into `<mode>.lock`.
 
 ### 5.5 (S) When the ceiling is exported
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `PermissionPolicy.inherited_ceiling`.
 - **Assumed:** At Runtime construction (process start), before any tool can run.
 
 ## 6. Events, snapshot, log
@@ -362,18 +362,18 @@ in section 9.
 - **Fix:** `AgentState | None` or a NOT_STARTED member.
 
 ### 6.2 (S) StateChanged when only pending_ops changes
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `StateChanged` docstring.
 - **Assumed:** Emitted on any change of (state, pending_ops), so frontends see the
   background count move while IDLE. Consumers must not count StateChanged(IDLE) events as
   cycles (this cost a test).
 - **Fix:** Document, or add a separate event for the count.
 
 ### 6.3 (S) pending_ops meaning
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `StateChanged` docstring.
 - **Assumed:** Number of running calls, foreground and background.
 
 ### 6.4 (S) Event log contents and file
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in SPEC 16.6.
 - **Assumed:** `events-<mode>.jsonl`; every event except deltas and progress, plus decision
   records (budget checks, permission outcomes, stop, backgrounding, abandonment, late
   completions, retries, idle/wake, cycle start/end, resume repair). See decisions.md.
@@ -385,37 +385,37 @@ in section 9.
 - **Fix:** Add `stop` to MessageCommitted or a dedicated event.
 
 ### 6.6 (S) UsageUpdated cadence
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `UsageUpdated` docstring.
 - **Assumed:** After each charge and each tool-call reservation; not continuously for
   elapsed time.
 
 ### 6.7 (S) Events after ShuttingDown
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `RuntimeAPI` docstring.
 - **Assumed:** A late completion of an abandoned call after shutdown is dropped.
 
 ## 7. Memory interaction
 
 ### 7.1 (S) maintain() on the first turn of a cycle
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, Memory calls.
 - **Where:** "maintain runs after a turn's results are appended and before the next
   assemble".
 - **Assumed:** Called before every inference, including the first of a cycle (after the
   user message is appended). Memory decides whether to act.
 
 ### 7.2 (S) ContextRequest budget composition
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `ContextRequest.max_tokens`.
 - **Where:** `ContextRequest.max_tokens` "window minus tools/output reserve".
 - **Assumed:** The base system prompt is subtracted too. Output reserve =
   `max_output_tokens` of the model or 4096, capped at a quarter of the window; it is also
   sent as `InferenceRequest.max_output_tokens`.
 
 ### 7.3 (S) The "10% smaller budget" on ContextOverflowError
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in SPEC 16.2 and `ContextOverflowError`.
 - **Assumed:** 90% of the assembled-context budget (not of the window). The overflow retry
   emits ModelRetry (delay 0) and is counted separately from transient retries.
 
 ### 7.4 (S) Completion behavior
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in `Completion` docstring and api.py module docstring.
 - **Assumed:** Transient errors are retried with the same backoff but emit no ModelRetry
   (nothing was streamed to frontends); MaintenanceStarted on first use, MaintenanceFinished
   after maintain returns. The request has no tools. A maintain failure is Failure(MODEL)
@@ -423,7 +423,7 @@ in section 9.
   budget re-check reports it.
 
 ### 7.5 (S) Append failure details
-- **Status:** **Open**. The assumption stands. With 3.8 resolved, the replayed transcript ends on the TOOL message, so the retrying `activate()` appends a runtime notice.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, durability order.
 - **Problem:** "starts nothing further until an append succeeds" leaves open what happens
   to an assistant message that failed to persist, and to the agent's state.
 - **Assumed:** Failed messages stay in an in-memory backlog, replayed (idempotently) before
@@ -433,7 +433,7 @@ in section 9.
   result) a failed append also sets FAILED.
 
 ### 7.6 (S) Resume repair placement
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in api.py module docstring, resume repair.
 - **Assumed:** Missing ToolResults are appended as one TOOL message at the tail, then the
   OperationResults as one USER message. Under the durability rules orphans can only be in
   the last assistant message; a corrupted archive with orphans earlier would break the
@@ -455,7 +455,7 @@ in section 9.
   `InstancePaths(data_dir)`. The result is type-checked against the module ABC.
 
 ### 8.2 (S) One module per kind
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in SPEC 16.1.
 - **Assumed:** Exactly one Core, Memory, Tools, Frontend per instance; combining several
   tool providers is the Tools module's job.
 
@@ -468,7 +468,7 @@ in section 9.
 - **Assumed:** `RuntimeConfig` (see decisions.md).
 
 ### 8.4 (S) Queued messages at shutdown
-- **Status:** **Open**. The assumption stands.
+- **Status:** **Resolved** (2026-11-07). Stated in SPEC 16.5 (appended at graceful shutdown).
 - **Where:** SPEC 16.5 "Queued messages are held in memory and lost on a crash".
 - **Assumed:** On graceful shutdown they are appended, not lost.
 
@@ -535,9 +535,10 @@ in section 9.
 
 ## 10. Found while migrating the module implementations (docs/process/MODULES.md)
 
-Against contract Draft 2.4. All **Open**; the stated assumption is what the module does.
+Against contract Draft 2.4. The stated assumption is what the module does.
 
 ### M1 (C) Memory.assemble: "starts at a USER message" vs. "always includes the newest message"
+- **Status:** **Resolved** (2026-11-07). Stated in `Memory.assemble`.
 - **Where:** `Memory.assemble` docstring.
 - **Problem:** A transcript (or the part after the last compaction) may contain no USER
   message at all, e.g. one written by an older runtime or by hand. Both rules cannot hold.
@@ -547,6 +548,7 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
 - **Fix:** "...starts at a USER message when the transcript has one".
 
 ### M2 (C) Memory.assemble: a budget too small for the newest exchange
+- **Status:** **Resolved** (2026-11-07). Stated in `Memory.assemble`.
 - **Where:** `Memory.assemble` "Must fit request.max_tokens" and "always includes the
   newest message".
 - **Problem:** From the last USER message on, the newest exchange may hold several
@@ -559,13 +561,16 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
   infeasible.
 
 ### M3 (S) Memory.history with an unknown `before` id
+- **Status:** **Resolved** (2026-11-07). Stated in `Memory.history`.
 - **Assumed:** KeyError, like an unknown conversation id.
 
 ### M4 (S) Error type for a conflicting re-append
+- **Status:** **Resolved** (2026-11-07). Stated in `Memory.append`.
 - **Where:** `Memory.append` "the same id with different content raises".
 - **Assumed:** ValueError, and the whole batch is rejected (nothing from it is appended).
 
 ### M5 (S) Truncating reasoning and tool calls in the assembled view
+- **Status:** **Resolved** (2026-11-07). Stated in `Memory.assemble`.
 - **Where:** `Memory.assemble` "A single oversized message is truncated in this view only".
 - **Problem:** Reasoning text cannot be shortened without invalidating its provider
   signature; ToolCall arguments cannot be shortened without breaking their JSON.
@@ -574,6 +579,7 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
   ToolCall blocks are kept whole.
 
 ### M6 (S) Output size of the light model
+- **Status:** **Resolved** (2026-11-07). Stated in `Completion` docstring; the runtime now caps `max_tokens` (`test_completion_caps_max_tokens_at_the_model_limit`).
 - **Where:** `Completion.max_input_tokens`; `Completion.__call__(max_tokens=...)`.
 - **Problem:** Memory learns the light model's window but not its output limit, so it
   cannot know whether its `max_tokens` request is accepted.
@@ -592,6 +598,7 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
 - **Problem:** Rewriting stored tags is an update to an archive that must be append-only.
 
 ### M8 (S) Recognising a context overflow
+- **Status:** **Resolved** (2026-11-07). Stated in `ContextOverflowError`.
 - **Where:** `ContextOverflowError` "The request exceeded the model's context window".
 - **Problem:** Neither API has a dedicated status or type for it. Anthropic answers 400
   `invalid_request_error` ("prompt is too long", "input length and `max_tokens` exceed
@@ -602,6 +609,7 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
   does not happen for it.
 
 ### M9 (S) Refusal or content filter with tool calls
+- **Status:** **Resolved** (2026-11-07). Stated in `StopReason.REFUSAL`.
 - **Where:** `StopReason.REFUSAL` "treated like END_TURN".
 - **Problem:** A turn can carry tool calls and still end with a refusal/content-filter
   reason. Treated like END_TURN, those calls would never get results.
@@ -609,12 +617,14 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
   reason. Anthropic reports what the API says (it does not combine them in practice).
 
 ### M10 (A) Reasoning without a `model`
+- **Status:** **Resolved** (2026-11-07). Stated in `Reasoning.model`.
 - **Where:** `Reasoning.model` "Cores drop state from other models".
 - **Problem:** Blocks persisted before the field existed have `model=None`.
 - **Assumed:** Unknown counts as another model: such reasoning is not replayed (an invalid
   signature would make the request fail permanently).
 
 ### M11 (S) Refusals in history
+- **Status:** Open. Known limitation, left for later.
 - **Where:** `MessageCommitted.stop`, `StopReason.REFUSAL` "shown distinctly".
 - **Problem:** The stop reason exists only on the live event; `Message` does not carry it,
   so after a restart or a late attach (history) a refusal looks like ordinary text.
@@ -622,6 +632,7 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
 - **Fix:** Persist the stop reason on assistant messages (e.g. `Message.stop`).
 
 ### M12 (S) Which snapshot operations are backgrounded
+- **Status:** Open. Known limitation, left for later.
 - **Where:** `RuntimeSnapshot.operations` "every running call, foreground included";
   `OperationInfo` has no flag for it.
 - **Problem:** A late-attaching frontend cannot tell a backgrounded call from one still

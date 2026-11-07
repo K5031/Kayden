@@ -191,6 +191,8 @@ class _Completion:
             assert rt._conversation is not None
             rt._emit(MaintenanceStarted(rt._conversation.id))
         info = rt._maintenance_info() if light else rt._info()
+        if info.max_output_tokens is not None:
+            max_tokens = min(max_tokens, info.max_output_tokens)
         request = InferenceRequest(info.id, system, list(messages), (), max_tokens,
                                    maintenance=True)
         attempt = 0

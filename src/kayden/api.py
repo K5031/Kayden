@@ -18,20 +18,35 @@ Runtime guarantees to modules:
 - Durability order: an assistant message is appended before any of its tool calls
   starts; each ToolResult is appended before its ToolFinished event; a user message
   is appended before its MessageCommitted event. If append fails, the runtime emits
-  Failure(INTERNAL) and starts nothing further until an append succeeds.
+  Failure(INTERNAL) and starts nothing further until an append succeeds: the agent is
+  FAILED, failed messages wait in memory and are re-appended (idempotently) before any
+  later append, and activate() retries. When an assistant message failed, a TOOL
+  message with ERROR "Not run" results for its calls waits behind it, so the replayed
+  transcript stays well formed. Duplicate call or message ids get no special handling;
+  a collision surfaces as an append failure.
 - Mutating Memory calls (append, maintain) are serialized per conversation. maintain
-  runs after a turn's results are appended and before the next assemble, never
+  runs before every inference (the first of a cycle included, after the user message
+  is appended), after a turn's results are appended and before the next assemble, never
   concurrently with inference or appends. Stop cancels it; the runtime re-checks the
-  budget after it returns.
+  budget after it returns. Inference, maintain and built-in Memory calls get Stop's
+  grace period like operations; one that does not stop in time is reported as
+  Failure(INTERNAL) and Stop proceeds without it.
 - Resume repair: before the first inference of a resumed conversation the runtime
   reads the full transcript via Memory.history and appends ToolResult(INTERRUPTED)
   for every ToolCall without a ToolResult, and OperationResult(INTERRUPTED) for every
-  BACKGROUNDED call without an OperationResult.
+  BACKGROUNDED call without an OperationResult: the ToolResults as one TOOL message at
+  the tail, then the OperationResults as one USER message.
 - Tool calls are validated (known name, arguments match the schema) before they
-  start; violations are answered with ToolResult(ERROR) and the tool is not run.
+  start; violations are answered with ToolResult(ERROR) and the tool is not run. A
+  known name is one offered in this turn's request: the mode's built-ins plus the
+  module tools listed this turn (Tools.list_tools is called once per request). Module
+  tools that redeclare a reserved name are dropped from the offer and logged. If
+  list_tools fails, Failure(INTERNAL) is emitted and the turn offers built-ins only.
 - Every module call is wrapped: an exception becomes a Failure event (an ERROR
   ToolResult for a tool), never a crash. An unexpected exception from Core.stream is
-  treated as a permanent CoreError.
+  treated as a permanent CoreError. A failed maintain is Failure(MODEL) for CoreError
+  and Failure(INTERNAL) otherwise; BudgetExhausted is reported by the budget re-check,
+  not as a maintain failure.
 - One inference cycle runs at a time per runtime. Triggers (user message, wake-up)
   only set flags that the cycle loop consumes.
 - Turn boundary: reached once the current turn's foreground ToolResults are appended.
@@ -39,7 +54,9 @@ Runtime guarantees to modules:
   background operations that terminated (OperationResult, in one USER message);
   queued user messages (one USER message each, in send order). idle() takes effect at
   the end of its turn: the wake set (every operation outstanding then) is computed at
-  that boundary, and unknown wait_for ids are ignored.
+  that boundary, and unknown wait_for ids are ignored. Other calls in that turn run
+  normally; if queued user messages are delivered at that boundary, they authorize the
+  next turn and the cycle continues.
 - Budgets: a tool start checks every dimension and counts the call in one atomic step.
   Inference checks every dimension before it starts (nothing is reserved, since its cost
   is unknown) and is cancelled as soon as in-flight usage exhausts one.
@@ -111,7 +128,9 @@ class Text:
 class Reasoning:
     text: str
     state: JSON | None = None  # opaque provider data (signatures); Core round-trips it
-    model: str | None = None  # producing model; Cores drop state from other models
+    # Producing model; Cores drop state from other models. None (blocks persisted before
+    # this field) counts as another model, so such reasoning is never replayed.
+    model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +240,10 @@ class StopReason(StrEnum):
     END_TURN = "end_turn"
     TOOL_USE = "tool_use"
     MAX_TOKENS = "max_tokens"  # a truncated tool call is answered with ERROR
-    REFUSAL = "refusal"  # model declined; treated like END_TURN, shown distinctly
+    # Model declined; treated like END_TURN, shown distinctly. The runtime runs a turn's
+    # tool calls whatever its stop reason, so a refusal that carries calls still gets
+    # their results.
+    REFUSAL = "refusal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,8 +297,12 @@ class TransientCoreError(CoreError):
 
 
 class ContextOverflowError(CoreError):
-    """The request exceeded the model's context window. The runtime re-assembles with a
-    10% smaller budget and retries once before failing."""
+    """The request exceeded the model's context window. The runtime re-assembles with
+    90% of the assembled-context budget (not of the window) and retries once before
+    failing; that retry emits ModelRetry (delay 0) and does not count as a transient
+    retry. Providers have no dedicated error for this, so Cores recognise it from known
+    codes and message fragments on 400/413 responses; an unrecognised wording stays a
+    permanent CoreError."""
 
 
 class Core(abc.ABC):
@@ -323,7 +349,10 @@ class ConversationInfo:
 @dataclass(frozen=True, slots=True)
 class ContextRequest:
     conversation_id: ConversationId
-    max_tokens: int  # budget for the assembled context (window minus tools/output reserve)
+    # Budget for the assembled context: window minus base system prompt, tool schemas and
+    # the output reserve (the model's max_output_tokens or the runtime default, capped at
+    # a quarter of the window; also sent as InferenceRequest.max_output_tokens).
+    max_tokens: int
     count_tokens: TokenCounter
 
 
@@ -358,7 +387,11 @@ class Completion(Protocol):
     Counts against the instance budget. Raises BudgetExhausted when a hard budget is
     spent, or CoreError if the model fails after the runtime's own retries.
     light=True asks for the runtime's cheaper maintenance model (falls back to the
-    main model if none is configured); Memory never names a model itself.
+    main model if none is configured); Memory never names a model itself. max_tokens is
+    capped at that model's output limit. Requests carry no tools and maintenance=True.
+    Transient errors are retried with the runtime's backoff but emit no ModelRetry
+    (nothing streams to frontends). The first call of a maintain emits MaintenanceStarted;
+    MaintenanceFinished follows when maintain returns.
     """
 
     def max_input_tokens(self, *, light: bool = False) -> int:
@@ -402,7 +435,8 @@ class Memory(abc.ABC):
         """Durable and crash-safe on return. Also feeds the permanent archive.
 
         Idempotent by message id: re-appending an identical message is a no-op (a
-        cancelled append may have landed); the same id with different content raises."""
+        cancelled append may have landed); the same id with different content raises
+        ValueError and nothing from the batch is appended."""
 
     @abc.abstractmethod
     async def history(
@@ -414,17 +448,21 @@ class Memory(abc.ABC):
     ) -> Sequence[Message]:
         """Full transcript from the archive, in append order, regardless of compaction.
 
-        With `before` (a message id), only messages preceding it; with `limit`, only
-        the last `limit` of those."""
+        With `before` (a message id), only messages preceding it (KeyError for an
+        unknown id); with `limit`, only the last `limit` of those."""
 
     @abc.abstractmethod
     async def assemble(self, request: ContextRequest) -> AssembledContext:
         """Read-only, no inference. Must fit request.max_tokens (addendum included)
         even if maintenance was deferred, by trimming the verbatim tail, never the
-        archive. The returned messages are a suffix of the transcript that starts at a
-        USER message, never splits a ToolCall from its ToolResult, and always includes
-        the newest message. A single oversized message is truncated in this view only
-        (the stored copy is untouched), with a marker saying how to recover it."""
+        archive. The returned messages are a suffix of the transcript that never splits a
+        ToolCall from its ToolResult, always includes the newest message, and starts at a
+        USER message when one qualifies (else at the latest message that splits no call).
+        A single oversized message is truncated in this view only (the stored copy is
+        untouched), with a marker naming the message id and recall: Reasoning blocks are
+        dropped, Text and result bodies are cut, ToolCall blocks stay whole. If even the
+        newest exchange, truncated, exceeds the budget, it is returned anyway: including it
+        wins over fitting, and the Core's ContextOverflowError handles the rest."""
 
     @abc.abstractmethod
     async def maintain(
@@ -471,7 +509,13 @@ class Memory(abc.ABC):
 _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 
 # Runtime built-ins. Never gated by permissions; they don't count as tool calls for
-# budgets. `idle` exists only in Continuous Mode.
+# budgets. `idle` exists only in Continuous Mode (in Session Mode it is an unknown tool).
+# op_status and op_cancel answer ERROR for an unknown or finished id; operations from
+# before a restart are unknown, their outcome is the INTERRUPTED OperationResult from
+# resume repair. op_cancel waits for termination (bounded by the grace period) and
+# reports the final status; the outcome still arrives as an OperationResult. recall and
+# peek_other_mode return hits as text, each preview capped at 1000 characters (the
+# "runtime does not truncate" rule applies to module tools).
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "idle": ToolSpec(
         "idle",
@@ -573,7 +617,8 @@ class Tools(abc.ABC):
     After cancellation execute() must return within the runtime's cancel grace period
     (default 5 s) or the call is abandoned. Keep results reasonably small; the runtime
     does not truncate them. The runtime puts the last progress text into the content of
-    CANCELLED, TIMED_OUT and ABANDONED results.
+    CANCELLED, TIMED_OUT and ABANDONED results. A call that returns normally after
+    cancellation was requested keeps its real OK or ERROR result: its effect happened.
 
     Tools that launch subprocesses must pass the environment through unmodified, at
     least PERMISSION_CEILING_ENV, or launched Kayden instances escape the ceiling.
@@ -631,6 +676,8 @@ class PermissionPolicy(StrEnum):
 
     @classmethod
     def inherited_ceiling(cls) -> PermissionPolicy | None:
+        """The ceiling set by a parent Kayden. The runtime exports its own effective
+        policy as the ceiling when it is constructed, before any tool can run."""
         value = os.environ.get(PERMISSION_CEILING_ENV)
         if not value:
             return None
@@ -662,6 +709,13 @@ class Budget:
     max_tool_calls excludes built-ins. Exhausting any dimension stops all chargeable
     execution, inference included. A budget belongs to the (data dir, mode); usage
     persists there in usage-<mode>.json.
+
+    A dimension is exhausted when used >= limit. Mid-stream, after every event, in-flight
+    usage counts as the larger of the last UsageReport and the runtime's estimate. A
+    request whose Completed pushes usage over the limit is still committed; the next
+    check refuses. When a budget cuts inference off mid-stream, the streamed text is
+    committed (text only, as with Stop) and the agent fails with Failure(BUDGET). An
+    abandoned call stops counting toward max_duration_s when it is abandoned.
     """
 
     max_tokens: int | None = None
@@ -737,6 +791,10 @@ class RuntimeSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class StateChanged:
+    """Emitted on any change of (state, pending_ops), so frontends see the background
+    count move while IDLE; consecutive StateChanged(IDLE) events are not separate cycles.
+    pending_ops is the number of running calls, foreground and background."""
+
     state: AgentState
     pending_ops: int = 0
 
@@ -795,8 +853,10 @@ class PermissionRequested:
 
 @dataclass(frozen=True, slots=True)
 class PermissionResolved:
-    """Also emitted for runtime-side outcomes: policy auto-decisions (request_id is a
-    fresh id) and DENY on Stop. call_id says which call it concerned."""
+    """Also emitted for runtime-side outcomes, each with a fresh request_id: read-only
+    auto-allow is ALLOW_ONCE, a call covered by a grant is ALLOW_CONVERSATION, the DENY
+    policy, a non-interactive refusal and Stop are DENY. call_id says which call it
+    concerned."""
 
     request_id: str
     decision: Decision
@@ -843,6 +903,9 @@ class StopStalled:
 
 @dataclass(frozen=True, slots=True)
 class UsageUpdated:
+    """Emitted after each charge and each tool-call reservation; elapsed time alone does
+    not trigger one."""
+
     snapshot: UsageSnapshot
 
 
@@ -910,11 +973,21 @@ class RuntimeAPI(Protocol):
       *** not while FAILED because a hard budget is exhausted (send raises there too).
 
     resolve_permission is first-wins; an unknown or already-resolved id raises
-    RuntimeStateError. cancel_operation raises RuntimeStateError unless the call is
-    currently running.
+    RuntimeStateError. cancel_operation is valid in any state while the call is running
+    and raises RuntimeStateError otherwise.
     stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
     which case it performs a full Stop. A Session agent counts as User-Controlled
     (activate is allowed in IDLE).
+
+    start() leaves the agent IDLE, except a Continuous agent resuming its existing
+    conversation, which starts STOPPED whatever its activation policy. The first start()
+    takes the (data dir, mode) lock, held until shutdown. send() in IDLE authorizes a
+    cycle and returns at once (the state is THINKING on return, so a second send
+    queues); the message is appended at the start of that cycle, so it never lands
+    between an assistant message and its TOOL message. Background results that arrive
+    while FAILED are appended immediately but do not wake the agent. After ShuttingDown
+    nothing more is appended or emitted: a late completion of an abandoned call is
+    dropped.
     """
 
     # Observation

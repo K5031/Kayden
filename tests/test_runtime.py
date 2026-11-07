@@ -637,6 +637,24 @@ async def test_maintenance_model(make: Any) -> None:
     assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 1
 
 
+async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
+    from kayden.api import Completion, Message
+
+    h: Harness = await make(maintenance_model="fake-2")  # max_output_tokens 1000
+
+    async def maintain(complete: Completion) -> bool:
+        for light, asked in ((True, 5_000), (True, 300)):
+            await complete("Summarize.", [Message("m", Role.USER, (Text("x"),), 0.0)],
+                           max_tokens=asked, light=light)
+        return True
+
+    h.memory.maintain_override = maintain
+    await h.start()
+    await h.turn("go")
+    asked = [r.max_output_tokens for r in h.core.requests if r.maintenance]
+    assert asked == [1_000, 300]
+
+
 @pytest.mark.parametrize("mode", [Mode.SESSION, Mode.CONTINUOUS])
 async def test_only_completion_requests_are_maintenance(make: Any, mode: Mode) -> None:
     """Requests made through Memory's Completion are marked maintenance; turns, retries and

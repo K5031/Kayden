@@ -299,7 +299,7 @@ Routine task assistant.
 Organizational roles and ranks are not hardcoded into Kayden.
 Capabilities and authority depend on each instance's configuration, model, tools, and permissions.
 10.4 Instance Safety
-Each instance owns its data directory per mode. The runtime holds an OS-level lock per (directory, mode); a second process opening the same mode fails immediately with an error naming the holder. Two processes may share a directory if they run different modes.
+Each instance owns its data directory per mode. The runtime holds an OS-level lock per (directory, mode), taken at the first start (when the mode is known) and released at shutdown; a second process opening the same mode fails immediately with an error naming the holder. Two processes may share a directory if they run different modes.
 A launched instance cannot be more permissive than its launcher. At startup the runtime exports its permission policy as a ceiling in its environment, and every instance clamps its own policy to the stricter of its configuration and any inherited ceiling. Strictness order: deny, ask, allow read-only. The exported ceiling is the instance's effective policy, carried in the KAYDEN_PERMISSION_CEILING environment variable; tools that launch subprocesses must pass the environment through. Launched instances have their own independent budgets.
 This is a guardrail against accidental or naive escalation, not a sandbox. It follows the trust model in section 3.2: an agent with arbitrary terminal access can defeat it.
 
@@ -400,13 +400,13 @@ Normative source: src/kayden/api.py (Python 3.12+, asyncio). Types and signature
 Modules are in-process Python objects. There is no wire protocol; a module may use subprocesses or sockets internally.
 All APIs are async. Cancellation is asyncio cancellation.
 Modules never call each other. The runtime is the only caller.
-Instance configuration lists each module as an import path "package.module:factory". The factory receives its configuration and the instance paths and returns the module.
+Instance configuration lists each module as an import path "package.module:factory". The factory receives its configuration and the instance paths and returns the module. An instance has exactly one module of each kind; combining several tool providers is the Tools module's job.
 Contracts evolve additively: optional fields, methods, events and block types.
 v1 messages are text and tool blocks only. Images and audio can be added later as new block types.
 One agent per process (section 4.4).
 
 16.2 Core
-The runtime retries TransientCoreError with backoff; Core never retries itself. CoreError is permanent. ContextOverflowError makes the runtime re-assemble with a 10% smaller budget and retry once.
+The runtime retries TransientCoreError with backoff; Core never retries itself. CoreError is permanent. ContextOverflowError makes the runtime re-assemble with 90% of the assembled-context budget (not of the window) and retry once.
 ToolCallDelta and UsageReport are optional. If a request is cancelled or fails before Completed, the runtime charges, per dimension, the larger of the last UsageReport and its own estimate; a failure before anything streamed is not charged.
 After a retry, frontends discard deltas received since the last committed message.
 Reasoning blocks record the model that produced them, and Core drops reasoning state from other models.
@@ -444,7 +444,7 @@ v1 has no conversation deletion or renaming.
 16.6 Runtime behavior
 Model failures are retried with backoff and never trigger a silent model switch.
 Budget semantics are in section 9.
-Each instance writes a JSONL event log of runtime decisions to its data directory, in addition to the event stream.
+Each instance writes a JSONL event log of runtime decisions to its data directory (events-<mode>.jsonl), in addition to the event stream: every event except deltas and progress, plus decision records (budget checks, permission outcomes, stop, backgrounding, abandonment, late completions, retries, idle and wake-up, cycle start and end, resume repair).
 Graceful shutdown cancels running calls. Only a crash produces interrupted results.
 
 Final Product Definition
