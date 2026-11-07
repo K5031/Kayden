@@ -82,21 +82,57 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Event stream: gapless seq, bounded queue drops oldest, ends after ShuttingDown; snapshot recovery | `test_event_*`, `test_snapshot_*` |
 | JSONL event log of decisions | `test_jsonl_event_log` |
 | Backoff delays and retry_after | `test_retry_backoff_delays` |
-| ContextOverflowError → re-assemble 10% smaller, retry once, then fail | `test_context_overflow_*` |
+| ContextOverflowError → re-assemble with 90% of the context budget, retry once, then fail | `test_context_overflow_*` |
 | MAX_TOKENS turn committed; unparsed call → ERROR, cycle continues | `test_max_tokens_truncated_call` |
 | Model selection validated, ModelSelected, applies next inference | `test_select_model` |
 | Initial wait → backgrounded placeholder + ToolBackgrounded | `test_backgrounding` |
 | Stall timeout and hard timeout → TIMED_OUT; default timeout | `test_stall_timeout`, `test_hard_timeout`, `test_default_timeout` |
 | Abandon after grace; late completion logged, never appended | `test_abandon_and_late_completion` |
 | progress() from threads | `test_thread_tool_progress` |
-| cancel_operation / op_cancel / op_status | `test_cancel_operation`, `test_op_cancel`, `test_op_status_wait` |
-| Read-only calls concurrent, others in emission order | `test_call_ordering` |
+| cancel_operation / op_cancel / op_status | `test_cancel_operation`, `test_op_cancel`, `test_op_status_wait_clamped` |
+| Read-only calls concurrent; a non-read-only call is a barrier; a backgrounded call releases it | `test_barrier_*`, `test_backgrounded_call_releases_barrier` |
 | Reserved names cannot be redeclared | `test_reserved_names_dropped` |
 | Stop commits partial text only; queued-while-stopping starts a cycle once stopped; StopStalled | `test_stop_*` |
 | Idle wait_for subset; unseen results wake immediately; idle absent in Session | `test_idle_*` |
 | Session may switch conversation only without outstanding ops | `test_session_switch_conversation` |
 | Background outcome appended immediately when no cycle runs | `test_background_result_appended_when_idle` |
-| Graceful shutdown cancels running calls (CANCELLED, not INTERRUPTED) | `test_shutdown_cancels_calls` |
+| Graceful shutdown ends running calls as Stop does: CANCELLED, or ABANDONED when cancel is ignored; never INTERRUPTED | `test_shutdown_cancels_calls`, `test_shutdown_abandons_calls_that_ignore_cancel` |
 | Stop before a requested cycle begins: message kept, no inference | `test_stop_before_cycle_starts` |
 | Messages queued before Stop are kept but start nothing | `test_stop_keeps_message_queued_before_stop` |
 | Maintenance model validated; `Completion(light=True)` uses it; Maintenance events | `test_maintenance_model` |
+| Completion requests are marked `maintenance`; max_tokens capped at the model's output limit | `test_only_completion_requests_are_maintenance`, `test_completion_caps_max_tokens_at_the_model_limit` |
+| A cancel before the first stream event is charged the input estimate | `test_cancel_before_first_event_charges_the_input_estimate` |
+
+## User settings (api.py `update_settings`) — `tests/test_settings.py`
+
+| Behavior | Test |
+|----------|------|
+| settings() reflects the configuration and the provider list | `test_settings_reflect_the_configuration`, `test_settings_without_a_provider_list` |
+| Model, maintenance model, prompt, budget, permissions apply from the next request | `test_live_settings_apply_from_the_next_request`, `test_maintenance_model_empty_string_clears_it` |
+| Permissions stay clamped to the inherited ceiling | `test_permissions_stay_clamped_to_the_inherited_ceiling` |
+| Raising a spent budget lets the agent continue | `test_raising_a_spent_budget_lets_the_agent_continue` |
+| An invalid update changes nothing | `test_an_invalid_update_changes_nothing` |
+| Provider switch rebuilds the Core; a provider that cannot list models is refused | `test_switching_provider_*`, `test_a_provider_that_cannot_list_models_is_not_switched_to` |
+| Provider, key and work folder wait until nothing runs; work folder rebuilds Tools | `test_provider_and_work_folder_wait_until_nothing_runs`, `test_work_folder_rebuilds_the_tools` |
+| Settings before start; the Core is asked for models only when needed | `test_settings_before_start`, `test_settings_before_start_need_the_provider_only_for_models` |
+| Keys go to the keychain only | `test_api_key_*` |
+| Only changed settings are saved; changes are logged without secrets, loosening flagged | `test_only_changed_settings_are_saved`, `test_settings_changes_are_logged_without_values_that_are_secret`, `test_raising_a_limit_and_loosening_permissions_are_flagged` |
+
+## Launcher (`kayden`) — `tests/test_e2e.py`
+
+| Behavior | Test |
+|----------|------|
+| Config file selects modules and runtime settings; flags override; invalid files refused | `test_config_file_in_the_data_dir_selects_the_core`, `test_runtime_settings_come_from_the_config_file`, `test_invalid_config_files_are_refused` |
+| System prompt inline or from a file | `test_system_prompt_replaces_the_default`, `test_system_prompt_file_is_relative_to_the_config_file` |
+| Provider list and the current provider | `test_providers_and_the_current_one` |
+| Saved settings override the config file; invalid ones refused | `test_saved_settings_override_the_config_file`, `test_invalid_saved_settings_are_refused` |
+| `--show-config` prints the effective config, which loads back unchanged | `test_show_config_prints_the_effective_config_without_building_modules`, `test_shown_config_loads_back_to_the_same_instance` |
+| Module startup errors are one line; the `kayden` command runs main | `test_module_startup_errors_are_one_line`, `test_kayden_command_runs_main` |
+
+## Settings screen (TUI) — `tests/test_tui_settings.py`
+
+| Behavior | Test |
+|----------|------|
+| F2 or /settings shows the current settings; saving sends only what changed | `test_settings_screen_shows_the_current_settings`, `test_saving_sends_only_what_changed` |
+| Loosening permissions or raising or removing the limit asks first; tightening does not | `test_raising_the_spending_limit_asks_first`, `test_removing_the_limit_and_loosening_permissions_ask_first`, `test_tightening_does_not_ask` |
+| Fits an 80×24 terminal | `test_settings_screen_fits_a_small_terminal` |
