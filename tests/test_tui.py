@@ -704,12 +704,13 @@ async def test_history_is_paginated():
         assert shown == [f"m{i}" for i in range(HISTORY_PAGE + 10, 2 * HISTORY_PAGE + 10)]
 
         for expected in (2 * HISTORY_PAGE, 2 * HISTORY_PAGE + 10):
-            app.query_one("#load-earlier", Button).press()  # scrolled out of view
+            button = app.query_one("#load-earlier", Button)
+            await until(pilot, lambda b=button: not b.disabled)  # a page may still be loading
+            button.press()  # scrolled out of view
             await until(pilot, lambda n=expected: len(entries(app, UserEntry)) == n)
         assert [e.message_text for e in entries(app, UserEntry)] == [
             f"m{i}" for i in range(2 * HISTORY_PAGE + 10)]
-        await pilot.pause()
-        assert not app.query("#load-earlier")
+        await until(pilot, lambda: not app.query("#load-earlier"))
 
 
 async def test_factory_builds_start_options(tmp_path):
