@@ -198,53 +198,6 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 - Moving the TUI onto the shared view model beyond the loosening check.
 - A web frontend.
 
-### Acceptance criteria
-
-- On a clean macOS and a clean Fedora or Ubuntu machine without Python, a user installs from
-  the `.dmg` or Flatpak, completes the welcome, and gets a streamed answer without a
-  terminal.
-- The key ends up in the OS keychain and in no file or log. A rejected key leaves the
-  previous provider working.
-- View-model tests, written first, cover:
-  - every event row above
-  - `ModelRetry` discarding the stream
-  - recovery on a `seq` gap and on attach mid-cycle, with queued messages, pending
-    prompts and background operations
-  - the settings diff
-- A test shows that loosening permissions, raising the limit and removing the limit each
-  require confirmation, and that nothing is sent on No. The TUI and the desktop app use the
-  same check.
-- The window stays responsive while a tool runs, during Stop with a call that ignores
-  cancellation, and while `update_settings` rebuilds the Core.
-- The existing runtime and shell-tool tests pass on a `qasync.QEventLoop`, which shows that
-  subprocesses and HTTP work on it.
-- The bundle size of each format is measured and recorded in `.agents/decisions.md`.
-- VoiceOver and Orca can read the transcript and operate Send, Stop and the permission
-  buttons.
-
-### Risks
-
-- **qasync has had no release since 0.28.0 (2025-08-28),** and its metadata does not yet
-  claim Python 3.14. The 3.14 CI landed on its main branch afterwards. Mitigations: run the
-  test suite on it first, bundle Python 3.13 if needed, and vendor the module if it is
-  abandoned (BSD-2-Clause). Switching to QtAsyncio once it supports subprocesses and
-  sockets is also possible.
-- **One thread for GUI and runtime.** A slow paint, such as re-rendering a very long
-  Markdown reply, delays runtime tasks. The mitigations are throttled re-rendering and
-  paged history.
-- **Keychain gaps.** A Linux desktop may lack a Secret Service, or a Flatpak may be denied
-  access to it. Such users must set an environment variable, which non-technical users
-  cannot do.
-- **Signing costs and gatekeeping.** Apple notarization needs a paid developer account.
-  Unsigned builds are blocked by Gatekeeper.
-- **Qt look on GNOME.** On GNOME, Qt widgets look less native than GTK ones.
-- **Web reuse is limited to the view model.** A web frontend will need its own rendering
-  layer.
-- **Ignoring the configured frontend.** `kayden-desktop` ignores `[frontend]` in
-  `config.toml`, so the same data directory can be opened by either the TUI or the app. The
-  instance lock refuses a second agent in the same mode. The app must show that refusal as
-  "Kayden is already open" rather than a traceback.
-
 ## Alternatives considered
 
 - **Toga (BeeWare).** Toga 0.5.7 has native widgets, an asyncio loop on the main thread and
@@ -277,6 +230,14 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
   web, but QtWebEngine bundles Chromium, which multiplies the bundle size.
   `QTextBrowser` Markdown covers what the TUI shows.
 - **PyQt6.** It has the same Qt and the same loop story, but a GPL or commercial license.
+- **A React UI in Electron or Tauri, with Kayden as a Python sidecar.** It gives the most
+  polished UI for the least effort, the largest ecosystem (chat, Markdown, code
+  highlighting) and the same UI for a later web frontend. It loses on architecture: the UI
+  cannot call `RuntimeAPI` directly, so the runtime must be exposed over a local connection
+  that has to be secured against other local processes (the NiceGUI problem), the app
+  becomes two processes and two languages, and each OS bundle carries two runtimes
+  (Chromium or a system web view, plus Python). The owner chose the simpler single-process
+  app over web reuse.
 - **Tauri or PyTauri.** Tauri has a tiny shell on system web views. But PyTauri has not
   released since 0.8.0 (2025-09-01), it adds Rust and Node tooling, and bundling Python
   removes the size advantage.
@@ -287,6 +248,53 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 - **Packaging with PyInstaller or `pyside6-deploy` (Nuitka).** Both freeze the app but do
   not build signed installers, Flatpaks or notarized DMGs. Nuitka's PyPI metadata now
   reads AGPL-3.0, which would need checking.
+
+## Acceptance criteria
+
+- On a clean macOS and a clean Fedora or Ubuntu machine without Python, a user installs from
+  the `.dmg` or Flatpak, completes the welcome, and gets a streamed answer without a
+  terminal.
+- The key ends up in the OS keychain and in no file or log. A rejected key leaves the
+  previous provider working.
+- View-model tests, written first, cover:
+  - every event row above
+  - `ModelRetry` discarding the stream
+  - recovery on a `seq` gap and on attach mid-cycle, with queued messages, pending
+    prompts and background operations
+  - the settings diff
+- A test shows that loosening permissions, raising the limit and removing the limit each
+  require confirmation, and that nothing is sent on No. The TUI and the desktop app use the
+  same check.
+- The window stays responsive while a tool runs, during Stop with a call that ignores
+  cancellation, and while `update_settings` rebuilds the Core.
+- The existing runtime and shell-tool tests pass on a `qasync.QEventLoop`, which shows that
+  subprocesses and HTTP work on it.
+- The bundle size of each format is measured and recorded in `.agents/decisions.md`.
+- VoiceOver and Orca can read the transcript and operate Send, Stop and the permission
+  buttons.
+
+## Risks
+
+- **qasync has had no release since 0.28.0 (2025-08-28),** and its metadata does not yet
+  claim Python 3.14. The 3.14 CI landed on its main branch afterwards. Mitigations: run the
+  test suite on it first, bundle Python 3.13 if needed, and vendor the module if it is
+  abandoned (BSD-2-Clause). Switching to QtAsyncio once it supports subprocesses and
+  sockets is also possible.
+- **One thread for GUI and runtime.** A slow paint, such as re-rendering a very long
+  Markdown reply, delays runtime tasks. The mitigations are throttled re-rendering and
+  paged history.
+- **Keychain gaps.** A Linux desktop may lack a Secret Service, or a Flatpak may be denied
+  access to it. Such users must set an environment variable, which non-technical users
+  cannot do.
+- **Signing costs and gatekeeping.** Apple notarization needs a paid developer account.
+  Unsigned builds are blocked by Gatekeeper.
+- **Qt look on GNOME.** On GNOME, Qt widgets look less native than GTK ones.
+- **Web reuse is limited to the view model.** A web frontend will need its own rendering
+  layer.
+- **Ignoring the configured frontend.** `kayden-desktop` ignores `[frontend]` in
+  `config.toml`, so the same data directory can be opened by either the TUI or the app. The
+  instance lock refuses a second agent in the same mode. The app must show that refusal as
+  "Kayden is already open" rather than a traceback.
 
 ## Sources (checked 2026-11-07)
 
