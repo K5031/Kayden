@@ -539,6 +539,19 @@ async def test_start_screen_starts_the_agent():
         await until(pilot, lambda: ("history", "conv-1") in stub.calls)
 
 
+async def test_start_screen_fits_a_small_terminal():
+    stub = StubRuntime(started=False)
+    app = make(stub)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await until(pilot, lambda: isinstance(app.screen, StartScreen))
+        await pilot.pause()
+        start = app.screen.query_one("#start", Button)
+        assert app.screen.focused is start
+        assert app.screen.region.contains_region(start.region)
+        await pilot.press("enter")
+        await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
+
+
 async def test_start_options_skip_the_start_screen():
     stub = StubRuntime(started=False)
     app = make(stub, start_options=StartOptions(Mode.SESSION, conversation_id="conv-1"))

@@ -356,7 +356,8 @@ class StartScreen(ModalScreen[StartOptions]):
         self.runtime = runtime
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
+        # Scrolls so Start stays reachable when the terminal is shorter than the dialog.
+        with VerticalScroll(classes="dialog"):
             yield Label("Start Kayden", classes="title")
             yield Label("Mode")
             yield Select(
@@ -384,6 +385,7 @@ class StartScreen(ModalScreen[StartOptions]):
             yield Button("Start", variant="primary", id="start")
 
     def on_mount(self) -> None:
+        self.query_one("#start", Button).focus()  # Enter starts with the defaults
         self.run_worker(self._load_models(), exit_on_error=False)
         self.run_worker(self._load_conversations(Mode.SESSION), group="conv", exclusive=True)
 
