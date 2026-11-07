@@ -78,7 +78,7 @@ in section 9.
 
 ### 1.7 (C) Python version
 - **Status:** **Accepted**: target 3.12+, run on what `uv` provides (3.13.7 here); 3.14 is a preference.
-- **Where:** CLAUDE.md "Python 3.14"; `pyproject.toml` `requires-python >= 3.12`; the
+- **Where:** AGENTS.md "Python 3.14"; `pyproject.toml` `requires-python >= 3.12`; the
   provided venv runs 3.13.7.
 - **Assumed:** Code targets 3.12+ (uses PEP 695 syntax as api.py does); tested on 3.13.
 
@@ -594,7 +594,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
   store (written with import-path tags) is refused on open with a clear error ("memory
   schema version 1 is not supported (expected 2)"). The archive is never updated.
 - **Where:** api.py `BLOCK_TYPES` comment, .agents/process/MODULES.md "migrate rows already written with
-  import paths"; CLAUDE.md "Memory archive: append-only".
+  import paths"; AGENTS.md "Memory archive: append-only".
 - **Problem:** Rewriting stored tags is an update to an archive that must be append-only.
 
 ### M8 (S) Recognising a context overflow

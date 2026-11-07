@@ -12,7 +12,7 @@ Your `.agents/contract-issues.md` was read. Most of your assumptions are now the
 7. **`AgentState.NOT_STARTED` (6.1).** `snapshot().state` is `NOT_STARTED` before `start()`.
 8. **`MessageCommitted.stop` (6.5).** Set it to the stop reason on assistant messages.
 9. **Use the shared helpers.** `InstancePaths` comes from `api.py`; `PermissionPolicy.inherited_ceiling()` now returns DENY for an invalid value; `PermissionPolicy.clamp` does the clamping.
-10. **Python.** Target 3.12+ and run on whatever `uv` provides. `CLAUDE.md` saying 3.14 is a preference, not a requirement.
+10. **Python.** Target 3.12+ and run on whatever `uv` provides. `AGENTS.md` saying 3.14 is a preference, not a requirement.
 
 ## Already matches the new spec (keep as is)
 ToolFinished buffering for foreground calls; one USER message per queued message; Stop in IDLE with outstanding operations performs a full Stop; wake set computed at the turn boundary; idempotent append backlog and FAILED(INTERNAL) with `activate()` retry; per-mode usage file and lock; invalid ceiling fail-closed; any exhausted dimension stops all chargeable execution; ABANDONED for unconfirmed timeouts.

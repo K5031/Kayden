@@ -3,7 +3,7 @@
 This is a spec test. You get only the written spec and contract, and build the runtime from them. Where they are ambiguous, the result will show it.
 
 ## Inputs
-Allowed: `CLAUDE.md`, `SPEC.md`, `src/kayden/api.py`, and what you create.
+Allowed: `AGENTS.md`, `SPEC.md`, `src/kayden/api.py`, and what you create.
 Not allowed: any other directory on this machine (especially anything named `kayden-*` or `Kayden`), other repositories' git history, or web searches for existing Kayden code. If you find such material, ignore it and say so in your report.
 
 ## Build
@@ -22,7 +22,7 @@ Not allowed: any other directory on this machine (especially anything named `kay
 4. Work in small commits.
 
 ## Rules
-Follow `CLAUDE.md`. Do not modify `api.py` or `SPEC.md`; propose changes in your report.
+Follow `AGENTS.md`. Do not modify `api.py` or `SPEC.md`; propose changes in your report.
 
 ## Report
 - `.agents/contract-issues.md`: every place the spec or `api.py` was ambiguous, contradictory or silent, and what you assumed. Be exhaustive; this is the main output.

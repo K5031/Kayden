@@ -65,7 +65,7 @@ coding agents rather than users:
 | `.agents/plan.md` | Each specified behavior and the test that covers it |
 | `.agents/process/` | The briefs earlier build phases followed |
 
-`CLAUDE.md` holds the rules for working on the code.
+`AGENTS.md` holds the rules for working on the code.
 
 ## Limits
 
