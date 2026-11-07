@@ -43,6 +43,10 @@ in, so a user never needs them; `config.toml` stays available for advanced overr
 - **Applied by swapping a module, only when no cycle is running and no operation is
   outstanding** (the rule `start()` already follows): provider and key rebuild the Core from
   its factory, then the model list is refreshed; the work folder rebuilds Tools. No restart.
+- **Confirmation.** Before loosening permissions or raising the spending limit, a frontend
+  must ask the user to confirm and send the change only after they do. This is a rule for
+  frontends: the runtime cannot tell whether a person confirmed. The runtime writes every
+  settings change to the event log either way.
 - **Not settings:** Memory (a different Memory is a different archive, so a different
   instance) and the frontend (it cannot replace itself). Both stay in `config.toml` and take a
   restart.
@@ -105,13 +109,16 @@ command-line flags, each overriding the previous; `--show-config` shows the resu
   it is idle; the conversation continues on the new provider.
 - Keys never land in a file Kayden writes.
 - Every attached frontend sees a change through `SettingsChanged`.
+- Loosening permissions or raising the spending limit asks the user to confirm first, in
+  every frontend.
 - Existing `config.toml` files and environment-variable keys keep working.
 
 ## Risks
 
 - **Safety.** Any frontend can loosen permissions or raise the budget, so whatever drives a
   frontend can too; SPEC section 3 already notes that a malicious frontend could
-  misrepresent user actions. Every settings change is written to the event log.
+  misrepresent user actions. The confirmation rule binds well-behaved frontends only; the
+  event log records every change.
 - **A larger runtime.** It gains the provider catalog, module rebuilding and settings
   persistence; module swapping must be tested against every state.
 - **Reasoning across providers.** After a provider swap, earlier reasoning blocks come from
@@ -123,6 +130,4 @@ command-line flags, each overriding the previous; `--show-config` shows the resu
 
 ## Open questions
 
-- Should loosening permissions or raising the spending limit ask for confirmation in the
-  frontend, and should the contract require it?
 - Which graphical frontend comes first: a local web page or a desktop app?
