@@ -34,11 +34,14 @@ from kayden.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
+    ProviderInfo,
     ReasoningDelta,
     Role,
     RuntimeEvent,
     RuntimeSnapshot,
     RuntimeStateError,
+    Settings,
+    SettingsUpdate,
     ShuttingDown,
     StartOptions,
     StateChanged,
@@ -102,6 +105,14 @@ class StubRuntime:
         self.calls: list[tuple] = []
         self.command_delay = 0.0
         self.fail_with: dict[str, Exception] = {}
+        self.spent = 1.25
+        self.current_settings = Settings(
+            provider="claude",
+            providers=[ProviderInfo("claude", "Claude", "ANTHROPIC_API_KEY", True),
+                       ProviderInfo("local", "Local AI", None, False)],
+            model="m1", maintenance_model=None, budget=Budget(max_cost_usd=10.0),
+            permissions=PermissionPolicy.ALLOW_READ_ONLY, system_prompt="Be helpful.",
+            work_folder="/work")
         self._subscribers: list[asyncio.Queue[EventEnvelope | None]] = []
 
     # scripting
@@ -148,7 +159,7 @@ class StubRuntime:
             conversation=self.conversation,
             config=self.config,
             model=self.model,
-            usage=UsageSnapshot(Usage(), 0, 0.0),
+            usage=UsageSnapshot(Usage(cost_usd=self.spent), 0, 0.0),
             operations=list(self.operations),
             pending_permissions=list(self.pending_permissions),
             queued_messages=list(self.queued),
@@ -207,6 +218,13 @@ class StubRuntime:
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:
         await self._record("resolve_permission", request_id, decision)
+
+    async def settings(self) -> Settings:
+        return self.current_settings
+
+    async def update_settings(self, update: SettingsUpdate) -> Settings:
+        await self._record("update_settings", update)
+        return self.current_settings
 
 
 def msg(id: str, role: Role, *blocks) -> Message:

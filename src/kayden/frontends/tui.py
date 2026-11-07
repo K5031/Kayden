@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Sequence
+from dataclasses import replace
 from typing import Any, ClassVar
 
 from rich.console import Group, RenderableType
@@ -21,7 +22,16 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Input, Label, OptionList, Select, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Input,
+    Label,
+    OptionList,
+    Select,
+    Static,
+    TextArea,
+)
 from textual.widgets.option_list import Option
 
 from kayden.api import (
@@ -46,6 +56,7 @@ from kayden.api import (
     ModelSelected,
     OperationInfo,
     OperationResult,
+    PermissionPolicy,
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
@@ -54,6 +65,8 @@ from kayden.api import (
     Role,
     RuntimeAPI,
     RuntimeEvent,
+    Settings,
+    SettingsUpdate,
     ShuttingDown,
     StartOptions,
     StateChanged,
@@ -104,7 +117,7 @@ DECISION_ALIASES = {
     "conv": Decision.ALLOW_CONVERSATION,
 }
 HELP = (
-    "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), "
+    "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -344,6 +357,198 @@ class ModelScreen(ModalScreen[str | None]):
         self.dismiss(event.option.id)
 
 
+SAME_MODEL = "__same__"
+PERMISSION_LABELS = {
+    PermissionPolicy.ASK: "Ask me before every action",
+    PermissionPolicy.ALLOW_READ_ONLY: "Read freely, ask before changes",
+    PermissionPolicy.DENY: "Never run tools",
+}
+
+
+def _money(value: float) -> str:
+    return f"${value:g}" if value == int(value) else f"${value:.2f}"
+
+
+def _dollars(value: float | None) -> str:
+    return "no spending limit" if value is None else _money(value)
+
+
+def _model_label(model: ModelInfo) -> str:
+    if model.input_usd_per_mtok is None or model.output_usd_per_mtok is None:
+        return model.name
+    return (f"{model.name}  ({_money(model.input_usd_per_mtok)} in / "
+            f"{_money(model.output_usd_per_mtok)} out per million tokens)")
+
+
+class ConfirmScreen(ModalScreen[bool]):
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(False)", "No")]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(self.message, id="confirm-message")
+            with Horizontal(classes="buttons"):
+                yield Button("Yes", variant="warning", id="confirm-yes")
+                yield Button("No", id="confirm-no")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm-no", Button).focus()
+
+    @on(Button.Pressed, "#confirm-yes")
+    def _yes(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#confirm-no")
+    def _no(self) -> None:
+        self.dismiss(False)
+
+
+class SettingsScreen(ModalScreen[SettingsUpdate | None]):
+    """Edits the user settings; returns only what changed. Loosening permissions or
+    raising the spending limit is confirmed first (api.py update_settings)."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, settings: Settings, models: Sequence[ModelInfo], spent: float) -> None:
+        super().__init__()
+        self.settings = settings
+        self.models = models
+        self.spent = spent
+
+    def compose(self) -> ComposeResult:
+        s = self.settings
+        models = [(_model_label(m), m.id) for m in self.models]
+        with VerticalScroll(classes="dialog"):
+            yield Label("Settings", classes="title")
+            yield Label("AI provider")
+            yield Select(
+                [(p.name + ("" if p.key_name is None else
+                            "  (key saved)" if p.has_key else "  (no key yet)"), p.id)
+                 for p in s.providers],
+                value=s.provider if s.provider is not None else Select.BLANK,
+                allow_blank=s.provider is None, prompt="Custom (from config.toml)",
+                id="provider")
+            yield Label("API key for this provider")
+            yield Input(password=True, placeholder="Leave empty to keep the current key",
+                        id="api-key")
+            yield Label("Model")
+            yield Select(models, value=s.model if s.model in dict(map(reversed, models))
+                         else Select.BLANK, allow_blank=True, prompt="Provider's default",
+                         id="model")
+            yield Label("A new provider starts with its first model; change it after saving.",
+                        id="model-note")
+            yield Label("Model for memory upkeep")
+            yield Select([("Same as the main model", SAME_MODEL), *models],
+                         value=s.maintenance_model or SAME_MODEL, allow_blank=False,
+                         id="maintenance-model")
+            yield Label("Spending limit in US dollars (empty = no limit)")
+            limit = s.budget.max_cost_usd
+            yield Input("" if limit is None else f"{limit:g}", id="spending-limit")
+            yield Static(f"${self.spent:.2f} spent so far", id="spent")
+            yield Label("What the agent may do")
+            yield Select([(label, policy) for policy, label in PERMISSION_LABELS.items()],
+                         value=s.permissions, allow_blank=False, id="permissions")
+            yield Label("Instructions")
+            yield TextArea(s.system_prompt, id="instructions")
+            yield Label("Work folder")
+            yield Input(s.work_folder or "", disabled=s.work_folder is None, id="work-folder")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#model-note").display = False
+
+    @on(Select.Changed, "#provider")
+    def _provider_changed(self, event: Select.Changed) -> None:
+        switching = event.value != self.settings.provider
+        for selector in ("#model", "#maintenance-model"):
+            self.query_one(selector, Select).disabled = switching
+        self.query_one("#model-note").display = switching
+
+    @on(Button.Pressed, "#cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#save")
+    def _save(self) -> None:
+        update = self._update()
+        if update is None:
+            return
+        reasons = self._loosening(update)
+        if not reasons:
+            self.dismiss(update)
+            return
+
+        def confirmed(yes: bool | None) -> None:
+            if yes:
+                self.dismiss(update)
+
+        self.app.push_screen(ConfirmScreen("This change " + " and ".join(reasons)
+                                           + ". Continue?"), confirmed)
+
+    def _update(self) -> SettingsUpdate | None:
+        """The changed fields, or None (with a message) if a value is invalid."""
+        s = self.settings
+        changes: dict[str, Any] = {}
+        provider = self.query_one("#provider", Select).value
+        switching = provider is not Select.BLANK and provider != s.provider
+        if switching:
+            changes["provider"] = provider
+        if key := self.query_one("#api-key", Input).value.strip():
+            changes["api_key"] = key
+        if not switching:
+            model = self.query_one("#model", Select).value
+            if model is not Select.BLANK and model != s.model:
+                changes["model"] = model
+            light = self.query_one("#maintenance-model", Select).value
+            light = None if light == SAME_MODEL else light
+            if light != s.maintenance_model:
+                changes["maintenance_model"] = light or ""
+        text = self.query_one("#spending-limit", Input).value.strip()
+        try:
+            limit = float(text.lstrip("$")) if text else None
+            if limit is not None and limit < 0:
+                raise ValueError
+        except ValueError:
+            self.notify("The spending limit must be an amount in dollars, like 10 or 2.50.",
+                        severity="error")
+            return None
+        if limit != s.budget.max_cost_usd:
+            changes["budget"] = replace(s.budget, max_cost_usd=limit)
+        permissions = self.query_one("#permissions", Select).value
+        if permissions != s.permissions:
+            changes["permissions"] = permissions
+        prompt = self.query_one("#instructions", TextArea).text
+        if prompt != s.system_prompt:
+            if not prompt.strip():
+                self.notify("The instructions can't be empty.", severity="error")
+                return None
+            changes["system_prompt"] = prompt
+        folder = self.query_one("#work-folder", Input)
+        if not folder.disabled and folder.value.strip() != (s.work_folder or ""):
+            changes["work_folder"] = folder.value.strip()
+        return SettingsUpdate(**changes)
+
+    def _loosening(self, update: SettingsUpdate) -> list[str]:
+        reasons = []
+        if update.budget is not None:
+            old, new = self.settings.budget.max_cost_usd, update.budget.max_cost_usd
+            if old is not None and (new is None or new > old):
+                reasons.append(f"raises the spending limit from {_dollars(old)} to "
+                               f"{_dollars(new)}" if new is not None else
+                               f"removes the {_dollars(old)} limit: no spending limit")
+        if update.permissions is not None:
+            order = list(PermissionPolicy)
+            if order.index(update.permissions) > order.index(self.settings.permissions):
+                reasons.append("lets the agent do more without asking: "
+                               + PERMISSION_LABELS[update.permissions].lower())
+        return reasons
+
+
 NEW_CONVERSATION = "__new__"
 DEFAULT_MODEL = "__default__"
 
@@ -469,11 +674,14 @@ class KaydenApp(App[None]):
     .dialog { width: 70; height: auto; max-height: 90%; border: thick $primary; padding: 1 2;
               background: $surface; }
     .dialog Select, .dialog Button { margin-bottom: 1; }
+    .dialog TextArea { height: 6; }
+    .dialog .buttons { height: auto; }
     """
     BINDINGS: ClassVar = [
         Binding("escape", "stop", "Stop"),
         Binding("ctrl+r", "activate", "Activate", priority=True),
         Binding("ctrl+o", "models", "Model", priority=True),
+        Binding("f2", "settings", "Settings", priority=True),
         Binding("ctrl+k", "operations", "Cancel op", priority=True),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
@@ -861,6 +1069,8 @@ class KaydenApp(App[None]):
                 self._call(self.runtime.select_model(arg))
             case "model":
                 self.action_models()
+            case "settings":
+                self.action_settings()
             case "cancel" if arg:
                 self._call(self.runtime.cancel_operation(arg))
             case "cancel":
@@ -911,6 +1121,28 @@ class KaydenApp(App[None]):
             self.push_screen(ModelScreen(models, self.model), self._on_model_chosen)
 
         self._call(pick())
+
+    def action_settings(self) -> None:
+        async def open_screen() -> None:
+            settings = await self.runtime.settings()
+            try:
+                models = await self.runtime.list_models()
+            except Exception:  # noqa: BLE001 - e.g. no key yet; the provider can still be set
+                models = []
+            spent = self.runtime.snapshot().usage.usage.cost_usd or 0.0
+            self.push_screen(SettingsScreen(settings, models, spent), self._on_settings_chosen)
+
+        self._call(open_screen())
+
+    def _on_settings_chosen(self, update: SettingsUpdate | None) -> None:
+        if update is None or update == SettingsUpdate():
+            return
+
+        async def apply() -> None:
+            await self.runtime.update_settings(update)
+            self.notify("Settings saved")
+
+        self._call(apply())
 
     def _on_model_chosen(self, model_id: str | None) -> None:
         if model_id is not None:

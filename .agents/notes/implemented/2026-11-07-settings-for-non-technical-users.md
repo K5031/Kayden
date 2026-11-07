@@ -100,9 +100,12 @@ Code: `api.py` (`Settings`, `SettingsUpdate`, `ProviderInfo`, `SettingsChanged`,
 
 ## Consequences
 
-- Every frontend gets settings through the contract it already uses, but no frontend shows
-  a settings screen yet: the TUI screen and the desktop app (a separate note, and the
-  first graphical frontend) are still to be built.
+- Every frontend gets settings through the contract it already uses. The TUI has a
+  settings screen (F2 or `/settings`, `SettingsScreen` in `frontends/tui.py`): it sends only
+  the fields that changed, and a `ConfirmScreen` asks before loosening permissions or
+  raising or removing the spending limit. It edits only the cost limit; other budget
+  dimensions stay as configured. The desktop app (a separate note, and the first graphical
+  frontend) is still to be built.
 - The runtime is larger: provider list, module rebuilding and settings persistence.
 - Any frontend, and whatever drives it, can loosen permissions or raise the budget; the
   confirmation rule binds well-behaved frontends only, and the event log records it.

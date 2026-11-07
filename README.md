@@ -83,8 +83,10 @@ to the config file) in `[runtime]` replaces the built-in prompt; Continuous Mode
 its instructions on how to idle. The built-in prompt explains background operations,
 `recall` and `peek_other_mode`, so start from it: `kayden --show-config` prints it.
 
-**Saved settings.** Frontends change provider, API key, model, spending limit,
-permissions, instructions and work folder through the runtime; the changes are saved to
+**Saved settings.** In the TUI, press F2 (or type `/settings`) to change the provider, API
+key, model, spending limit, permissions, instructions and work folder; loosening permissions
+or raising the limit asks for confirmation. Any frontend can do this through the runtime;
+the changes are saved to
 `<data dir>/settings.toml` and override `config.toml` (command-line flags override both).
 API keys set that way go to the OS keychain, never to a file. Keys exported in the
 environment still work and take precedence.
