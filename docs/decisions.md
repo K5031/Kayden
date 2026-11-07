@@ -212,7 +212,7 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 
 ### OpenAI-compatible profiles (`profile` option of `kayden.core.openai_compat:factory`)
 
-Design: `design/deepseek-profile.md`.
+Design: [Agent Note](../.agents/notes/implemented/2026-10-30-deepseek-openai-compatible-profiles.md).
 
 - A `Profile` is plain data in `openai_compat.py`; generic code reads its fields and never
   a provider name. `"openai"` (default) is stock behavior. `models` entries in the
@@ -237,7 +237,7 @@ Design: `design/deepseek-profile.md`.
   with finish reason `length`. Hence the profile's `max_output_tokens` of 64000 (DeepSeek's
   default for thinking, against 393216 reported by `/models`). Replayed reasoning counts
   as input tokens, and the runtime's estimator counts it too.
-- Maintenance requests (`InferenceRequest.maintenance`, design: `design/maintenance-marker.md`)
+- Maintenance requests (`InferenceRequest.maintenance`, design: [Agent Note](../.agents/notes/implemented/2026-11-02-maintenance-marker.md))
   run with thinking disabled, unless `options` says otherwise, so reasoning cannot use up a
   summary's token limit.
 - `insufficient_system_resource` and `aborted` are transient. Neither was seen live.
@@ -288,7 +288,7 @@ Design: `design/deepseek-profile.md`.
 
 ## Running Kayden
 
-Design of the config file: `design/config-file.md`.
+Design of the config file: [Agent Note](../.agents/notes/implemented/2026-11-02-instance-config-file.md).
 
 ```
 export ANTHROPIC_API_KEY=...

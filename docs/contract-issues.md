@@ -642,7 +642,7 @@ Against contract Draft 2.4. All **Open**; the stated assumption is what the modu
 
 ### M14 (S) No maintenance marker on inference requests
 - **Status:** Resolved (2026-11-02): `InferenceRequest.maintenance`. Design:
-  `design/maintenance-marker.md`.
+  [Agent Note](../.agents/notes/implemented/2026-11-02-maintenance-marker.md).
 - **Where:** `InferenceRequest` has no field for it; `Completion` has `light`, which the
   runtime does not pass on.
 - **Problem:** A Core cannot tell maintenance from a turn, yet a provider may need different
