@@ -624,7 +624,9 @@ Against contract Draft 2.4. The stated assumption is what the module does.
   signature would make the request fail permanently).
 
 ### M11 (S) Refusals in history
-- **Status:** Open. Known limitation, left for later.
+- **Status:** **Accepted** (2026-11-07). Left as is: the reply text is saved either way, and
+  only the refusal mark is lost after a restart. The fix needs a schema change (a stop
+  column), which is not worth it for a display detail.
 - **Where:** `MessageCommitted.stop`, `StopReason.REFUSAL` "shown distinctly".
 - **Problem:** The stop reason exists only on the live event; `Message` does not carry it,
   so after a restart or a late attach (history) a refusal looks like ordinary text.
@@ -643,7 +645,8 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Fix:** Add `backgrounded: bool` to `OperationInfo`.
 
 ### M13 (S) Time-of-day prices
-- **Status:** Open.
+- **Status:** **Accepted** (2026-11-02). Left as is: costs only read high, so a cost budget
+  can stop early but never overspend, and it matters only on DeepSeek.
 - **Where:** `ModelInfo.input_usd_per_mtok` and siblings hold one price per model.
 - **Problem:** DeepSeek's off-peak rates are half its peak rates, on a UTC schedule that
   also depends on Chinese public holidays.
