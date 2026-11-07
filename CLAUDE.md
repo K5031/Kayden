@@ -17,13 +17,16 @@ Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, r
 - Each instance writes a JSONL event log of runtime decisions (state changes, tool starts, stops, budget checks).
 
 ## Ambiguity
-If the spec or `api.py` is ambiguous, contradictory or wrong, do not silently work around it. Record it in `docs/contract-issues.md` (what, where, proposed fix) and continue with the most reasonable reading. Record implementation choices the spec leaves open (storage formats, timeouts, defaults, base system prompt) in `docs/decisions.md`.
+If the spec or `api.py` is ambiguous, contradictory or wrong, do not silently work around it. Record it in `.agents/contract-issues.md` (what, where, proposed fix) and continue with the most reasonable reading. Record implementation choices the spec leaves open (storage formats, timeouts, defaults, base system prompt) in `.agents/decisions.md`.
+
+## Documentation
+`docs/` is the user wiki: concise, plain language, organized by what a reader wants to do. When a change alters user-facing behavior (commands, keys, settings, defaults, limits), update the affected page in the same change. Working records (Agent Notes, contract issues, decisions, plans) go in `.agents/`, never in `docs/`.
 
 ## Agent Notes
 Design decisions live in `.agents/notes/` as **Agent Notes**: the why and what was given up, which code and docs can't carry.
 
 ### When to write one
-- Only for lasting decision rationale that code, tests and docs don't explain. Skip mechanical or local changes; small choices go in `docs/decisions.md`.
+- Only for lasting decision rationale that code, tests and docs don't explain. Skip mechanical or local changes; small choices go in `.agents/decisions.md`.
 - For a new feature or a change of approach, write the proposed note before coding.
 - If a note already owns the decision, update it. Don't duplicate.
 - Before changing architecture, adding a dependency or switching approach, search the notes. If the change contradicts an accepted decision, flag it and ask.

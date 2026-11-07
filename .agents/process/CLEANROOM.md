@@ -17,7 +17,7 @@ Not allowed: any other directory on this machine (especially anything named `kay
 
 ## Process
 1. Read the three input files completely.
-2. Write `docs/plan.md`: the list of behaviors you extracted from the spec, each with the test that will cover it.
+2. Write `.agents/plan.md`: the list of behaviors you extracted from the spec, each with the test that will cover it.
 3. Write the tests, then the runtime. Run `uv run pytest` and `uv run ruff check` until clean.
 4. Work in small commits.
 
@@ -25,6 +25,6 @@ Not allowed: any other directory on this machine (especially anything named `kay
 Follow `CLAUDE.md`. Do not modify `api.py` or `SPEC.md`; propose changes in your report.
 
 ## Report
-- `docs/contract-issues.md`: every place the spec or `api.py` was ambiguous, contradictory or silent, and what you assumed. Be exhaustive; this is the main output.
-- `docs/decisions.md`: choices the spec leaves to the implementer (defaults, formats).
+- `.agents/contract-issues.md`: every place the spec or `api.py` was ambiguous, contradictory or silent, and what you assumed. Be exhaustive; this is the main output.
+- `.agents/decisions.md`: choices the spec leaves to the implementer (defaults, formats).
 - Finish with a short summary: tests passing, anything unfinished, and the five ambiguities that cost you the most time.

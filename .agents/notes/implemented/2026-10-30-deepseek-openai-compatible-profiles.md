@@ -43,7 +43,7 @@ completions. Generic code reads its fields and never a provider name. The factor
 - **Model config.** User `models` entries merge over the profile's, field by field, so
   overriding a context window keeps the prices.
 
-Live results: `docs/decisions.md`, "OpenAI-compatible profiles".
+Live results: `.agents/decisions.md`, "OpenAI-compatible profiles".
 
 ## Alternatives considered
 

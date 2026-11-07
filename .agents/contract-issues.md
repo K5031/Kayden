@@ -482,7 +482,7 @@ in section 9.
 
 ### N1 (C) op_status: clamp vs. schema maximum
 - **Status:** **Resolved** (Draft 2.4: schema has no maximum; values above 60 are treated as 60). Runtime changed: `wait_s: 61` is now clamped, not rejected (`test_op_status_wait_clamped`).
-- **Where:** docs/process/RUNTIME_FOLLOWUP.md "Clamp `wait_s` to 60 s"; `BUILTIN_TOOLS["op_status"]` schema
+- **Where:** .agents/process/RUNTIME_FOLLOWUP.md "Clamp `wait_s` to 60 s"; `BUILTIN_TOOLS["op_status"]` schema
   `"maximum": 60`; SPEC 16.2 (arguments are validated against the schema).
 - **Problem:** Validation rejects `wait_s > 60` before the tool runs, so a clamp can never
   apply.
@@ -533,7 +533,7 @@ in section 9.
   may have started processing it.
 - **Fix:** Say whether cancellation is covered.
 
-## 10. Found while migrating the module implementations (docs/process/MODULES.md)
+## 10. Found while migrating the module implementations (.agents/process/MODULES.md)
 
 Against contract Draft 2.4. The stated assumption is what the module does.
 
@@ -593,7 +593,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
   tags from the start, and no code reads or rewrites Python import-path tags. A version 1
   store (written with import-path tags) is refused on open with a clear error ("memory
   schema version 1 is not supported (expected 2)"). The archive is never updated.
-- **Where:** api.py `BLOCK_TYPES` comment, docs/process/MODULES.md "migrate rows already written with
+- **Where:** api.py `BLOCK_TYPES` comment, .agents/process/MODULES.md "migrate rows already written with
   import paths"; CLAUDE.md "Memory archive: append-only".
 - **Problem:** Rewriting stored tags is an update to an archive that must be append-only.
 
@@ -657,7 +657,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 
 ### M14 (S) No maintenance marker on inference requests
 - **Status:** Resolved (2026-11-02): `InferenceRequest.maintenance`. Design:
-  [Agent Note](../.agents/notes/implemented/2026-11-02-maintenance-marker.md).
+  [Agent Note](notes/implemented/2026-11-02-maintenance-marker.md).
 - **Where:** `InferenceRequest` has no field for it; `Completion` has `light`, which the
   runtime does not pass on.
 - **Problem:** A Core cannot tell maintenance from a turn, yet a provider may need different
@@ -684,7 +684,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 None was consulted or encountered. The only out-of-tree output seen was a system-wide
 `pip list` (unrelated packages) during the initial environment check.
 
-Update for the module migration: `docs/process/MODULES.md` (added by the user after the clean-room
+Update for the module migration: `.agents/process/MODULES.md` (added by the user after the clean-room
 build) explicitly directs importing the module implementations from
 the sibling repositories `kayden-memory`, `kayden-core` and `kayden-tools`. Their
 `src/` and `tests/` were copied in (read-only use of those folders); their `api.py` copies

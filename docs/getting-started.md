@@ -1,0 +1,59 @@
+# Getting started
+
+## What you need
+
+- Linux. macOS should work but is untested; Windows is not supported.
+- Python 3.12 or newer, and [uv](https://docs.astral.sh/uv/).
+- An API key from one provider: [Anthropic](https://platform.claude.com/) (Claude),
+  [DeepSeek](https://platform.deepseek.com/) or [OpenAI](https://platform.openai.com/).
+
+## Install
+
+```bash
+git clone https://github.com/K5031/Kayden.git
+uv tool install --editable Kayden
+```
+
+This puts the `kayden` command on your PATH.
+
+Without uv, use a virtual environment (systems such as Arch refuse a system-wide
+`pip install`):
+
+```bash
+python -m venv ~/.venvs/kayden
+~/.venvs/kayden/bin/pip install git+https://github.com/K5031/Kayden.git
+~/.venvs/kayden/bin/kayden
+```
+
+## Add your API key
+
+Either export it in your shell profile (`~/.bashrc`, `~/.zshrc`):
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...     # or DEEPSEEK_API_KEY / OPENAI_API_KEY
+```
+
+or start Kayden and enter it in the settings screen (F2), which stores it in your system's
+keychain. Kayden uses Claude unless you choose another provider.
+
+## First run
+
+Kayden's tools work in the folder you start it from, and they are **not a sandbox**: a
+command the agent runs can reach anything your user account can. Start in a folder made for
+it:
+
+```bash
+mkdir ~/kayden-work && cd ~/kayden-work
+kayden
+```
+
+The start screen asks for a mode; press Enter to start a normal conversation. Type a
+message and press Enter. Before the agent uses a tool (running a command, reading or
+changing a file), it asks you first.
+
+Next: [Using Kayden](using-kayden.md).
+
+## Spending
+
+Every message costs money with your provider. Set a spending limit in the settings screen
+(F2) before longer sessions; Kayden stops when it is reached. See [Settings](settings.md).

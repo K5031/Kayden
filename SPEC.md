@@ -1,5 +1,5 @@
 Kayden v1 — MVP Specification
-Status: Product spec with module contracts (Draft 2.4); implementation choices are recorded in docs/decisions.md and open contract issues in docs/contract-issues.md
+Status: Product spec with module contracts (Draft 2.4); implementation choices are recorded in .agents/decisions.md and open contract issues in .agents/contract-issues.md
 Purpose: Define the product, runtime responsibilities, module boundaries, and observable behavior before delegating implementation to coding agents.
 Repository: this repository is the v1 implementation; the previous Kayden repository is kept as a reference.
 
@@ -390,7 +390,7 @@ Test end-to-end workflows.
 Prioritize useful product progress over architectural sophistication.
 15. Remaining Design Work
 Resolved by the API design (section 16): the Core, Memory, Tools and Frontend contracts; the Runtime API exposed to frontends; the Memory-to-Core inference mechanism; streaming event representation; tool cancellation; permission model; module discovery (import-path factories).
-The storage formats and numeric defaults that are now decided are recorded in docs/decisions.md.
+The storage formats and numeric defaults that are now decided are recorded in .agents/decisions.md.
 New decisions of this kind are recorded in the same log without reopening settled product requirements.
 
 16. Module API Contracts (Draft 2.4)

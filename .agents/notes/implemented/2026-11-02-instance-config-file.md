@@ -53,7 +53,7 @@ max_cost_usd = 5.0
 - **Keys.** Not in the file: each Core reads its own environment variable, then the OS
   keychain, and refuses a missing key at construction; `kayden` reports that as one line.
 
-Reference: `docs/decisions.md`, "Running Kayden"; README, "Config file".
+Reference: `.agents/decisions.md`, "Running Kayden"; user docs: `docs/settings.md`.
 
 ## Alternatives considered
 

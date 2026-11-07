@@ -140,7 +140,7 @@ timing flake, not a violation).
 | The activation notice is appended only when the transcript is empty or its newest message is ASSISTANT; a transcript ending on a TOOL message (e.g. after an append failure) is sent unchanged. | `Runtime._ensure_user_last` | `test_activate_after_tool_message_adds_no_notice`, `test_append_failure_stops_further_work` (updated) |
 | `op_status.wait_s` above 60 is no longer rejected by validation; the built-in clamps it to `_OP_STATUS_MAX_WAIT_S` (60 s). Implementation unchanged. | `Runtime._builtin` | `test_op_status_wait_clamped` (replaces `test_op_status_wait_capped`) |
 
-## Module migration (docs/process/MODULES.md)
+## Module migration (.agents/process/MODULES.md)
 
 Module streams were imported with `rsync -a --ignore-existing`, so this repository's
 `api.py`, `__init__.py` files and runtime were kept. Dependencies were merged into
@@ -213,7 +213,7 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 
 ### OpenAI-compatible profiles (`profile` option of `kayden.core.openai_compat:factory`)
 
-Design: [Agent Note](../.agents/notes/implemented/2026-10-30-deepseek-openai-compatible-profiles.md).
+Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-profiles.md).
 
 - A `Profile` is plain data in `openai_compat.py`; generic code reads its fields and never
   a provider name. `"openai"` (default) is stock behavior. `models` entries in the
@@ -238,7 +238,7 @@ Design: [Agent Note](../.agents/notes/implemented/2026-10-30-deepseek-openai-com
   with finish reason `length`. Hence the profile's `max_output_tokens` of 64000 (DeepSeek's
   default for thinking, against 393216 reported by `/models`). Replayed reasoning counts
   as input tokens, and the runtime's estimator counts it too.
-- Maintenance requests (`InferenceRequest.maintenance`, design: [Agent Note](../.agents/notes/implemented/2026-11-02-maintenance-marker.md))
+- Maintenance requests (`InferenceRequest.maintenance`, design: [Agent Note](notes/implemented/2026-11-02-maintenance-marker.md))
   run with thinking disabled, unless `options` says otherwise, so reasoning cannot use up a
   summary's token limit.
 - `insufficient_system_resource` and `aborted` are transient. Neither was seen live.
@@ -289,9 +289,9 @@ Design: [Agent Note](../.agents/notes/implemented/2026-10-30-deepseek-openai-com
 
 ## Running Kayden
 
-Design of the config file: [Agent Note](../.agents/notes/implemented/2026-11-02-instance-config-file.md).
+Design of the config file: [Agent Note](notes/implemented/2026-11-02-instance-config-file.md).
 User settings changed from a frontend (`update_settings`), saved to `settings.toml` and
-applied over the config file: [Agent Note](../.agents/notes/implemented/2026-11-07-settings-for-non-technical-users.md).
+applied over the config file: [Agent Note](notes/implemented/2026-11-07-settings-for-non-technical-users.md).
 
 ```
 export ANTHROPIC_API_KEY=...

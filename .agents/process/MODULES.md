@@ -8,7 +8,7 @@ the sibling repositories `kayden-memory`, `kayden-core`, `kayden-tools` (Memory 
 2. Run `uv run pytest`. Expect failures where the old code uses older contract shapes.
 3. Migrate ONE module at a time, in this order: Memory, Core, Tools, then the TUI. For each: fix until its conformance suite and tests pass, run `ruff`, commit.
 4. Run the whole suite together at the end, then do one end-to-end check described below.
-5. Record contract problems in `docs/contract-issues.md` (new section) and choices in `docs/decisions.md`. Do not edit `SPEC.md` or `api.py`.
+5. Record contract problems in `.agents/contract-issues.md` (new section) and choices in `.agents/decisions.md`. Do not edit `SPEC.md` or `api.py`.
 
 ## What changed in the contract since those modules were written
 ### Memory
@@ -33,4 +33,4 @@ the sibling repositories `kayden-memory`, `kayden-core`, `kayden-tools` (Memory 
 - Remove the "always allow" choice. Add a per-operation cancel control (`cancel_operation`), show `queued_messages` from the snapshot, end `run()` when `events()` ends. Use paginated `history`.
 
 ## End-to-end check (last step)
-Add a small `kayden` entry point (`python -m kayden`) that builds an instance from an `InstanceConfig`: SqliteMemory, Anthropic Core, ShellFilesTools rooted at the current directory, and the TUI. Do not run live API tests unless `ANTHROPIC_API_KEY` is set. Describe in `docs/decisions.md` how to start it. Without a key, run it against the scripted fakes to prove the wiring.
+Add a small `kayden` entry point (`python -m kayden`) that builds an instance from an `InstanceConfig`: SqliteMemory, Anthropic Core, ShellFilesTools rooted at the current directory, and the TUI. Do not run live API tests unless `ANTHROPIC_API_KEY` is set. Describe in `.agents/decisions.md` how to start it. Without a key, run it against the scripted fakes to prove the wiring.

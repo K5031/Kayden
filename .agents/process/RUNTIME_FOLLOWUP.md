@@ -1,6 +1,6 @@
 # Runtime follow-up: contract Draft 2.3
 
-Your `docs/contract-issues.md` was read. Most of your assumptions are now the spec. `SPEC.md` and `src/kayden/api.py` have been updated (replace them with the new copies; do not edit them yourself). Adapt the runtime and tests to the changes below, then update `docs/contract-issues.md`: mark each entry resolved, accepted, or still open.
+Your `.agents/contract-issues.md` was read. Most of your assumptions are now the spec. `SPEC.md` and `src/kayden/api.py` have been updated (replace them with the new copies; do not edit them yourself). Adapt the runtime and tests to the changes below, then update `.agents/contract-issues.md`: mark each entry resolved, accepted, or still open.
 
 ## Changes you must make
 1. **Barrier ordering (your 2.1).** A non-read-only call starts only after every earlier call in the turn has finished or been backgrounded, and later calls wait for it. Consecutive read-only calls still run concurrently. Test `[write, read]`, `[read, write]` and `[read, read, write, read]`.
@@ -18,4 +18,4 @@ Your `docs/contract-issues.md` was read. Most of your assumptions are now the sp
 ToolFinished buffering for foreground calls; one USER message per queued message; Stop in IDLE with outstanding operations performs a full Stop; wake set computed at the turn boundary; idempotent append backlog and FAILED(INTERNAL) with `activate()` retry; per-mode usage file and lock; invalid ceiling fail-closed; any exhausted dimension stops all chargeable execution; ABANDONED for unconfirmed timeouts.
 
 ## Report
-Add a short section to `docs/decisions.md` listing what changed, and keep the full test suite and `ruff` green. Commit.
+Add a short section to `.agents/decisions.md` listing what changed, and keep the full test suite and `ruff` green. Commit.
