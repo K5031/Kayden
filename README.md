@@ -1,11 +1,15 @@
 # Kayden
 
-Kayden is an AI agent that runs on your computer. You talk to it, and it can run commands
-and work with files to get things done, asking your permission first. It works with
-Claude, DeepSeek or OpenAI models, using your own API key, and keeps a spending limit.
+An AI agent for your terminal that can keep working on its own. Use it as a chat
+assistant, or start it in continuous mode: it runs long tasks in the background and can
+pick up again on its own when they finish.
 
-Under the hood, a runtime drives four swappable modules (model, memory, tools, interface)
-through the contracts in `src/kayden/api.py`; `SPEC.md` is the product spec.
+It asks before running a command or touching a file, stops at the spending limit you
+set, and remembers past conversations. Bring your own key for Claude, DeepSeek or
+OpenAI.
+
+Kayden is a small runtime plus four swappable modules (model, memory, tools,
+interface). The contracts are in `src/kayden/api.py`; the product spec is `SPEC.md`.
 
 ## Quick start
 
