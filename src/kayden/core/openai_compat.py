@@ -7,7 +7,7 @@ import math
 import os
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx2
@@ -44,12 +44,14 @@ from kayden.core._common import (
     ModelConfig,
     assistant_message,
     configured,
+    merged_configs,
     model_configs,
     operation_text,
     parse_arguments,
     request_options,
     result_text,
     retry_after,
+    stored_key,
 )
 
 _CONTEXT_WINDOW_FIELDS = ("context_length", "max_model_len", "context_window")
@@ -133,7 +135,7 @@ class OpenAICompatCore(Core):
             client = _client(self._profile, api_key, base_url)
         self._client = client.with_options(max_retries=0)  # the runtime owns retries
         self._options = dict(options or {})
-        self._models = _merged(self._profile.models, model_configs(models))
+        self._models = merged_configs(self._profile.models, model_configs(models))
         self._max_tokens_param = max_tokens_param
         self._stream_usage = stream_usage
 
@@ -193,7 +195,7 @@ class OpenAICompatCore(Core):
 
 
 def _client(profile: Profile, api_key: str | None, base_url: str | None) -> openai.AsyncOpenAI:
-    api_key = api_key or os.environ.get(profile.api_key_env)
+    api_key = api_key or os.environ.get(profile.api_key_env) or stored_key(profile.api_key_env)
     if not api_key and profile.api_key_required:
         raise ValueError(f"set {profile.api_key_env} or the api_key option")
     # Local servers usually need no key, but the SDK insists on one.
@@ -204,18 +206,6 @@ def _client(profile: Profile, api_key: str | None, base_url: str | None) -> open
     return openai.AsyncOpenAI(
         api_key=api_key, base_url=base_url or profile.base_url,
         default_headers={"OpenAI-Organization": openai.Omit(), "OpenAI-Project": openai.Omit()})
-
-
-def _merged(defaults: Mapping[str, ModelConfig], configs: Mapping[str, ModelConfig]
-            ) -> dict[str, ModelConfig]:
-    """`configs` over `defaults`, field by field."""
-    merged = dict(defaults)
-    for model_id, config in configs.items():
-        base = merged.get(model_id, ModelConfig())
-        changes = {f.name: value for f in fields(config) if f.name != "options"
-                   and (value := getattr(config, f.name)) is not None}
-        merged[model_id] = replace(base, options={**base.options, **config.options}, **changes)
-    return merged
 
 
 def _extra_int(model: Any, names: Sequence[str]) -> int | None:

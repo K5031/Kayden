@@ -293,6 +293,20 @@ async def test_model_configuration() -> None:
     await plain.core.aclose()
 
 
+async def test_built_in_prices_merge_with_configured_ones() -> None:
+    driver = AnthropicDriver(models={"claude-opus-5-5": {"input_usd_per_mtok": 3.5}})
+    driver.stub.routes["/v1/models"] = lambda r: httpx2.Response(200, json={
+        "data": [{"type": "model", "id": m, "display_name": m, "lifecycle": "active",
+                  "created_at": "2026-01-01T00:00:00Z", "max_input_tokens": 1_000_000,
+                  "max_tokens": 128_000} for m in ("claude-opus-5-5", "claude-sonnet-5-5")],
+        "has_more": False, "first_id": "claude-opus-5-5", "last_id": "claude-sonnet-5-5"})
+    opus, sonnet = await driver.core.list_models()
+    assert (opus.input_usd_per_mtok, opus.output_usd_per_mtok,
+            opus.cached_input_usd_per_mtok) == (3.5, 20.0, 0.2)
+    assert (sonnet.input_usd_per_mtok, sonnet.output_usd_per_mtok) == (2.0, 10.0)
+    await driver.core.aclose()
+
+
 async def test_factory(tmp_path) -> None:
     from kayden.api import InstancePaths
 
@@ -309,6 +323,15 @@ async def test_missing_key_fails_at_construction(monkeypatch) -> None:
         AnthropicCore()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     await AnthropicCore().aclose()
+
+
+async def test_key_from_the_keychain(monkeypatch, keychain) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    keychain.store[("kayden", "ANTHROPIC_API_KEY")] = "from-keychain"
+    core = AnthropicCore()
+    assert core._client.api_key == "from-keychain"
+    await core.aclose()
 
 
 async def test_tool_call_without_arguments(anthropic: AnthropicDriver) -> None:

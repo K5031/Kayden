@@ -29,6 +29,8 @@ class FakeTools(Tools):
         self.release = asyncio.Event()  # lets cancel-ignoring tools finish
         self.list_error: Exception | None = None
         self.gates: dict[str, asyncio.Event] = {}
+        self.options: dict[str, Any] = {}
+        self.closed = False
 
     def add(self, spec: ToolSpec, fn: ToolFn) -> ToolSpec:
         self.specs[spec.name] = spec
@@ -120,6 +122,9 @@ class FakeTools(Tools):
 
     # ── Tools contract ──
 
+    async def aclose(self) -> None:
+        self.closed = True
+
     async def list_tools(self) -> Sequence[ToolSpec]:
         if self.list_error is not None:
             raise self.list_error
@@ -143,6 +148,7 @@ class FakeTools(Tools):
 
 def factory(options: dict[str, Any], paths: Any) -> FakeTools:
     tools = FakeTools()
+    tools.options = dict(options)
     for name in options.get("instant", ()):
         tools.instant(name)
     return tools

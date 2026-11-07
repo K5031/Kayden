@@ -27,12 +27,15 @@ from kayden.runtime import (
     InstanceConfig,
     ModuleLoadError,
     ModuleSpec,
+    Provider,
     RuntimeConfig,
     run_instance,
 )
+from kayden.runtime.settings import SETTINGS_FILE
 
 DEFAULT_DATA_DIR = Path("~/.kayden")
 CONFIG_FILE = "config.toml"
+OPENAI_COMPAT = "kayden.core.openai_compat:factory"
 DEFAULT_FACTORIES = {
     "core": "kayden.core.anthropic:factory",
     "memory": "kayden.memory.sqlite:factory",
@@ -42,11 +45,22 @@ DEFAULT_FACTORIES = {
 RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_prompt",
                 "system_prompt_file")
 SECRET_WORDS = ("key", "token", "secret", "password")
+PROVIDERS = (
+    Provider("anthropic", "Claude", ModuleSpec(DEFAULT_FACTORIES["core"]), "ANTHROPIC_API_KEY"),
+    Provider("deepseek", "DeepSeek", ModuleSpec(OPENAI_COMPAT, {"profile": "deepseek"}),
+             "DEEPSEEK_API_KEY"),
+    Provider("openai", "OpenAI", ModuleSpec(OPENAI_COMPAT, {"profile": "openai"}),
+             "OPENAI_API_KEY"),
+)
+SAVED_KEYS = ("provider", "model", "maintenance_model", "permissions", "system_prompt",
+              "work_folder", "budget")
 BUDGET_INTS = ("max_tokens", "max_tool_calls")
 BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
 
 
-def read_config(path: Path, *, required: bool) -> dict[str, Any]:
+def read_config(path: Path, *, required: bool,
+                sections: Sequence[str] | None = None) -> dict[str, Any]:
+    """The TOML file's top level; with `sections`, those are the only keys allowed."""
     try:
         data = tomllib.loads(path.read_text())
     except FileNotFoundError:
@@ -56,7 +70,10 @@ def read_config(path: Path, *, required: bool) -> dict[str, Any]:
     except tomllib.TOMLDecodeError as e:
         raise SystemExit(f"{path}: invalid TOML: {e}") from None
     for name in data:
-        if name not in (*DEFAULT_FACTORIES, "runtime"):
+        if sections is not None:
+            if name not in sections:
+                raise SystemExit(f"{path}: unknown key {name!r}; known: {', '.join(sections)}")
+        elif name not in (*DEFAULT_FACTORIES, "runtime"):
             raise SystemExit(f"{path}: unknown section {name!r}; "
                              f"known: {', '.join(DEFAULT_FACTORIES)}, runtime")
     return data
@@ -142,6 +159,8 @@ def show_config(config: InstanceConfig, path: Path) -> str:
     found = "" if path.is_file() else " (not found, defaults only)"
     header = ["# Effective Kayden config", f"# data dir: {config.runtime.data_dir}",
               f"# config file: {path}{found}"]
+    if (saved := config.runtime.data_dir / SETTINGS_FILE).is_file():
+        header.append(f"# saved settings applied on top: {saved}")
     data: dict[str, Any] = {
         name: {"factory": spec.factory, "options": redact(dict(spec.options))}
         for name, spec in (("core", config.core), ("memory", config.memory),
@@ -195,27 +214,75 @@ def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
     return load_config(parse_args(argv))
 
 
+def _identity(core: ModuleSpec) -> tuple[str, Any]:
+    profile = core.options.get("profile", "openai") if core.factory == OPENAI_COMPAT else None
+    return core.factory, profile
+
+
+def providers_for(core: ModuleSpec) -> tuple[list[Provider], str | None]:
+    """The built-in providers, the configured Core's entry carrying its configured options
+    (so switching back keeps them), and the id of the configured one (None if custom)."""
+    providers, current = [], None
+    for provider in PROVIDERS:
+        if _identity(provider.core) == _identity(core):
+            provider, current = Provider(provider.id, provider.name, core,
+                                         provider.key_name), provider.id
+        providers.append(provider)
+    return providers, current
+
+
+def read_saved(path: Path, providers: Sequence[Provider]) -> dict[str, Any]:
+    """Settings saved by RuntimeAPI.update_settings, validated like [runtime]."""
+    data = read_config(path, required=False, sections=SAVED_KEYS)
+    for key in ("provider", "work_folder"):
+        if key in data and not isinstance(data[key], str):
+            raise SystemExit(f"{path}: {key} must be a string")
+    if "provider" in data and data["provider"] not in {p.id for p in providers}:
+        raise SystemExit(f"{path}: unknown provider {data['provider']!r}")
+    runtime = {k: v for k, v in data.items() if k not in ("provider", "work_folder")}
+    clear_light = runtime.get("maintenance_model") == ""
+    if clear_light:
+        del runtime["maintenance_model"]
+    saved = load_runtime(path, {"runtime": runtime})
+    if clear_light:
+        saved["maintenance_model"] = None
+    return {**saved, **{k: data[k] for k in ("provider", "work_folder") if k in data}}
+
+
 def load_config(args: argparse.Namespace) -> InstanceConfig:
+    """config.toml, then the saved settings, then command-line flags, each overriding."""
     data_dir = args.data_dir.expanduser()
     path = config_path(args)
     data = read_config(path, required=args.config is not None)
     modules = load_modules(path, data)
     runtime = load_runtime(path, data)
+    if modules["tools"].factory == DEFAULT_FACTORIES["tools"] and not modules["tools"].options:
+        modules["tools"] = ModuleSpec(modules["tools"].factory, {"root": str(Path.cwd())})
+    providers, _ = providers_for(modules["core"])
+    saved = read_saved(data_dir / SETTINGS_FILE, providers)
+    if "provider" in saved:
+        chosen = saved.pop("provider")
+        modules["core"] = next(p.core for p in providers if p.id == chosen)
+    if "work_folder" in saved:
+        tools = modules["tools"]
+        modules["tools"] = ModuleSpec(tools.factory, {**tools.options,
+                                                      "root": saved.pop("work_folder")})
+    runtime.update(saved)
     for key in ("model", "maintenance_model"):
         if getattr(args, key):
             runtime[key] = getattr(args, key)
     if args.permissions:
         runtime["permissions"] = PermissionPolicy(args.permissions)
-    if modules["tools"].factory == DEFAULT_FACTORIES["tools"] and not modules["tools"].options:
-        modules["tools"] = ModuleSpec(modules["tools"].factory, {"root": str(Path.cwd())})
     if args.mode:
         start = {"mode": args.mode, "activation": args.activation}
         if args.conversation:
             start["conversation_id"] = args.conversation
         frontend = modules["frontend"]
         modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
+    _, provider = providers_for(modules["core"])
     return InstanceConfig(
-        runtime=RuntimeConfig(data_dir=data_dir, **runtime),
+        runtime=RuntimeConfig(data_dir=data_dir, providers=tuple(providers),
+                              provider=provider, tools_module=modules["tools"], **runtime),
         **modules,
     )
 

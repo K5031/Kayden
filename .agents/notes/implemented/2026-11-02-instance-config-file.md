@@ -44,12 +44,14 @@ max_cost_usd = 5.0
   filled in, the default system prompt in full, values under keys that name a key, token,
   secret or password redacted. Unset settings that only the Core resolves (the model) are
   listed as comments.
-- **Precedence.** `--model`, `--maintenance-model` and `--permissions` override the file;
+- **Precedence.** Settings saved through `RuntimeAPI.update_settings`
+  (`<data dir>/settings.toml`, see [settings](2026-11-07-settings-for-non-technical-users.md))
+  override the file; `--model`, `--maintenance-model` and `--permissions` override both;
   `--mode`, `--activation` and `--conversation` are merged over the frontend options.
 - **Strict.** Unknown sections or keys, wrong types and negative budgets stop startup with
   a one-line message naming the file.
-- **Keys.** Not in the file: each Core reads its own environment variable and refuses a
-  missing key at construction; `kayden` reports that as one line.
+- **Keys.** Not in the file: each Core reads its own environment variable, then the OS
+  keychain, and refuses a missing key at construction; `kayden` reports that as one line.
 
 Reference: `docs/decisions.md`, "Running Kayden"; README, "Config file".
 

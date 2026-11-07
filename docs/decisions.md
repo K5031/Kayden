@@ -290,6 +290,8 @@ Design: [Agent Note](../.agents/notes/implemented/2026-10-30-deepseek-openai-com
 ## Running Kayden
 
 Design of the config file: [Agent Note](../.agents/notes/implemented/2026-11-02-instance-config-file.md).
+User settings changed from a frontend (`update_settings`), saved to `settings.toml` and
+applied over the config file: [Agent Note](../.agents/notes/implemented/2026-11-07-settings-for-non-technical-users.md).
 
 ```
 export ANTHROPIC_API_KEY=...

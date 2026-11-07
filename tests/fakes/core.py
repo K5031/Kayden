@@ -14,6 +14,7 @@ from kayden.api import (
     JSON,
     Completed,
     Core,
+    CoreError,
     CoreEvent,
     InferenceRequest,
     Message,
@@ -87,12 +88,20 @@ class ScriptedCore(Core):
         self.cancelled = 0
         self.trace = trace if trace is not None else []
         self.count_tokens_result: int | None = None
+        self.options: dict[str, Any] = {}
+        self.list_error: Exception | None = None
+        self.closed = False
 
     def add(self, *steps: StepSource) -> None:
         self.steps.extend(steps)
 
     async def list_models(self) -> Sequence[ModelInfo]:
+        if self.list_error is not None:
+            raise self.list_error
         return self.models
+
+    async def aclose(self) -> None:
+        self.closed = True
 
     async def count_tokens(self, request: InferenceRequest) -> int | None:
         return self.count_tokens_result
@@ -152,4 +161,15 @@ class ScriptedCore(Core):
 
 
 def factory(options: dict[str, Any], paths: Any) -> ScriptedCore:
-    return ScriptedCore(options.get("steps", ()), default=options.get("default"))
+    """Options: steps, default, models (ids; each gets a 100k window and prices), and
+    list_error (a message: list_models raises CoreError, like a rejected key)."""
+    models = DEFAULT_MODELS
+    if "models" in options:
+        models = tuple(ModelInfo(m, m, context_window=100_000, max_output_tokens=1_000,
+                                 input_usd_per_mtok=1.0, output_usd_per_mtok=2.0)
+                       for m in options["models"])
+    core = ScriptedCore(options.get("steps", ()), models=models, default=options.get("default"))
+    core.options = dict(options)
+    if "list_error" in options:
+        core.list_error = CoreError(options["list_error"])
+    return core

@@ -43,12 +43,14 @@ from kayden.core._common import (
     ModelConfig,
     assistant_message,
     configured,
+    merged_configs,
     model_configs,
     operation_text,
     parse_arguments,
     request_options,
     result_text,
     retry_after,
+    stored_key,
 )
 
 PROVIDER = "anthropic"
@@ -61,6 +63,30 @@ _STOP_REASONS = {
     "refusal": StopReason.REFUSAL,
 }
 _OVERFLOW_MESSAGES = ("prompt is too long", "exceed context limit", "context window")
+
+
+# USD per million tokens, from Anthropic's price list of 2026-10-06; the API does not
+# report prices. Configured `models` entries override them field by field. Haiku 5.5 uses
+# its rate for prompts over 100K tokens, so the cost budget errs high. A missing cached
+# price falls back to the input price.
+_PRICES = {
+    model_id: ModelConfig(input_usd_per_mtok=i, output_usd_per_mtok=o,
+                          cached_input_usd_per_mtok=c)
+    for model_id, i, o, c in (
+        ("claude-fable-5-1", 10.0, 50.0, 0.25),
+        ("claude-fable-5", 10.0, 50.0, None),
+        ("claude-opus-5-5", 4.0, 20.0, 0.20),
+        ("claude-opus-5", 5.0, 25.0, None),
+        ("claude-opus-4-8", 5.0, 25.0, None),
+        ("claude-opus-4-7", 5.0, 25.0, None),
+        ("claude-opus-4-6", 5.0, 25.0, None),
+        ("claude-sonnet-5-5", 2.0, 10.0, 0.20),
+        ("claude-sonnet-5", 2.0, 10.0, None),
+        ("claude-sonnet-4-6", 3.0, 15.0, None),
+        ("claude-haiku-5-5", 0.50, 2.50, None),
+        ("claude-haiku-4-5-20251001", 1.0, 5.0, None),
+    )
+}
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> AnthropicCore:
@@ -85,11 +111,13 @@ class AnthropicCore(Core):
     ) -> None:
         if client is None and not (api_key or os.environ.get("ANTHROPIC_API_KEY")
                                    or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-            raise ValueError("ANTHROPIC_API_KEY is not set")
+            api_key = stored_key("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise ValueError("ANTHROPIC_API_KEY is not set")
         client = client or anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._client = client.with_options(max_retries=0)  # the runtime owns retries
         self._options = dict(options or {})
-        self._models = model_configs(models)
+        self._models = merged_configs(_PRICES, model_configs(models))
         self._default_max_tokens = default_max_tokens
 
     async def list_models(self) -> Sequence[ModelInfo]:

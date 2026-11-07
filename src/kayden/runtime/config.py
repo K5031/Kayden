@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,8 +31,27 @@ CONTINUOUS_PROMPT = (
 
 
 @dataclass(frozen=True, slots=True)
+class ModuleSpec:
+    """A module as an import path "package.module:factory" plus its configuration."""
+
+    factory: str
+    options: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Provider:
+    """A model provider the user can switch to: a Core and the key it reads."""
+
+    id: str
+    name: str
+    core: ModuleSpec
+    key_name: str | None = None  # environment variable and keychain entry of its key
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeConfig:
-    """Instance-level settings. Read-only after start()."""
+    """Instance-level settings. The user settings among them change through
+    RuntimeAPI.update_settings; the rest are fixed for the process."""
 
     data_dir: Path
     budget: Budget = field(default_factory=Budget)
@@ -49,14 +68,9 @@ class RuntimeConfig:
     default_tool_timeout_s: float = 3600.0
     cancel_grace_s: float = 5.0
     subscriber_queue_size: int = 1000
-
-
-@dataclass(frozen=True, slots=True)
-class ModuleSpec:
-    """A module as an import path "package.module:factory" plus its configuration."""
-
-    factory: str
-    options: Mapping[str, Any] = field(default_factory=dict)
+    providers: Sequence[Provider] = ()  # what the user can switch to
+    provider: str | None = None  # Provider.id of the Core the instance was built with
+    tools_module: ModuleSpec | None = None  # rebuilt with options["root"] = work folder
 
 
 @dataclass(frozen=True, slots=True)

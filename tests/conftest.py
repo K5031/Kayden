@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import keyring
+import keyring.backend
 import pytest
 
 from kayden.api import (
@@ -114,6 +116,34 @@ class Harness:
 
 
 type Make = Callable[..., Any]
+
+
+class MemoryKeyring(keyring.backend.KeyringBackend):
+    """Stands in for the OS keychain so tests never read or write the real one."""
+
+    priority = 1  # type: ignore[assignment]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.store.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.store[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        self.store.pop((service, username), None)
+
+
+@pytest.fixture(autouse=True)
+def keychain() -> Any:
+    previous = keyring.get_keyring()
+    memory = MemoryKeyring()
+    keyring.set_keyring(memory)
+    yield memory
+    keyring.set_keyring(previous)
 
 
 @pytest.fixture

@@ -185,6 +185,59 @@ def test_runtime_defaults_without_a_runtime_section(workspace, tmp_path):
     assert runtime.system_prompt == DEFAULT_SYSTEM_PROMPT
 
 
+def test_providers_and_the_current_one(workspace, tmp_path):
+    runtime = build_config(["--data-dir", str(tmp_path)]).runtime
+    assert [p.id for p in runtime.providers] == ["anthropic", "deepseek", "openai"]
+    assert runtime.provider == "anthropic"
+    assert runtime.tools_module == ModuleSpec("kayden.tools.shell_files:factory",
+                                              {"root": str(workspace)})
+
+    path = tmp_path / "config.toml"
+    path.write_text('[core]\nfactory = "kayden.core.openai_compat:factory"\n'
+                    'options = { profile = "deepseek", models = { x = { context_window = 9 } } }\n')
+    runtime = build_config(["--data-dir", str(tmp_path)]).runtime
+    assert runtime.provider == "deepseek"
+    [deepseek] = [p for p in runtime.providers if p.id == "deepseek"]
+    assert deepseek.core.options["models"] == {"x": {"context_window": 9}}  # kept on switch
+
+    path.write_text('[core]\nfactory = "tests.fakes.core:factory"\n')
+    assert build_config(["--data-dir", str(tmp_path)]).runtime.provider is None
+
+
+def test_saved_settings_override_the_config_file(workspace, tmp_path):
+    (tmp_path / "config.toml").write_text(RUNTIME)
+    folder = tmp_path / "work"
+    folder.mkdir()
+    (tmp_path / "settings.toml").write_text(
+        'provider = "deepseek"\nmodel = "deepseek-v4-pro"\nmaintenance_model = ""\n'
+        'permissions = "ask"\nsystem_prompt = "Saved."\n'
+        f'work_folder = "{folder}"\n[budget]\nmax_cost_usd = 7.0\n')
+    config = build_config(["--data-dir", str(tmp_path)])
+    runtime = config.runtime
+    assert config.core.factory == "kayden.core.openai_compat:factory"
+    assert runtime.provider == "deepseek"
+    assert (runtime.model, runtime.maintenance_model) == ("deepseek-v4-pro", None)
+    assert runtime.permissions is PermissionPolicy.ASK
+    assert runtime.system_prompt == "Saved."
+    assert runtime.budget == Budget(max_cost_usd=7.0)  # replaces the whole budget
+    assert config.tools.options["root"] == str(folder) == runtime.tools_module.options["root"]
+
+    flagged = build_config(["--data-dir", str(tmp_path), "--model", "m", "--permissions", "deny"])
+    assert (flagged.runtime.model, flagged.runtime.permissions) == ("m", PermissionPolicy.DENY)
+
+
+@pytest.mark.parametrize(("content", "message"), [
+    ('provider = "nope"\n', "unknown provider 'nope'"),
+    ("colour = 1\n", "unknown key 'colour'"),
+    ("model = 3\n", "model must be a string"),
+    ("[budget\n", "invalid TOML"),
+])
+def test_invalid_saved_settings_are_refused(workspace, tmp_path, content, message):
+    (tmp_path / "settings.toml").write_text(content)
+    with pytest.raises(SystemExit, match=re.escape(message)):
+        build_config(["--data-dir", str(tmp_path)])
+
+
 def test_system_prompt_replaces_the_default(workspace, tmp_path):
     path = tmp_path / "config.toml"
     path.write_text('[runtime]\nsystem_prompt = "Be brief."\n')
@@ -222,6 +275,12 @@ def test_show_config_prints_the_effective_config_without_building_modules(
     assert "model" not in shown["runtime"]
     assert "# model: not set, the first model the Core lists" in out
     assert str(tmp_path / "config.toml") in out
+    assert "saved settings" not in out
+    (tmp_path / "settings.toml").write_text('system_prompt = "Saved."\n')
+    main(["--data-dir", str(tmp_path), "--show-config"])
+    out = capsys.readouterr().out
+    assert f"# saved settings applied on top: {tmp_path / 'settings.toml'}" in out
+    assert tomllib.loads(out)["runtime"]["system_prompt"] == "Saved."
 
 
 def test_shown_config_loads_back_to_the_same_instance(workspace, tmp_path, capsys):

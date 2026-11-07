@@ -6,12 +6,16 @@ import json
 import time
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+import keyring
+import keyring.errors
+
 from kayden.api import (
     JSON,
+    KEYCHAIN_SERVICE,
     Block,
     Message,
     ModelInfo,
@@ -42,6 +46,18 @@ def model_configs(models: Mapping[str, ModelConfig | Mapping[str, Any]] | None
             for model_id, c in (models or {}).items()}
 
 
+def merged_configs(defaults: Mapping[str, ModelConfig], configs: Mapping[str, ModelConfig]
+            ) -> dict[str, ModelConfig]:
+    """`configs` over `defaults`, field by field."""
+    merged = dict(defaults)
+    for model_id, config in configs.items():
+        base = merged.get(model_id, ModelConfig())
+        changes = {f.name: value for f in fields(config) if f.name != "options"
+                   and (value := getattr(config, f.name)) is not None}
+        merged[model_id] = replace(base, options={**base.options, **config.options}, **changes)
+    return merged
+
+
 def configured(info: ModelInfo, config: ModelConfig | None) -> ModelInfo:
     """`info` with configured values taking precedence over what the provider reported."""
     if config is None:
@@ -58,6 +74,15 @@ def configured(info: ModelInfo, config: ModelConfig | None) -> ModelInfo:
 
 def request_options(options: Mapping[str, Any], config: ModelConfig | None) -> JSON:
     return {**options, **(config.options if config else {})}
+
+
+def stored_key(name: str) -> str | None:
+    """The key saved in the OS keychain under KEYCHAIN_SERVICE, or None. Blocks briefly:
+    Cores call it only at construction."""
+    try:
+        return keyring.get_password(KEYCHAIN_SERVICE, name)
+    except keyring.errors.KeyringError:
+        return None
 
 
 def retry_after(headers: Mapping[str, str] | None) -> float | None:

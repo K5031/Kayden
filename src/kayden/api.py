@@ -78,6 +78,9 @@ type CallId = str  # also the operation id of a backgrounded call
 type TokenCounter = Callable[[str | Sequence[Message]], int]  # fast local estimate
 
 PERMISSION_CEILING_ENV = "KAYDEN_PERMISSION_CEILING"
+# OS keychain service under which API keys are stored, one entry per key name
+# (ProviderInfo.key_name). Cores read their key from the environment first, then from here.
+KEYCHAIN_SERVICE = "kayden"
 
 
 @dataclass(frozen=True, slots=True)
@@ -770,6 +773,47 @@ class StartOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderInfo:
+    """A model provider the user can switch to (a Core with its options)."""
+
+    id: str  # stable, e.g. "anthropic"
+    name: str  # for display, e.g. "Claude"
+    key_name: str | None  # the key's environment variable and keychain entry; None = no key
+    has_key: bool  # a key is available from the environment or the keychain
+
+
+@dataclass(frozen=True, slots=True)
+class Settings:
+    """The user settings, in the terms a settings screen shows. Models come from
+    list_models(), spending so far from snapshot().usage."""
+
+    provider: str | None  # ProviderInfo.id of the current Core; None if not from the list
+    providers: Sequence[ProviderInfo]
+    model: str | None  # None before start() = the first model the Core lists
+    maintenance_model: str | None  # None = the main model
+    budget: Budget
+    permissions: PermissionPolicy  # effective: clamped to any inherited ceiling
+    system_prompt: str
+    work_folder: str | None  # the Tools' working directory; None = not settable
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsUpdate:
+    """A partial change: None leaves a setting as it is. maintenance_model "" clears it.
+    budget replaces the whole budget. api_key is stored for `provider` (or the current
+    one) and never returned."""
+
+    provider: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    maintenance_model: str | None = None
+    budget: Budget | None = None
+    permissions: PermissionPolicy | None = None
+    system_prompt: str | None = None
+    work_folder: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeSnapshot:
     """Everything a late-attaching frontend needs. Recovery order: subscribe to
     events(), take snapshot(), drop envelopes with seq <= snapshot.seq, load history()
@@ -881,6 +925,11 @@ class ModelSelected:
 
 
 @dataclass(frozen=True, slots=True)
+class SettingsChanged:
+    settings: Settings
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceStarted:
     """Emitted when Memory first uses inference during maintain()."""
 
@@ -935,6 +984,7 @@ type RuntimeEvent = (
     | PermissionResolved
     | ModelRetry
     | ModelSelected
+    | SettingsChanged
     | MaintenanceStarted
     | MaintenanceFinished
     | StopStalled
@@ -1026,6 +1076,24 @@ class RuntimeAPI(Protocol):
     async def select_model(self, model_id: str) -> None:
         """Validated against list_models(); ValueError if unknown. Applies from the next
         inference and emits ModelSelected."""
+
+    async def settings(self) -> Settings: ...
+
+    async def update_settings(self, update: SettingsUpdate) -> Settings:
+        """Validate and apply a partial change, save it to <data dir>/settings.toml and
+        emit SettingsChanged (and ModelSelected when the model changes). Nothing is applied
+        if any part is invalid (ValueError).
+
+        Model, maintenance model, budget, permissions and system prompt apply in any state,
+        from the next inference. Permissions are clamped to any inherited ceiling. A
+        provider, key or work-folder change rebuilds the Core or Tools and is allowed only
+        while no cycle runs and no operation is outstanding (RuntimeStateError otherwise).
+        A new provider must list its models before it replaces the current one; the model
+        becomes `model` or the provider's first, and the maintenance model is cleared
+        unless set. Keys go to the OS keychain under key_name, never to a file.
+
+        Frontends must ask the user to confirm before loosening permissions or raising a
+        budget limit. Every change is written to the event log, without key values."""
 
     async def send(self, text: str) -> None:
         """Submit a user message and authorize a cycle. While a cycle runs or the agent

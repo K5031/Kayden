@@ -11,6 +11,7 @@ dependencies = [
     "anthropic>=2.3.0",
     "httpx2>=2.12",
     "jsonschema>=4.26.0",
+    "keyring>=25.7.0",
     "openai>=3.41.0",
     "textual>=8.2.8",
     "tomli-w>=1.2.0",

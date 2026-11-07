@@ -454,6 +454,14 @@ async def test_deepseek_requires_its_own_key(tmp_path, monkeypatch) -> None:
         OpenAICompatCore(profile="deepseek")
 
 
+async def test_key_from_the_keychain(monkeypatch, keychain) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    keychain.store[("kayden", "DEEPSEEK_API_KEY")] = "from-keychain"
+    core = OpenAICompatCore(profile="deepseek")
+    assert core._client.api_key == "from-keychain"
+    await core.aclose()
+
+
 OPENAI_SENTINELS = {
     "OPENAI_API_KEY": "sentinel-api-key",
     "OPENAI_BASE_URL": "http://sentinel-base.invalid/v1",

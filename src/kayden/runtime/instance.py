@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import importlib
 import os
@@ -71,10 +72,11 @@ async def run_instance(config: InstanceConfig) -> None:
     from kayden.runtime.orchestrator import Runtime
 
     paths = InstancePaths(config.runtime.data_dir)
-    core = load_module(config.core, Core, paths)
-    memory = load_module(config.memory, Memory, paths)
-    tools = load_module(config.tools, Tools, paths)
-    frontend = load_module(config.frontend, Frontend, paths)
+    # Off the event loop: factories may block briefly (a Core reading the OS keychain).
+    core = await asyncio.to_thread(load_module, config.core, Core, paths)
+    memory = await asyncio.to_thread(load_module, config.memory, Memory, paths)
+    tools = await asyncio.to_thread(load_module, config.tools, Tools, paths)
+    frontend = await asyncio.to_thread(load_module, config.frontend, Frontend, paths)
     runtime = Runtime(core=core, memory=memory, tools=tools, frontend=frontend.info,
                       config=config.runtime)
     try:

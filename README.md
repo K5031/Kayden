@@ -83,6 +83,12 @@ to the config file) in `[runtime]` replaces the built-in prompt; Continuous Mode
 its instructions on how to idle. The built-in prompt explains background operations,
 `recall` and `peek_other_mode`, so start from it: `kayden --show-config` prints it.
 
+**Saved settings.** Frontends change provider, API key, model, spending limit,
+permissions, instructions and work folder through the runtime; the changes are saved to
+`<data dir>/settings.toml` and override `config.toml` (command-line flags override both).
+API keys set that way go to the OS keychain, never to a file. Keys exported in the
+environment still work and take precedence.
+
 **Effective config.** `kayden --show-config` prints the config the instance would run with,
 defaults filled in and secrets redacted, as TOML you can copy into a config file. It builds
 no module and needs no API key.
