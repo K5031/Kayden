@@ -102,18 +102,19 @@ New `RuntimeAPI` methods, backed by new `Memory` methods:
 | `memories()` | `memories()` | Current entries: id, text, source conversation, time |
 | `add_memory(text)` | `remember(text)` | The user adds a fact |
 | `edit_memory(id, text)` | `revise(id, text)` | The user corrects one |
-| `forget_memory(id)` | `forget(id)` | The entry stops reaching any context |
+| `forget_memory(id)` | `forget(id)` | The entry and all its revisions are erased |
 
 - They are allowed in any state and apply from the next assemble. Each emits
   `MemoriesChanged` and is logged (without the text, which may be private).
 - The Memory methods are optional: the base class raises `NotImplementedError`, and the
   runtime reports that as "this memory module cannot edit memories". Frontends hide the
   controls when `memories()` is not supported.
-- `SqliteMemory` keeps `long_term` append-only, like the transcript archive: an edit or a
-  forget is a new revision row, and the current list is the latest revision of each entry
-  that is not forgotten. Compaction sees only the current list, so it does not re-extract a
-  forgotten fact from the same summary it was removed from. It can still learn it again
-  from new messages; the user then forgets it again or tells the agent not to remember it.
+- `SqliteMemory` keeps edits as revision rows, and the current list is the latest revision
+  of each entry. Forgetting erases the entry with every revision (see
+  [Deletion](#deletion)). Compaction sees only the current list, and a forgotten entry's
+  text is kept as a hash so compaction does not re-extract the same fact from the summary
+  it came from. It can still learn it again from new messages; the user then forgets it
+  again or tells the agent not to remember it.
 - `inspect_memory` keeps showing the rolling summary of a conversation, read-only.
 
 ### Searching other conversations
@@ -137,14 +138,36 @@ capability `peek_other_mode` gave, reading other work, under the user's control.
   conversation is hidden from `list_conversations()` (unless `include_archived=True`) and
   from `recall(scope="all")`, and can be unarchived. The open conversation can be archived;
   it stays open until the user switches away.
-- **No deletion.** Deleting conversations, messages or archived memories stays out of
-  scope: it needs an exception to the append-only archive rule in `AGENTS.md`, which is the
-  owner's call and gets its own note if wanted. Forgetting covers what the agent sees;
-  deletion would cover what the disk keeps.
+- **Delete.** `RuntimeAPI.delete_conversation(id)` erases a conversation; see
+  [Deletion](#deletion).
 
 Each change emits `ConversationUpdated(info)` and is logged. These all go through one new
 Memory method, `update_conversation(id, *, title=None, archived=None, autonomous=None)`.
 Conversation metadata is not part of the append-only transcript archive.
+
+### Deletion
+
+The archive is append-only except for deletion the user asks for. Archive and forget
+control what the agent sees; deletion controls what the disk keeps, for example after
+pasting a password or private data into a chat.
+
+- `RuntimeAPI.delete_conversation(id)` erases the conversation's messages, summaries,
+  search index entries and metadata, and the long-term memory entries extracted from it,
+  with their revisions. It is refused for the open conversation (switch away first) and
+  while any operation of it is outstanding. It emits `ConversationDeleted(id)` and is
+  logged by id only.
+- A conversation seeded from a deleted one keeps its own first summary: it is that
+  conversation's data. `seed_from` then points at nothing, and frontends show no source.
+- `forget_memory(id)` erases the entry and its revisions, as above.
+- Backed by an optional `Memory.delete_conversation(id)`; without it the runtime reports
+  "this memory module cannot delete conversations" and frontends hide the control.
+- `SqliteMemory` turns on `PRAGMA secure_delete` so erased content is overwritten in the
+  database file, and checkpoints the write-ahead log (`TRUNCATE`) after each deletion so
+  no copy stays there. Copies outside Kayden's data folder, such as backups, are not
+  reached, and neither is what the AI provider received to answer each message, which
+  follows the provider's own retention policy; docs say both.
+- Frontends ask for confirmation, saying it cannot be undone. Archive stays the normal way
+  to tidy the list.
 
 ### Migrating existing data
 
@@ -174,10 +197,10 @@ names the replacement (`--autonomous`), then removed.
   8.2 and 8.8 (no mode isolation; Remember and memory editing), 9 and 10.4 (per data
   folder), 11, 12 (Scenarios C and E use an autonomous conversation; Scenario I becomes
   "recall across conversations, never in a temporary chat"), 13 (renaming leaves the
-  out-of-scope list; deletion stays) and 16.
+  out-of-scope list, and so does deletion) and 16.
 - **TUI.** The start screen loses the mode and activation pickers and gains an
   "Autonomous" switch, "Continue from" and "Remember". The conversation list shows
-  titles and offers rename and archive. A memory screen lists, adds, edits and forgets
+  titles and offers rename, archive and delete. A memory screen lists, adds, edits and forgets
   entries.
 - **Desktop app.** v1 has no mode choice (see [Desktop app](2026-11-07-desktop-app.md)).
   The controls above appear in it as they land in the runtime.
@@ -208,12 +231,15 @@ names the replacement (`--autonomous`), then removed.
 - **Titles from the first message only, with no inference.** Free and deterministic, and
   it stays the fallback. Model-written titles read much better in a long list, for one
   small light-model call per conversation.
-- **Editing long-term memory rows in place.** Simpler, but the store would then have one
-  table that silently changes. Revisions keep the store append-only and allow an undo
-  later.
-- **Real deletion of conversations and memories.** Users expect it, and it matters for
-  privacy. It contradicts the append-only archive rule in `AGENTS.md`, so it is left to
-  the owner and a separate note rather than slipped in here.
+- **Editing long-term memory rows in place.** Simpler, but an edit would silently replace
+  what the agent had learned. Revisions keep each change visible and allow an undo later.
+- **Archive and forget only, no deletion.** Keeps the archive strictly append-only, so
+  nothing is ever lost by accident. But anything sensitive pasted into a chat would stay
+  on disk forever, and the user would control what the agent sees but not what Kayden
+  keeps. Deletion is explicit and confirmed, so accidental loss stays unlikely.
+- **Deleting single messages.** Finer control, but a hole in a transcript breaks the
+  pairing of tool calls and results, and summaries already include the message. Deleting
+  the conversation is the unit that leaves nothing inconsistent.
 
 ## Acceptance criteria
 
@@ -228,11 +254,15 @@ names the replacement (`--autonomous`), then removed.
     is unchanged
   - with Remember off, long-term memory is not assembled, not extracted, and
     `recall(scope="all")` is refused
-  - add, edit and forget change the next assembled context; a forgotten entry is not
-    re-extracted from the existing summary; the `long_term` table only grows
+  - add, edit and forget change the next assembled context; an edit keeps the earlier
+    revision
   - automatic titles are written once, never over a user's title, and a failed title call
     changes nothing
   - archived conversations are absent from `list_conversations()` and `recall(scope="all")`
+  - a deleted conversation's text is absent from every table, the search index, the
+    database file and the write-ahead log; its long-term entries are gone; deleting the
+    open conversation or one with outstanding operations is refused
+  - a forgotten memory's text is absent from the database file and is not re-extracted
   - migration from schema 1 with both modes keeps every message, turns the continuous
     conversation into an autonomous one, merges long-term memory and sums usage
 - `SqliteMemory` passes the Memory conformance suite, extended for the new methods; the
@@ -247,9 +277,10 @@ names the replacement (`--autonomous`), then removed.
 - **Remember is easy to misread.** A user may think it hides the conversation from the
   archive. The UI says "This chat won't use or add to long-term memory", and docs say the
   messages are still kept.
-- **Forgetting is not erasing.** A forgotten fact stays on disk in the revision history and
-  in the archived messages it came from. Until deletion is decided, docs must say so
-  plainly.
+- **Forgetting a fact is not deleting its source.** A forgotten fact is erased, but the
+  messages it came from stay until their conversation is deleted. Docs say so plainly.
+- **Deletion cannot be undone.** A mistaken delete loses a conversation for good. The
+  confirmation must name the conversation, and archive stays the first choice offered.
 - **Autonomy without supervision spends money.** A wake-up loop can run up a bill. Budgets
   still apply, and the switch is off by default; the desktop app should show spending
   next to it.

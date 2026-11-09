@@ -13,7 +13,7 @@ Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, r
 - No speculative abstractions, no features outside the MVP, no unrequested refactoring.
 - Prefer established libraries over custom mechanisms.
 - Modules must never block the event loop.
-- Memory archive: append-only, full-fidelity, schema-versioned.
+- Memory archive: append-only, full-fidelity, schema-versioned. The one exception is deletion the user explicitly asks for.
 - Each instance writes a JSONL event log of runtime decisions (state changes, tool starts, stops, budget checks).
 
 ## Ambiguity
