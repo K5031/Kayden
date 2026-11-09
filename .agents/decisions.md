@@ -429,8 +429,9 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
   first runs the compaction prompt (light model) on the source's current summary and as
   many of its newest exchanges as fit, and stores the result as a summary with
   `through_seq` 0. Long-term lines in that output are ignored (the source already
-  contributed them). An empty result or an empty source writes nothing; the next maintain
-  tries again.
+  contributed them). An empty source writes nothing. An empty result writes nothing and
+  skips that maintain's compaction too, since a first summary from compaction would end
+  seeding; the next maintain tries again.
 - Titles: after seeding and compaction, a conversation with no title gets one from its
   first USER message with Text (2000 characters at most), light model, 20 output tokens,
   prompt `_TITLE_PROMPT`. The first non-empty line is kept, quotes, `#*_` and a trailing

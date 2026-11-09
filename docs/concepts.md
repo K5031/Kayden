@@ -10,7 +10,9 @@ conversation after its first message; you can rename it.
   [long-term memory](#memory).
 - **Continue from**: a new conversation that knows where an earlier one left off. Kayden
   writes a short summary of the earlier one into the new one, then leaves the earlier one
-  as it was. Use it when a conversation has grown long or wandered off.
+  as it was. Use it when a conversation has grown long or wandered off. Continuing from a
+  private chat carries what was said there into the new conversation; if the new one has
+  Remember on, the agent may then keep facts from it in long-term memory.
 - **Remember** (on by default): turned off when you start a conversation, it makes a
   private chat: it does not use long-term memory, adds nothing to it, and the agent cannot
   look into your other conversations from it. Its messages are still saved like any other.

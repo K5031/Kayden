@@ -449,11 +449,15 @@ class SqliteMemory(Memory):
         async with self._locks[conversation_id]:
             state = await self._run(_read_state, conversation_id)
             acted = False
-            if state.info.seed_from is not None and not state.seeded:
-                acted = await self._seed(state, complete, context)
-                if acted:
+            seeding = state.info.seed_from is not None and not state.seeded
+            if seeding:
+                seeded = await self._seed(state, complete, context)
+                if seeded:
                     state = await self._run(_read_state, conversation_id)
-            acted = await self._compact(state, complete, context) or acted
+                acted = bool(seeded)
+            # A first summary from compaction would end seeding: wait for the seed.
+            if not (seeding and seeded is None):
+                acted = await self._compact(state, complete, context) or acted
             if state.info.title is None:
                 acted = await self._title(conversation_id, complete) or acted
             return acted
@@ -467,9 +471,12 @@ class SqliteMemory(Memory):
         )
         return system, summary_tokens
 
-    async def _seed(self, state: _State, complete: Completion, context: ContextRequest) -> bool:
+    async def _seed(self, state: _State, complete: Completion, context: ContextRequest
+                    ) -> bool | None:
         """Write the first summary of a conversation continued from another: the source's
-        summary merged with as much of its verbatim tail as the light model takes."""
+        summary merged with as much of its verbatim tail as the light model takes. False
+        when the source is empty; None when the summary came back empty (tried again by the
+        next maintain)."""
         count = context.count_tokens
         source = await self._run(_read_state, state.info.seed_from)
         messages = [a.message for a in source.active]
@@ -487,7 +494,7 @@ class SqliteMemory(Memory):
         )
         summary, _ = _parse_output(output, summary_tokens, count)  # its facts are known
         if not summary:
-            return False
+            return None
 
         def commit(conn: sqlite3.Connection) -> None:
             with _transaction(conn):

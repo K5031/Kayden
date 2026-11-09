@@ -606,3 +606,22 @@ async def test_failed_migration_changes_nothing(open_store, db: Path):
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         assert [r[0] for r in conn.execute("SELECT mode FROM conversations ORDER BY id")] == [
             "continuous", "session"]
+
+
+async def test_an_empty_seed_is_retried_rather_than_lost(open_store):
+    """Continue from: when the seed summary comes back empty, a compaction must not
+    write the first summary, or the source would never reach the conversation."""
+    memory = open_store()
+    source = await memory.create_conversation(title="source")
+    await fill(memory, source.id, tokens(0, 30))
+    seeded = await memory.create_conversation(title="seeded", seed_from=source.id)
+    await fill(memory, seeded.id, tokens(500, 40))  # enough to compact on its own
+
+    def empty_seed(kept: list[str], text: str) -> str:
+        return "" if "tok0029" in text else tagged(kept, text)
+
+    await maintain(memory, seeded.id, FakeCompletion(render=empty_seed))
+    assert (await memory.inspect(seeded.id)).summary == ""
+    # keep=200: the compaction that follows the seed keeps the source's tokens
+    assert await maintain(memory, seeded.id, FakeCompletion(keep=200, render=tagged))
+    assert "tok0001" in await addendum(memory, seeded.id)
