@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from typing import Any
 
@@ -112,6 +113,13 @@ async def test_permissions_stay_clamped_to_the_inherited_ceiling(make, monkeypat
     s = await h.runtime.update_settings(
         SettingsUpdate(permissions=PermissionPolicy.ALLOW_READ_ONLY))
     assert s.permissions is PermissionPolicy.DENY
+
+
+async def test_permissions_loosen_past_the_policy_this_runtime_exported(make):
+    h = await setup(make, permissions=PermissionPolicy.DENY)
+    s = await h.runtime.update_settings(SettingsUpdate(permissions=PermissionPolicy.ASK))
+    assert s.permissions is PermissionPolicy.ASK
+    assert os.environ[PERMISSION_CEILING_ENV] == "ask"
 
 
 async def test_raising_a_spent_budget_lets_the_agent_continue(make):

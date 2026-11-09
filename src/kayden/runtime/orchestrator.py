@@ -117,8 +117,8 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
-def _effective_policy(configured: PermissionPolicy) -> PermissionPolicy:
-    ceiling = PermissionPolicy.inherited_ceiling()
+def _effective_policy(configured: PermissionPolicy,
+                      ceiling: PermissionPolicy | None) -> PermissionPolicy:
     return configured.clamp(ceiling) if ceiling is not None else configured
 
 
@@ -243,7 +243,9 @@ class Runtime:
         self._config = config
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self._scratch = config.data_dir / "scratch"
-        self._permissions = _effective_policy(config.permissions)
+        # Read before exporting our own policy, which must not clamp later changes.
+        self._ceiling = PermissionPolicy.inherited_ceiling()
+        self._permissions = _effective_policy(config.permissions, self._ceiling)
         os.environ[PERMISSION_CEILING_ENV] = self._permissions.value
         self._log = EventLog()
         self._bus = EventBus(config.subscriber_queue_size, self._log)
@@ -663,7 +665,7 @@ class Runtime:
         self._models = models
         permissions = self._permissions
         if u.permissions is not None:
-            permissions = _effective_policy(u.permissions)
+            permissions = _effective_policy(u.permissions, self._ceiling)
             os.environ[PERMISSION_CEILING_ENV] = permissions.value
         self._permissions = permissions
         self._budget.budget = budget
