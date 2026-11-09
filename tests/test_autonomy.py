@@ -107,6 +107,22 @@ async def test_set_autonomous_applies_from_the_next_turn(make: Any) -> None:
     assert any(d.get("decision") == "set_autonomous" for d in await decisions(h))
 
 
+async def test_turning_autonomy_on_while_idle_wakes_when_running_work_finishes(
+        make: Any) -> None:
+    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="started"),
+                         Step(text="saw the result")])
+    tools = FakeTools()
+    tools.gated("bg")
+    h: Harness = await make(core=core, tools=tools)
+    await h.start()
+    await h.turn("go")  # bg is backgrounded and still running; the agent is idle
+    assert h.runtime.snapshot().operations
+    await h.runtime.set_autonomous(True)
+    tools.gates["bg"].set()
+    await eventually(lambda: len(core.requests) == 3)
+    assert {o.call_id for o in op_results(core.requests[2].messages)} == {"bg"}
+
+
 async def test_set_autonomous_needs_a_started_agent(make: Any) -> None:
     h: Harness = await make()
     with pytest.raises(RuntimeStateError):

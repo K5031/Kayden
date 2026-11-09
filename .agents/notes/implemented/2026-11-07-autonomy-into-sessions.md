@@ -56,8 +56,10 @@ data folder: `instance.lock`, `usage.json` and `events.jsonl`.
 
 - `StartOptions.autonomous` sets it for a new conversation; None keeps a resumed one's.
 - `RuntimeAPI.set_autonomous(bool)` changes the open conversation in any state, from the
-  next turn. Turning it off drops any pending wake-up; background operations keep running
-  and their results wait for the user.
+  next turn. Turning it on while IDLE with operations running sets the wake set to them, so
+  the agent wakes when they finish, as if it had idled waiting for them. Turning it off
+  drops any pending wake-up; background operations keep running and their results wait for
+  the user.
 - `start()` always leaves the agent IDLE. A resumed autonomous conversation has no pending
   wake-up, so it never runs before the user sends a message or activates it.
 - `activate()` is allowed in IDLE for every conversation.

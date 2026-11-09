@@ -29,7 +29,8 @@ the change applies from the agent's next step.
 | Results of background tasks | Wait for you | Wake the agent |
 
 An autonomous agent can say it is done for now ("idle"); it then waits until the tasks it
-started finish, or until you write. Turning autonomy off stops any such wake-up; tasks
+started finish, or until you write. Turning autonomy on while the agent waits with tasks
+running makes it continue when they finish. Turning autonomy off stops any such wake-up; tasks
 keep running and their results wait for you. After Kayden restarts, an autonomous
 conversation waits for you before doing anything. Spending limits apply as always, so
 watch the costs of a conversation left to work on its own.

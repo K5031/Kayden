@@ -1244,8 +1244,10 @@ class RuntimeAPI(Protocol):
 
     async def set_autonomous(self, autonomous: bool) -> None:
         """Flip the open conversation's switch, in any state, from the next turn. Turning
-        it off drops any pending wake-up: background operations keep running and their
-        results wait for the user. RuntimeStateError before start()."""
+        it on while IDLE with operations running makes the agent wake when they finish, as
+        if it had idled waiting for them. Turning it off drops any pending wake-up:
+        background operations keep running and their results wait for the user.
+        RuntimeStateError before start()."""
 
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
         """An empty title clears it, so an automatic title follows."""
