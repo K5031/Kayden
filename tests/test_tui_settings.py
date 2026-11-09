@@ -185,14 +185,3 @@ async def test_settings_screen_fits_a_small_terminal():
         save_button.focus()  # scrolls the dialog, with an animation
         await until(pilot, lambda: app.screen.region.contains_region(save_button.region))
 
-
-def test_amounts_read_like_money():
-    from kayden.api import ModelInfo
-    from kayden.frontends.tui import _dollars, _model_label
-
-    assert _dollars(10.0) == "$10" and _dollars(2.5) == "$2.50" and _dollars(None) == (
-        "no spending limit")
-    assert _model_label(ModelInfo("h", "Haiku", 1_000, input_usd_per_mtok=0.5,
-                                  output_usd_per_mtok=2.5)) == (
-        "Haiku  ($0.50 in / $2.50 out per million tokens)")
-    assert _model_label(ModelInfo("x", "Plain", 1_000)) == "Plain"

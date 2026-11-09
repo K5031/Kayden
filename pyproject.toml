@@ -19,9 +19,17 @@ dependencies = [
 
 [project.scripts]
 kayden = "kayden.__main__:main"
+kayden-desktop = "kayden.frontends.desktop.launcher:main"
+
+[project.optional-dependencies]
+desktop = [
+    "pyside6-essentials>=6.12.0",
+    "qasync>=0.28.0",
+]
 
 [dependency-groups]
 dev = [
+    "kayden[desktop]",
     "psutil>=7.2.2",
     "pytest",
     "pytest-asyncio",
@@ -42,3 +50,30 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+
+# Desktop bundles (`briefcase build`); see docs/development.md.
+[tool.briefcase]
+project_name = "Kayden"
+bundle = "io.github.k5031"
+version = "0.0.0"
+url = "https://github.com/K5031/Kayden"
+author = "K5031"
+
+[tool.briefcase.app.kayden-desktop]
+formal_name = "Kayden"
+description = "An AI agent that works for you on your computer."
+sources = ["src/kayden", "src/kayden_desktop"]
+requires = [
+    "anthropic>=2.3.0",
+    "httpx2>=2.12",
+    "jsonschema>=4.26.0",
+    "keyring>=25.7.0",
+    "openai>=3.41.0",
+    "pyside6-essentials>=6.12.0",
+    "qasync>=0.28.0",
+    "textual>=8.2.8",
+    "tomli-w>=1.2.0",
+]
+
+[tool.briefcase.app.kayden-desktop.linux.flatpak]
+finish_arg."talk-name=org.freedesktop.secrets" = true

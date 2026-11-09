@@ -335,3 +335,43 @@ config `python -m kayden` builds (Core and Frontend swapped for fakes), and once
 real TUI driven by Textual's test pilot (send, approve the shell call, see the answer).
 Both check the SQLite transcript and the file the shell call wrote. The live Core suites
 run with `KAYDEN_LIVE_TESTS=1` and a key.
+
+## Desktop app
+
+Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
+
+| Choice | Value |
+|---|---|
+| Entry points | `kayden-desktop` (`kayden.frontends.desktop.launcher:main`); bundles run `python -m kayden_desktop`, which calls it |
+| Dependencies | `pyside6-essentials` and `qasync`, in the `desktop` extra (also in the dev group) |
+| Default work folder | `~/Kayden`, created at launch when neither config file sets a root (`load_config(default_root=...)`) |
+| At launch | Reopens the most recently updated conversation, or starts one when there is none |
+| Welcome | Shown when the configured provider needs a key and no provider has one |
+| Markdown re-render | At most every 100 ms while streaming; at once on commit |
+| History page | 100 messages, then "Load earlier messages" |
+| Quit order | `setQuitOnLastWindowClosed(False)`: closing the window ends `Frontend.run`, the runtime shuts down, then `asyncio.run` returns |
+| "Get a key" pages | `platform.claude.com`, `platform.deepseek.com/api_keys`, `platform.openai.com/api-keys` |
+| Shared with the TUI | `kayden.frontends.common`: permission labels, money formatting, `loosening()` |
+
+**PySide6 on Python 3.15.** With PySide6 6.12 loaded, reading a lazily imported module
+attribute (PEP 810) from another module returns the `lazy_import` object instead of
+resolving it. `asyncio.to_thread` reads `concurrent.futures.ThreadPoolExecutor`, so every
+`to_thread` failed. `kayden.frontends.desktop` resolves that name when imported, before any
+Qt import; `tests/conftest.py` imports it first for the same reason. Other lazily imported
+stdlib names stay exposed on 3.15.
+
+**qasync results (2026-11-08, qasync 0.28.0, PySide6 6.12.0).** With
+`KAYDEN_TEST_LOOP=qasync`, every test file passes on Python 3.13.18 when run on its own.
+On 3.15.1, `test_commands.py` hangs and `core/test_openai_compat.py` segfaults in fixture
+teardown; the other files pass. A single run of the whole suite segfaults on both versions
+after a few dozen tests, each of which creates its own `QEventLoop`; the app creates one.
+Bundles therefore carry Python 3.13.
+
+**Briefcase (0.4.7).** It accepts `[tool.briefcase]` and generates the Linux system
+template. The build stopped compiling its launcher stub: the machine's Python 3.14 had no
+`Python.h`. No bundle has been built, so sizes are not measured yet.
+
+**Permission ceiling.** The runtime reads the inherited ceiling once, at construction and
+before exporting its own policy, and `update_settings` clamps to that. Clamping to the
+environment at update time would clamp to the runtime's own export, and permissions could
+never be loosened in a running instance (`test_permissions_loosen_past_the_policy_this_runtime_exported`).

@@ -249,15 +249,17 @@ def read_saved(path: Path, providers: Sequence[Provider]) -> dict[str, Any]:
     return {**saved, **{k: data[k] for k in ("provider", "work_folder") if k in data}}
 
 
-def load_config(args: argparse.Namespace) -> InstanceConfig:
-    """config.toml, then the saved settings, then command-line flags, each overriding."""
+def load_config(args: argparse.Namespace, *, default_root: Path | None = None) -> InstanceConfig:
+    """config.toml, then the saved settings, then command-line flags, each overriding.
+    The Tools root defaults to `default_root`, else the current directory."""
     data_dir = args.data_dir.expanduser()
     path = config_path(args)
     data = read_config(path, required=args.config is not None)
     modules = load_modules(path, data)
     runtime = load_runtime(path, data)
     if modules["tools"].factory == DEFAULT_FACTORIES["tools"] and not modules["tools"].options:
-        modules["tools"] = ModuleSpec(modules["tools"].factory, {"root": str(Path.cwd())})
+        root = default_root or Path.cwd()
+        modules["tools"] = ModuleSpec(modules["tools"].factory, {"root": str(root)})
     providers, _ = providers_for(modules["core"])
     saved = read_saved(data_dir / SETTINGS_FILE, providers)
     if "provider" in saved:

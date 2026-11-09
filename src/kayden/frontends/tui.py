@@ -56,7 +56,6 @@ from kayden.api import (
     ModelSelected,
     OperationInfo,
     OperationResult,
-    PermissionPolicy,
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
@@ -85,6 +84,7 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.api import Text as TextBlock
+from kayden.frontends.common import PERMISSION_LABELS, loosening, model_label
 
 STATE_LABELS = {
     AgentState.NOT_STARTED: "Not started",
@@ -358,26 +358,6 @@ class ModelScreen(ModalScreen[str | None]):
 
 
 SAME_MODEL = "__same__"
-PERMISSION_LABELS = {
-    PermissionPolicy.ASK: "Ask me before every action",
-    PermissionPolicy.ALLOW_READ_ONLY: "Read freely, ask before changes",
-    PermissionPolicy.DENY: "Never run tools",
-}
-
-
-def _money(value: float) -> str:
-    return f"${value:g}" if value == int(value) else f"${value:.2f}"
-
-
-def _dollars(value: float | None) -> str:
-    return "no spending limit" if value is None else _money(value)
-
-
-def _model_label(model: ModelInfo) -> str:
-    if model.input_usd_per_mtok is None or model.output_usd_per_mtok is None:
-        return model.name
-    return (f"{model.name}  ({_money(model.input_usd_per_mtok)} in / "
-            f"{_money(model.output_usd_per_mtok)} out per million tokens)")
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -420,7 +400,7 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
 
     def compose(self) -> ComposeResult:
         s = self.settings
-        models = [(_model_label(m), m.id) for m in self.models]
+        models = [(model_label(m), m.id) for m in self.models]
         with VerticalScroll(classes="dialog"):
             yield Label("Settings", classes="title")
             yield Label("AI provider")
@@ -478,7 +458,7 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
         update = self._update()
         if update is None:
             return
-        reasons = self._loosening(update)
+        reasons = loosening(self.settings, update)
         if not reasons:
             self.dismiss(update)
             return
@@ -532,21 +512,6 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
         if not folder.disabled and folder.value.strip() != (s.work_folder or ""):
             changes["work_folder"] = folder.value.strip()
         return SettingsUpdate(**changes)
-
-    def _loosening(self, update: SettingsUpdate) -> list[str]:
-        reasons = []
-        if update.budget is not None:
-            old, new = self.settings.budget.max_cost_usd, update.budget.max_cost_usd
-            if old is not None and (new is None or new > old):
-                reasons.append(f"raises the spending limit from {_dollars(old)} to "
-                               f"{_dollars(new)}" if new is not None else
-                               f"removes the {_dollars(old)} limit: no spending limit")
-        if update.permissions is not None:
-            order = list(PermissionPolicy)
-            if order.index(update.permissions) > order.index(self.settings.permissions):
-                reasons.append("lets the agent do more without asking: "
-                               + PERMISSION_LABELS[update.permissions].lower())
-        return reasons
 
 
 NEW_CONVERSATION = "__new__"

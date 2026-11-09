@@ -1,0 +1,425 @@
+"""The desktop app's view model, against the runtime with scripted fakes (no display)."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+
+import pytest
+
+from kayden.api import (
+    AgentState,
+    Budget,
+    ConversationInfo,
+    Decision,
+    EventEnvelope,
+    Failure,
+    FailureKind,
+    Message,
+    Mode,
+    PermissionPolicy,
+    PermissionRequested,
+    ProviderInfo,
+    Role,
+    RuntimeSnapshot,
+    RuntimeStateError,
+    Settings,
+    SettingsUpdate,
+    ShuttingDown,
+    StateChanged,
+    Text,
+    TextDelta,
+    ToolStatus,
+    TransientCoreError,
+    Usage,
+    UsageSnapshot,
+)
+from kayden.frontends.desktop.viewmodel import (
+    BUDGET_MESSAGE,
+    BUSY_MESSAGE,
+    AssistantItem,
+    Closed,
+    Controller,
+    ConversationModel,
+    NoticeItem,
+    Phase,
+    ToolItem,
+    UserItem,
+    conversation_label,
+    form_from,
+    needs_welcome,
+    newest_first,
+    settings_update,
+    user_message,
+)
+from kayden.runtime import InstanceLockedError
+from tests.conftest import Harness, eventually
+from tests.fakes.core import Step, call
+
+
+async def attach(h: Harness) -> tuple[ConversationModel, Controller, asyncio.Task[None]]:
+    model = ConversationModel()
+    controller = Controller(h.runtime, model)
+    task = asyncio.create_task(controller.run())
+    await settle(h, controller)
+    return model, controller, task
+
+
+async def settle(h: Harness, controller: Controller) -> None:
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+
+
+async def until_state(h: Harness, controller: Controller, state: AgentState) -> None:
+    await eventually(lambda: controller.model.state is state
+                     and controller.caught_up(h.runtime.snapshot().seq))
+
+
+def of[T](model: ConversationModel, kind: type[T]) -> list[T]:
+    return [item for item in model.items if isinstance(item, kind)]
+
+
+async def test_a_turn_with_reasoning_and_a_tool(make):
+    h: Harness = await make()
+    h.tools.instant("look", "found it")
+    h.core.add(Step(reasoning="hmm", text="Let me look.", calls=[call("look", {"q": "x"})]),
+               Step(text="**Done.**"))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("find x")
+    await eventually(lambda: len(of(model, AssistantItem)) == 2 and not model.busy)
+    await settle(h, controller)
+    user, first, tool, last = model.items
+    assert isinstance(user, UserItem) and user.text == "find x" and not user.queued
+    assert isinstance(first, AssistantItem) and first.final
+    assert (first.reasoning, first.text) == ("hmm", "Let me look.")
+    assert isinstance(tool, ToolItem) and tool.name == "look" and tool.summary == '{"q": "x"}'
+    assert tool.status is ToolStatus.OK and tool.state_label == "done"
+    assert tool.content.startswith("found it") and tool.duration_s is not None
+    assert tool.notes == ["Permission: allowed"]  # read-only, allowed by policy
+    assert isinstance(last, AssistantItem) and last.text == "**Done.**"
+    assert model.status_text == "Ready"
+    assert model.spending_text.endswith("spent")
+
+
+async def test_permission_prompt_is_answered_and_removed(make):
+    h: Harness = await make()
+    h.tools.instant("write", read_only=False)
+    h.core.add(Step(calls=[call("write", {"path": "a"})]), Step(text="written"))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("write a")
+    await eventually(lambda: model.prompts)
+    assert model.status_text == "Waiting for you"
+    (request,) = model.prompts.values()
+    assert request.call.name == "write" and not request.read_only
+    controller.resolve(request.id, Decision.ALLOW_ONCE)
+    await eventually(lambda: not model.prompts and not model.busy)
+    (tool,) = of(model, ToolItem)
+    assert tool.status is ToolStatus.OK and "Permission: allowed" in tool.notes
+
+
+async def test_denied_call_is_shown_as_declined(make):
+    h: Harness = await make()
+    h.tools.instant("write", read_only=False)
+    h.core.add(Step(calls=[call("write")]), Step(text="ok"))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("write")
+    await eventually(lambda: model.prompts)
+    controller.resolve(next(iter(model.prompts)), Decision.DENY)
+    await eventually(lambda: not model.busy and of(model, ToolItem)[0].status is not None)
+    assert of(model, ToolItem)[0].state_label == "declined"
+
+
+async def test_message_sent_while_busy_is_queued_until_committed(make):
+    h: Harness = await make()
+    h.core.add(Step(text="a slow answer", chunks=5, delay=0.05), Step(text="second"))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("first")
+    await eventually(lambda: model.busy)
+    controller.send("also this")
+    await eventually(lambda: any(u.queued for u in of(model, UserItem)))
+    assert model.busy  # Send is Stop meanwhile
+    await eventually(lambda: not model.busy and len(of(model, AssistantItem)) == 2)
+    assert [(u.text, u.queued) for u in of(model, UserItem)] == [("first", False),
+                                                                 ("also this", False)]
+
+
+async def test_retry_discards_the_partial_stream(make):
+    h: Harness = await make()
+    h.core.add(Step(text="partial", error=TransientCoreError("busy")), Step(text="final"))
+    await h.start()
+    model, controller, _ = await attach(h)
+    notices: list[str] = []
+    model.on_change = lambda change: notices.append(model.notice)
+    controller.send("hi")
+    await eventually(lambda: not model.busy and of(model, AssistantItem))
+    await settle(h, controller)
+    assert [a.text for a in of(model, AssistantItem)] == ["final"]
+    assert "Retrying (2 of 4)…" in notices
+
+
+async def test_background_task_shows_in_the_status_and_finishes(make):
+    h: Harness = await make()
+    h.tools.slow("build", 0.6)
+    h.core.add(Step(calls=[call("build")]), Step(text="started"))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("build it")
+    await eventually(lambda: of(model, ToolItem) and of(model, ToolItem)[0].phase
+                     is Phase.BACKGROUND)
+    tool = of(model, ToolItem)[0]
+    assert tool.cancellable
+    await eventually(lambda: "1 task running in the background" in model.status_text)
+    await eventually(lambda: tool.status is ToolStatus.OK, timeout=5)
+    assert not tool.cancellable and tool.progress.startswith("build")
+    assert "background" not in model.status_text
+
+
+async def test_cancel_a_running_tool(make):
+    h: Harness = await make()
+    h.tools.hanging("wait")
+    h.core.add(Step(calls=[call("wait")]), Step(text="ok"))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("wait")
+    await eventually(lambda: of(model, ToolItem) and of(model, ToolItem)[0].cancellable)
+    controller.cancel(of(model, ToolItem)[0].call_id)
+    await eventually(lambda: of(model, ToolItem)[0].status is ToolStatus.CANCELLED)
+
+
+async def test_stop_with_a_call_that_ignores_cancellation(make):
+    h: Harness = await make()
+    h.tools.hanging("stuck", honor_cancel=False)
+    h.core.add(Step(calls=[call("stuck")]))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("go")
+    await eventually(lambda: of(model, ToolItem) and of(model, ToolItem)[0].cancellable)
+    controller.stop()
+    assert model.notice == "Stop requested"
+    await until_state(h, controller, AgentState.STOPPED)
+    assert of(model, ToolItem)[0].status is ToolStatus.ABANDONED
+    assert any(n.severity == "warning" and "may still be running" in n.text
+               for n in of(model, NoticeItem))
+
+
+async def test_attach_mid_cycle_restores_tools_prompts_and_queue(make):
+    h: Harness = await make()
+    h.tools.slow("index", 30, steps=300)
+    h.tools.instant("write", read_only=False)
+    h.core.add(Step(calls=[call("index")]), Step(calls=[call("write")]), Step(text="ok"))
+    await h.start()
+    await h.runtime.send("index and write")
+    await h.rec.wait_for(lambda r: r.of(PermissionRequested))
+    await h.runtime.send("queued meanwhile")
+    await eventually(lambda: any(op.last_progress for op in h.runtime.snapshot().operations))
+    model, controller, _ = await attach(h)
+    index, write = of(model, ToolItem)
+    assert index.phase is Phase.BACKGROUND and index.progress.startswith("index")
+    assert write.name == "write" and write.status is None
+    assert len(model.prompts) == 1 and model.state is AgentState.AWAITING_PERMISSION
+    assert [(u.text, u.queued) for u in of(model, UserItem)] == [
+        ("index and write", False), ("queued meanwhile", True)]
+    controller.resolve(next(iter(model.prompts)), Decision.ALLOW_ONCE)
+    await eventually(lambda: not model.prompts and write.status is ToolStatus.OK)
+    await eventually(lambda: not of(model, UserItem)[1].queued)
+
+
+async def test_load_earlier_pages_back(make):
+    h: Harness = await make()
+    await h.start()
+    for i in range(3):
+        h.core.add(Step(text=f"reply {i}"))
+        await h.turn(f"message {i}")
+    model, controller, _ = await attach(h)
+    assert len(model.items) == 6 and not model.has_earlier
+    model.load(h.runtime.snapshot(), (await h.transcript())[-2:], page=2)
+    assert [i.text for i in model.items] == ["message 2", "reply 2"] and model.has_earlier
+    controller.load_earlier()
+    await eventually(lambda: len(model.items) == 6)
+    assert [i.text for i in model.items][:2] == ["message 0", "reply 0"]
+
+
+async def test_opening_a_conversation_resets_the_view(make):
+    h: Harness = await make()
+    first = await h.start()
+    await h.turn("in the first")
+    model, controller, _ = await attach(h)
+    assert controller.can_switch() is None
+    await controller.open_conversation(None)
+    await eventually(lambda: model.conversation is not None
+                     and model.conversation.id != first.id)
+    assert model.items == []
+    listed = await controller.conversations()
+    assert [c.id for c in listed][-1] == first.id
+    await controller.open_conversation(first.id)
+    await eventually(lambda: model.conversation.id == first.id and len(model.items) == 2)
+
+
+async def test_switching_is_refused_while_busy(make):
+    h: Harness = await make()
+    h.tools.hanging("wait")
+    h.core.add(Step(calls=[call("wait")]))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("wait")
+    await eventually(lambda: of(model, ToolItem))
+    assert controller.can_switch() == BUSY_MESSAGE
+    await controller.open_conversation(None)
+    assert of(model, NoticeItem)[-1].text == BUSY_MESSAGE
+
+
+async def test_shutting_down_closes_the_view(make):
+    h: Harness = await make()
+    await h.start()
+    model, _, task = await attach(h)
+    closed: list[str] = []
+    model.on_change = lambda change: isinstance(change, Closed) and closed.append(change.reason)
+    await h.runtime.aclose()
+    await asyncio.wait_for(task, 5)
+    assert model.closed and len(closed) == 1
+
+
+# ── pure model ────────────────────────────────────────────────────────────
+
+CONVERSATION = ConversationInfo("c", Mode.SESSION, None, 0.0, 0.0)
+
+
+def _snapshot(seq: int = 0) -> RuntimeSnapshot:
+    return RuntimeSnapshot(seq=seq, state=AgentState.IDLE, conversation=CONVERSATION,
+                           config=None, model="m", usage=UsageSnapshot(Usage(), 0, 0.0),
+                           operations=(), pending_permissions=(), queued_messages=())
+
+
+def test_failure_banner_until_the_next_cycle():
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    model.apply(Failure(FailureKind.BUDGET, "budget exhausted: max_cost_usd"))
+    assert model.failure is not None and model.failure.kind is FailureKind.BUDGET
+    assert of(model, NoticeItem)[0].severity == "error"
+    model.apply(StateChanged(AgentState.THINKING))
+    assert model.failure is None
+
+
+def test_stream_cut_off_by_stop_is_marked_interrupted():
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    model.apply(StateChanged(AgentState.THINKING))
+    model.apply(TextDelta("half"))
+    model.apply(StateChanged(AgentState.STOPPED))
+    (item,) = model.items
+    assert isinstance(item, AssistantItem) and item.interrupted and not item.final
+
+
+def test_spending_with_and_without_a_limit():
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    model.usage = UsageSnapshot(Usage(cost_usd=1.2), 0, 0.0, {"max_cost_usd": 8.8})
+    assert model.spending_text == "$1.20 of $10 spent"
+    model.usage = UsageSnapshot(Usage(cost_usd=1.2), 0, 0.0)
+    assert model.spending_text == "$1.20 spent"
+
+
+class GapRuntime:
+    """Events with a gap in seq; counts recoveries."""
+
+    def __init__(self) -> None:
+        self.snapshots = 0
+        self.history_messages = [Message("m1", Role.USER, (Text("hello"),), 0.0)]
+
+    async def _events(self) -> AsyncIterator[EventEnvelope]:
+        yield EventEnvelope(1, StateChanged(AgentState.THINKING))
+        yield EventEnvelope(5, StateChanged(AgentState.IDLE))  # 2-4 were dropped
+        yield EventEnvelope(6, ShuttingDown("done"))
+
+    def events(self) -> AsyncIterator[EventEnvelope]:
+        return self._events()
+
+    def snapshot(self) -> RuntimeSnapshot:
+        self.snapshots += 1
+        return _snapshot(seq=0 if self.snapshots == 1 else 4)
+
+    async def history(self, conversation_id: str, **kw: object) -> list[Message]:
+        return self.history_messages
+
+
+async def test_seq_gap_triggers_recovery():
+    runtime = GapRuntime()
+    model = ConversationModel()
+    await asyncio.wait_for(Controller(runtime, model).run(), 5)  # type: ignore[arg-type]
+    assert runtime.snapshots == 2
+    assert [i.text for i in of(model, UserItem)] == ["hello"]  # rendered once
+    assert model.closed
+
+
+# ── settings form ─────────────────────────────────────────────────────────
+
+SETTINGS = Settings(
+    provider="anthropic",
+    providers=(ProviderInfo("anthropic", "Claude", "ANTHROPIC_API_KEY", True),
+               ProviderInfo("openai", "OpenAI", "OPENAI_API_KEY", False)),
+    model="m1", maintenance_model=None, budget=Budget(max_cost_usd=10.0),
+    permissions=PermissionPolicy.ASK, system_prompt="Be helpful.", work_folder="/home/u/Kayden",
+)
+
+
+def test_an_untouched_form_changes_nothing():
+    assert settings_update(SETTINGS, form_from(SETTINGS)) == SettingsUpdate()
+
+
+def test_only_changed_fields_are_sent():
+    from dataclasses import replace
+
+    form = replace(form_from(SETTINGS), model="m2", maintenance_model="m3",
+                   spending_limit="$2.50", permissions=PermissionPolicy.DENY,
+                   instructions="Be brief.", work_folder="/tmp/w", api_key=" k ")
+    assert settings_update(SETTINGS, form) == SettingsUpdate(
+        api_key="k", model="m2", maintenance_model="m3", budget=Budget(max_cost_usd=2.5),
+        permissions=PermissionPolicy.DENY, system_prompt="Be brief.", work_folder="/tmp/w")
+    cleared = replace(form_from(replace(SETTINGS, maintenance_model="m3")),
+                      maintenance_model=None, spending_limit="")
+    assert settings_update(replace(SETTINGS, maintenance_model="m3"), cleared) == SettingsUpdate(
+        maintenance_model="", budget=Budget())
+
+
+def test_switching_provider_leaves_the_models_to_it():
+    from dataclasses import replace
+
+    form = replace(form_from(SETTINGS), provider="openai", model="m2", api_key="sk")
+    assert settings_update(SETTINGS, form) == SettingsUpdate(provider="openai", api_key="sk")
+
+
+@pytest.mark.parametrize("field, value, message", [
+    ("spending_limit", "ten", "amount in dollars"),
+    ("spending_limit", "-1", "amount in dollars"),
+    ("instructions", "  ", "can't be empty"),
+    ("work_folder", " ", "work folder"),
+])
+def test_invalid_values_are_explained(field, value, message):
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match=message):
+        settings_update(SETTINGS, replace(form_from(SETTINGS), **{field: value}))
+
+
+def test_welcome_conversation_labels_and_refusals():
+    from dataclasses import replace
+
+    assert not needs_welcome(SETTINGS)
+    assert needs_welcome(replace(SETTINGS, providers=(
+        ProviderInfo("anthropic", "Claude", "ANTHROPIC_API_KEY", False),)))
+    assert not needs_welcome(replace(SETTINGS, provider=None, providers=()))  # custom Core
+    assert not needs_welcome(replace(SETTINGS, providers=(
+        ProviderInfo("anthropic", "Local", None, False),)))
+    old = ConversationInfo("a", Mode.SESSION, "Trip plans", 0.0, 1.0)
+    new = ConversationInfo("b", Mode.SESSION, None, 0.0, 2.0)
+    assert newest_first([old, new]) == [new, old]
+    assert conversation_label(old) == "Trip plans"
+    assert conversation_label(new).startswith("Conversation of ")
+    assert user_message(RuntimeStateError("cannot start while thinking")) == BUSY_MESSAGE
+    assert user_message(RuntimeStateError("budget exhausted: max_cost_usd")) == BUDGET_MESSAGE
+    assert user_message(InstanceLockedError("session mode in /d is already in use by process 7")
+                        ).startswith("Kayden is already open")
+    assert user_message(ValueError("unknown model x")) == "unknown model x"

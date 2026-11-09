@@ -2,7 +2,8 @@
 
 ## The settings screen
 
-Press **F2** (or type `/settings`). Change what you need and choose **Save**; only what you
+Press **F2** (or type `/settings`); in the [desktop app](desktop-app.md), choose
+**Kayden → Settings**. Change what you need and choose **Save**; only what you
 changed is saved, and most changes apply to the agent's next step.
 
 | Setting | Notes |

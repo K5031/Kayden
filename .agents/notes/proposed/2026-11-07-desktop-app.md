@@ -53,10 +53,15 @@ command the bundle runs). It does the following:
 
 1. Reads `config.toml` and `settings.toml` with the same `load_config` as `kayden`.
 2. Uses the desktop frontend factory instead of the configured frontend.
-3. Sets the Tools root to `~/Kayden` when neither file sets a work folder. A double-clicked
-   app's working directory is meaningless, often `/`, and the root must never be that.
+3. Sets the Tools root to `~/Kayden` when neither file sets a work folder
+   (`load_config(default_root=...)`). A double-clicked app's working directory is
+   meaningless, often `/`, and the root must never be that.
 4. Runs `asyncio.run(run_instance(config), loop_factory=qasync.QEventLoop)` under a
-   `QApplication`.
+   `QApplication` that does not quit when its last window closes, so the runtime shuts down
+   before the loop stops.
+
+A Briefcase bundle runs `python -m <app module>`, so a two-line `kayden_desktop` package
+calls the same `main`.
 
 "Frontend owns the process's main loop" (`api.Frontend` docstring) does not match how the
 loop is created. That mismatch goes into `.agents/contract-issues.md` when this is built.
@@ -109,11 +114,18 @@ the oldest envelopes. It follows the `RuntimeSnapshot` order:
 
 "Load earlier messages" pages back with `history(before=...)`.
 
-**Conversations.** A sidebar lists `list_conversations(Mode.SESSION)` with a New
-conversation button. Choosing one calls `start()`, which is allowed only while idle with no
-outstanding operations. Otherwise the sidebar is disabled with the reason shown. A Model
-menu lists `list_models()` with prices and calls `select_model`. Search over the archive
-(`search_archive`) is in a later version.
+**Conversations.** The app has no mode choice. It always runs Session Mode, the one kind
+of conversation that remains once Continuous Mode is retired
+([Autonomy into sessions](2026-11-07-autonomy-into-sessions.md)). A sidebar lists
+`list_conversations(Mode.SESSION)`, newest first, with a New conversation button. An entry
+shows its title, or the date when it has none. Choosing one calls `start()`, which is
+allowed only while idle with no outstanding operations. Otherwise the sidebar is disabled
+with the reason shown. A Model menu lists `list_models()` with prices and calls
+`select_model`. Search over the archive (`search_archive`) is in a later version.
+
+The conversation controls of the autonomy note (rename, archive, the Autonomous switch,
+Continue from, Remember, the memory window) are added to the sidebar and Settings as each
+lands in the runtime. v1 does not wait for them, and none of them needs a mode.
 
 **Settings window.** The window offers the same fields as the TUI's `SettingsScreen`:
 
@@ -154,8 +166,9 @@ installs nothing else. Briefcase supports PySide6 apps and produces the formats 
 | Linux | Flatpak (main) and AppImage | The Flatpak needs D-Bus access to `org.freedesktop.secrets` for the keychain. |
 | Windows | `.msi` | Deferred, see Scope. |
 
-The bundled Python is chosen at build time. It may stay on 3.13 until qasync is proven on
-3.14.
+The bundled Python is chosen at build time and is 3.13: every test file passes on qasync
+there, while 3.15 has a hang and a crash on qasync and breaks lazy imports under PySide6
+(`.agents/decisions.md`, Desktop app).
 
 **First run.** First run happens when `settings()` shows no provider with `has_key`. It is a
 three-page welcome window, shown before `start()`:
@@ -179,7 +192,8 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 **Version 1:**
 
 - Linux and macOS.
-- Session Mode: the conversation sidebar, new and resume conversations.
+- Session Mode only, with no mode choice: the conversation sidebar, new and resume
+  conversations.
 - Streaming transcript with Markdown, reasoning, tool cards, per-call cancel, permission
   cards, queued messages, Stop, the status line with spending, and the model menu.
 - Settings window with confirmations, first-run welcome, and late-attach recovery.
@@ -191,8 +205,9 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 - **Windows.** The runtime's instance lock uses `fcntl`, and the shell tool uses `killpg`
   and a POSIX shell. Porting both needs its own note. The toolkit and Briefcase already
   target Windows.
-- **Continuous Mode and activation policies.** The mode is fixed per process after the
-  first start, so they need a mode choice at launch.
+- **Autonomy, conversation management and memory editing.** They come from the
+  [autonomy note](2026-11-07-autonomy-into-sessions.md), which retires Continuous Mode, so
+  the app never gets a mode choice. Each control is added when its runtime part lands.
 - Archive search, memory inspection, a tool list, editing the other budget dimensions.
 - Automatic updates.
 - Moving the TUI onto the shared view model beyond the loosening check.
@@ -276,10 +291,13 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 ## Risks
 
 - **qasync has had no release since 0.28.0 (2025-08-28),** and its metadata does not yet
-  claim Python 3.14. The 3.14 CI landed on its main branch afterwards. Mitigations: run the
-  test suite on it first, bundle Python 3.13 if needed, and vendor the module if it is
-  abandoned (BSD-2-Clause). Switching to QtAsyncio once it supports subprocesses and
-  sockets is also possible.
+  claim Python 3.14. On 3.13 the runtime, shell-tool and Core suites pass on it file by
+  file; on 3.15 one command test hangs and the OpenAI-compatible Core tests crash.
+  Mitigations: bundle Python 3.13, vendor the module if it is abandoned (BSD-2-Clause), or
+  switch to QtAsyncio once it supports subprocesses and sockets.
+- **PySide6 on Python 3.15 breaks lazy imports** (PEP 810) read across modules. The app
+  resolves the one asyncio needs; others in the stdlib stay exposed, so 3.15 is not
+  supported until PySide6 fixes it.
 - **One thread for GUI and runtime.** A slow paint, such as re-rendering a very long
   Markdown reply, delays runtime tasks. The mitigations are throttled re-rendering and
   paged history.

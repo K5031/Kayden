@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,7 @@ import keyring
 import keyring.backend
 import pytest
 
+import kayden.frontends.desktop  # noqa: F401 - before any Qt import: see its lazy-import note
 from kayden.api import (
     PERMISSION_CEILING_ENV,
     Activation,
@@ -37,6 +39,18 @@ FAST: dict[str, Any] = {
     "retry_max_delay_s": 0.05,
     "permissions": PermissionPolicy.ALLOW_READ_ONLY,
 }
+
+
+if os.environ.get("KAYDEN_TEST_LOOP") == "qasync":
+    def pytest_asyncio_loop_factories(config: pytest.Config, item: pytest.Item) -> Any:
+        """KAYDEN_TEST_LOOP=qasync runs every async test on qasync's QEventLoop, the loop
+        the desktop app runs on."""
+        import qasync
+        from PySide6.QtWidgets import QApplication
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+        return {"qasync": lambda: qasync.QEventLoop(app)}
 
 
 async def eventually(predicate: Callable[[], Any], timeout: float = 5.0) -> Any:

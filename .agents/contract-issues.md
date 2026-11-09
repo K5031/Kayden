@@ -679,6 +679,18 @@ Against contract Draft 2.4. The stated assumption is what the module does.
   thinks by default stays exposed.
 - **Fix:** State that empty output means no compaction, or have Completion raise CoreError.
 
+## 11. Found while building the desktop app
+
+### M16 (S) The Frontend does not own the main loop
+- **Status:** Open.
+- **Where:** `api.Frontend` docstring: "Owns the UI and the process's main loop."
+- **Problem:** The launcher creates the event loop (`asyncio.run`) before any module is
+  loaded, so a frontend cannot choose it. A GUI toolkit's loop must be the one that runs.
+- **Assumed:** The desktop app has its own entry point, `kayden-desktop`, which runs
+  `run_instance` on qasync's `QEventLoop`; `Frontend.run` only runs inside that loop.
+- **Fix:** Say "Owns the UI; its launcher chooses the event loop", or let a frontend
+  factory name a loop factory that `kayden` uses.
+
 ## Material outside the allowed inputs
 
 None was consulted or encountered. The only out-of-tree output seen was a system-wide
