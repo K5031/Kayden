@@ -5,26 +5,29 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 
 import pytest
 from rich.text import Text as RichText
 from textual.pilot import Pilot
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, OptionList, Select, Static, Switch
 
 from kayden.api import (
-    Activation,
     AgentConfig,
     AgentState,
     Budget,
+    ConversationDeleted,
     ConversationInfo,
+    ConversationUpdated,
     Decision,
     EventEnvelope,
     Failure,
     FailureKind,
+    MemoriesChanged,
+    MemoryEntry,
     Message,
     MessageCommitted,
     MessageQueued,
-    Mode,
     ModelInfo,
     ModelRetry,
     ModelSelected,
@@ -63,19 +66,30 @@ from kayden.api import (
 )
 from kayden.frontends.tui import (
     AssistantEntry,
+    ConfirmScreen,
+    ConversationsScreen,
     KaydenApp,
+    MemoryScreen,
     ModelScreen,
     OperationsScreen,
     PermissionPrompt,
     StartScreen,
     SystemEntry,
+    TextPromptScreen,
     ToolEntry,
     TuiFrontend,
     UserEntry,
 )
 
-CONVERSATION = ConversationInfo("conv-1", Mode.SESSION, "Test", 0.0, 0.0)
+CONVERSATION = ConversationInfo("conv-1", "Test", 0.0, 0.0)
+OTHERS = [
+    ConversationInfo("conv-2", None, 0.0, 0.0, preview="What is the weather"),
+    ConversationInfo("conv-3", None, 0.0, 0.0, autonomous=True),
+    ConversationInfo("conv-4", "Old plans", 0.0, 0.0, archived=True),
+]
 MODELS = [ModelInfo("m1", "Model One", 100_000), ModelInfo("m2", "Model Two", 200_000)]
+MEMORIES = [MemoryEntry("e1", "Likes tea", "conv-1", 0.0),
+            MemoryEntry("e2", "Lives in Oslo", None, 0.0)]
 
 
 class StubRuntime:
@@ -85,23 +99,24 @@ class StubRuntime:
         self,
         *,
         started: bool = True,
-        mode: Mode = Mode.SESSION,
-        activation: Activation = Activation.USER_CONTROLLED,
+        autonomous: bool = False,
         history: Sequence[Message] = (),
         operations: Sequence[OperationInfo] = (),
         pending_permissions: Sequence[PermissionRequest] = (),
         queued: Sequence[MessageQueued] = (),
+        editable_memory: bool = True,
     ) -> None:
         self.seq = 0
         self.state = AgentState.IDLE if started else AgentState.NOT_STARTED
-        self.conversation = CONVERSATION if started else None
-        self.config = (AgentConfig(mode, activation, Budget(), PermissionPolicy.ASK)
-                       if started else None)
+        self.conversations = [replace(CONVERSATION, autonomous=autonomous), *OTHERS]
+        self.conversation = self.conversations[0] if started else None
+        self.config = AgentConfig(Budget(), PermissionPolicy.ASK) if started else None
         self.model = "m1"
         self.history_messages = list(history)
         self.operations = list(operations)
         self.pending_permissions = list(pending_permissions)
         self.queued = list(queued)
+        self.entries = list(MEMORIES) if editable_memory else None
         self.calls: list[tuple] = []
         self.command_delay = 0.0
         self.fail_with: dict[str, Exception] = {}
@@ -140,6 +155,19 @@ class StubRuntime:
         if name in self.fail_with:
             raise self.fail_with[name]
 
+    def _update(self, conversation_id: str, **changes: object) -> None:
+        index = [c.id for c in self.conversations].index(conversation_id)
+        info = replace(self.conversations[index], **changes)
+        self.conversations[index] = info
+        if self.conversation is not None and self.conversation.id == info.id:
+            self.conversation = info
+        self.emit(ConversationUpdated(info))
+
+    def _memories(self) -> list[MemoryEntry]:
+        if self.entries is None:
+            raise NotImplementedError("this memory module cannot edit memories")
+        return self.entries
+
     # RuntimeAPI
 
     def events(self) -> AsyncIterator[EventEnvelope]:
@@ -171,8 +199,9 @@ class StubRuntime:
     async def list_tools(self):
         return []
 
-    async def list_conversations(self, mode: Mode) -> Sequence[ConversationInfo]:
-        return [CONVERSATION] if mode is Mode.SESSION else []
+    async def list_conversations(self, *, include_archived: bool = False
+                                 ) -> Sequence[ConversationInfo]:
+        return [c for c in self.conversations if include_archived or not c.archived]
 
     async def history(self, conversation_id: str, *, before: str | None = None,
                       limit: int | None = None) -> Sequence[Message]:
@@ -185,19 +214,70 @@ class StubRuntime:
             messages = messages[: [m.id for m in messages].index(before)]
         return messages[-limit:] if limit else messages
 
-    async def search_archive(self, query, *, mode=None, conversation_id=None, limit=10):
+    async def search_archive(self, query, *, conversation_id=None, limit=10):
         return []
 
     async def inspect_memory(self, conversation_id):
         return None
 
+    async def memories(self) -> Sequence[MemoryEntry]:
+        return list(self._memories())
+
     async def start(self, options: StartOptions) -> ConversationInfo:
         await self._record("start", options)
-        self.conversation = CONVERSATION
-        self.config = AgentConfig(options.mode, options.activation, Budget(),
-                                  PermissionPolicy.ASK)
+        if options.conversation_id is None:
+            info = ConversationInfo("conv-new", None, 0.0, 0.0,
+                                    autonomous=bool(options.autonomous),
+                                    remember=options.remember, seed_from=options.seed_from)
+            self.conversations.insert(0, info)
+        else:
+            info = next(c for c in self.conversations if c.id == options.conversation_id)
+            if options.autonomous is not None:
+                info = replace(info, autonomous=options.autonomous)
+        self.conversation = info
+        self.config = AgentConfig(Budget(), PermissionPolicy.ASK)
         self.emit(StateChanged(AgentState.IDLE))
-        return CONVERSATION
+        return info
+
+    async def set_autonomous(self, autonomous: bool) -> None:
+        await self._record("set_autonomous", autonomous)
+        assert self.conversation is not None
+        self._update(self.conversation.id, autonomous=autonomous)
+
+    async def rename_conversation(self, conversation_id: str, title: str) -> None:
+        await self._record("rename_conversation", conversation_id, title)
+        self._update(conversation_id, title=title or None)
+
+    async def archive_conversation(self, conversation_id: str, archived: bool) -> None:
+        await self._record("archive_conversation", conversation_id, archived)
+        self._update(conversation_id, archived=archived)
+
+    async def delete_conversation(self, conversation_id: str) -> None:
+        await self._record("delete_conversation", conversation_id)
+        if self.conversation is not None and conversation_id == self.conversation.id:
+            raise RuntimeStateError("cannot delete the open conversation")
+        self.conversations = [c for c in self.conversations if c.id != conversation_id]
+        self.emit(ConversationDeleted(conversation_id))
+
+    async def add_memory(self, text: str) -> MemoryEntry:
+        await self._record("add_memory", text)
+        entry = MemoryEntry(f"e{len(self._memories()) + 1}", text, None, 0.0)
+        self._memories().append(entry)
+        self.emit(MemoriesChanged())
+        return entry
+
+    async def edit_memory(self, entry_id: str, text: str) -> MemoryEntry:
+        await self._record("edit_memory", entry_id, text)
+        entries = self._memories()
+        index = [e.id for e in entries].index(entry_id)
+        entries[index] = replace(entries[index], text=text)
+        self.emit(MemoriesChanged())
+        return entries[index]
+
+    async def forget_memory(self, entry_id: str) -> None:
+        await self._record("forget_memory", entry_id)
+        self.entries = [e for e in self._memories() if e.id != entry_id]
+        self.emit(MemoriesChanged())
 
     async def select_model(self, model_id: str) -> None:
         await self._record("select_model", model_id)
@@ -464,40 +544,28 @@ async def test_model_selection_dialog_and_command():
         await until(pilot, lambda: ("select_model", "m1") in stub.calls)
 
 
-async def test_activate_for_continuous_user_controlled_agent():
-    stub = StubRuntime(mode=Mode.CONTINUOUS)
+async def test_activate_needs_only_a_started_agent():
+    stub = StubRuntime()
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
-        assert "continuous/user" in status(app)
         await pilot.press("ctrl+r")
         await until(pilot, lambda: ("activate",) in stub.calls)
         await type_text(pilot, "/activate")
         await pilot.press("enter")
         await until(pilot, lambda: stub.calls.count(("activate",)) == 2)
 
-
-async def test_activate_allowed_in_session_mode():
-    stub = StubRuntime(mode=Mode.SESSION)
+    stub = StubRuntime(autonomous=True)
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
-        await pilot.press("ctrl+r")
-        await until(pilot, lambda: ("activate",) in stub.calls)
+        assert app.check_action("activate", ()) is True  # IDLE and autonomous: allowed
 
-
-async def test_activate_disabled_for_idle_agent_controlled_agent():
-    stub = StubRuntime(mode=Mode.CONTINUOUS, activation=Activation.AGENT_CONTROLLED)
+    stub = StubRuntime(started=False)
     app = make(stub)
-    async with app.run_test() as pilot:
-        await caught_up(pilot, app, stub)
-        await pilot.press("ctrl+r")
-        await pilot.pause(0.05)
-        assert ("activate",) not in stub.calls
-        stub.emit(StateChanged(AgentState.STOPPED))
-        await caught_up(pilot, app, stub)
-        await pilot.press("ctrl+r")
-        await until(pilot, lambda: ("activate",) in stub.calls)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await until(pilot, lambda: isinstance(app.screen, StartScreen))
+        assert app.check_action("activate", ()) is False
 
 
 async def test_late_attach_restores_history_operations_and_prompts():
@@ -541,20 +609,50 @@ async def test_sequence_gap_triggers_resync():
         assert stub.calls.count(("history", "conv-1")) == 2
 
 
-async def test_start_screen_starts_the_agent():
+async def test_start_screen_starts_a_new_conversation():
     stub = StubRuntime(started=False)
     app = make(stub)
     async with app.run_test(size=(120, 50)) as pilot:
         await until(pilot, lambda: isinstance(app.screen, StartScreen))
-        app.screen.query_one("#mode").value = Mode.CONTINUOUS
-        app.screen.query_one("#activation").value = Activation.AGENT_CONTROLLED
+        screen = app.screen
+        assert not screen.query("#mode") and not screen.query("#activation")
+        await until(pilot, lambda: len(screen.query_one("#conversation", Select)._options) == 4)
+        assert screen.query_one("#autonomous", Switch).value is False
+        assert screen.query_one("#remember", Switch).value is True
+        assert "won't use or add to long-term memory" in plain(screen.query_one("#remember-hint"))
+        screen.query_one("#autonomous", Switch).value = True
+        screen.query_one("#remember", Switch).value = False
+        screen.query_one("#seed-from", Select).value = "conv-2"
         await pilot.pause()
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
         [options] = [c[1] for c in stub.calls if c[0] == "start"]
-        assert options == StartOptions(Mode.CONTINUOUS, Activation.AGENT_CONTROLLED, None, None)
-        await until(pilot, lambda: "continuous/agent" in status(app))
-        await until(pilot, lambda: ("history", "conv-1") in stub.calls)
+        assert options == StartOptions(autonomous=True, remember=False, seed_from="conv-2")
+        await until(pilot, lambda: "autonomous" in status(app))
+        await until(pilot, lambda: ("history", "conv-new") in stub.calls)
+
+
+async def test_start_screen_lists_titles_and_resumes_a_conversation():
+    stub = StubRuntime(started=False)
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await until(pilot, lambda: isinstance(app.screen, StartScreen))
+        screen = app.screen
+        select = screen.query_one("#conversation", Select)
+        await until(pilot, lambda: len(select._options) == 4)
+        labels = [str(prompt) for prompt, _ in select._options]
+        # Archived conversations are left out; untitled ones show their preview.
+        assert labels == ["New conversation", "Test", "What is the weather",
+                          "Untitled conversation"]
+        select.value = "conv-3"
+        await pilot.pause()
+        assert screen.query_one("#autonomous", Switch).value is True  # its current value
+        assert screen.query_one("#remember", Switch).disabled
+        assert screen.query_one("#seed-from", Select).disabled
+        await pilot.click("#start")
+        await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
+        [options] = [c[1] for c in stub.calls if c[0] == "start"]
+        assert options == StartOptions(conversation_id="conv-3", autonomous=True)
 
 
 async def test_start_screen_fits_a_small_terminal():
@@ -572,7 +670,7 @@ async def test_start_screen_fits_a_small_terminal():
 
 async def test_start_options_skip_the_start_screen():
     stub = StubRuntime(started=False)
-    app = make(stub, start_options=StartOptions(Mode.SESSION, conversation_id="conv-1"))
+    app = make(stub, start_options=StartOptions(conversation_id="conv-1"))
     async with app.run_test() as pilot:
         await until(pilot, lambda: ("history", "conv-1") in stub.calls)
         assert not isinstance(app.screen, StartScreen)
@@ -745,7 +843,260 @@ async def test_factory_builds_start_options(tmp_path):
     from kayden.api import InstancePaths
     from kayden.frontends.tui import factory
 
-    assert factory({}, InstancePaths(tmp_path)).start_options is None
-    frontend = factory({"mode": "continuous", "activation": "agent_controlled"},
-                       InstancePaths(tmp_path))
-    assert frontend.start_options == StartOptions(Mode.CONTINUOUS, Activation.AGENT_CONTROLLED)
+    paths = InstancePaths(tmp_path)
+    assert factory({}, paths).start_options is None
+    assert factory({"start": False, "model": "m1"}, paths).start_options is None
+    assert factory({"start": True}, paths).start_options == StartOptions()
+    frontend = factory({"start": True, "conversation_id": "conv-1", "autonomous": True,
+                        "model": "m2"}, paths)
+    assert frontend.start_options == StartOptions("conv-1", "m2", True)
+
+
+# ── autonomy ─────────────────────────────────────────────────────────────
+
+
+async def test_autonomous_command_binding_and_status():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(notifications=True) as pilot:
+        await caught_up(pilot, app, stub)
+        assert "autonomous" not in status(app)
+        await type_text(pilot, "/autonomous on")
+        await pilot.press("enter")
+        await until(pilot, lambda: ("set_autonomous", True) in stub.calls)
+        await caught_up(pilot, app, stub)
+        assert app.conversation is not None and app.conversation.autonomous
+        assert "autonomous" in status(app)
+
+        await pilot.press("ctrl+t")  # toggles
+        await until(pilot, lambda: ("set_autonomous", False) in stub.calls)
+        await caught_up(pilot, app, stub)
+        assert "autonomous" not in status(app)
+
+        await type_text(pilot, "/autonomous maybe")
+        await pilot.press("enter")
+        await until(pilot, lambda: any("/autonomous on" in n.message
+                                       for n in app._notifications))
+        assert len([c for c in stub.calls if c[0] == "set_autonomous"]) == 2
+
+
+async def test_conversation_events_for_other_conversations_and_memories():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        stub.emit(ConversationUpdated(replace(OTHERS[0], autonomous=True)),
+                  ConversationDeleted("conv-4"), MemoriesChanged())
+        stub.emit(ConversationUpdated(replace(CONVERSATION, title="Renamed")))
+        await caught_up(pilot, app, stub)
+        assert app.conversation is not None
+        assert (app.conversation.id, app.conversation.title) == ("conv-1", "Renamed")
+        assert "autonomous" not in status(app)
+
+
+# ── conversation list ────────────────────────────────────────────────────
+
+
+async def open_conversations(pilot: Pilot, app: KaydenApp, stub: StubRuntime,
+                             how: str = "f3") -> ConversationsScreen:
+    await caught_up(pilot, app, stub)
+    if how == "f3":
+        await pilot.press("f3")
+    else:
+        await type_text(pilot, "/conversations")
+        await pilot.press("enter")
+    await until(pilot, lambda: isinstance(app.screen, ConversationsScreen))
+    screen = app.screen
+    assert isinstance(screen, ConversationsScreen)
+    await until(pilot, lambda: screen.conversations is not None)
+    return screen
+
+
+def listed(screen: ConversationsScreen) -> list[str]:
+    options = screen.query_one("#conversations", OptionList)
+    return [str(options.get_option_at_index(i).prompt) for i in range(options.option_count)]
+
+
+def highlight(screen: ConversationsScreen | MemoryScreen, option_id: str) -> None:
+    options = screen.query_one(OptionList)
+    options.highlighted = options.get_option_index(option_id)
+
+
+async def test_conversation_list_shows_titles_and_opens_one():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await open_conversations(pilot, app, stub, how="command")
+        assert listed(screen) == ["● Test", "  What is the weather",
+                                  "  Untitled conversation  · autonomous"]
+        screen.query_one("#show-archived", Switch).value = True
+        await until(pilot, lambda: len(listed(screen)) == 4)
+        assert listed(screen)[-1] == "  Old plans  · archived"
+
+        highlight(screen, "conv-2")
+        screen.query_one("#open", Button).press()
+        await until(pilot, lambda: ("start", StartOptions(conversation_id="conv-2"))
+                    in stub.calls)
+        await until(pilot, lambda: ("history", "conv-2") in stub.calls)
+        assert not isinstance(app.screen, ConversationsScreen)
+
+
+async def test_conversation_cannot_be_switched_while_the_agent_runs():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50), notifications=True) as pilot:
+        stub.emit(StateChanged(AgentState.THINKING))
+        screen = await open_conversations(pilot, app, stub)
+        highlight(screen, "conv-2")
+        screen.query_one("#open", Button).press()
+        await until(pilot, lambda: any("Stop" in n.message for n in app._notifications))
+        assert not any(c[0] == "start" for c in stub.calls)
+
+
+async def test_new_conversation_from_the_list_uses_the_start_screen():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await open_conversations(pilot, app, stub)
+        screen.query_one("#new", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, StartScreen))
+        await pilot.press("escape")  # cancellable when an agent is already running
+        await until(pilot, lambda: not isinstance(app.screen, StartScreen))
+        assert not any(c[0] == "start" for c in stub.calls)
+
+
+async def test_rename_and_archive_a_conversation():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await open_conversations(pilot, app, stub)
+        highlight(screen, "conv-2")
+        screen.query_one("#rename", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
+        app.screen.query_one(Input).value = "Weather"
+        await pilot.press("enter")
+        await until(pilot, lambda: ("rename_conversation", "conv-2", "Weather") in stub.calls)
+        await until(pilot, lambda: "  Weather" in listed(screen))
+
+        highlight(screen, "conv-2")
+        screen.query_one("#archive", Button).press()
+        await until(pilot, lambda: ("archive_conversation", "conv-2", True) in stub.calls)
+        await until(pilot, lambda: "  Weather" not in listed(screen))
+
+        screen.query_one("#show-archived", Switch).value = True
+        await until(pilot, lambda: "  Weather  · archived" in listed(screen))
+        highlight(screen, "conv-2")
+        await pilot.pause()
+        assert str(screen.query_one("#archive", Button).label) == "Unarchive"
+        screen.query_one("#archive", Button).press()
+        await until(pilot, lambda: ("archive_conversation", "conv-2", False) in stub.calls)
+
+
+async def test_delete_a_conversation_after_confirmation():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50), notifications=True) as pilot:
+        screen = await open_conversations(pilot, app, stub)
+        highlight(screen, "conv-1")  # the open conversation
+        screen.query_one("#delete", Button).press()
+        await until(pilot, lambda: any("open another conversation first" in n.message
+                                       for n in app._notifications))
+        assert not isinstance(app.screen, ConfirmScreen)
+
+        highlight(screen, "conv-2")
+        screen.query_one("#delete", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+        message = plain(app.screen.query_one("#confirm-message"))
+        assert "What is the weather" in message and "cannot be undone" in message
+        await pilot.press("escape")
+        await until(pilot, lambda: app.screen is screen)
+        assert not any(c[0] == "delete_conversation" for c in stub.calls)
+
+        screen.query_one("#delete", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+        app.screen.query_one("#confirm-yes", Button).press()
+        await until(pilot, lambda: ("delete_conversation", "conv-2") in stub.calls)
+        await until(pilot, lambda: "  What is the weather" not in listed(screen))
+
+
+async def test_delete_is_disabled_when_memory_cannot_delete():
+    stub = StubRuntime()
+    stub.fail_with["delete_conversation"] = NotImplementedError(
+        "this memory module cannot delete conversations")
+    app = make(stub)
+    async with app.run_test(size=(120, 50), notifications=True) as pilot:
+        screen = await open_conversations(pilot, app, stub)
+        highlight(screen, "conv-2")
+        screen.query_one("#delete", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+        app.screen.query_one("#confirm-yes", Button).press()
+        await until(pilot, lambda: screen.query_one("#delete", Button).disabled)
+        assert any("cannot delete" in n.message for n in app._notifications)
+
+
+# ── long-term memory ─────────────────────────────────────────────────────
+
+
+async def open_memory(pilot: Pilot, app: KaydenApp, stub: StubRuntime) -> MemoryScreen:
+    await caught_up(pilot, app, stub)
+    await pilot.press("f4")
+    await until(pilot, lambda: isinstance(app.screen, MemoryScreen))
+    screen = app.screen
+    assert isinstance(screen, MemoryScreen)
+    return screen
+
+
+def memory_rows(screen: MemoryScreen) -> list[str]:
+    options = screen.query_one("#memories", OptionList)
+    return [str(options.get_option_at_index(i).prompt) for i in range(options.option_count)]
+
+
+async def test_memory_screen_adds_edits_and_forgets():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50), notifications=True) as pilot:
+        screen = await open_memory(pilot, app, stub)
+        assert memory_rows(screen) == ["Likes tea", "Lives in Oslo  · added by you"]
+
+        screen.query_one("#add", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
+        app.screen.query_one(Input).value = "Prefers metric units"
+        await pilot.press("enter")
+        await until(pilot, lambda: ("add_memory", "Prefers metric units") in stub.calls)
+        await until(pilot, lambda: len(memory_rows(screen)) == 3)
+
+        highlight(screen, "e1")
+        screen.query_one("#edit", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
+        assert app.screen.query_one(Input).value == "Likes tea"
+        app.screen.query_one(Input).value = "Likes green tea"
+        await pilot.press("enter")
+        await until(pilot, lambda: ("edit_memory", "e1", "Likes green tea") in stub.calls)
+        await until(pilot, lambda: memory_rows(screen)[0] == "Likes green tea")
+
+        highlight(screen, "e2")
+        screen.query_one("#forget", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+        message = plain(app.screen.query_one("#confirm-message"))
+        assert "Lives in Oslo" in message
+        assert "stay until their conversation is deleted" in message
+        app.screen.query_one("#confirm-yes", Button).press()
+        await until(pilot, lambda: ("forget_memory", "e2") in stub.calls)
+        await until(pilot, lambda: len(memory_rows(screen)) == 2)
+
+        await pilot.press("escape")
+        await until(pilot, lambda: not isinstance(app.screen, MemoryScreen))
+        await type_text(pilot, "/memory")
+        await pilot.press("enter")
+        await until(pilot, lambda: isinstance(app.screen, MemoryScreen))
+
+
+async def test_memory_screen_unavailable_without_editable_memory():
+    stub = StubRuntime(editable_memory=False)
+    app = make(stub)
+    async with app.run_test(notifications=True) as pilot:
+        await caught_up(pilot, app, stub)
+        await pilot.press("f4")
+        await until(pilot, lambda: any("cannot edit memories" in n.message
+                                       for n in app._notifications))
+        assert not isinstance(app.screen, MemoryScreen)
