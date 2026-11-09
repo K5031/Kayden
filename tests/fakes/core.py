@@ -30,6 +30,7 @@ from kayden.api import (
     Usage,
     UsageReport,
 )
+from kayden.runtime.settings import read_key
 
 DEFAULT_MODELS = (
     ModelInfo(
@@ -180,3 +181,22 @@ def factory(options: dict[str, Any], paths: Any) -> ScriptedCore:
     if "list_error" in options:
         core.list_error = CoreError(options["list_error"])
     return core
+
+
+def first_factory(options: dict[str, Any], paths: Any) -> ScriptedCore:
+    """An installed Core that needs FIRST_API_KEY (registered by the `installed` fixture)."""
+    if not read_key("FIRST_API_KEY"):
+        raise ValueError("FIRST_API_KEY is not set")
+    core = factory(options, paths)
+    core.options["key"] = read_key("FIRST_API_KEY")
+    return core
+
+
+def second_factory(options: dict[str, Any], paths: Any) -> ScriptedCore:
+    return factory({"models": ["s-1", "s-2"], **options}, paths)
+
+
+first_factory.display_name = "First AI"  # type: ignore[attr-defined]
+first_factory.key_name = "FIRST_API_KEY"  # type: ignore[attr-defined]
+second_factory.display_name = "Second AI"  # type: ignore[attr-defined]
+second_factory.key_name = "SECOND_API_KEY"  # type: ignore[attr-defined]

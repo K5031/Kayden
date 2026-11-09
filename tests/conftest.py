@@ -157,6 +157,39 @@ def keychain() -> Any:
     keyring.set_keyring(previous)
 
 
+# Entry points of a package that provides modules, the way a user-made one would.
+INSTALLED_MODULES = """\
+[kayden.cores]
+first = tests.fakes.core:first_factory
+second = tests.fakes.core:second_factory
+keyless = tests.fakes.core:factory
+broken = tests.fakes.nowhere:factory
+
+[kayden.memories]
+fake-memory = tests.fakes.memory:factory
+
+[kayden.tools]
+fake-tools = tests.fakes.tools:factory
+
+[kayden.frontends]
+scripted = tests.fakes.frontend:factory
+scripted-window = tests.fakes.frontend:window_factory
+"""
+
+
+@pytest.fixture
+def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Installs a package declaring INSTALLED_MODULES: its dist-info on sys.path."""
+    site = tmp_path / "site"
+    dist = site / "kayden_test_modules-1.0.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: kayden-test-modules\nVersion: 1.0\n")
+    (dist / "entry_points.txt").write_text(INSTALLED_MODULES)
+    monkeypatch.syspath_prepend(str(site))
+    return site
+
+
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     # Record the variable so whatever the runtime exports is undone after the test.
@@ -177,6 +210,7 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
         memory_kw: dict[str, Any] | None = None,
         data_dir: Path | None = None,
         interactive: bool = True,
+        kind: str = "terminal",
         **config: Any,
     ) -> Harness:
         trace: list[Any] = []
@@ -187,7 +221,7 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
         store = store if store is not None else MemoryStore()
         memory = InMemoryMemory(store, trace=trace, **(memory_kw or {}))
         data_dir = data_dir or tmp_path / f"instance{len(harnesses)}"
-        frontend = ScriptedFrontend(interactive=interactive)
+        frontend = ScriptedFrontend(interactive=interactive, kind=kind)
         runtime = Runtime(
             core=core,
             memory=memory,

@@ -75,9 +75,11 @@ type Script = Callable[[RuntimeAPI, "ScriptedFrontend"], Awaitable[None]]
 
 
 class ScriptedFrontend(Frontend):
-    def __init__(self, script: Script | None = None, *, interactive: bool = True):
+    def __init__(self, script: Script | None = None, *, interactive: bool = True,
+                 kind: str = "terminal", options: dict[str, Any] | None = None):
         self.script = script
-        self._info = FrontendInfo("scripted", interactive_permissions=interactive)
+        self._info = FrontendInfo("scripted", interactive_permissions=interactive, kind=kind)
+        self.options = options or {}
         self.recorder: Recorder | None = None
 
     @property
@@ -99,4 +101,15 @@ class ScriptedFrontend(Frontend):
 
 
 def factory(options: dict[str, Any], paths: Any) -> ScriptedFrontend:
-    return ScriptedFrontend(options.get("script"), interactive=options.get("interactive", True))
+    """Options: script, interactive; any others are kept in `options`."""
+    return ScriptedFrontend(options.get("script"), interactive=options.get("interactive", True),
+                            options=options)
+
+
+def window_factory(options: dict[str, Any], paths: Any) -> ScriptedFrontend:
+    return ScriptedFrontend(options.get("script"), kind="window", options=options)
+
+
+factory.display_name = "Scripted"  # type: ignore[attr-defined]
+window_factory.display_name = "Scripted window"  # type: ignore[attr-defined]
+window_factory.kind = "window"  # type: ignore[attr-defined]

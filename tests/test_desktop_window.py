@@ -15,7 +15,7 @@ from PySide6.QtGui import QAction, QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QPushButton
 
-from kayden.api import Budget, PermissionPolicy, SettingsUpdate
+from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
 from kayden.frontends.desktop.viewmodel import OPEN_DELETE_MESSAGE, Controller, ConversationModel
 from kayden.frontends.desktop.window import (
     AssistantBubble,
@@ -26,17 +26,14 @@ from kayden.frontends.desktop.window import (
     UserBubble,
     WelcomeDialog,
 )
-from kayden.runtime import ModuleSpec, Provider
+from kayden.runtime import ModuleState
+from kayden.runtime.config import RuntimeConfig
+from kayden.runtime.setup import SetupRuntime
 from tests.conftest import Harness, eventually
 from tests.fakes.core import Step, call
 
-FAKE_CORE = "tests.fakes.core:factory"
-PROVIDERS = (
-    Provider("first", "First AI", ModuleSpec(FAKE_CORE), key_name="FIRST_API_KEY"),
-    Provider("broken", "Broken AI", ModuleSpec(FAKE_CORE, {"list_error": "invalid key"}),
-             key_name="BROKEN_API_KEY"),
-)
-TOOLS = ModuleSpec("tests.fakes.tools:factory", {"root": "/start"})
+RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
+           "frontend": "scripted-window"}
 
 
 @pytest.fixture(scope="module")
@@ -111,8 +108,8 @@ async def test_switching_is_disabled_while_busy(make, qapp):
 
 
 async def setup(make: Any) -> Harness:
-    return await make(providers=PROVIDERS, provider="first", tools_module=TOOLS,
-                      permissions=PermissionPolicy.DENY)
+    return await make(modules=ModuleState(running=RUNNING, work_folder="/start"),
+                      permissions=PermissionPolicy.DENY, kind="window")
 
 
 def message_box(dialog: Any) -> QMessageBox:
@@ -156,35 +153,71 @@ async def test_tightening_saves_without_asking(make, qapp):
     assert (await h.runtime.settings()).budget.max_cost_usd == 5.0
 
 
-async def test_welcome_saves_the_key_folder_and_limit(make, qapp, keychain, tmp_path):
-    h = await setup(make)
-    window, controller, _ = await open_window(h)
-    settings = await h.runtime.settings()
-    dialog = WelcomeDialog(window, h.runtime, controller, settings)
-    accepted: list[bool] = []
-    dialog.accepted.connect(lambda: accepted.append(True))
-    dialog.open()
-    dialog.provider.setCurrentRow(1)  # Broken AI: its key is rejected
-    dialog.pages.setCurrentIndex(1)
-    dialog.key.setText("bad")
-    dialog.key_continue.click()
-    await eventually(lambda: dialog.key_error.isVisibleTo(dialog))
-    assert "BROKEN_API_KEY" in dialog.key_error.text() and dialog.pages.currentIndex() == 1
-    assert (await h.runtime.settings()).provider == "first"
-    dialog.pages.setCurrentIndex(0)
-    dialog.provider.setCurrentRow(0)
+def setup_runtime(tmp_path: Any, error: str = "tests.fakes.core:first_factory: "
+                                               "FIRST_API_KEY is not set") -> SetupRuntime:
+    """Nothing could be built; by default because the provider has no key (first run)."""
+    state = ModuleState(running=RUNNING, work_folder="/start")
+    return SetupRuntime(RuntimeConfig(data_dir=tmp_path / "data", modules=state), "window",
+                        error)
+
+
+async def test_welcome_saves_the_key_folder_and_limit_then_restarts(installed, qapp, keychain,
+                                                                    tmp_path, monkeypatch):
+    monkeypatch.delenv("FIRST_API_KEY", raising=False)
+    runtime = setup_runtime(tmp_path)
+    controller = Controller(runtime, ConversationModel())
+    window = MainWindow(runtime, controller)
+    asyncio.create_task(controller.run())
+    await window.begin()
+    dialog = window._dialog
+    assert isinstance(dialog, WelcomeDialog)
+    names = [dialog.provider.item(i).text() for i in range(dialog.provider.count())]
+    assert "First AI" in names and "keyless" not in names  # only providers that take keys
+    dialog.provider.setCurrentRow(names.index("Second AI"))
     dialog.pages.setCurrentIndex(1)
     dialog.key.setText("sk-good")
     dialog.key_continue.click()
     await eventually(lambda: dialog.pages.currentIndex() == 2)
-    assert keychain.store[("kayden", "FIRST_API_KEY")] == "sk-good"
+    assert keychain.store[("kayden", "SECOND_API_KEY")] == "sk-good"
     dialog.folder.setText(str(tmp_path / "work"))
     dialog.limit.setText("3")
     dialog.finish_button.click()
-    await eventually(lambda: accepted)
-    after = await h.runtime.settings()
+    await eventually(lambda: runtime.restart_request is not None)
+    after = await runtime.settings()
+    assert after.modules["core"].chosen == "second"
     assert after.work_folder == str(tmp_path / "work") and (tmp_path / "work").is_dir()
     assert after.budget.max_cost_usd == 3.0
+
+
+async def test_a_startup_error_opens_the_settings(installed, qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("FIRST_API_KEY", "k")  # not a first run
+    runtime = setup_runtime(tmp_path, "the memory module 'gone' is not installed")
+    controller = Controller(runtime, ConversationModel())
+    window = MainWindow(runtime, controller)
+    asyncio.create_task(controller.run())
+    await window.begin()
+    await eventually(lambda: isinstance(window._dialog, SettingsDialog))
+    dialog = window._dialog
+    assert "'gone' is not installed" in dialog.startup_error.text()
+    assert dialog.restart_button.isVisibleTo(dialog)
+
+
+async def test_choosing_the_tui_says_when_it_is_used(make, installed, qapp):
+    h = await setup(make)
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
+    dialog.open()
+    frontend = dialog.modules["frontend"]
+    frontend.setCurrentIndex(frontend.findData("tui"))
+    dialog._save()
+    box = await eventually(lambda: next((b for b in window.findChildren(QMessageBox)
+                                         if b.isVisible()), None))
+    assert box.text().startswith("Terminal (TUI) will be used the next time you run kayden "
+                                 "in a terminal.")
+    box.button(QMessageBox.StandardButton.Yes).click()  # restarts the desktop app itself
+    await h.rec.wait_for(lambda r: r.of(ShuttingDown))
+    assert h.runtime.restart_request.frontend == "scripted-window"
 
 
 # ── conversations and long-term memory ───────────────────────────────────

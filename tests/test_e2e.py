@@ -201,23 +201,18 @@ def test_runtime_defaults_without_a_runtime_section(workspace, tmp_path):
     assert runtime.system_prompt == DEFAULT_SYSTEM_PROMPT
 
 
-def test_providers_and_the_current_one(workspace, tmp_path):
-    runtime = build_config(["--data-dir", str(tmp_path)]).runtime
-    assert [p.id for p in runtime.providers] == ["anthropic", "deepseek", "openai"]
-    assert runtime.provider == "anthropic"
-    assert runtime.tools_module == ModuleSpec("kayden.tools.shell_files:factory",
-                                              {"root": str(workspace)})
+def test_module_ids_of_the_configured_modules(workspace, tmp_path):
+    config = build_config(["--data-dir", str(tmp_path)])
+    state = config.runtime.modules
+    assert dict(state.running) == {"core": "anthropic", "memory": "sqlite",
+                                   "tools": "shell-files", "frontend": "tui"}
+    assert state.chosen == state.running
+    assert state.work_folder == str(workspace) == config.tools.options["root"]
 
     path = tmp_path / "config.toml"
     path.write_text('[core]\nfactory = "kayden.core.openai_compat:factory"\n'
-                    'options = { profile = "deepseek", models = { x = { context_window = 9 } } }\n')
-    runtime = build_config(["--data-dir", str(tmp_path)]).runtime
-    assert runtime.provider == "deepseek"
-    [deepseek] = [p for p in runtime.providers if p.id == "deepseek"]
-    assert deepseek.core.options["models"] == {"x": {"context_window": 9}}  # kept on switch
-
-    path.write_text('[core]\nfactory = "tests.fakes.core:factory"\n')
-    assert build_config(["--data-dir", str(tmp_path)]).runtime.provider is None
+                    'options = { profile = "deepseek" }\n')
+    assert build_config(["--data-dir", str(tmp_path)]).runtime.modules.running["core"] is None
 
 
 def test_saved_settings_override_the_config_file(workspace, tmp_path):
@@ -230,20 +225,21 @@ def test_saved_settings_override_the_config_file(workspace, tmp_path):
         f'work_folder = "{folder}"\n[budget]\nmax_cost_usd = 7.0\n')
     config = build_config(["--data-dir", str(tmp_path)])
     runtime = config.runtime
-    assert config.core.factory == "kayden.core.openai_compat:factory"
-    assert runtime.provider == "deepseek"
+    assert config.core == ModuleSpec("kayden.core.openai_compat:deepseek_factory")
+    assert runtime.modules.running["core"] == "deepseek"
     assert (runtime.model, runtime.maintenance_model) == ("deepseek-v4-pro", None)
     assert runtime.permissions is PermissionPolicy.ASK
     assert runtime.system_prompt == "Saved."
     assert runtime.budget == Budget(max_cost_usd=7.0)  # replaces the whole budget
-    assert config.tools.options["root"] == str(folder) == runtime.tools_module.options["root"]
+    assert config.tools.options["root"] == str(folder) == runtime.modules.work_folder
 
     flagged = build_config(["--data-dir", str(tmp_path), "--model", "m", "--permissions", "deny"])
     assert (flagged.runtime.model, flagged.runtime.permissions) == ("m", PermissionPolicy.DENY)
 
 
 @pytest.mark.parametrize(("content", "message"), [
-    ('provider = "nope"\n', "unknown provider 'nope'"),
+    ("[modules]\ncore = 3\n", "[modules] maps core, memory, tools, frontend to module ids"),
+    ("[modules]\nengine = 'x'\n", "[modules] maps"),
     ("colour = 1\n", "unknown key 'colour'"),
     ("model = 3\n", "model must be a string"),
     ("[budget\n", "invalid TOML"),
@@ -362,30 +358,6 @@ def test_kayden_command_runs_main():
     exe = Path(sys.executable).parent / "kayden"
     out = subprocess.run([str(exe), "--help"], capture_output=True, text=True, check=True)
     assert out.stdout.startswith("usage: kayden ")
-
-
-@pytest.mark.parametrize(("config", "message"), [
-    ("", "kayden.core.anthropic:factory: ANTHROPIC_API_KEY is not set"),
-    ("[core]\nfactory = 'kayden.core.openai_compat:factory'\noptions = {profile = 'deepseek'}\n",
-     "kayden.core.openai_compat:factory: set DEEPSEEK_API_KEY or the api_key option"),
-    ("[core]\nfactory = 'kayden.core.nowhere:factory'\n",
-     "kayden.core.nowhere:factory: No module named 'kayden.core.nowhere'"),
-    ("[core]\nfactory = 'kayden.core.anthropic:nothing'\n",
-     "kayden.core.anthropic:nothing: module 'kayden.core.anthropic' has no attribute 'nothing'"),
-    ("[core]\noptions = {api_key = 'x', colour = 'red'}\n",
-     "kayden.core.anthropic:factory: "),
-])
-def test_module_startup_errors_are_one_line(workspace, tmp_path, config, message):
-    (tmp_path / "config.toml").write_text(config)
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY")}
-    out = subprocess.run([sys.executable, "-m", "kayden", "--data-dir", str(tmp_path)],
-                         check=False, capture_output=True, text=True, env=env,
-                         timeout=60)
-    assert out.returncode == 1
-    assert out.stdout == ""
-    assert out.stderr.startswith(f"kayden: {message}")
-    assert out.stderr.count("\n") == 1
 
 
 async def test_instance_runs_on_the_scripted_core(workspace, tmp_path):

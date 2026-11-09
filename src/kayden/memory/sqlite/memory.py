@@ -94,6 +94,10 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> SqliteMemory:
     path = Path(options.pop("path", paths.data_dir / "memory.db"))
     return SqliteMemory(path, CompactionConfig(**options))
 
+
+factory.display_name = "Built-in memory (SQLite)"  # type: ignore[attr-defined]
+
+
 # Messages are deleted only for a conversation listed in `erasing`, inside the
 # transaction that erases it.
 _NO_DELETE_TRIGGER = """

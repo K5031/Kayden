@@ -132,6 +132,9 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
     return ShellFilesTools(Path(options.pop("root", Path.cwd())), **options)
 
 
+factory.display_name = "Shell and files"  # type: ignore[attr-defined]
+
+
 class ShellFilesTools(Tools):
     """`shell_timeout`: hard limit per command (None = runtime default, math.inf = none).
     `shell_stall_timeout`: seconds without output before the command counts as hung."""

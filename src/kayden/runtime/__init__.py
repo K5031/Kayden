@@ -2,7 +2,13 @@
 Frontend (see kayden.api for the contracts)."""
 
 from kayden.api import InstancePaths
-from kayden.runtime.config import InstanceConfig, ModuleSpec, Provider, RuntimeConfig
+from kayden.runtime.config import (
+    InstanceConfig,
+    ModuleSpec,
+    ModuleState,
+    Restart,
+    RuntimeConfig,
+)
 from kayden.runtime.instance import (
     InstanceLockedError,
     ModuleLoadError,
@@ -17,7 +23,8 @@ __all__ = [
     "InstancePaths",
     "ModuleLoadError",
     "ModuleSpec",
-    "Provider",
+    "ModuleState",
+    "Restart",
     "Runtime",
     "RuntimeConfig",
     "load_module",

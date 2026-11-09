@@ -62,7 +62,18 @@ from kayden.api import (
     Settings,
     SettingsUpdate,
 )
-from kayden.frontends.common import PERMISSION_LABELS, dollars, loosening, model_label
+from kayden.frontends.common import (
+    AT_RESTART,
+    MEMORY_WARNING,
+    MODULE_LABELS,
+    PERMISSION_LABELS,
+    dollars,
+    loosening,
+    model_label,
+    module_options,
+    needs_restart,
+    restart_notice,
+)
 from kayden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     AssistantItem,
@@ -501,18 +512,24 @@ class MainWindow(QMainWindow):
 
     # ── startup ───────────────────────────────────────────────────────────
 
-    async def begin(self) -> None:
-        """First run shows the welcome; otherwise resume the newest conversation."""
+    async def begin(self, conversation_id: str | None = None) -> None:
+        """When Kayden could not start: the welcome on first run, else the settings with
+        the error. Otherwise open `conversation_id`, or resume the newest conversation."""
         settings = await self.runtime.settings()
-        await self.check_memory()
         if needs_welcome(settings):
             self._dialog = WelcomeDialog(self, self.runtime, self.controller, settings)
-            self._dialog.accepted.connect(lambda: self.open_conversation(None))
+            self._dialog.accepted.connect(lambda: self.controller.command(self.runtime.restart()))
             self._dialog.open()
             return
+        if settings.startup_error is not None:
+            self.open_settings()
+            return
+        await self.check_memory()
         if self.runtime.snapshot().conversation is None:
-            conversations = await self.controller.conversations()
-            self.open_conversation(conversations[0].id if conversations else None)
+            if conversation_id is None:
+                conversations = await self.controller.conversations()
+                conversation_id = conversations[0].id if conversations else None
+            self.open_conversation(conversation_id)
 
     async def check_memory(self) -> None:
         """Hide Memory when the Memory module cannot show what it remembers."""
@@ -873,7 +890,8 @@ def choose_folder(parent: QWidget, start: str, then: Callable[[str], None]) -> Q
 
 
 class SettingsDialog(QDialog):
-    """Sends only what changed; loosening is confirmed first."""
+    """Sends only what changed; loosening and a different Memory are confirmed first.
+    Module settings wait for a restart, which Restart now starts."""
 
     def __init__(self, parent: QWidget, runtime: RuntimeAPI, controller: Controller,
                  settings: Settings, models: Sequence[ModelInfo], spent: float) -> None:
@@ -883,15 +901,13 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(560)
         form = QFormLayout(self)
 
-        self.provider = QComboBox()
-        for p in settings.providers:
-            saved = "" if p.key_name is None else ("  (key saved)" if p.has_key
-                                                    else "  (no key yet)")
-            self.provider.addItem(p.name + saved, p.id)
-        if settings.provider is None:
-            self.provider.insertItem(0, "Custom (from config.toml)", None)
-        self.provider.setCurrentIndex(max(0, self.provider.findData(settings.provider)))
-        self.provider.currentIndexChanged.connect(self._provider_changed)
+        self.startup_error = _label(f"Kayden could not start: {settings.startup_error}")
+        self.startup_error.setStyleSheet(f"color: {SEVERITY_COLORS['error']};")
+        self.startup_error.setVisible(settings.startup_error is not None)
+        self.modules = {kind: self._module_box(kind) for kind in settings.modules}
+        self.modules["core"].currentIndexChanged.connect(self._core_changed)
+        self.modules["frontend"].currentIndexChanged.connect(
+            lambda: self.restart_button.setVisible(True))
         self.api_key = QLineEdit(echoMode=QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText("Leave empty to keep the current key")
         self.model = QComboBox()
@@ -904,8 +920,11 @@ class SettingsDialog(QDialog):
             self.model.insertItem(0, settings.model or "Provider's default", settings.model)
         self.model.setCurrentIndex(self.model.findData(settings.model))
         self.light.setCurrentIndex(max(0, self.light.findData(settings.maintenance_model)))
-        self.model_note = _label("A new provider starts with its first model; change it "
-                                 "after saving.", selectable=False)
+        self.has_models = bool(models)
+        for box in (self.model, self.light):
+            box.setEnabled(self.has_models)
+        self.model_note = _label("After the restart, the new provider starts with its first "
+                                 "model.", selectable=False)
         self.model_note.hide()
         self.limit = QLineEdit("" if settings.budget.max_cost_usd is None
                                else f"{settings.budget.max_cost_usd:g}")
@@ -925,6 +944,8 @@ class SettingsDialog(QDialog):
         folder_row.addWidget(browse)
         for widget in (self.folder, browse):
             widget.setEnabled(settings.work_folder is not None)
+        self.notice = _label(restart_notice(settings) or "", selectable=False)
+        self.notice.setVisible(restart_notice(settings) is not None)
         self.error = _label()
         self.error.setStyleSheet(f"color: {SEVERITY_COLORS['error']};")
         self.error.hide()
@@ -933,8 +954,14 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.restart_button = buttons.addButton("Restart now",
+                                                QDialogButtonBox.ButtonRole.ActionRole)
+        self.restart_button.clicked.connect(lambda: self._save(restart=True))
+        self.restart_button.setVisible(settings.restart_needed
+                                       or settings.startup_error is not None)
 
-        form.addRow("AI provider", self.provider)
+        form.addRow(self.startup_error)
+        form.addRow("AI provider", self.modules["core"])
         form.addRow("API key", self.api_key)
         form.addRow("Model", self.model)
         form.addRow("Model for memory upkeep", self.light)
@@ -944,18 +971,32 @@ class SettingsDialog(QDialog):
         form.addRow("What the agent may do", self.permissions)
         form.addRow("Instructions", self.instructions)
         form.addRow("Work folder", folder_row)
+        for kind in ("memory", "tools", "frontend"):
+            form.addRow(MODULE_LABELS[kind], self.modules[kind])
+        form.addRow(_label(AT_RESTART, selectable=False))
+        form.addRow(self.notice)
         form.addRow(self.error)
         form.addRow(buttons)
 
-    def _provider_changed(self) -> None:
-        switching = self.provider.currentData() != self.settings.provider
-        self.model.setEnabled(not switching)
-        self.light.setEnabled(not switching)
+    def _module_box(self, kind: str) -> QComboBox:
+        choice = self.settings.modules[kind]
+        box = QComboBox()
+        for label, module_id in module_options(choice):
+            box.addItem(label, module_id)
+        if choice.chosen is None:
+            box.insertItem(0, "Custom (from config.toml)", None)
+        box.setCurrentIndex(max(0, box.findData(choice.chosen)))
+        return box
+
+    def _core_changed(self) -> None:
+        switching = self.modules["core"].currentData() != self.settings.modules["core"].running
+        self.model.setEnabled(not switching and self.has_models)
+        self.light.setEnabled(not switching and self.has_models)
         self.model_note.setVisible(switching)
 
     def form(self) -> SettingsForm:
         return SettingsForm(
-            provider=self.provider.currentData(),
+            modules={kind: box.currentData() for kind, box in self.modules.items()},
             api_key=self.api_key.text(),
             model=self.model.currentData(),
             maintenance_model=self.light.currentData(),
@@ -965,31 +1006,48 @@ class SettingsDialog(QDialog):
             work_folder=self.folder.text() if self.folder.isEnabled() else None,
         )
 
-    def _save(self) -> None:
+    def _save(self, *, restart: bool = False) -> None:
         try:
             update = settings_update(self.settings, self.form())
         except ValueError as e:
             self._show_error(str(e))
             return
-        if update == SettingsUpdate():
+        if update == SettingsUpdate() and not restart:
             self.accept()
             return
+        text = ""
         if reasons := loosening(self.settings, update):
-            confirm(self, "This change " + " and ".join(reasons) + ". Continue?",
-                    lambda: self._apply(update))
+            text = "This change " + " and ".join(reasons) + ". "
+        if update.modules and "memory" in update.modules:
+            text += MEMORY_WARNING + " "
+        if text:
+            confirm(self, text + "Continue?", lambda: self._apply(update, restart))
         else:
-            self._apply(update)
+            self._apply(update, restart)
 
-    def _apply(self, update: SettingsUpdate) -> None:
+    def _apply(self, update: SettingsUpdate, restart: bool) -> None:
         self.save_button.setEnabled(False)
         self.error.hide()
+
+        async def apply() -> Settings:
+            settings = self.settings
+            if update != SettingsUpdate():
+                settings = await self.runtime.update_settings(update)
+            if restart:
+                await self.runtime.restart()
+            return settings
 
         def failed(error: Exception) -> None:
             self.save_button.setEnabled(True)
             self._show_error(user_message(error))
 
-        self.controller.command(self.runtime.update_settings(update),
-                                done=lambda _: self.accept(), failed=failed)
+        def saved(settings: Settings) -> None:
+            self.accept()
+            if not restart and needs_restart(update) and (notice := restart_notice(settings)):
+                confirm(self.parentWidget(), notice + " Restart now?",
+                        lambda: self.controller.command(self.runtime.restart()))
+
+        self.controller.command(apply(), done=saved, failed=failed)
 
     def _show_error(self, text: str) -> None:
         self.error.setText(text)
@@ -1000,8 +1058,9 @@ class SettingsDialog(QDialog):
 
 
 class WelcomeDialog(QDialog):
-    """Three pages: provider, key, then work folder and spending limit. Accepted when
-    everything is saved; the window then starts a conversation."""
+    """Three pages: provider, key, then work folder and spending limit, saved on the setup
+    runtime before anything is built. Accepted when everything is saved; the window then
+    restarts Kayden, which builds the provider with its key."""
 
     def __init__(self, parent: QWidget, runtime: RuntimeAPI, controller: Controller,
                  settings: Settings) -> None:
@@ -1020,12 +1079,14 @@ class WelcomeDialog(QDialog):
                                 "it directly for what you use."))
         self.provider = QListWidget()
         self.provider.setAccessibleName("AI provider")
-        for p in settings.providers:
-            entry = QListWidgetItem(p.name)
-            entry.setData(Qt.ItemDataRole.UserRole, p.id)
+        self.cores = [m for m in settings.modules["core"].installed if m.key_name is not None]
+        for core in self.cores:
+            entry = QListWidgetItem(core.name)
+            entry.setData(Qt.ItemDataRole.UserRole, core.id)
             self.provider.addItem(entry)
+        chosen = settings.modules["core"].chosen
         self.provider.setCurrentRow(max(0, next(
-            (i for i, p in enumerate(settings.providers) if p.id == settings.provider), 0)))
+            (i for i, core in enumerate(self.cores) if core.id == chosen), 0)))
         column.addWidget(self.provider)
         next_button = QPushButton("Continue")
         next_button.setDefault(True)
@@ -1050,7 +1111,7 @@ class WelcomeDialog(QDialog):
         column.addWidget(self.key)
         column.addWidget(self.key_error)
         column.addStretch()
-        self.key_continue = QPushButton("Check and save the key")
+        self.key_continue = QPushButton("Save the key")
         self.key_continue.clicked.connect(self._save_key)
         back = QPushButton("Back")
         back.clicked.connect(lambda: self.pages.setCurrentIndex(0))
@@ -1095,7 +1156,7 @@ class WelcomeDialog(QDialog):
 
     def _chosen(self) -> Any:
         provider_id = self.provider.currentItem().data(Qt.ItemDataRole.UserRole)
-        return next(p for p in self.settings.providers if p.id == provider_id)
+        return next(core for core in self.cores if core.id == provider_id)
 
     def _page_shown(self, index: int) -> None:
         if index == 1:
@@ -1113,8 +1174,9 @@ class WelcomeDialog(QDialog):
             self._error(self.key_error, "Paste a key first.")
             return
         provider = self._chosen()
-        update = SettingsUpdate(api_key=key, provider=None if provider.id == self.settings.provider
-                                else provider.id)
+        chosen = self.settings.modules["core"].chosen
+        update = SettingsUpdate(api_key=key, modules=None if provider.id == chosen
+                                else {"core": provider.id})
         self.key_continue.setEnabled(False)
         self.key_error.hide()
 

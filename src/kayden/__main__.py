@@ -2,10 +2,14 @@
 
 Builds one instance from an InstanceConfig. A TOML config file (--config, else
 <data dir>/config.toml) names the modules and the per-instance runtime settings (model,
-maintenance model, permissions, budget, system prompt); command-line flags override it.
-Anything it leaves out is a default: SQLite Memory, the Anthropic Core, shell/file Tools
-rooted at the current directory, the Textual TUI and no budget. --show-config prints the
-result.
+maintenance model, permissions, budget, system prompt); the settings saved from the app
+(<data dir>/settings.toml) and then command-line flags override it. Anything they leave out
+is a default: SQLite Memory, the Anthropic Core, shell/file Tools rooted at the current
+directory, the Textual TUI and no budget. --show-config prints the result.
+
+The saved frontend is used when it is a terminal frontend, the TUI otherwise. Restart now
+in a frontend starts the instance again in this process; to a window frontend, it hands
+over to kayden-desktop as a detached process when a display is available.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import subprocess
 import sys
 import tomllib
 from collections.abc import Sequence
@@ -22,20 +27,21 @@ from typing import Any
 
 import tomli_w
 
-from kayden.api import Budget, PermissionPolicy
+from kayden.api import MODULE_KINDS, Budget, PermissionPolicy
 from kayden.runtime import (
     InstanceConfig,
     ModuleLoadError,
     ModuleSpec,
-    Provider,
+    ModuleState,
+    Restart,
     RuntimeConfig,
     run_instance,
 )
+from kayden.runtime.modules import LABELS, TERMINAL, WINDOW, find, targets
 from kayden.runtime.settings import SETTINGS_FILE
 
 DEFAULT_DATA_DIR = Path("~/.kayden")
 CONFIG_FILE = "config.toml"
-OPENAI_COMPAT = "kayden.core.openai_compat:factory"
 DEFAULT_FACTORIES = {
     "core": "kayden.core.anthropic:factory",
     "memory": "kayden.memory.sqlite:factory",
@@ -45,15 +51,11 @@ DEFAULT_FACTORIES = {
 RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_prompt",
                 "system_prompt_file")
 SECRET_WORDS = ("key", "token", "secret", "password")
-PROVIDERS = (
-    Provider("anthropic", "Claude", ModuleSpec(DEFAULT_FACTORIES["core"]), "ANTHROPIC_API_KEY"),
-    Provider("deepseek", "DeepSeek", ModuleSpec(OPENAI_COMPAT, {"profile": "deepseek"}),
-             "DEEPSEEK_API_KEY"),
-    Provider("openai", "OpenAI", ModuleSpec(OPENAI_COMPAT, {"profile": "openai"}),
-             "OPENAI_API_KEY"),
-)
-SAVED_KEYS = ("provider", "model", "maintenance_model", "permissions", "system_prompt",
-              "work_folder", "budget")
+# The frontend each launcher falls back to: its own kind's built-in one.
+LAUNCHER_FRONTENDS = {TERMINAL: "tui", WINDOW: "desktop"}
+# "provider" is the Core id as saved before modules were chosen by id.
+SAVED_KEYS = ("modules", "provider", "model", "maintenance_model", "permissions",
+              "system_prompt", "work_folder", "budget")
 BUDGET_INTS = ("max_tokens", "max_tool_calls")
 # Flags of the per-mode versions, accepted for one release with a warning.
 DEPRECATED_MODES = ("session", "continuous")
@@ -239,76 +241,138 @@ def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
     return load_config(parse_args(argv))
 
 
-def _identity(core: ModuleSpec) -> tuple[str, Any]:
-    profile = core.options.get("profile", "openai") if core.factory == OPENAI_COMPAT else None
-    return core.factory, profile
-
-
-def providers_for(core: ModuleSpec) -> tuple[list[Provider], str | None]:
-    """The built-in providers, the configured Core's entry carrying its configured options
-    (so switching back keeps them), and the id of the configured one (None if custom)."""
-    providers, current = [], None
-    for provider in PROVIDERS:
-        if _identity(provider.core) == _identity(core):
-            provider, current = Provider(provider.id, provider.name, core,
-                                         provider.key_name), provider.id
-        providers.append(provider)
-    return providers, current
-
-
-def read_saved(path: Path, providers: Sequence[Provider]) -> dict[str, Any]:
-    """Settings saved by RuntimeAPI.update_settings, validated like [runtime]."""
+def read_saved(path: Path) -> dict[str, Any]:
+    """Settings saved by RuntimeAPI.update_settings, validated like [runtime]. A model of
+    "" is the Core's first, a maintenance model of "" the main model."""
     data = read_config(path, required=False, sections=SAVED_KEYS)
     for key in ("provider", "work_folder"):
         if key in data and not isinstance(data[key], str):
             raise SystemExit(f"{path}: {key} must be a string")
-    if "provider" in data and data["provider"] not in {p.id for p in providers}:
-        raise SystemExit(f"{path}: unknown provider {data['provider']!r}")
-    runtime = {k: v for k, v in data.items() if k not in ("provider", "work_folder")}
-    clear_light = runtime.get("maintenance_model") == ""
-    if clear_light:
-        del runtime["maintenance_model"]
+    modules = data.get("modules", {})
+    if not isinstance(modules, dict) or not all(
+            kind in MODULE_KINDS and isinstance(v, str) for kind, v in modules.items()):
+        raise SystemExit(f"{path}: [modules] maps {', '.join(MODULE_KINDS)} to module ids")
+    if "provider" in data:
+        modules = {"core": data["provider"], **modules}
+    runtime = {k: v for k, v in data.items() if k not in ("modules", "provider", "work_folder")}
+    cleared = [k for k in ("model", "maintenance_model") if runtime.get(k) == ""]
+    for key in cleared:
+        del runtime[key]
     saved = load_runtime(path, {"runtime": runtime})
-    if clear_light:
-        saved["maintenance_model"] = None
-    return {**saved, **{k: data[k] for k in ("provider", "work_folder") if k in data}}
+    saved.update(dict.fromkeys(cleared))
+    if modules:
+        saved["modules"] = modules
+    if "work_folder" in data:
+        saved["work_folder"] = data["work_folder"]
+    return saved
 
 
-def load_config(args: argparse.Namespace, *, default_root: Path | None = None) -> InstanceConfig:
+def module_id(kind: str, spec: ModuleSpec) -> str | None:
+    """The id of the installed module whose factory `spec` names; None for any other."""
+    return next((i for i, target in targets(kind).items() if target == spec.factory), None)
+
+
+def choose_frontend(chosen: str | None, configured: ModuleSpec, launcher: str
+                    ) -> tuple[str | None, ModuleSpec]:
+    """The frontend this launcher runs: the chosen one if it is installed and of the
+    launcher's kind, else the launcher's own."""
+    if chosen is None and module_id("frontend", configured) is None:
+        return None, configured  # an import path from config.toml
+    info = find("frontend", chosen)
+    if info is None or info.kind != launcher:
+        own = LAUNCHER_FRONTENDS[launcher]
+        return own, ModuleSpec(targets("frontend")[own])
+    return info.id, (configured if info.factory == configured.factory
+                     else ModuleSpec(info.factory))
+
+
+def load_config(args: argparse.Namespace, *, default_root: Path | None = None,
+                launcher: str = TERMINAL, restart: Restart | None = None) -> InstanceConfig:
     """config.toml, then the saved settings, then command-line flags, each overriding.
-    The Tools root defaults to `default_root`, else the current directory."""
+    The Tools root defaults to `default_root`, else the current directory. After a
+    `restart` its frontend and conversation replace the command-line start options."""
     data_dir = args.data_dir.expanduser()
     path = config_path(args)
     data = read_config(path, required=args.config is not None)
     modules = load_modules(path, data)
     runtime = load_runtime(path, data)
-    if modules["tools"].factory == DEFAULT_FACTORIES["tools"] and not modules["tools"].options:
-        root = default_root or Path.cwd()
-        modules["tools"] = ModuleSpec(modules["tools"].factory, {"root": str(root)})
-    providers, _ = providers_for(modules["core"])
-    saved = read_saved(data_dir / SETTINGS_FILE, providers)
-    if "provider" in saved:
-        chosen = saved.pop("provider")
-        modules["core"] = next(p.core for p in providers if p.id == chosen)
-    if "work_folder" in saved:
-        tools = modules["tools"]
-        modules["tools"] = ModuleSpec(tools.factory, {**tools.options,
-                                                      "root": saved.pop("work_folder")})
+    saved = read_saved(data_dir / SETTINGS_FILE)
+    chosen = {kind: module_id(kind, spec) for kind, spec in modules.items()}
+    chosen.update(saved.pop("modules", {}))
+    running: dict[str, str | None] = {}
+    problems = []
+    for kind in ("core", "memory", "tools"):
+        running[kind] = module_id(kind, modules[kind])
+        if chosen[kind] == running[kind]:
+            continue
+        if (target := targets(kind).get(chosen[kind] or "")) is None:
+            problems.append(f"the {LABELS[kind]} module {chosen[kind]!r} is not installed; "
+                            "choose another one in Settings")
+            continue
+        modules[kind], running[kind] = ModuleSpec(target), chosen[kind]
+    want = restart.frontend if restart is not None else chosen["frontend"]
+    running["frontend"], modules["frontend"] = choose_frontend(want, modules["frontend"],
+                                                               launcher)
+
+    tools = modules["tools"]
+    if running["tools"] == "shell-files" and "root" not in tools.options:
+        tools = ModuleSpec(tools.factory, {**tools.options, "root": str(default_root or Path.cwd())})
+    if "work_folder" in saved and "root" in tools.options:
+        tools = ModuleSpec(tools.factory, {**tools.options, "root": saved["work_folder"]})
+    saved.pop("work_folder", None)
+    modules["tools"] = tools
     runtime.update(saved)
     for key in ("model", "maintenance_model"):
         if getattr(args, key):
             runtime[key] = getattr(args, key)
     if args.permissions:
         runtime["permissions"] = PermissionPolicy(args.permissions)
-    if (start := start_options(args)) is not None:
+    if restart is not None:
+        start = ({"start": True, "conversation_id": restart.conversation_id}
+                 if restart.conversation_id is not None else None)
+    else:
+        start = start_options(args)
+    if start is not None:
         frontend = modules["frontend"]
         modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
-    _, provider = providers_for(modules["core"])
+    state = ModuleState(running=running, chosen=chosen, work_folder=tools.options.get("root"))
     return InstanceConfig(
-        runtime=RuntimeConfig(data_dir=data_dir, providers=tuple(providers),
-                              provider=provider, tools_module=modules["tools"], **runtime),
+        runtime=RuntimeConfig(data_dir=data_dir, modules=state, **runtime),
+        startup_error="; ".join(problems) or None,
         **modules,
     )
+
+
+async def launch(args: argparse.Namespace, launcher: str, *, default_root: Path | None = None
+                 ) -> Restart | None:
+    """Run instances until the user quits; a Restart to a frontend of another kind is
+    returned for the caller to hand over."""
+    restart: Restart | None = None
+    while True:
+        config = load_config(args, default_root=default_root, launcher=launcher,
+                             restart=restart)
+        restart = await run_instance(config, fallback=LAUNCHER_FRONTENDS[launcher])
+        if restart is None or restart.frontend_kind != launcher:
+            return restart
+
+
+def window_command(args: argparse.Namespace, restart: Restart) -> list[str]:
+    """kayden-desktop on the same data directory, config file and conversation."""
+    command = [sys.executable, "-m", "kayden.frontends.desktop.launcher",
+               "--data-dir", str(args.data_dir.expanduser())]
+    if args.config:
+        command += ["--config", str(args.config.expanduser())]
+    if restart.conversation_id is not None:
+        command += ["--conversation", restart.conversation_id]
+    return command
+
+
+def hand_over(args: argparse.Namespace, restart: Restart) -> None:
+    """Start the desktop app detached from this terminal."""
+    subprocess.Popen(window_command(args, restart), start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+    print("Kayden continues in the desktop app.")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -318,10 +382,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(show_config(config, config_path(args)), end="")
         return
     try:
-        asyncio.run(run_instance(config))
+        restart = asyncio.run(launch(args, TERMINAL))
     except ModuleLoadError as e:
         print(f"kayden: {e}", file=sys.stderr)
         raise SystemExit(1) from None
+    if restart is not None:
+        hand_over(args, restart)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import jsonschema
@@ -43,7 +42,6 @@ from kayden.api import (
     FailureKind,
     FrontendInfo,
     InferenceRequest,
-    InstancePaths,
     MaintenanceFinished,
     MaintenanceStarted,
     MemoriesChanged,
@@ -62,7 +60,6 @@ from kayden.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
-    ProviderInfo,
     ReasoningDelta,
     Role,
     RuntimeEvent,
@@ -98,19 +95,17 @@ from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_t
 from kayden.runtime.config import (
     ACTIVATION_NOTICE,
     AUTONOMY_PROMPT,
-    ModuleSpec,
-    Provider,
+    Restart,
     RuntimeConfig,
 )
 from kayden.runtime.events import EventBus, EventLog
-from kayden.runtime.instance import InstanceLock, ModuleLoadError, load_module
+from kayden.runtime.instance import InstanceLock
+from kayden.runtime.modules import ModuleSettings
 from kayden.runtime.operations import Context, Operation
-from kayden.runtime.settings import get_stored_key, has_key, save_settings, store_key
 
 logger = logging.getLogger(__name__)
 
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
-_QUIET = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 _HIT_PREVIEW_CHARS = 1000
 _OP_STATUS_MAX_WAIT_S = 60
 USAGE_FILE = "usage.json"
@@ -296,6 +291,8 @@ class Runtime:
         self._duration_task: asyncio.Task[None] | None = None
         self._inbox_before_stop = 0
         self._settings_lock = asyncio.Lock()
+        self._modules = ModuleSettings(config.data_dir, config.modules, frontend.kind)
+        self.restart_request: Restart | None = None  # set by restart(), read by the launcher
 
     # ── Observation ──────────────────────────────────────────────────────
 
@@ -401,23 +398,27 @@ class Runtime:
 
     async def settings(self) -> Settings:
         cfg = self._config
-        tools = cfg.tools_module
-        root = tools.options.get("root") if tools is not None else None
         return Settings(
-            provider=cfg.provider,
-            providers=[ProviderInfo(p.id, p.name, p.key_name, await has_key(p.key_name))
-                       for p in cfg.providers],
             model=self._model,
             maintenance_model=cfg.maintenance_model,
             budget=cfg.budget,
             permissions=self._permissions,
             system_prompt=cfg.system_prompt,
-            work_folder=None if root is None else str(root),
+            **await self._modules.fields(),
         )
 
     async def update_settings(self, update: SettingsUpdate) -> Settings:
         async with self._settings_lock:
             return await self._update_settings(update)
+
+    async def restart(self) -> None:
+        if self.restart_request is not None:
+            return
+        conversation = self._conversation.id if self._conversation is not None else None
+        self.restart_request = await self._modules.restart(conversation)
+        self._log.decision("restart", frontend=self.restart_request.frontend,
+                           conversation=self.restart_request.conversation_id)
+        await self.aclose()
 
     async def send(self, text: str) -> None:
         state = self._state()
@@ -639,121 +640,43 @@ class Runtime:
 
     # ── Settings ─────────────────────────────────────────────────────────
 
-    def _quiet(self) -> bool:
-        return self._state() in _QUIET and not self._ops
-
-    def _provider(self, provider_id: str | None) -> Provider:
-        for p in self._config.providers:
-            if p.id == provider_id:
-                return p
-        raise ValueError(f"unknown provider {provider_id!r}")
-
     async def _update_settings(self, u: SettingsUpdate) -> Settings:
         changed = [f.name for f in fields(u) if getattr(u, f.name) is not None]
         if not changed:
             return await self.settings()
         cfg = self._config
-        switching = u.provider is not None and u.provider != cfg.provider
-        rebuild_core = switching or u.api_key is not None
-        if (rebuild_core or u.work_folder is not None) and not self._quiet():
-            raise RuntimeStateError("wait until the agent is idle with nothing running")
-
-        # Validate everything that needs no module first.
-        provider = self._provider(u.provider or cfg.provider) if rebuild_core else None
-        if u.api_key is not None:
-            assert provider is not None
-            if provider.key_name is None:
-                raise ValueError(f"{provider.name} takes no API key")
-            if not u.api_key.strip():
-                raise ValueError("the API key is empty")
+        saved, removed = await self._modules.prepare(u)
+        # Models belong to the running Core; with another one chosen, they are not saved.
+        core_pending = ("core" in saved.get("modules", {})
+                        or self._modules.chosen["core"] != self._modules.running["core"])
         if u.system_prompt is not None and not u.system_prompt.strip():
             raise ValueError("the system prompt is empty")
-        tools_spec: ModuleSpec | None = None
-        if u.work_folder is not None:
-            if cfg.tools_module is None:
-                raise ValueError("the work folder of these tools cannot be changed")
-            folder = Path(u.work_folder).expanduser()
-            if not folder.is_dir():
-                raise ValueError(f"{folder} is not a folder")
-            tools_spec = ModuleSpec(cfg.tools_module.factory,
-                                    {**cfg.tools_module.options, "root": str(folder)})
         budget = cfg.budget if u.budget is None else u.budget
-
-        # Build replacement modules; on any failure nothing is applied.
-        paths = InstancePaths(cfg.data_dir)
-        new_core: Core | None = None
-        new_tools: Tools | None = None
-        old_key: str | None = None
+        model = self._model if u.model is None else u.model
+        light = cfg.maintenance_model
+        if u.maintenance_model is not None:
+            light = u.maintenance_model or None
         models = self._models
-        try:
-            if u.api_key is not None:
-                assert provider is not None and provider.key_name is not None
-                old_key = await get_stored_key(provider.key_name)
-                await store_key(provider.key_name, u.api_key)
-            if rebuild_core:
-                assert provider is not None
-                new_core = await self._build(provider.core, Core, paths)
-                try:
-                    models = {m.id: m for m in await new_core.list_models()}
-                except Exception as e:
-                    raise ValueError(f"{provider.name}: {e}") from e
-                if not models:
-                    raise ValueError(f"{provider.name} offers no models")
-            if tools_spec is not None:
-                new_tools = await self._build(tools_spec, Tools, paths)
+        if not models and (model or light):  # before start(): only to check them
+            models = {m.id: m for m in await self._core.list_models()}
+        for m in (model, light):
+            if m is not None:
+                self._check_model(m, models, budget)
 
-            model = self._model
-            light = cfg.maintenance_model
-            if u.maintenance_model is not None:
-                light = u.maintenance_model or None
-            elif switching:
-                light = None
-            if u.model is not None:
-                model = u.model
-            if not models and (model or light):  # before start(): only to check them
-                models = {m.id: m for m in await self._core.list_models()}
-            if u.model is None and (switching or (model is not None and model not in models)):
-                model = next(iter(models))
-            for m in (model, light):
-                if m is not None:
-                    self._check_model(m, models, budget)
-            if (rebuild_core or tools_spec is not None) and not self._quiet():
-                raise RuntimeStateError("the agent started working; try again when it is idle")
-
-            saved: dict[str, Any] = {}
-            if switching:
-                saved["provider"] = u.provider
-            if model != self._model and model is not None:
-                saved["model"] = model
-            if light != cfg.maintenance_model:
-                saved["maintenance_model"] = light or ""
-            if u.budget is not None:
-                saved["budget"] = {k: v for k, v in asdict(budget).items() if v is not None}
-            if u.permissions is not None:
-                saved["permissions"] = u.permissions.value
-            if u.system_prompt is not None:
-                saved["system_prompt"] = u.system_prompt
-            if tools_spec is not None:
-                saved["work_folder"] = tools_spec.options["root"]
-            if saved:
-                await asyncio.to_thread(save_settings, cfg.data_dir, saved)
-        except BaseException:
-            for module in (new_core, new_tools):
-                if module is not None:
-                    await self._close_module(module)
-            if u.api_key is not None and provider is not None and provider.key_name:
-                with contextlib.suppress(ValueError):
-                    await store_key(provider.key_name, old_key)
-            raise
+        if not core_pending and u.model is not None and model != self._model:
+            saved["model"] = model
+        if not core_pending and light != cfg.maintenance_model:
+            saved["maintenance_model"] = light or ""
+        if u.budget is not None:
+            saved["budget"] = {k: v for k, v in asdict(budget).items() if v is not None}
+        if u.permissions is not None:
+            saved["permissions"] = u.permissions.value
+        if u.system_prompt is not None:
+            saved["system_prompt"] = u.system_prompt
+        await self._modules.commit(u, saved, removed)
 
         # Apply: nothing below can fail.
         loosened = self._loosened(u)
-        if new_core is not None:
-            old_core, self._core = self._core, new_core
-            await self._close_module(old_core)
-        if new_tools is not None:
-            old_tools, self._tools = self._tools, new_tools
-            await self._close_module(old_tools)
         self._models = models
         permissions = self._permissions
         if u.permissions is not None:
@@ -762,11 +685,9 @@ class Runtime:
         self._permissions = permissions
         self._budget.budget = budget
         self._config = replace(
-            cfg, provider=provider.id if switching and provider else cfg.provider,
-            maintenance_model=light, budget=budget,
+            cfg, maintenance_model=light, budget=budget,
             permissions=u.permissions or cfg.permissions,
-            system_prompt=u.system_prompt or cfg.system_prompt,
-            tools_module=tools_spec or cfg.tools_module)
+            system_prompt=u.system_prompt or cfg.system_prompt)
         if self._agent_config is not None:
             self._agent_config = replace(self._agent_config, budget=budget,
                                          permissions=permissions)
@@ -799,18 +720,6 @@ class Runtime:
                 loosened.append("permissions")
         return loosened
 
-    async def _build[T](self, spec: ModuleSpec, kind: type[T], paths: InstancePaths) -> T:
-        try:
-            return await asyncio.to_thread(load_module, spec, kind, paths)
-        except ModuleLoadError as e:
-            raise ValueError(str(e)) from e
-
-    async def _close_module(self, module: Core | Tools) -> None:
-        try:
-            await module.aclose()
-        except Exception:
-            logger.exception("module aclose failed")
-
     # ── Models and context sizing ────────────────────────────────────────
 
     async def _refresh_models(self) -> None:
@@ -821,8 +730,9 @@ class Runtime:
         info = (self._models if models is None else models).get(model_id)
         if info is None:
             raise ValueError(f"unknown model {model_id!r}")
-        if info.context_window is None and model_id not in self._config.context_windows:
-            raise ValueError(f"model {model_id!r} has no known context window; configure one")
+        if info.context_window is None:
+            raise ValueError(f"model {model_id!r} has no known context window; configure "
+                             "one in the Core's models option")
         budget = self._config.budget if budget is None else budget
         if budget.max_cost_usd is not None and not has_prices(info):
             raise ValueError(f"a cost budget needs prices for model {model_id!r}")
@@ -836,7 +746,8 @@ class Runtime:
         return self._models[light] if light else self._info()
 
     def _window(self, info: ModelInfo) -> int:
-        return info.context_window or self._config.context_windows[info.id]
+        assert info.context_window is not None  # checked by _check_model
+        return info.context_window
 
     def _counter(self, model: str) -> TokenCounter:
         return calibrated(self._calibration.get(model, 1.0))

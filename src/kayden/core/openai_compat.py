@@ -109,6 +109,22 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> OpenAICompatCore:
     return OpenAICompatCore(**options)
 
 
+def deepseek_factory(options: dict[str, Any], paths: InstancePaths) -> OpenAICompatCore:
+    """The DeepSeek profile; options as for factory."""
+    return OpenAICompatCore(**{"profile": "deepseek", **options})
+
+
+def openai_factory(options: dict[str, Any], paths: InstancePaths) -> OpenAICompatCore:
+    """The OpenAI profile; options as for factory."""
+    return OpenAICompatCore(**{"profile": "openai", **options})
+
+
+deepseek_factory.display_name = "DeepSeek"  # type: ignore[attr-defined]
+deepseek_factory.key_name = "DEEPSEEK_API_KEY"  # type: ignore[attr-defined]
+openai_factory.display_name = "OpenAI"  # type: ignore[attr-defined]
+openai_factory.key_name = "OPENAI_API_KEY"  # type: ignore[attr-defined]
+
+
 class OpenAICompatCore(Core):
     """`options` are merged verbatim into every request body (temperature,
     reasoning_effort, tool_choice, ...); `models` adds per-model options, context windows
