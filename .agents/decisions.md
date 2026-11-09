@@ -44,9 +44,9 @@ exact/estimate, clamped to [0.25, 4].
 
 | File | Format |
 |------|--------|
-| `<mode>.lock` | `fcntl.flock` lock; contents: holder pid |
-| `usage-<mode>.json` | `{"schema_version": 1, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, elapsed_s}`; written with temp file + `os.replace` after each charge, each tool-call reservation and whenever activity drops to zero |
-| `events-<mode>.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread |
+| `instance.lock` | `fcntl.flock` lock, taken at the first `start()`; contents: holder pid. `session.lock` and `continuous.lock`, left by the per-mode versions, are also locked when present, so an older Kayden cannot run on the folder meanwhile, and one that holds them makes `start()` fail naming its pid |
+| `usage.json` | `{"schema_version": 1, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, elapsed_s}`; written with temp file + `os.replace` at the first start, after each charge, each tool-call reservation and whenever activity drops to zero. When it does not exist, the first start sums `usage-session.json` and `usage-continuous.json` into it and leaves them in place |
+| `events.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread. The per-mode `events-<mode>.jsonl` files are left as they are |
 | `scratch/` | `ToolContext.data_dir`, shared by all calls |
 
 Event log records:
@@ -59,14 +59,18 @@ Event log records:
 Decision kinds: `start`, `cycle_requested`, `cycle_start`, `cycle_end`, `budget_check`,
 `permission`, `backgrounded`, `cancel_operation`, `abandoned`, `late_completion`, `idle`,
 `stop`, `stopped`, `resume_repair`, `reserved_tool_dropped`, `maintenance_retry`,
-`activation_notice`, `duration_exhausted`.
+`activation_notice`, `duration_exhausted`, `set_autonomous`, `rename_conversation`
+(`cleared`, never the title), `archive_conversation`, `delete_conversation`, `title` (an
+automatic title was written; not its text), `memory_added`, `memory_edited`,
+`memory_forgotten` (entry id only).
 TextDelta, ReasoningDelta, ToolCallDelta and ToolProgress are not logged.
 
 ## Base system prompt
 
-`config.DEFAULT_SYSTEM_PROMPT` explains backgrounded operations, `op_status`/`op_cancel`,
-`recall` and `peek_other_mode`. `[runtime] system_prompt` or `system_prompt_file` replaces
-it. Continuous Mode appends `CONTINUOUS_PROMPT` (how to idle) to either.
+`config.DEFAULT_SYSTEM_PROMPT` explains backgrounded operations, `op_status`/`op_cancel`
+and `recall` (with scope "all" for the other conversations). `[runtime] system_prompt` or
+`system_prompt_file` replaces it. An autonomous conversation appends `AUTONOMY_PROMPT`
+(how to idle, and that finished background work wakes it) to either.
 Memory's `system_addendum` follows, separated by a blank line.
 
 ## Runtime-authored texts
@@ -84,8 +88,12 @@ Memory's `system_addendum` follows, separated by a blank line.
   do."
 - REFUSED: names the reason (policy, denial, non-interactive frontend, or the exhausted
   budget dimension).
-- recall / peek_other_mode: one line per hit, `[conversation/message role ISO-time] text`,
-  text capped at 1000 characters.
+- recall: one line per hit, `[conversation/message role ISO-time] text`, text capped at
+  1000 characters. Scope "all" in a conversation with Remember off: ERROR "recall with
+  scope "all" is not available here: the user turned off Remember for this conversation,
+  so it stays private."
+- Unsupported optional Memory methods: NotImplementedError "this memory module cannot edit
+  memories" / "this memory module cannot delete conversations".
 
 ## Libraries
 
@@ -109,7 +117,10 @@ permanent errors, delays, hanging streams that can ignore cancellation), `FakeTo
 (instant, slow with progress, hanging with/without honouring cancellation, gated, failing,
 thread-using, environment probe), `InMemoryMemory` over a `MemoryStore` that outlives
 instances (idempotent append, suffix assembly with in-view truncation, compaction through
-`Completion`, word-overlap archive search, per-mode long-term memory), `ScriptedFrontend`
+`Completion`, word-overlap archive search, one long-term list with revisions and a
+forgotten set, seeding by copying the source's summary and tail without inference,
+optional titles (`auto_title`) and optional-method support (`editable`), facts to extract
+set through `extract`), `ScriptedFrontend`
 whose `Recorder` keeps every envelope. Timing-based tests use 0.15 s initial wait and 0.2 s
 grace.
 
@@ -150,7 +161,7 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 ### Memory (`kayden.memory.sqlite`)
 
 - Factory: `kayden.memory.sqlite:factory`. Options: `path` (default
-  `<data_dir>/memory.db`, shared by both modes of a data directory) plus any
+  `<data_dir>/memory.db`) plus any
   `CompactionConfig` field; an unknown option raises TypeError.
 - `CompactionConfig` is all fractions of `ContextRequest.max_tokens`: trigger 0.75
   (summary plus active verbatim context), remove 0.5 (cut-half), summary 0.05, long-term
@@ -167,12 +178,12 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   `OpaqueBlock(type, data)` is stored as exactly that. An unknown tag, or a known tag whose
   data the current class cannot take (a field added later), decodes to `OpaqueBlock`, so it
   re-encodes unchanged. Appending a block class without a tag raises TypeError.
-- Schema version 2 (`PRAGMA user_version`). Stores use only the stable tags from the
-  start; there is no migration and no code reads Python import-path tags. Any other
-  version, including version 1 stores written by the pre-migration module with
-  import-path tags, is refused rather than read as opaque blocks.
-- The archive is strictly append-only: the source never runs UPDATE or DELETE on
-  `messages`, and the no-update/no-delete triggers stay in place for the life of a store.
+- Stores use only the stable tags from the start; no code reads Python import-path tags.
+  Version 1 stores written by the pre-migration module with import-path tags are refused
+  rather than read as opaque blocks. Schema versions: see "SqliteMemory schema 3" below.
+- The archive is append-only: the source never runs UPDATE on `messages`, and DELETE
+  only inside `delete_conversation` (see schema 3 below); the no-update/no-delete
+  triggers stay in place for the life of a store.
 - `append` compares a re-appended id with the stored message (decoded equality) and skips
   it when equal; a conflict raises ValueError and rolls back the batch.
 - Search: FTS5 over the strings of each block minus ids and reasoning state, words ORed,
@@ -268,8 +279,8 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
 
 ### TUI (`kayden.frontends.tui`)
 
-- Factory: `kayden.frontends.tui:factory`. Options `mode`, `activation`,
-  `conversation_id`, `model`: with a mode the agent starts at once, otherwise the start
+- Factory: `kayden.frontends.tui:factory`. Options `start`, `conversation_id`,
+  `autonomous`, `model`: with `start` true the agent starts at once, otherwise the start
   screen asks. `run()` returns when the user quits or `events()` ends.
 - History is loaded `HISTORY_PAGE` (100) messages at a time; a "Load earlier messages"
   button at the top of the transcript prepends the previous page (`history(before=...)`).
@@ -279,9 +290,8 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
 - Permission choices are Allow once, Allow for conversation, Deny (`/allow once|conversation`,
   `/deny`). Runtime-side decisions (policy, Stop) are noted on the call via
   `PermissionResolved.call_id`.
-- Activate (Ctrl+R, `/activate`) is offered once started, except for an idle
-  agent-controlled Continuous agent; the runtime remains the authority and its errors are
-  shown as notifications.
+- Activate (Ctrl+R, `/activate`) is offered once started; the runtime remains the
+  authority and its errors are shown as notifications.
 - Queued messages are matched to their commit by `message_id`. A BACKGROUNDED placeholder
   keeps the call shown as running in the background until its final ToolFinished or
   OperationResult. Refusals get a red "declined" line. The model shown follows
@@ -296,8 +306,7 @@ applied over the config file: [Agent Note](notes/implemented/2026-11-07-settings
 ```
 export ANTHROPIC_API_KEY=...
 cd <project to work in>          # shell/file tools are rooted here
-kayden [--config FILE] [--mode session|continuous]
-    [--activation user_controlled|agent_controlled] [--conversation ID]
+kayden [--config FILE] [--conversation ID] [--autonomous|--no-autonomous]
     [--model MODEL_ID] [--maintenance-model MODEL_ID]
     [--permissions ask|allow_read_only|deny] [--data-dir DIR]
 ```
@@ -316,10 +325,13 @@ the usage it limits, is the point: a flag alone would let each launch pick or fo
 limit. `--model`, `--maintenance-model` and `--permissions` override the file. The other
 `RuntimeConfig` fields (retries, timeouts, ...) are tuning and stay at their defaults
 until someone needs them. `--show-config` prints the effective config as TOML (`tomli-w`)
-and exits. `--mode`, `--activation` and
-`--conversation` are merged over the frontend options. The data directory defaults to
-`$KAYDEN_DATA_DIR` or `~/.kayden`. Without `--mode` the TUI's start screen asks for mode,
-activation, conversation and model. The launcher checks no API keys: each Core refuses a
+and exits. `--conversation` and `--autonomous`/`--no-autonomous` start at once: they
+become the frontend options `start = true`, `conversation_id`, `autonomous`, merged over
+the configured ones. `--mode` and `--activation` are accepted for one release: each prints
+a warning naming `--autonomous` to stderr, starts at once, and `--mode continuous` or
+`--activation agent_controlled` means `--autonomous` unless `--[no-]autonomous` is given.
+The data directory defaults to `$KAYDEN_DATA_DIR` or `~/.kayden`. Without those flags the
+TUI's start screen asks. The launcher checks no API keys: each Core refuses a
 missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
 `ANTHROPIC_AUTH_TOKEN`).
 
@@ -375,3 +387,57 @@ template. The build stopped compiling its launcher stub: the machine's Python 3.
 before exporting its own policy, and `update_settings` clamps to that. Clamping to the
 environment at update time would clamp to the runtime's own export, and permissions could
 never be loosened in a running instance (`test_permissions_loosen_past_the_policy_this_runtime_exported`).
+
+## Changes for contract Draft 3 (autonomy into sessions)
+
+Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
+
+| Choice | Value |
+|---|---|
+| `activate()` in IDLE | Allowed for every conversation; in an autonomous one it also drops a pending wake-up (a new cycle clears the wake set) |
+| `start()` | Always leaves the agent IDLE. A resumed autonomous conversation has no wake set, so nothing runs before the user acts |
+| `StartOptions` validation | `remember=False` or `seed_from` with a `conversation_id`: ValueError, before anything is opened |
+| `set_autonomous` | Changes the in-memory conversation first (so a wake-up check during the write sees it), then Memory; reverts if Memory fails |
+| Untitled display | `ConversationInfo.preview`: the Text of the first USER message, whitespace collapsed, 100 characters |
+| `Memory.search` scope | `conversation_ids` (None = all). `recall(scope="all")` passes the open conversation plus every listed (not archived) conversation with Remember on; `search_archive` without an id searches everything, archived included |
+| Memory entry ids | Strings; SqliteMemory uses its integer row ids |
+
+### SqliteMemory schema 3
+
+- Version 3 (`PRAGMA user_version`). Version 2 stores are migrated in place, in the
+  transaction that opens the store; any other version is refused. A failed migration
+  rolls back and leaves version 2 as it was.
+- `conversations`: `autonomous`, `remember`, `archived`, `seed_from` columns. The
+  migration sets `autonomous = 1` and the title "Continuous conversation" (if it had none)
+  on the former continuous conversation, then drops the `mode` column rather than keeping
+  it unused: nothing reads it, and new rows would otherwise need a made-up value.
+- Long-term memory: `memory_entries` (id, source conversation or NULL for the user's,
+  created_at) and `memory_revisions` (entry, text, created_at); the current text is the
+  newest revision. The migration copies `long_term` (both modes) with exact duplicates
+  collapsed into the lowest id, then drops it. `forgotten` holds SHA-256 fingerprints of
+  forgotten texts (casefolded, whitespace collapsed); compaction drops a new entry whose
+  fingerprint is there. A reworded fact is new to it.
+- Remember off: `assemble` and `inspect` show no long-term entries and compaction adds
+  none; the summary is written as usual.
+- Seeding: while `seed_from` is set and the conversation has no summary row, `maintain`
+  first runs the compaction prompt (light model) on the source's current summary and as
+  many of its newest exchanges as fit, and stores the result as a summary with
+  `through_seq` 0. Long-term lines in that output are ignored (the source already
+  contributed them). An empty result or an empty source writes nothing; the next maintain
+  tries again.
+- Titles: after seeding and compaction, a conversation with no title gets one from its
+  first USER message with Text (2000 characters at most), light model, 20 output tokens,
+  prompt `_TITLE_PROMPT`. The first non-empty line is kept, quotes, `#*_` and a trailing
+  period stripped, 80 characters at most. A CoreError is logged and leaves the title
+  empty (the turn goes on, no Failure event); BudgetExhausted propagates. The write is
+  `UPDATE ... WHERE title IS NULL`, so a title the user set meanwhile wins.
+- Erasure: `PRAGMA secure_delete = ON` on every connection. `delete_conversation` runs in
+  one transaction: list the id in `erasing` (the no-delete trigger exempts listed
+  conversations), remove each message from the contentless FTS index with the `delete`
+  command and its original text, delete messages, summaries, long-term entries from it
+  and their revisions, set `seed_from` to NULL where it pointed there, delete the row,
+  then `optimize` the FTS index so no segment keeps the terms. `forget` deletes the
+  revisions and the entry and records the fingerprints. Both then run
+  `PRAGMA wal_checkpoint(TRUNCATE)`; a concurrent reader can keep it from completing,
+  which is logged as a warning.
+

@@ -119,7 +119,7 @@ settings screen says so before saving a Memory change.
 - **Losing the live provider switch.** Switching provider now needs a restart; a few seconds
   for the user, and the conversation continues after it.
 - **Memory switches look like lost data.** The warning before saving must be clear.
-- **Overlap with other proposals.** The [autonomy note](2026-11-07-autonomy-into-sessions.md)
+- **Overlap with other proposals.** The [autonomy note](../implemented/2026-11-07-autonomy-into-sessions.md)
   removes modes and changes Memory's contract, and the
   [desktop app note](2026-11-07-desktop-app.md) adds `kayden-desktop`; this note's
   settings and launcher changes must be built after or together with them.

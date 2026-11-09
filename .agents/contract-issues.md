@@ -691,6 +691,84 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Fix:** Say "Owns the UI; its launcher chooses the event loop", or let a frontend
   factory name a loop factory that `kayden` uses.
 
+## 12. Found while building autonomy into sessions (contract Draft 3)
+
+### A1 (C) "SqliteMemory schema version 2"
+- **Status:** Resolved in the implementation.
+- **Where:** [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md), "Migrating
+  existing data": "schema version 2, migrated in place".
+- **Problem:** Stores were already at version 2 (stable block tags); the owner's
+  `~/.kayden/memory.db` is version 2, not 1.
+- **Assumed:** The new layout is version 3, migrated from version 2.
+- **Fix:** None needed beyond the note, which now says version 3.
+
+### A2 (C) A restarted autonomous conversation: idle or stopped
+- **Status:** Resolved (SPEC 11 and the `RuntimeAPI` docstring now say idle).
+- **Where:** The note: "opens idle and never wakes before the user sends a message or
+  activates it (SPEC 11's rule for continuous agents, kept)"; SPEC 11 said "comes back
+  stopped".
+- **Assumed:** It opens IDLE with no pending wake-up; both rules' purpose (nothing runs
+  before the user acts) holds.
+
+### A3 (S) Showing an untitled conversation
+- **Status:** Resolved (`ConversationInfo.preview`).
+- **Where:** The note: "frontends then show the start of the first message".
+- **Problem:** No contract call returns the first message cheaply; `history` pages from
+  the end.
+- **Fix:** `ConversationInfo.preview`, filled by Memory.
+
+### A4 (A) Not re-extracting a forgotten fact "from the summary it came from"
+- **Status:** Accepted.
+- **Where:** The note, "Long-term memory the user can see and change".
+- **Problem:** A fingerprint of the text cannot tell where a new extraction came from.
+- **Assumed:** A new entry whose normalized text matches a forgotten one is dropped, from
+  any source; a reworded fact is accepted. Docs say a forgotten fact can come back from
+  new messages.
+
+### A5 (S) A failed title call
+- **Status:** Resolved (`Memory.maintain` docstring).
+- **Problem:** Whether a CoreError from the title call fails maintenance (Failure(MODEL),
+  shown to the user) or is quiet.
+- **Assumed:** SqliteMemory logs it and leaves the title empty; BudgetExhausted still
+  propagates.
+
+### A6 (A) Deleting a conversation "while any operation of it is outstanding"
+- **Status:** Accepted.
+- **Where:** The note, "Deletion".
+- **Problem:** Only the open conversation can have operations (start() needs none
+  outstanding), so the rule is covered by refusing the open conversation.
+- **Assumed:** `delete_conversation` refuses the open conversation and nothing else.
+
+### A7 (S) The event log keeps message text after deletion
+- **Status:** Open.
+- **Where:** SPEC 16.6 (the event log records every event except deltas and progress,
+  `MessageCommitted` included) vs. the note's "deletion controls what the disk keeps".
+- **Problem:** `events.jsonl` holds the full text of every committed message. Deleting a
+  conversation does not touch it, and its records do not name the conversation, so it
+  cannot be scrubbed per conversation.
+- **Assumed:** Deletion reaches the database only; docs (`concepts.md`, "Deleting") tell
+  the user the activity log keeps a record and how to remove it.
+- **Fix:** Log `MessageCommitted` (and `MessageQueued`) without text, keeping ids, roles
+  and block types; or write the conversation id into each record so deletion can rewrite
+  the log.
+
+### A8 (S) Emptying the write-ahead log while another process reads
+- **Status:** Accepted.
+- **Problem:** `wal_checkpoint(TRUNCATE)` cannot complete while another connection reads
+  the store, so erased text may stay in `memory.db-wal` until the next checkpoint.
+- **Assumed:** One process per data folder (the instance lock) makes this rare; the
+  incomplete checkpoint is logged.
+
+### A9 (S) Frontends cannot ask what Memory supports
+- **Status:** Open.
+- **Where:** `RuntimeAPI` docstring: frontends hide the memory and delete controls when the
+  Memory module does not support them.
+- **Problem:** The only way to find out is to call and catch NotImplementedError. The TUI
+  probes `memories()` before opening its memory screen and can only disable Delete after a
+  delete fails.
+- **Fix:** A capability flag (on `Settings` or `RuntimeSnapshot`) saying whether memory
+  editing and deletion are supported.
+
 ## Material outside the allowed inputs
 
 None was consulted or encountered. The only out-of-tree output seen was a system-wide

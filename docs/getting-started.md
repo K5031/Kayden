@@ -47,7 +47,7 @@ mkdir ~/kayden-work && cd ~/kayden-work
 kayden
 ```
 
-The start screen asks for a mode; press Enter to start a normal conversation. Type a
+The start screen opens with a new conversation selected; press Enter to start it. Type a
 message and press Enter. Before the agent uses a tool (running a command, reading or
 changing a file), it asks you first.
 

@@ -2,7 +2,7 @@
 
 ## Architecture
 
-A **runtime** owns everything about how the agent runs: modes, activation, permissions,
+A **runtime** owns everything about how the agent runs: conversations and autonomy, permissions,
 budgets, background tasks, settings and the event log. It drives four swappable
 **modules** through the contracts in `src/kayden/api.py`:
 
