@@ -14,7 +14,6 @@ from kayden.api import (
     Decision,
     Failure,
     FailureKind,
-    Mode,
     PermissionPolicy,
     PermissionRequested,
     ToolFinished,
@@ -220,7 +219,7 @@ async def test_usage_persists(make: Any) -> None:
     await h.start()
     await h.turn("a")
     await h.close()
-    data = json.loads((h.data_dir / "usage-session.json").read_text())
+    data = json.loads((h.data_dir / "usage.json").read_text())
     assert data["input_tokens"] == 500 and data["output_tokens"] == 50
 
     h2: Harness = await make(data_dir=h.data_dir, store=h.store)
@@ -228,6 +227,7 @@ async def test_usage_persists(make: Any) -> None:
     await h2.start()
     assert h2.runtime.snapshot().usage.usage.input_tokens == 500
 
+    await h2.close()
     h3: Harness = await make(data_dir=h.data_dir)
-    await h3.start(Mode.CONTINUOUS)  # separate per mode
-    assert h3.runtime.snapshot().usage.usage.input_tokens == 0
+    await h3.start(autonomous=True)  # one budget per data folder, whatever the conversation
+    assert h3.runtime.snapshot().usage.usage.input_tokens == 500

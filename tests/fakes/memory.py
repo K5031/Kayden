@@ -8,7 +8,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -20,10 +20,11 @@ from kayden.api import (
     ContextRequest,
     ConversationId,
     ConversationInfo,
+    CoreError,
     Memory,
+    MemoryEntry,
     MemoryView,
     Message,
-    Mode,
     OperationResult,
     Role,
     Text,
@@ -44,7 +45,19 @@ class Conversation:
 @dataclass
 class MemoryStore:
     conversations: dict[ConversationId, Conversation] = field(default_factory=dict)
-    long_term: dict[Mode, list[str]] = field(default_factory=lambda: {m: [] for m in Mode})
+    # entry id -> revisions, oldest first; the last one is current
+    long_term: dict[str, list[MemoryEntry]] = field(default_factory=dict)
+    forgotten: set[str] = field(default_factory=set)
+    next_id: int = 0
+
+    def add(self, text: str, source: ConversationId | None) -> MemoryEntry:
+        self.next_id += 1
+        entry = MemoryEntry(str(self.next_id), text, source, time.time())
+        self.long_term[entry.id] = [entry]
+        return entry
+
+    def entries(self) -> list[MemoryEntry]:
+        return [revisions[-1] for revisions in self.long_term.values()]
 
 
 def render_block(block: Block) -> str:
@@ -72,6 +85,8 @@ class InMemoryMemory(Memory):
         summary_tokens: int = 200,
         maintain_delay: float = 0.0,
         trace: list[Any] | None = None,
+        auto_title: bool = False,
+        editable: bool = True,
     ):
         self.store = store if store is not None else MemoryStore()
         self.compact_at = compact_at
@@ -88,18 +103,82 @@ class InMemoryMemory(Memory):
         self.assemble_budgets: list[int] = []
         self.seq_source: Callable[[], int] | None = None  # runtime seq at append time
         self.maintain_override: Callable[[Completion], Awaitable[bool]] | None = None
+        self.auto_title = auto_title  # write titles during maintain with a light call
+        self.editable = editable  # False: the optional memory methods are unsupported
+        self.extract: list[str] = []  # facts the next compaction extracts
 
     def _conv(self, conversation_id: ConversationId) -> Conversation:
         return self.store.conversations[conversation_id]  # KeyError for unknown ids
 
-    async def create_conversation(self, mode: Mode, title: str | None = None) -> ConversationInfo:
+    async def create_conversation(self, *, title: str | None = None, autonomous: bool = False,
+                                  remember: bool = True, seed_from: ConversationId | None = None
+                                  ) -> ConversationInfo:
+        if seed_from is not None:
+            self._conv(seed_from)
         now = time.time()
-        info = ConversationInfo(uuid.uuid4().hex, mode, title, now, now)
+        info = ConversationInfo(uuid.uuid4().hex, title, now, now, autonomous=autonomous,
+                                remember=remember, seed_from=seed_from)
         self.store.conversations[info.id] = Conversation(info)
         return info
 
-    async def list_conversations(self, mode: Mode) -> Sequence[ConversationInfo]:
-        return [c.info for c in self.store.conversations.values() if c.info.mode == mode]
+    async def list_conversations(self, *, include_archived: bool = False
+                                 ) -> Sequence[ConversationInfo]:
+        infos = [self._info(c) for c in self.store.conversations.values()
+                 if include_archived or not c.info.archived]
+        return sorted(infos, key=lambda i: i.updated_at, reverse=True)
+
+    def _info(self, conv: Conversation) -> ConversationInfo:
+        first = next((m for m in conv.messages if m.role == Role.USER), None)
+        return replace(conv.info, preview=render(first)[:100] if first else None)
+
+    async def update_conversation(self, conversation_id: ConversationId, *,
+                                  title: str | None = None, archived: bool | None = None,
+                                  autonomous: bool | None = None) -> ConversationInfo:
+        conv = self._conv(conversation_id)
+        changes: dict[str, Any] = {}
+        if title is not None:
+            changes["title"] = title or None
+        if archived is not None:
+            changes["archived"] = archived
+        if autonomous is not None:
+            changes["autonomous"] = autonomous
+        conv.info = replace(conv.info, **changes)
+        return self._info(conv)
+
+    async def delete_conversation(self, conversation_id: ConversationId) -> None:
+        if not self.editable:
+            raise NotImplementedError
+        self._conv(conversation_id)
+        del self.store.conversations[conversation_id]
+        for entry_id, revisions in list(self.store.long_term.items()):
+            if revisions[0].source_conversation_id == conversation_id:
+                del self.store.long_term[entry_id]
+        for conv in self.store.conversations.values():
+            if conv.info.seed_from == conversation_id:
+                conv.info = replace(conv.info, seed_from=None)
+
+    async def memories(self) -> Sequence[MemoryEntry]:
+        if not self.editable:
+            raise NotImplementedError
+        return self.store.entries()
+
+    async def remember(self, text: str) -> MemoryEntry:
+        if not self.editable:
+            raise NotImplementedError
+        return self.store.add(text, None)
+
+    async def revise(self, entry_id: str, text: str) -> MemoryEntry:
+        if not self.editable:
+            raise NotImplementedError
+        revisions = self.store.long_term[entry_id]
+        revisions.append(replace(revisions[-1], text=text))
+        return revisions[-1]
+
+    async def forget(self, entry_id: str) -> None:
+        if not self.editable:
+            raise NotImplementedError
+        for entry in self.store.long_term.pop(entry_id):
+            self.store.forgotten.add(entry.text)
 
     async def append(self, conversation_id: ConversationId, messages: Sequence[Message]) -> None:
         conv = self._conv(conversation_id)
@@ -137,7 +216,7 @@ class InMemoryMemory(Memory):
         parts = []
         if conv.summary:
             parts.append(f"Summary of earlier conversation:\n{conv.summary}")
-        if lt := self.store.long_term[conv.info.mode]:
+        if conv.info.remember and (lt := [e.text for e in self.store.entries()]):
             parts.append("Long-term memory:\n" + "\n".join(lt))
         return "\n\n".join(parts)
 
@@ -180,44 +259,78 @@ class InMemoryMemory(Memory):
                 raise self.maintain_error
             if self.maintain_override is not None:
                 return await self.maintain_override(complete)
-            active = conv.messages[conv.active_from :]
-            if context.count_tokens(active) <= self.compact_at * context.max_tokens:
-                return False
-            target = len(active) * self.cut
-            cuts = [i for i, m in enumerate(active) if m.role == Role.USER and i > 0]
-            if not cuts:
-                return False
-            j = next((i for i in cuts if i >= target), cuts[-1])
-            selected = "\n".join(render(m) for m in active[:j])
-            prompt = Message(
-                uuid.uuid4().hex,
-                Role.USER,
-                (Text(f"Previous summary:\n{conv.summary}\n\nNew messages:\n{selected}"),),
-                time.time(),
-            )
-            summary = await complete(
-                "Summarize the conversation.", [prompt], max_tokens=self.summary_tokens,
-                light=True,
-            )
-            # Atomic: summary and compaction point change together, after inference.
-            conv.summary, conv.active_from = summary, conv.active_from + j
-            conv.compactions += 1
-            return True
+            acted = self._seed(conv)
+            acted = await self._compact(conv, complete, context) or acted
+            return await self._title(conv, complete) or acted
         finally:
             self.mutating -= 1
             self.trace.append(("maintain_end",))
 
-    async def search(self, query: str, *, mode: Mode | None = None,
-                     conversation_id: ConversationId | None = None,
+    def _seed(self, conv: Conversation) -> bool:
+        """The initial summary of a seeded conversation: the source's summary and tail."""
+        source = self.store.conversations.get(conv.info.seed_from or "")
+        if source is None or conv.compactions or conv.summary:
+            return False
+        tail = "\n".join(render(m) for m in source.messages[source.active_from :])
+        conv.summary = "\n".join(p for p in (source.summary, tail) if p)
+        return bool(conv.summary)
+
+    async def _title(self, conv: Conversation, complete: Completion) -> bool:
+        first = next((m for m in conv.messages if m.role == Role.USER), None)
+        if not self.auto_title or conv.info.title or first is None:
+            return False
+        try:
+            title = (await complete("Write a short title.", [first], max_tokens=20,
+                                    light=True)).strip()
+        except CoreError:
+            return False  # retried by a later maintain
+        if not title or conv.info.title:
+            return False
+        conv.info = replace(conv.info, title=title)
+        return True
+
+    async def _compact(self, conv: Conversation, complete: Completion,
+                       context: ContextRequest) -> bool:
+        active = conv.messages[conv.active_from :]
+        if context.count_tokens(active) <= self.compact_at * context.max_tokens:
+            return False
+        target = len(active) * self.cut
+        cuts = [i for i, m in enumerate(active) if m.role == Role.USER and i > 0]
+        if not cuts:
+            return False
+        j = next((i for i in cuts if i >= target), cuts[-1])
+        selected = "\n".join(render(m) for m in active[:j])
+        prompt = Message(
+            uuid.uuid4().hex,
+            Role.USER,
+            (Text(f"Previous summary:\n{conv.summary}\n\nNew messages:\n{selected}"),),
+            time.time(),
+        )
+        summary = await complete(
+            "Summarize the conversation.", [prompt], max_tokens=self.summary_tokens,
+            light=True,
+        )
+        # Atomic: summary and compaction point change together, after inference.
+        conv.summary, conv.active_from = summary, conv.active_from + j
+        conv.compactions += 1
+        if conv.info.remember:
+            known = {e.text for e in self.store.entries()} | self.store.forgotten
+            for fact in self.extract:
+                if fact not in known:
+                    self.store.add(fact, conv.info.id)
+        return True
+
+    async def search(self, query: str, *,
+                     conversation_ids: Collection[ConversationId] | None = None,
                      limit: int = 5) -> Sequence[ArchiveHit]:
         if self.search_error is not None:
             raise self.search_error
         words = set(re.findall(r"\w+", query.lower()))
         hits = []
+        for cid in conversation_ids or ():
+            self._conv(cid)
         for conv in self.store.conversations.values():
-            if mode is not None and conv.info.mode != mode:
-                continue
-            if conversation_id is not None and conv.info.id != conversation_id:
+            if conversation_ids is not None and conv.info.id not in conversation_ids:
                 continue
             for m in conv.messages:
                 score = len(words & set(re.findall(r"\w+", render(m).lower())))
@@ -228,7 +341,8 @@ class InMemoryMemory(Memory):
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView | None:
         conv = self._conv(conversation_id)
-        return MemoryView(conv.summary, list(self.store.long_term[conv.info.mode]))
+        long_term = [e.text for e in self.store.entries()] if conv.info.remember else []
+        return MemoryView(conv.summary, long_term)
 
 
 def factory(options: dict[str, Any], paths: Any) -> InMemoryMemory:

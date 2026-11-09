@@ -77,9 +77,11 @@ class ScriptedCore(Core):
         *,
         models: Sequence[ModelInfo] = DEFAULT_MODELS,
         default: StepSource | None = None,
+        maintenance: StepSource | None = None,
         trace: list[Any] | None = None,
     ):
         self.steps: deque[StepSource] = deque(steps)
+        self.maintenance = maintenance  # answers maintenance requests without using steps
         self.models = list(models)
         self.default = default or Step(text="ok")
         self.requests: list[InferenceRequest] = []
@@ -108,7 +110,10 @@ class ScriptedCore(Core):
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
         self.requests.append(request)
-        source = self.steps.popleft() if self.steps else self.default
+        if request.maintenance and self.maintenance is not None:
+            source = self.maintenance
+        else:
+            source = self.steps.popleft() if self.steps else self.default
         step = source(request) if callable(source) else source
         self.active += 1
         self.max_active = max(self.max_active, self.active)
@@ -161,14 +166,16 @@ class ScriptedCore(Core):
 
 
 def factory(options: dict[str, Any], paths: Any) -> ScriptedCore:
-    """Options: steps, default, models (ids; each gets a 100k window and prices), and
+    """Options: steps, default, maintenance, models (ids; each gets a 100k window and
+    prices), and
     list_error (a message: list_models raises CoreError, like a rejected key)."""
     models = DEFAULT_MODELS
     if "models" in options:
         models = tuple(ModelInfo(m, m, context_window=100_000, max_output_tokens=1_000,
                                  input_usd_per_mtok=1.0, output_usd_per_mtok=2.0)
                        for m in options["models"])
-    core = ScriptedCore(options.get("steps", ()), models=models, default=options.get("default"))
+    core = ScriptedCore(options.get("steps", ()), models=models, default=options.get("default"),
+                        maintenance=options.get("maintenance"))
     core.options = dict(options)
     if "list_error" in options:
         core.list_error = CoreError(options["list_error"])

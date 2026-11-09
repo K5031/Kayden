@@ -14,8 +14,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "Tool calls that take long are moved to the background: you get an operation id, can "
     "check them with op_status or cancel them with op_cancel, and their outcome arrives later "
     "as an operation result. Use recall to search earlier parts of this conversation that are "
-    "no longer in context, and peek_other_mode to read (never change) the memory of the other "
-    "operating mode."
+    "no longer in context, or with scope \"all\" the user's other conversations."
 )
 
 ACTIVATION_NOTICE = (
@@ -23,10 +22,11 @@ ACTIVATION_NOTICE = (
     "or idle if there is nothing to do."
 )
 
-CONTINUOUS_PROMPT = (
-    "You run continuously. When you have nothing more to do right now, call idle(); ending a "
-    "turn without tool calls also idles. Background operations keep running while you are "
-    "idle. Calling idle() also conserves your budget."
+AUTONOMY_PROMPT = (
+    "You work autonomously in this conversation. When you have nothing more to do right now, "
+    "call idle(); ending a turn without tool calls also idles. Background operations keep "
+    "running while you are idle, and you are woken when the ones you wait for finish. "
+    "Calling idle() also conserves your budget."
 )
 
 

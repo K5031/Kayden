@@ -9,12 +9,17 @@ import os
 from pathlib import Path
 from typing import Any
 
-from kayden.api import Core, Frontend, InstancePaths, Memory, Mode, Tools
+from kayden.api import Core, Frontend, InstancePaths, Memory, Tools
 from kayden.runtime.config import InstanceConfig, ModuleSpec
+
+LOCK_FILE = "instance.lock"
+# Locks of the Kayden versions that ran one store per mode. While an older Kayden holds
+# one, this data directory is in use.
+LEGACY_LOCK_FILES = ("session.lock", "continuous.lock")
 
 
 class InstanceLockedError(RuntimeError):
-    """Another process holds this (data directory, mode)."""
+    """Another process uses this data directory."""
 
 
 class ModuleLoadError(Exception):
@@ -23,33 +28,43 @@ class ModuleLoadError(Exception):
 
 
 class InstanceLock:
-    """OS-level advisory lock per (data directory, mode); released on close or process exit."""
+    """OS-level advisory lock per data directory; released on close or process exit. Also
+    holds any per-mode lock file an older Kayden left, so that version cannot start on the
+    directory meanwhile."""
 
-    def __init__(self, path: Path, fd: int):
+    def __init__(self, path: Path, fds: list[int]):
         self.path = path
-        self._fd: int | None = fd
+        self._fds = fds
 
     @classmethod
-    def acquire(cls, data_dir: Path, mode: Mode) -> InstanceLock:
-        path = data_dir / f"{mode}.lock"
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    def acquire(cls, data_dir: Path) -> InstanceLock:
+        path = data_dir / LOCK_FILE
+        legacy = [data_dir / name for name in LEGACY_LOCK_FILES if (data_dir / name).exists()]
+        fds: list[int] = []
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            holder = path.read_text().strip() or "unknown"
-            os.close(fd)
-            raise InstanceLockedError(
-                f"{mode} mode in {data_dir} is already in use by process {holder}"
-            ) from None
-        os.ftruncate(fd, 0)
-        os.write(fd, f"{os.getpid()}\n".encode())
-        return cls(path, fd)
+            for lock_path in (path, *legacy):
+                fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(fd)
+                    holder = lock_path.read_text().strip() or "unknown"
+                    raise InstanceLockedError(
+                        f"{data_dir} is already in use by process {holder}") from None
+                fds.append(fd)
+        except BaseException:
+            for fd in fds:
+                os.close(fd)
+            raise
+        os.ftruncate(fds[0], 0)
+        os.write(fds[0], f"{os.getpid()}\n".encode())
+        return cls(path, fds)
 
     def release(self) -> None:
-        if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-            os.close(self._fd)
-            self._fd = None
+        for fd in self._fds:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        self._fds = []
 
 
 def load_module[T](spec: ModuleSpec, kind: type[T], paths: InstancePaths) -> T:

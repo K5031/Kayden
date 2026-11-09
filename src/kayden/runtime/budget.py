@@ -93,6 +93,12 @@ class Totals:
     elapsed_s: float = 0.0
 
 
+def _read_totals(path: Path) -> Totals:
+    data = json.loads(path.read_text())
+    data.pop("schema_version", None)
+    return Totals(**data)
+
+
 class BudgetTracker:
     """Usage for the instance lifetime, persisted as JSON in the data directory.
 
@@ -105,12 +111,19 @@ class BudgetTracker:
         self._active = 0
         self._active_since = 0.0
 
-    def load(self, path: Path) -> None:
+    def load(self, path: Path, legacy: Sequence[Path] = ()) -> None:
+        """Read the usage file. Without one, start from the sum of the `legacy` files
+        (usage kept per mode by older versions), so spending limits count what was
+        already spent; those files are left in place."""
         self._path = path
         if path.exists():
-            data = json.loads(path.read_text())
-            data.pop("schema_version", None)
-            self.totals = Totals(**data)
+            self.totals = _read_totals(path)
+            return
+        for old in legacy:
+            if old.exists():
+                totals = _read_totals(old)
+                for name, value in asdict(totals).items():
+                    setattr(self.totals, name, getattr(self.totals, name) + value)
 
     def save(self) -> None:
         if self._path is None:

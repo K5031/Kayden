@@ -1,4 +1,4 @@
-"""Kayden v1 module API contracts (Draft 2).
+"""Kayden v1 module API contracts (Draft 3).
 
 Four module classes: Core, Memory, Tools, Frontend. The Runtime owns
 orchestration and is the only component that talks to modules; modules never
@@ -38,7 +38,7 @@ Runtime guarantees to modules:
   the tail, then the OperationResults as one USER message.
 - Tool calls are validated (known name, arguments match the schema) before they
   start; violations are answered with ToolResult(ERROR) and the tool is not run. A
-  known name is one offered in this turn's request: the mode's built-ins plus the
+  known name is one offered in this turn's request: the conversation's built-ins plus the
   module tools listed this turn (Tools.list_tools is called once per request). Module
   tools that redeclare a reserved name are dropped from the offer and logged. If
   list_tools fails, Failure(INTERNAL) is emitted and the turn offers built-ins only.
@@ -66,7 +66,7 @@ from __future__ import annotations
 
 import abc
 import os
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -91,16 +91,6 @@ class InstancePaths:
 
 
 # ── Shared types ──────────────────────────────────────────────────────────
-
-
-class Mode(StrEnum):
-    SESSION = "session"
-    CONTINUOUS = "continuous"
-
-
-class Activation(StrEnum):
-    USER_CONTROLLED = "user_controlled"
-    AGENT_CONTROLLED = "agent_controlled"
 
 
 class Role(StrEnum):
@@ -342,11 +332,17 @@ class Core(abc.ABC):
 
 @dataclass(frozen=True, slots=True)
 class ConversationInfo:
+    """Conversation metadata. Not part of the append-only transcript archive."""
+
     id: ConversationId
-    mode: Mode
-    title: str | None
+    title: str | None  # None = not set yet; Memory writes one during maintain
     created_at: float
     updated_at: float
+    autonomous: bool = False  # the agent may idle() and wake itself (SPEC 4)
+    remember: bool = True  # uses and adds to long-term memory; fixed at creation
+    archived: bool = False  # hidden from list_conversations() and recall(scope="all")
+    seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
+    preview: str | None = None  # start of the first user message, for display
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,6 +366,16 @@ class ArchiveHit:
     conversation_id: ConversationId
     message: Message
     score: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryEntry:
+    """One long-term memory entry, at its latest revision."""
+
+    id: str
+    text: str
+    source_conversation_id: ConversationId | None  # None = added by the user
+    created_at: float  # when the entry was first written
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,19 +424,43 @@ class Memory(abc.ABC):
     Persist blocks generically using BLOCK_TYPES tags, never assuming the current Block variants
     are the only ones, so new block types round-trip without a storage migration.
 
-    Every method that takes a conversation id raises KeyError for an unknown one.
-    Long-term memory is scoped per mode: all conversations of a mode share it. A second
-    process (the other mode) may open the same store read-only for peek_other_mode, so
-    the store must tolerate concurrent readers.
+    Every method that takes a conversation id raises KeyError for an unknown one, and
+    every method that takes a memory entry id raises KeyError for an unknown entry.
+    Long-term memory is one list per store, shared by every conversation with remember
+    on. A conversation with remember off neither gets it in its context nor adds to it.
+    The archive is append-only except for delete_conversation, which the user asks for.
     """
 
     @abc.abstractmethod
     async def create_conversation(
-        self, mode: Mode, title: str | None = None
-    ) -> ConversationInfo: ...
+        self,
+        *,
+        title: str | None = None,
+        autonomous: bool = False,
+        remember: bool = True,
+        seed_from: ConversationId | None = None,
+    ) -> ConversationInfo:
+        """seed_from (KeyError if unknown) starts a conversation that continues another:
+        on its first maintain, Memory writes its initial rolling summary from the
+        source's current summary and verbatim tail. The source is not changed."""
 
     @abc.abstractmethod
-    async def list_conversations(self, mode: Mode) -> Sequence[ConversationInfo]: ...
+    async def list_conversations(
+        self, *, include_archived: bool = False
+    ) -> Sequence[ConversationInfo]:
+        """Newest activity first."""
+
+    @abc.abstractmethod
+    async def update_conversation(
+        self,
+        conversation_id: ConversationId,
+        *,
+        title: str | None = None,
+        archived: bool | None = None,
+        autonomous: bool | None = None,
+    ) -> ConversationInfo:
+        """Change metadata; None leaves a field as it is. An empty title clears it, so an
+        automatic title follows. Returns the updated info."""
 
     @abc.abstractmethod
     async def append(
@@ -480,9 +510,15 @@ class Memory(abc.ABC):
         fractions of it (the model may change mid-conversation).
 
         Called by the runtime only inside an authorized inference cycle, so it can
-        never restart a user-controlled agent. Archive writes and compaction-state
-        updates must be atomic: the only copy of a message is never removed.
-        BudgetExhausted must propagate with no state change.
+        never restart an agent by itself. Archive writes and compaction-state updates must
+        be atomic: the only copy of a message is never removed. BudgetExhausted must
+        propagate with no state change.
+
+        Also writes the initial summary of a seeded conversation (see
+        create_conversation) and, once the first user message is in, a title for a
+        conversation that has none (light model, at most 20 output tokens). A failed or
+        empty title call leaves the title empty, to be retried by a later maintain; a
+        title that is set is never overwritten.
         """
 
     @abc.abstractmethod
@@ -490,19 +526,45 @@ class Memory(abc.ABC):
         self,
         query: str,
         *,
-        mode: Mode | None = None,
-        conversation_id: ConversationId | None = None,
+        conversation_ids: Collection[ConversationId] | None = None,
         limit: int = 5,
     ) -> Sequence[ArchiveHit]:
-        """Read-only archive search; backs recall() and peek_other_mode().
+        """Read-only archive search; backs recall() and RuntimeAPI.search_archive().
 
-        `query` is plain text with no operator syntax. Higher score is better and is
-        comparable only within one result set. peek_other_mode searches the other
-        mode's archive only, never its long-term memory."""
+        `query` is plain text with no operator syntax. conversation_ids limits the search
+        to those conversations (None = every conversation). Higher score is better and is
+        comparable only within one result set."""
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView | None:
         """Optional. Return None to expose nothing to frontends."""
         return None
+
+    # Optional: long-term memory the user can see and change. The base class raises
+    # NotImplementedError; the runtime then reports that memories cannot be edited.
+
+    async def memories(self) -> Sequence[MemoryEntry]:
+        """Current entries, oldest first."""
+        raise NotImplementedError
+
+    async def remember(self, text: str) -> MemoryEntry:
+        """Add an entry written by the user."""
+        raise NotImplementedError
+
+    async def revise(self, entry_id: str, text: str) -> MemoryEntry:
+        """Correct an entry. The earlier text may be kept as a revision."""
+        raise NotImplementedError
+
+    async def forget(self, entry_id: str) -> None:
+        """Erase an entry and all its revisions. Compaction must not re-extract the
+        same fact from the summary it came from."""
+        raise NotImplementedError
+
+    async def delete_conversation(self, conversation_id: ConversationId) -> None:
+        """Optional. Erase a conversation: messages, summaries, search index entries,
+        metadata, and the long-term entries extracted from it with their revisions.
+        Conversations seeded from it keep their own summaries; their seed_from becomes
+        None. The runtime never calls it for the open conversation."""
+        raise NotImplementedError
 
     async def aclose(self) -> None:
         pass
@@ -513,18 +575,21 @@ class Memory(abc.ABC):
 _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 
 # Runtime built-ins. Never gated by permissions; they don't count as tool calls for
-# budgets. `idle` exists only in Continuous Mode (in Session Mode it is an unknown tool).
+# budgets. `idle` is offered only in an autonomous conversation (elsewhere it is an unknown
+# tool).
 # op_status and op_cancel answer ERROR for an unknown or finished id; operations from
 # before a restart are unknown, their outcome is the INTERRUPTED OperationResult from
 # resume repair. op_cancel waits for termination (bounded by the grace period) and
-# reports the final status; the outcome still arrives as an OperationResult. recall and
-# peek_other_mode return hits as text, each preview capped at 1000 characters (the
-# "runtime does not truncate" rule applies to module tools).
+# reports the final status; the outcome still arrives as an OperationResult. recall
+# returns hits as text, each preview capped at 1000 characters (the "runtime does not
+# truncate" rule applies to module tools). recall with scope "all" searches every
+# conversation that is not archived and has remember on; it is refused (ERROR) in a
+# conversation with remember off.
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "idle": ToolSpec(
         "idle",
         "End this cycle and wait. Background operations keep running; you are woken when "
-        "the awaited ones finish (or by the user, depending on the activation policy).",
+        "the awaited ones finish, or by the user.",
         {
             "type": "object",
             "properties": {
@@ -557,25 +622,15 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     ),
     "recall": ToolSpec(
         "recall",
-        "Search the archive of this conversation, including messages no longer in context.",
+        "Search the archive of this conversation, including messages no longer in context. "
+        'With scope "all", search the user\'s other conversations too.',
         {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1, "default": 5},
-            },
-            "required": ["query"],
-        },
-        read_only=True,
-    ),
-    "peek_other_mode": ToolSpec(
-        "peek_other_mode",
-        "Read-only search of the other operating mode's memory. Changes nothing there.",
-        {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "default": 5},
+                "scope": {"type": "string", "enum": ["conversation", "all"],
+                          "default": "conversation"},
             },
             "required": ["query"],
         },
@@ -711,8 +766,8 @@ class Budget:
     inference or tool operation runs (background included); permission waits and
     backoff don't count, and exhausting it also cancels running operations as Stop does.
     max_tool_calls excludes built-ins. Exhausting any dimension stops all chargeable
-    execution, inference included. A budget belongs to the (data dir, mode); usage
-    persists there in usage-<mode>.json.
+    execution, inference included. A budget belongs to the data dir; usage persists there
+    in usage.json.
 
     A dimension is exhausted when used >= limit. Mid-stream, after every event, in-flight
     usage counts as the larger of the last UsageReport and the runtime's estimate. A
@@ -730,11 +785,10 @@ class Budget:
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
-    """Read-only to frontends; chosen at start() (budget and permissions come from the
-    instance configuration). The model is separate: see RuntimeSnapshot.model."""
+    """Read-only to frontends; budget and permissions come from the instance
+    configuration. The model is separate: see RuntimeSnapshot.model, and so is autonomy:
+    see ConversationInfo.autonomous."""
 
-    mode: Mode
-    activation: Activation
     budget: Budget
     permissions: PermissionPolicy  # effective: after clamping to any inherited ceiling
 
@@ -764,14 +818,16 @@ class OperationInfo:
 
 @dataclass(frozen=True, slots=True)
 class StartOptions:
-    """Session: conversation_id None = new, else resume. Continuous: None = resume the
-    instance's single continuous conversation, creating it if absent; a different
-    conversation_id raises ValueError."""
+    """conversation_id None = a new conversation, else resume that one (KeyError if
+    unknown). autonomous sets the new conversation's switch (None = off); for a resumed
+    one, None keeps its value. remember and seed_from apply to a new conversation only
+    (ValueError with conversation_id); seed_from must name an existing conversation."""
 
-    mode: Mode
-    activation: Activation = Activation.USER_CONTROLLED  # ignored in Session Mode
     conversation_id: ConversationId | None = None
     model: str | None = None
+    autonomous: bool | None = None
+    remember: bool = True
+    seed_from: ConversationId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -932,6 +988,24 @@ class SettingsChanged:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationUpdated:
+    """A conversation's metadata changed: title (by the user or an automatic title),
+    archived, or autonomous. Emitted for any conversation, open or not."""
+
+    info: ConversationInfo
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationDeleted:
+    conversation_id: ConversationId
+
+
+@dataclass(frozen=True, slots=True)
+class MemoriesChanged:
+    """Long-term memory entries were added, edited or forgotten; re-read memories()."""
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceStarted:
     """Emitted when Memory first uses inference during maintain()."""
 
@@ -987,6 +1061,9 @@ type RuntimeEvent = (
     | ModelRetry
     | ModelSelected
     | SettingsChanged
+    | ConversationUpdated
+    | ConversationDeleted
+    | MemoriesChanged
     | MaintenanceStarted
     | MaintenanceFinished
     | StopStalled
@@ -1019,21 +1096,27 @@ class RuntimeAPI(Protocol):
       STOPPED           ok*    ok    ok        no-op  ok            -
       FAILED            ok*    ok    ok***     no-op  ok            -
 
-      *   only with no outstanding operations; the mode may not change after the first
-          start. One agent per process.
-      **  only for a User-Controlled agent.
+      *   only with no outstanding operations. One agent per process.
+      **  in an autonomous conversation this also drops a pending wake-up.
       *** not while FAILED because a hard budget is exhausted (send raises there too).
 
     resolve_permission is first-wins; an unknown or already-resolved id raises
     RuntimeStateError. cancel_operation is valid in any state while the call is running
     and raises RuntimeStateError otherwise.
     stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
-    which case it performs a full Stop. A Session agent counts as User-Controlled
-    (activate is allowed in IDLE).
+    which case it performs a full Stop.
 
-    start() leaves the agent IDLE, except a Continuous agent resuming its existing
-    conversation, which starts STOPPED whatever its activation policy. The first start()
-    takes the (data dir, mode) lock, held until shutdown. send() in IDLE authorizes a
+    Conversation and memory management (set_autonomous, rename_conversation,
+    archive_conversation, delete_conversation, memories, add_memory, edit_memory,
+    forget_memory) is allowed in any state; set_autonomous needs a started agent.
+    Changes apply from the next turn or assemble. Each emits ConversationUpdated,
+    ConversationDeleted or MemoriesChanged and is logged without any text. The memory
+    commands raise NotImplementedError ("this memory module cannot ...") when the Memory
+    module does not support them; frontends then hide those controls.
+
+    start() leaves the agent IDLE. A resumed autonomous conversation has no pending
+    wake-up, so it never runs before the user sends a message or activates it. The first
+    start() takes the data dir lock, held until shutdown. send() in IDLE authorizes a
     cycle and returns at once (the state is THINKING on return, so a second send
     queues); the message is appended at the start of that cycle, so it never lands
     between an assistant message and its TOOL message. Background results that arrive
@@ -1052,7 +1135,9 @@ class RuntimeAPI(Protocol):
     def snapshot(self) -> RuntimeSnapshot: ...
     async def list_models(self) -> Sequence[ModelInfo]: ...
     async def list_tools(self) -> Sequence[ToolSpec]: ...
-    async def list_conversations(self, mode: Mode) -> Sequence[ConversationInfo]: ...
+    async def list_conversations(
+        self, *, include_archived: bool = False
+    ) -> Sequence[ConversationInfo]: ...
     async def history(
         self,
         conversation_id: ConversationId,
@@ -1064,12 +1149,13 @@ class RuntimeAPI(Protocol):
         self,
         query: str,
         *,
-        mode: Mode | None = None,
         conversation_id: ConversationId | None = None,
         limit: int = 10,
-    ) -> Sequence[ArchiveHit]: ...
+    ) -> Sequence[ArchiveHit]:
+        """conversation_id None searches every conversation, archived ones included."""
 
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None: ...
+    async def memories(self) -> Sequence[MemoryEntry]: ...
 
     # Control
 
@@ -1116,6 +1202,32 @@ class RuntimeAPI(Protocol):
 
     async def cancel_operation(self, call_id: CallId) -> None:
         """User-initiated cancel of one running call, with Stop's grace and abandon rules."""
+
+    async def set_autonomous(self, autonomous: bool) -> None:
+        """Flip the open conversation's switch, in any state, from the next turn. Turning
+        it off drops any pending wake-up: background operations keep running and their
+        results wait for the user. RuntimeStateError before start()."""
+
+    async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
+        """An empty title clears it, so an automatic title follows."""
+
+    async def archive_conversation(
+        self, conversation_id: ConversationId, archived: bool
+    ) -> None:
+        """Hide (or show again) a conversation in list_conversations() and
+        recall(scope="all"). The open conversation stays open."""
+
+    async def delete_conversation(self, conversation_id: ConversationId) -> None:
+        """Erase a conversation for good (see Memory.delete_conversation).
+        RuntimeStateError for the open conversation; switch away first. Frontends must
+        ask the user to confirm and say it cannot be undone."""
+
+    async def add_memory(self, text: str) -> MemoryEntry: ...
+    async def edit_memory(self, entry_id: str, text: str) -> MemoryEntry: ...
+
+    async def forget_memory(self, entry_id: str) -> None:
+        """Erase the entry with its revisions. The messages it came from stay until their
+        conversation is deleted."""
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None: ...
 

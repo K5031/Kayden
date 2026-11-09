@@ -29,7 +29,8 @@ _UNLOGGED = (TextDelta, ReasoningDelta, ToolCallDelta, ToolProgress)
 
 class EventLog:
     """JSONL log written off the event loop through a logging QueueListener. Records are
-    buffered until open() names the file (the mode, and so the file, is known at start)."""
+    buffered until open() names the file, once the first start() has locked the data
+    directory."""
 
     def __init__(self) -> None:
         self._queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()

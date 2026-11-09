@@ -46,7 +46,7 @@ def saved(h: Harness) -> dict[str, Any]:
 
 
 def logged_settings(h: Harness) -> list[dict[str, Any]]:
-    lines = (h.data_dir / "events-session.jsonl").read_text().splitlines()
+    lines = (h.data_dir / "events.jsonl").read_text().splitlines()
     return [r for r in map(json.loads, lines) if r.get("decision") == "settings"]
 
 
@@ -228,7 +228,7 @@ async def test_api_key_goes_to_the_keychain_only(make, keychain):
     assert keychain.store[("kayden", "SECOND_API_KEY")] == "sk-2"
     assert [p.has_key for p in s.providers if p.id == "second"] == [True]
     assert "sk-2" not in (h.data_dir / "settings.toml").read_text()
-    assert "sk-2" not in (h.data_dir / "events-session.jsonl").read_text()
+    assert "sk-2" not in (h.data_dir / "events.jsonl").read_text()
 
 
 async def test_api_key_without_provider_is_for_the_current_one(make, keychain):

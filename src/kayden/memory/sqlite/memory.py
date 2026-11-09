@@ -4,18 +4,23 @@ The archive is the single source of truth for messages. Active context is the ar
 messages after the latest summary's `through_seq`, so compaction removes nothing: it
 inserts one summary row (plus any long-term entries) in a single transaction. All token
 figures come from the runtime's `TokenCounter`; thresholds are fractions of the window.
+
+The only removal is erasure the user asks for (delete_conversation, forget). It runs with
+`secure_delete` on, so erased content is overwritten in the file, and checkpoints the
+write-ahead log afterwards so no copy stays there.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -34,11 +39,12 @@ from kayden.api import (
     ContextRequest,
     ConversationId,
     ConversationInfo,
+    CoreError,
     InstancePaths,
     Memory,
+    MemoryEntry,
     MemoryView,
     Message,
-    Mode,
     OperationResult,
     Reasoning,
     Role,
@@ -51,9 +57,16 @@ from kayden.api import (
 from . import codec
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 2  # version 1 stores (import-path block tags) are not supported
+# 2: stable block tags, one store per mode. 3: conversations instead of modes, editable
+# long-term memory, erasure. Version 2 stores are migrated on open; others are refused.
+SCHEMA_VERSION = 3
 # Output headroom on top of the summary budget for tags and new long-term entries.
 _LONG_TERM_OUTPUT_TOKENS = 256
+_TITLE_OUTPUT_TOKENS = 20
+_TITLE_INPUT_CHARS = 2000
+_TITLE_MAX_CHARS = 80
+_PREVIEW_CHARS = 100
+CONTINUOUS_TITLE = "Continuous conversation"  # the migrated continuous conversation
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,13 +94,40 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> SqliteMemory:
     path = Path(options.pop("path", paths.data_dir / "memory.db"))
     return SqliteMemory(path, CompactionConfig(**options))
 
-_SCHEMA = """
+# Messages are deleted only for a conversation listed in `erasing`, inside the
+# transaction that erases it.
+_NO_DELETE_TRIGGER = """
+CREATE TABLE erasing (conversation_id TEXT PRIMARY KEY);
+CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
+WHEN OLD.conversation_id NOT IN (SELECT conversation_id FROM erasing)
+BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
+"""
+_MEMORY_TABLES = """
+CREATE TABLE memory_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_conversation_id TEXT REFERENCES conversations(id),
+    created_at REAL NOT NULL
+);
+CREATE INDEX memory_entries_source ON memory_entries(source_conversation_id);
+CREATE TABLE memory_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_id INTEGER NOT NULL REFERENCES memory_entries(id),
+    text TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX memory_revisions_entry ON memory_revisions(entry_id, id);
+CREATE TABLE forgotten (hash TEXT PRIMARY KEY);
+"""
+_SCHEMA = f"""
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
-    mode TEXT NOT NULL,
     title TEXT,
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    autonomous INTEGER NOT NULL DEFAULT 0,
+    remember INTEGER NOT NULL DEFAULT 1,
+    archived INTEGER NOT NULL DEFAULT 0,
+    seed_from TEXT
 );
 CREATE TABLE messages (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,8 +143,7 @@ CREATE TABLE messages (
 CREATE INDEX messages_conversation ON messages(conversation_id, seq);
 CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages
 BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
-CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
-BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
+{_NO_DELETE_TRIGGER}
 CREATE VIRTUAL TABLE messages_fts USING fts5(
     body, content='', tokenize='porter unicode61 remove_diacritics 2'
 );
@@ -116,14 +155,28 @@ CREATE TABLE summaries (
     created_at REAL NOT NULL
 );
 CREATE INDEX summaries_conversation ON summaries(conversation_id, id);
-CREATE TABLE long_term (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    mode TEXT NOT NULL,
-    text TEXT NOT NULL,
-    source_conversation_id TEXT NOT NULL REFERENCES conversations(id),
-    created_at REAL NOT NULL
-);
-CREATE INDEX long_term_mode ON long_term(mode, id);
+{_MEMORY_TABLES}
+"""
+# Version 2 to 3, in the transaction that opens the store. Long-term entries of both
+# modes become one list; exact duplicates collapse into the oldest entry.
+_MIGRATE_FROM_2 = f"""
+ALTER TABLE conversations ADD COLUMN autonomous INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE conversations ADD COLUMN remember INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE conversations ADD COLUMN seed_from TEXT;
+UPDATE conversations SET autonomous = 1, title = COALESCE(title, '{CONTINUOUS_TITLE}')
+WHERE mode = 'continuous';
+ALTER TABLE conversations DROP COLUMN mode;
+DROP TRIGGER messages_no_delete;
+{_NO_DELETE_TRIGGER}
+{_MEMORY_TABLES}
+INSERT INTO memory_entries (id, source_conversation_id, created_at)
+SELECT id, source_conversation_id, created_at FROM long_term AS l
+WHERE id = (SELECT MIN(id) FROM long_term WHERE text = l.text) ORDER BY id;
+INSERT INTO memory_revisions (entry_id, text, created_at)
+SELECT id, text, created_at FROM long_term WHERE id IN (SELECT id FROM memory_entries)
+ORDER BY id;
+DROP TABLE long_term;
 """
 _TRUNCATION_MARKER = (
     "\n[{omitted} characters truncated in this view. The full message ({id}) is kept in the"
@@ -156,9 +209,19 @@ Existing long-term memory:
 {long_term}
 """
 
+_TITLE_PROMPT = """\
+Write a title of at most six words for a conversation that starts with the user's message
+below. Reply with the title only: no quotes, no punctuation at the end."""
+
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
 _LONG_TERM_RE = re.compile(r"<long_term>(.*?)</long_term>", re.DOTALL)
 _WORD_RE = re.compile(r"\w+")
+_INFO_COLUMNS = "id, title, created_at, updated_at, autonomous, remember, archived, seed_from"
+_CURRENT_ENTRIES = (
+    "SELECT e.id, r.text, e.source_conversation_id, e.created_at FROM memory_entries e"
+    " JOIN memory_revisions r ON r.id ="
+    " (SELECT MAX(id) FROM memory_revisions WHERE entry_id = e.id)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,10 +232,11 @@ class _Active:
 
 @dataclass(frozen=True, slots=True)
 class _State:
-    mode: Mode
+    info: ConversationInfo
     summary: str
-    long_term: list[str]
+    long_term: list[str]  # empty when the conversation does not remember
     active: list[_Active]
+    seeded: bool  # a summary row exists
 
 
 class SqliteMemory(Memory):
@@ -188,33 +252,113 @@ class SqliteMemory(Memory):
         self._conn: sqlite3.Connection | None = None
         self._locks: defaultdict[ConversationId, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    # ── Memory API ────────────────────────────────────────────────────────
+    # ── Conversations ─────────────────────────────────────────────────────
 
     async def create_conversation(
-        self, mode: Mode, title: str | None = None
+        self,
+        *,
+        title: str | None = None,
+        autonomous: bool = False,
+        remember: bool = True,
+        seed_from: ConversationId | None = None,
     ) -> ConversationInfo:
-        info = ConversationInfo(uuid.uuid4().hex, mode, title, time.time(), time.time())
+        now = time.time()
+        info = ConversationInfo(uuid.uuid4().hex, title or None, now, now,
+                                autonomous=autonomous, remember=remember, seed_from=seed_from)
 
         def run(conn: sqlite3.Connection) -> None:
             with _transaction(conn):
+                if seed_from is not None:
+                    _require_conversation(conn, seed_from)
                 conn.execute(
-                    "INSERT INTO conversations VALUES (?, ?, ?, ?, ?)",
-                    (info.id, info.mode.value, title, info.created_at, info.updated_at),
+                    f"INSERT INTO conversations ({_INFO_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (info.id, info.title, now, now, autonomous, remember, False, seed_from),
                 )
 
         await self._run(run)
         return info
 
-    async def list_conversations(self, mode: Mode) -> Sequence[ConversationInfo]:
+    async def list_conversations(
+        self, *, include_archived: bool = False
+    ) -> Sequence[ConversationInfo]:
         def run(conn: sqlite3.Connection) -> list[ConversationInfo]:
             rows = conn.execute(
-                "SELECT id, mode, title, created_at, updated_at FROM conversations"
-                " WHERE mode = ? ORDER BY updated_at DESC, created_at DESC",
-                (mode.value,),
+                f"SELECT {_INFO_COLUMNS}, (SELECT blocks FROM messages m"
+                " WHERE m.conversation_id = c.id AND m.role = 'user' ORDER BY seq LIMIT 1)"
+                " FROM conversations c WHERE ? OR archived = 0"
+                " ORDER BY updated_at DESC, created_at DESC",
+                (include_archived,),
             )
-            return [_conversation_info(row) for row in rows]
+            return [_conversation_info(row[:8], row[8]) for row in rows]
 
         return await self._run(run)
+
+    async def update_conversation(
+        self,
+        conversation_id: ConversationId,
+        *,
+        title: str | None = None,
+        archived: bool | None = None,
+        autonomous: bool | None = None,
+    ) -> ConversationInfo:
+        changes: dict[str, Any] = {}
+        if title is not None:
+            changes["title"] = title.strip() or None
+        if archived is not None:
+            changes["archived"] = archived
+        if autonomous is not None:
+            changes["autonomous"] = autonomous
+
+        def run(conn: sqlite3.Connection) -> ConversationInfo:
+            with _transaction(conn):
+                _require_conversation(conn, conversation_id)
+                if changes:
+                    conn.execute(
+                        f"UPDATE conversations SET {', '.join(f'{k} = ?' for k in changes)}"
+                        " WHERE id = ?",
+                        (*changes.values(), conversation_id),
+                    )
+                return _require_conversation(conn, conversation_id)
+
+        return await self._run(run)
+
+    async def delete_conversation(self, conversation_id: ConversationId) -> None:
+        def run(conn: sqlite3.Connection) -> None:
+            with _transaction(conn):
+                _require_conversation(conn, conversation_id)
+                conn.execute("INSERT INTO erasing VALUES (?)", (conversation_id,))
+                rows = conn.execute(
+                    "SELECT seq, blocks FROM messages WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchall()
+                # A contentless FTS5 index forgets a row only when given its original text.
+                conn.executemany(
+                    "INSERT INTO messages_fts (messages_fts, rowid, body) VALUES ('delete', ?, ?)",
+                    [(seq, codec.searchable_text(blocks)) for seq, blocks in rows],
+                )
+                conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+                conn.execute("DELETE FROM erasing WHERE conversation_id = ?", (conversation_id,))
+                conn.execute("DELETE FROM summaries WHERE conversation_id = ?",
+                             (conversation_id,))
+                conn.execute(
+                    "DELETE FROM memory_revisions WHERE entry_id IN"
+                    " (SELECT id FROM memory_entries WHERE source_conversation_id = ?)",
+                    (conversation_id,),
+                )
+                conn.execute("DELETE FROM memory_entries WHERE source_conversation_id = ?",
+                             (conversation_id,))
+                conn.execute("UPDATE conversations SET seed_from = NULL WHERE seed_from = ?",
+                             (conversation_id,))
+                conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+                # Rewrite the index without the deleted rows; until then their terms stay.
+                conn.execute("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')")
+            _checkpoint(conn)
+
+        async with self._locks[conversation_id]:
+            await self._run(run)
+        self._locks.pop(conversation_id, None)
+
+    # ── Transcript ────────────────────────────────────────────────────────
 
     async def append(
         self, conversation_id: ConversationId, messages: Sequence[Message]
@@ -290,90 +434,175 @@ class SqliteMemory(Memory):
         state = await self._run(_read_state, request.conversation_id)
         return _fit(state, request, self._config.long_term_fraction)
 
+    # ── Maintenance ───────────────────────────────────────────────────────
+
     async def maintain(
         self, conversation_id: ConversationId, complete: Completion, context: ContextRequest
     ) -> bool:
-        config, count = self._config, context.count_tokens
         async with self._locks[conversation_id]:
             state = await self._run(_read_state, conversation_id)
-            sizes = [count([a.message]) for a in state.active]
-            total = sum(sizes) + (count(state.summary) if state.summary else 0)
-            if total <= config.trigger_fraction * context.max_tokens:
-                return False
-            summary_tokens = max(1, int(config.summary_fraction * context.max_tokens))
-            output_tokens = summary_tokens + _LONG_TERM_OUTPUT_TOKENS
-            system = _SYSTEM_PROMPT.format(
-                summary_tokens=summary_tokens,
-                summary=state.summary or "(none)",
-                long_term="\n".join(f"- {e}" for e in state.long_term) or "(none)",
-            )
-            allowance = complete.max_input_tokens(light=True) - output_tokens - count(system)
-            selection = _choose_cut(state.active, sizes, config.remove_fraction, allowance,
-                                    count)
-            if selection is None:
-                return False
-            cut, transcript = selection
+            acted = False
+            if state.info.seed_from is not None and not state.seeded:
+                acted = await self._seed(state, complete, context)
+                if acted:
+                    state = await self._run(_read_state, conversation_id)
+            acted = await self._compact(state, complete, context) or acted
+            if state.info.title is None:
+                acted = await self._title(conversation_id, complete) or acted
+            return acted
+
+    def _prompt(self, state: _State, summary: str, context: ContextRequest) -> tuple[str, int]:
+        summary_tokens = max(1, int(self._config.summary_fraction * context.max_tokens))
+        system = _SYSTEM_PROMPT.format(
+            summary_tokens=summary_tokens,
+            summary=summary or "(none)",
+            long_term="\n".join(f"- {e}" for e in state.long_term) or "(none)",
+        )
+        return system, summary_tokens
+
+    async def _seed(self, state: _State, complete: Completion, context: ContextRequest) -> bool:
+        """Write the first summary of a conversation continued from another: the source's
+        summary merged with as much of its verbatim tail as the light model takes."""
+        count = context.count_tokens
+        source = await self._run(_read_state, state.info.seed_from)
+        messages = [a.message for a in source.active]
+        if not source.summary and not messages:
+            return False
+        system, summary_tokens = self._prompt(state, source.summary, context)
+        output_tokens = summary_tokens + _LONG_TERM_OUTPUT_TOKENS
+        allowance = complete.max_input_tokens(light=True) - output_tokens - count(system)
+        starts = _valid_starts(messages, pending_calls_block=False) if messages else []
+        first = _max_true(len(starts), lambda k: k == 0 or count(
+            [_user_message(_render_transcript(messages[starts[-k]:]))]) <= allowance)
+        transcript = _render_transcript(messages[starts[-first]:]) if first else "(none)"
+        output = await complete(
+            system, [_user_message(transcript)], max_tokens=output_tokens, light=True
+        )
+        summary, _ = _parse_output(output, summary_tokens, count)  # its facts are known
+        if not summary:
+            return False
+
+        def commit(conn: sqlite3.Connection) -> None:
+            with _transaction(conn):
+                conn.execute(
+                    "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
+                    " VALUES (?, 0, ?, ?)",
+                    (state.info.id, summary, time.time()),
+                )
+
+        await self._run(commit)
+        return True
+
+    async def _compact(
+        self, state: _State, complete: Completion, context: ContextRequest
+    ) -> bool:
+        config, count = self._config, context.count_tokens
+        conversation_id = state.info.id
+        sizes = [count([a.message]) for a in state.active]
+        total = sum(sizes) + (count(state.summary) if state.summary else 0)
+        if total <= config.trigger_fraction * context.max_tokens:
+            return False
+        system, summary_tokens = self._prompt(state, state.summary, context)
+        output_tokens = summary_tokens + _LONG_TERM_OUTPUT_TOKENS
+        allowance = complete.max_input_tokens(light=True) - output_tokens - count(system)
+        selection = _choose_cut(state.active, sizes, config.remove_fraction, allowance, count)
+        if selection is None:
+            return False
+        cut, transcript = selection
+        output = await complete(
+            system, [_user_message(transcript)], max_tokens=output_tokens, light=True
+        )
+        summary, new_entries = _parse_output(output, summary_tokens, count)
+        if not summary:  # e.g. reasoning used the whole output limit: keep the context
+            logger.warning("compaction of %s returned no summary; nothing compacted",
+                           conversation_id)
+            return False
+        if not state.info.remember:
+            new_entries = []
+        known = set(state.long_term)
+        new_entries = [e for e in dict.fromkeys(new_entries) if e not in known]
+        through_seq = state.active[cut - 1].seq
+
+        def commit(conn: sqlite3.Connection) -> None:
+            now = time.time()
+            with _transaction(conn):
+                conn.execute(
+                    "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (conversation_id, through_seq, summary, now),
+                )
+                forgotten = {r[0] for r in conn.execute("SELECT hash FROM forgotten")}
+                for entry in new_entries:
+                    if _fingerprint(entry) not in forgotten:
+                        _add_entry(conn, entry, conversation_id, now)
+
+        await self._run(commit)
+        return True
+
+    async def _title(self, conversation_id: ConversationId, complete: Completion) -> bool:
+        def first_text(conn: sqlite3.Connection) -> str:
+            for (blocks,) in conn.execute(
+                "SELECT blocks FROM messages WHERE conversation_id = ? AND role = 'user'"
+                " ORDER BY seq", (conversation_id,)
+            ):
+                if text := _text_of(blocks):
+                    return text
+            return ""
+
+        text = await self._run(first_text)
+        if not text:
+            return False
+        try:
             output = await complete(
-                system, [_user_message(transcript)], max_tokens=output_tokens, light=True
+                _TITLE_PROMPT, [_user_message(text[:_TITLE_INPUT_CHARS])],
+                max_tokens=_TITLE_OUTPUT_TOKENS, light=True,
             )
-            summary, new_entries = _parse_output(output, summary_tokens, count)
-            if not summary:  # e.g. reasoning used the whole output limit: keep the context
-                logger.warning("compaction of %s returned no summary; nothing compacted",
-                               conversation_id)
-                return False
-            known = set(state.long_term)
-            new_entries = [e for e in dict.fromkeys(new_entries) if e not in known]
-            through_seq = state.active[cut - 1].seq
+        except CoreError as e:  # leave it untitled; the next maintain tries again
+            logger.warning("title for %s failed: %s", conversation_id, e)
+            return False
+        title = _clean_title(output)
+        if not title:
+            return False
 
-            def commit(conn: sqlite3.Connection) -> None:
-                now = time.time()
-                with _transaction(conn):
-                    conn.execute(
-                        "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
-                        " VALUES (?, ?, ?, ?)",
-                        (conversation_id, through_seq, summary, now),
-                    )
-                    conn.executemany(
-                        "INSERT INTO long_term (mode, text, source_conversation_id, created_at)"
-                        " VALUES (?, ?, ?, ?)",
-                        [(state.mode.value, e, conversation_id, now) for e in new_entries],
-                    )
+        def commit(conn: sqlite3.Connection) -> bool:
+            with _transaction(conn):  # a title the user set meanwhile wins
+                return conn.execute(
+                    "UPDATE conversations SET title = ? WHERE id = ? AND title IS NULL",
+                    (title, conversation_id),
+                ).rowcount == 1
 
-            await self._run(commit)
-            return True
+        return await self._run(commit)
+
+    # ── Search and inspection ─────────────────────────────────────────────
 
     async def search(
         self,
         query: str,
         *,
-        mode: Mode | None = None,
-        conversation_id: ConversationId | None = None,
+        conversation_ids: Collection[ConversationId] | None = None,
         limit: int = 5,
     ) -> Sequence[ArchiveHit]:
         words = _WORD_RE.findall(query)
         match = " OR ".join(f'"{w}"' for w in dict.fromkeys(words))
+        scope = None if conversation_ids is None else list(dict.fromkeys(conversation_ids))
         sql = (
             "SELECT m.conversation_id, m.id, m.role, m.created_at, m.blocks,"
             " bm25(messages_fts) AS rank"
             " FROM messages_fts JOIN messages m ON m.seq = messages_fts.rowid"
-            " JOIN conversations c ON c.id = m.conversation_id"
             " WHERE messages_fts MATCH ?"
         )
         params: list[Any] = [match]
-        if mode is not None:
-            sql += " AND c.mode = ?"
-            params.append(mode.value)
-        if conversation_id is not None:
-            sql += " AND m.conversation_id = ?"
-            params.append(conversation_id)
+        if scope is not None:
+            sql += f" AND m.conversation_id IN ({', '.join('?' * len(scope))})"
+            params.extend(scope)
         sql += " ORDER BY rank, m.seq LIMIT ?"
         params.append(limit)
 
         def run(conn: sqlite3.Connection) -> list[ArchiveHit]:
             with _transaction(conn, "DEFERRED"):
-                if conversation_id is not None:
+                for conversation_id in scope or ():
                     _require_conversation(conn, conversation_id)
-                if not words or limit <= 0:
+                if not words or limit <= 0 or scope == []:
                     return []
                 return [
                     ArchiveHit(row[0], _message(row[1:5]), -row[5])
@@ -385,6 +614,47 @@ class SqliteMemory(Memory):
     async def inspect(self, conversation_id: ConversationId) -> MemoryView:
         state = await self._run(_read_state, conversation_id, False)
         return MemoryView(summary=state.summary, long_term=state.long_term)
+
+    # ── Long-term memory ──────────────────────────────────────────────────
+
+    async def memories(self) -> Sequence[MemoryEntry]:
+        def run(conn: sqlite3.Connection) -> list[MemoryEntry]:
+            return [_entry(row) for row in conn.execute(_CURRENT_ENTRIES + " ORDER BY e.id")]
+
+        return await self._run(run)
+
+    async def remember(self, text: str) -> MemoryEntry:
+        def run(conn: sqlite3.Connection) -> MemoryEntry:
+            with _transaction(conn):
+                return _add_entry(conn, text, None, time.time())
+
+        return await self._run(run)
+
+    async def revise(self, entry_id: str, text: str) -> MemoryEntry:
+        def run(conn: sqlite3.Connection) -> MemoryEntry:
+            with _transaction(conn):
+                _require_entry(conn, entry_id)
+                conn.execute(
+                    "INSERT INTO memory_revisions (entry_id, text, created_at) VALUES (?, ?, ?)",
+                    (int(entry_id), text, time.time()),
+                )
+                return _require_entry(conn, entry_id)
+
+        return await self._run(run)
+
+    async def forget(self, entry_id: str) -> None:
+        def run(conn: sqlite3.Connection) -> None:
+            with _transaction(conn):
+                _require_entry(conn, entry_id)
+                texts = [r[0] for r in conn.execute(
+                    "SELECT text FROM memory_revisions WHERE entry_id = ?", (int(entry_id),))]
+                conn.executemany("INSERT OR IGNORE INTO forgotten VALUES (?)",
+                                 [(_fingerprint(t),) for t in texts])
+                conn.execute("DELETE FROM memory_revisions WHERE entry_id = ?", (int(entry_id),))
+                conn.execute("DELETE FROM memory_entries WHERE id = ?", (int(entry_id),))
+            _checkpoint(conn)
+
+        await self._run(run)
 
     async def aclose(self) -> None:
         def run(conn: sqlite3.Connection) -> None:
@@ -414,13 +684,14 @@ def _open(path: Path) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = FULL")
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA secure_delete = ON")  # erased content is overwritten with zeros
         with _transaction(conn):
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             if version == 0:
-                # executescript() would commit the open transaction; run statements singly.
-                for statement in _SCHEMA.split(";\n"):
-                    if statement.strip():
-                        conn.execute(statement)
+                _execute_script(conn, _SCHEMA)
+            elif version == 2:
+                logger.info("migrating %s from memory schema 2 to %d", path, SCHEMA_VERSION)
+                _execute_script(conn, _MIGRATE_FROM_2)
             elif version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"{path}: memory schema version {version} is not supported"
@@ -431,6 +702,22 @@ def _open(path: Path) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+def _execute_script(conn: sqlite3.Connection, script: str) -> None:
+    """executescript() would commit the open transaction; run statements singly."""
+    for statement in script.split(";\n"):
+        if statement.strip():
+            conn.execute(statement)
+
+
+def _checkpoint(conn: sqlite3.Connection) -> None:
+    """Move everything into the database file and empty the write-ahead log, so erased
+    content leaves no copy there. Another process reading at the time can keep it from
+    completing; the next erasure or SQLite's own checkpoints finish the job."""
+    busy, _, _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    if busy:
+        logger.warning("write-ahead log not emptied: another connection is reading")
 
 
 @contextmanager
@@ -444,17 +731,64 @@ def _transaction(conn: sqlite3.Connection, kind: str = "IMMEDIATE") -> Iterator[
     conn.execute("COMMIT")
 
 
-def _require_conversation(conn: sqlite3.Connection, conversation_id: ConversationId) -> Mode:
+def _require_conversation(
+    conn: sqlite3.Connection, conversation_id: ConversationId
+) -> ConversationInfo:
     row = conn.execute(
-        "SELECT mode FROM conversations WHERE id = ?", (conversation_id,)
+        f"SELECT {_INFO_COLUMNS} FROM conversations WHERE id = ?", (conversation_id,)
     ).fetchone()
     if row is None:
         raise KeyError(f"unknown conversation {conversation_id}")
-    return Mode(row[0])
+    return _conversation_info(row)
 
 
-def _conversation_info(row: Sequence[Any]) -> ConversationInfo:
-    return ConversationInfo(row[0], Mode(row[1]), row[2], row[3], row[4])
+def _conversation_info(row: Sequence[Any], first_user_blocks: str | None = None
+                       ) -> ConversationInfo:
+    preview = " ".join(_text_of(first_user_blocks).split()) if first_user_blocks else ""
+    return ConversationInfo(row[0], row[1], row[2], row[3], autonomous=bool(row[4]),
+                            remember=bool(row[5]), archived=bool(row[6]), seed_from=row[7],
+                            preview=preview[:_PREVIEW_CHARS] or None)
+
+
+def _text_of(blocks: str) -> str:
+    return "\n".join(b.text for b in codec.decode_blocks(blocks) if isinstance(b, Text)).strip()
+
+
+def _clean_title(output: str) -> str:
+    line = next((ln for ln in output.splitlines() if ln.strip()), "")
+    title = line.strip().strip("#*_`\"'“”‘’ ").removeprefix("Title:").strip().rstrip(".")
+    return title[:_TITLE_MAX_CHARS].strip()
+
+
+def _fingerprint(text: str) -> str:
+    """What a forgotten entry leaves behind: enough to recognise the same fact, not its text."""
+    return hashlib.sha256(" ".join(text.casefold().split()).encode()).hexdigest()
+
+
+def _entry(row: Sequence[Any]) -> MemoryEntry:
+    return MemoryEntry(str(row[0]), row[1], row[2], row[3])
+
+
+def _require_entry(conn: sqlite3.Connection, entry_id: str) -> MemoryEntry:
+    row = None
+    if entry_id.isdigit():
+        row = conn.execute(_CURRENT_ENTRIES + " WHERE e.id = ?", (int(entry_id),)).fetchone()
+    if row is None:
+        raise KeyError(f"unknown memory entry {entry_id}")
+    return _entry(row)
+
+
+def _add_entry(conn: sqlite3.Connection, text: str, source: ConversationId | None,
+               now: float) -> MemoryEntry:
+    cursor = conn.execute(
+        "INSERT INTO memory_entries (source_conversation_id, created_at) VALUES (?, ?)",
+        (source, now),
+    )
+    conn.execute(
+        "INSERT INTO memory_revisions (entry_id, text, created_at) VALUES (?, ?, ?)",
+        (cursor.lastrowid, text, now),
+    )
+    return MemoryEntry(str(cursor.lastrowid), text, source, now)
 
 
 def _message(row: Sequence[Any]) -> Message:
@@ -469,19 +803,17 @@ def _read_state(
     conn: sqlite3.Connection, conversation_id: ConversationId, with_active: bool = True
 ) -> _State:
     with _transaction(conn, "DEFERRED"):
-        mode = _require_conversation(conn, conversation_id)
+        info = _require_conversation(conn, conversation_id)
         row = conn.execute(
             "SELECT through_seq, text FROM summaries WHERE conversation_id = ?"
             " ORDER BY id DESC LIMIT 1",
             (conversation_id,),
         ).fetchone()
         through_seq, summary = row if row else (0, "")
-        long_term = [
-            r[0]
-            for r in conn.execute(
-                "SELECT text FROM long_term WHERE mode = ? ORDER BY id", (mode.value,)
-            )
-        ]
+        long_term = (
+            [r[1] for r in conn.execute(_CURRENT_ENTRIES + " ORDER BY e.id")]
+            if info.remember else []
+        )
         rows = (
             conn.execute(
                 "SELECT seq, id, role, created_at, blocks FROM messages"
@@ -492,7 +824,7 @@ def _read_state(
             else []
         )
     active = [_Active(r[0], _message(r[1:])) for r in rows]
-    return _State(mode, summary, long_term, active)
+    return _State(info, summary, long_term, active, row is not None)
 
 
 def _valid_starts(messages: Sequence[Message], *, pending_calls_block: bool) -> list[int]:

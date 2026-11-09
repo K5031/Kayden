@@ -27,9 +27,9 @@ from kayden.api import (
     AssembledContext,
     BudgetExhausted,
     ContextRequest,
+    CoreError,
     Memory,
     Message,
-    Mode,
     OpaqueBlock,
     OperationResult,
     Reasoning,
@@ -186,7 +186,7 @@ async def assert_archived(memory: Memory, conversation_id: str, messages: Sequen
     """Every message is retrievable from the archive with full fidelity."""
     for m in messages:
         token = TOKEN_RE.search(repr(m.blocks)).group()
-        hits = await memory.search(token, conversation_id=conversation_id, limit=10)
+        hits = await memory.search(token, conversation_ids=[conversation_id], limit=10)
         assert m in [h.message for h in hits], f"{m.id} ({token}) missing from archive"
 
 
@@ -231,14 +231,51 @@ class MemoryConformance:
 
     # ── Conversations ─────────────────────────────────────────────────────
 
-    async def test_conversations_are_listed_per_mode(self, memory: Memory):
-        session = await memory.create_conversation(Mode.SESSION, "first")
-        continuous = await memory.create_conversation(Mode.CONTINUOUS)
-        assert session.mode is Mode.SESSION and session.title == "first"
-        assert [c.id for c in await memory.list_conversations(Mode.SESSION)] == [session.id]
-        assert [c.id for c in await memory.list_conversations(Mode.CONTINUOUS)] == [
-            continuous.id
-        ]
+    async def test_conversations_are_listed_newest_first(self, memory: Memory):
+        first = await memory.create_conversation(title="first")
+        second = await memory.create_conversation()
+        assert first.title == "first" and second.title is None
+        assert not first.autonomous and first.remember and not first.archived
+        assert first.seed_from is None
+        await memory.append(first.id, [text_message("tok0001")])
+        listed = await memory.list_conversations()
+        assert [c.id for c in listed] == [first.id, second.id]
+        assert listed[0].preview and listed[0].preview.startswith("tok0001")
+        assert listed[1].preview is None
+
+    async def test_conversation_options_are_stored(self, open_memory: MemoryFactory):
+        memory = open_memory()
+        source = await memory.create_conversation(title="source")
+        conv = await memory.create_conversation(autonomous=True, remember=False,
+                                                seed_from=source.id)
+        assert (conv.autonomous, conv.remember, conv.seed_from) == (True, False, source.id)
+        with pytest.raises(KeyError):
+            await memory.create_conversation(seed_from="missing")
+        await memory.aclose()
+        [reopened] = [c for c in await open_memory().list_conversations() if c.id == conv.id]
+        assert (reopened.autonomous, reopened.remember, reopened.seed_from) == (
+            True, False, source.id)
+
+    async def test_update_conversation(self, memory: Memory):
+        conv = await memory.create_conversation()
+        renamed = await memory.update_conversation(conv.id, title="Trip")
+        assert renamed.title == "Trip" and renamed.id == conv.id
+        assert (await memory.update_conversation(conv.id, autonomous=True)).autonomous
+        assert (await memory.update_conversation(conv.id, title="")).title is None
+        [listed] = await memory.list_conversations()
+        assert listed.autonomous and listed.title is None
+        with pytest.raises(KeyError):
+            await memory.update_conversation("missing", title="x")
+
+    async def test_archived_conversations_are_hidden_from_the_list(self, memory: Memory):
+        kept = await memory.create_conversation(title="kept")
+        hidden = await memory.create_conversation(title="hidden")
+        assert (await memory.update_conversation(hidden.id, archived=True)).archived
+        assert [c.id for c in await memory.list_conversations()] == [kept.id]
+        everything = await memory.list_conversations(include_archived=True)
+        assert {c.id for c in everything} == {kept.id, hidden.id}
+        await memory.update_conversation(hidden.id, archived=False)
+        assert len(await memory.list_conversations()) == 2
 
     async def test_unknown_conversation_raises_key_error(
         self, memory: Memory, completion: FakeCompletion
@@ -248,8 +285,9 @@ class MemoryConformance:
             memory.history("missing"),
             memory.assemble(context("missing")),
             memory.maintain("missing", completion, context("missing")),
-            memory.search("tok0001", conversation_id="missing"),
+            memory.search("tok0001", conversation_ids=["missing"]),
             memory.inspect("missing"),
+            memory.update_conversation("missing", archived=True),
         ]
         for call in calls:
             with pytest.raises(KeyError):
@@ -259,26 +297,26 @@ class MemoryConformance:
 
     async def test_append_is_durable_across_reopen(self, open_memory: MemoryFactory):
         memory = open_memory()
-        conv = await memory.create_conversation(Mode.SESSION, "persisted")
+        conv = await memory.create_conversation(title="persisted")
         messages = await self.fill(memory, conv.id, tokens(0, 6))
         await memory.aclose()
 
         reopened = open_memory()
         assert await active(reopened, conv.id) == messages
         assert await reopened.history(conv.id) == messages
-        assert [c.id for c in await reopened.list_conversations(Mode.SESSION)] == [conv.id]
+        assert [c.id for c in await reopened.list_conversations()] == [conv.id]
         await assert_archived(reopened, conv.id, messages)
 
     async def test_append_is_durable_without_clean_shutdown(self, open_memory: MemoryFactory):
         memory = open_memory()
-        conv = await memory.create_conversation(Mode.CONTINUOUS)
+        conv = await memory.create_conversation(title="test")
         messages = await self.fill(memory, conv.id, tokens(0, 4))
         # No aclose(): a second process-like instance must already see everything.
         assert await active(open_memory(), conv.id) == messages
 
     async def test_second_instance_reads_while_first_writes(self, open_memory: MemoryFactory):
         writer, reader = open_memory(), open_memory()
-        conv = await writer.create_conversation(Mode.CONTINUOUS)
+        conv = await writer.create_conversation(title="test")
         await self.fill(writer, conv.id, tokens(0, 4))
 
         async def write() -> None:
@@ -286,15 +324,15 @@ class MemoryConformance:
 
         async def read() -> None:
             for _ in range(20):
-                await reader.search("tok0001", mode=Mode.CONTINUOUS)
+                await reader.search("tok0001")
                 await reader.history(conv.id, limit=3)
 
         await asyncio.gather(write(), read())
-        assert len(await reader.search("tok0118", mode=Mode.CONTINUOUS)) == 1
+        assert len(await reader.search("tok0118")) == 1
 
     async def test_all_block_types_round_trip(self, open_memory: MemoryFactory):
         memory = open_memory()
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         messages = [
             Message("u", Role.USER, (Text("tok0001 go"),
                                      OperationResult("c0", ToolStatus.ABANDONED, "late")), 1.5),
@@ -315,7 +353,7 @@ class MemoryConformance:
 
     async def test_opaque_block_round_trips_unchanged(self, open_memory: MemoryFactory):
         memory = open_memory()
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         message = Message(
             "future", Role.USER,
             (Text("tok0001 before"), OpaqueBlock("image", {"w": 3, "tags": ["a"], "r": 0.1}),
@@ -330,7 +368,7 @@ class MemoryConformance:
         assert [h.message for h in await reopened.search("tok0001")] == [message]
 
     async def test_append_is_idempotent_by_message_id(self, memory: Memory):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         first, second = text_message("tok0001"), text_message("tok0002", Role.ASSISTANT)
         await memory.append(conv.id, [first])
         await memory.append(conv.id, [first, second])  # a cancelled append may have landed
@@ -345,7 +383,7 @@ class MemoryConformance:
     # ── History ───────────────────────────────────────────────────────────
 
     async def test_history_pagination(self, memory: Memory, completion: FakeCompletion):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         messages = await self.fill(memory, conv.id, tokens(0, 30))
         assert await self.maintain(memory, conv.id, completion)
         assert await memory.history(conv.id) == messages  # regardless of compaction
@@ -362,7 +400,7 @@ class MemoryConformance:
     async def test_assemble_fits_budget(
         self, memory: Memory, completion: FakeCompletion, budget: int, maintained: bool
     ):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 30))
         if maintained:
             assert await self.maintain(memory, conv.id, completion)
@@ -383,7 +421,7 @@ class MemoryConformance:
             assert len(ctx.messages) > 3, "a generous budget should keep more than the minimum"
 
     async def test_assemble_counts_the_addendum(self, memory: Memory, completion: FakeCompletion):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 30))
         assert await self.maintain(memory, conv.id, completion)
         summary = await addendum(memory, conv.id)
@@ -395,7 +433,7 @@ class MemoryConformance:
         assert used_tokens(ctx) <= budget - 1
 
     async def test_assemble_starts_at_a_user_message(self, memory: Memory):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         call, result = tool_exchange("tok0001")
         u1, u2 = text_message("tok0000"), text_message("tok0002")
         final = text_message("tok0003", Role.ASSISTANT)
@@ -407,7 +445,7 @@ class MemoryConformance:
             assert used_tokens(ctx) <= budget
 
     async def test_oversized_newest_message_is_truncated_in_view_only(self, memory: Memory):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         earlier = await self.fill(memory, conv.id, tokens(0, 4))
         huge = Message("huge", Role.USER, (Text("tok0500 " + "lorem ipsum " * 2_000),), 1.0)
         await memory.append(conv.id, [huge])
@@ -422,7 +460,7 @@ class MemoryConformance:
     # ── Maintenance ───────────────────────────────────────────────────────
 
     async def test_maintain_skips_small_context(self, memory: Memory, completion: FakeCompletion):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         messages = await self.fill(memory, conv.id, tokens(0, 2))
         assert await self.maintain(memory, conv.id, completion) is False
         assert completion.calls == []
@@ -431,7 +469,7 @@ class MemoryConformance:
     async def test_maintain_threshold_follows_the_window(
         self, memory: Memory, completion: FakeCompletion
     ):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 30))
         assert not await memory.maintain(conv.id, completion, context(conv.id, 100 * WINDOW))
         assert completion.calls == []
@@ -440,7 +478,7 @@ class MemoryConformance:
     async def test_maintain_compacts_and_archives_first(
         self, memory: Memory, completion: FakeCompletion
     ):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         messages = await self.fill(memory, conv.id, tokens(0, 30))
         assert await self.maintain(memory, conv.id, completion) is True
 
@@ -460,7 +498,7 @@ class MemoryConformance:
         await assert_archived(memory, conv.id, messages[: len(messages) - len(tail)])
 
     async def test_maintain_sizes_its_request_to_the_light_model(self, memory: Memory):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 60))
         completion = FakeCompletion(input_tokens=1_200)
         assert await self.maintain(memory, conv.id, completion)
@@ -472,7 +510,7 @@ class MemoryConformance:
     async def test_failed_completion_changes_nothing(
         self, memory: Memory, completion: FakeCompletion
     ):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 30))
         before = await snapshot(memory, conv.id)
         with pytest.raises(RuntimeError):
@@ -485,7 +523,7 @@ class MemoryConformance:
         self, open_memory: MemoryFactory, completion: FakeCompletion
     ):
         memory = open_memory()
-        conv = await memory.create_conversation(Mode.CONTINUOUS)
+        conv = await memory.create_conversation(title="test")
         messages = await self.fill(memory, conv.id, tokens(0, 30))
         await self.maintain(memory, conv.id, completion)
         messages += await self.fill(memory, conv.id, tokens(100, 30))
@@ -507,7 +545,7 @@ class MemoryConformance:
     async def test_archive_finds_messages_decayed_out_of_summary(
         self, memory: Memory, completion: FakeCompletion
     ):
-        conv = await memory.create_conversation(Mode.CONTINUOUS)
+        conv = await memory.create_conversation(title="test")
         messages = []
         for cycle in range(8):
             messages += await self.fill(memory, conv.id, tokens(cycle * 20, 20))
@@ -523,51 +561,55 @@ class MemoryConformance:
         assert len(decayed) > len(messages) // 2
         await assert_archived(memory, conv.id, decayed)
 
-    # ── Mode isolation ────────────────────────────────────────────────────
+    # ── Search scope ──────────────────────────────────────────────────────
 
-    async def test_modes_are_isolated(self, memory: Memory, completion: FakeCompletion):
-        session = await memory.create_conversation(Mode.SESSION)
-        continuous = await memory.create_conversation(Mode.CONTINUOUS)
-        await self.fill(memory, session.id, tokens(0, 30))
-        await self.fill(memory, continuous.id, tokens(500, 30))
-        before = await snapshot(memory, continuous.id)
-
-        await self.maintain(memory, session.id, completion)
-        assert await snapshot(memory, continuous.id) == before
-        assert not set(TOKEN_RE.findall(before[0])) & set(tokens(0, 30))
-
-        session_hits = await memory.search("tok0003", mode=Mode.SESSION)
-        assert {h.conversation_id for h in session_hits} == {session.id}
-        assert await memory.search("tok0003", mode=Mode.CONTINUOUS) == []
-        assert await memory.search("tok0503", mode=Mode.SESSION) == []
-        assert await memory.search("tok0503", conversation_id=session.id) == []
-        both = await memory.search("tok0003 tok0503", limit=10)
-        assert {h.conversation_id for h in both} == {session.id, continuous.id}
-
-    async def test_cross_mode_search_is_read_only(
+    async def test_conversations_are_separate_and_search_takes_a_scope(
         self, memory: Memory, completion: FakeCompletion
     ):
-        session = await memory.create_conversation(Mode.SESSION)
-        continuous = await memory.create_conversation(Mode.CONTINUOUS)
-        await self.fill(memory, continuous.id, tokens(0, 30))
-        await self.maintain(memory, continuous.id, completion)
-        before = await snapshot(memory, continuous.id)
-        listed = await memory.list_conversations(Mode.CONTINUOUS)
+        first = await memory.create_conversation(title="test")
+        second = await memory.create_conversation(title="test")
+        await self.fill(memory, first.id, tokens(0, 30))
+        await self.fill(memory, second.id, tokens(500, 30))
+        before = await snapshot(memory, second.id)
+
+        await self.maintain(memory, first.id, completion)
+        after = await snapshot(memory, second.id)  # long-term memory is shared
+        assert after[1] == before[1]
+        assert (after[2] and after[2].summary) == (before[2] and before[2].summary)
+        assert not set(TOKEN_RE.findall(before[0])) & set(tokens(0, 30))
+
+        first_hits = await memory.search("tok0003", conversation_ids=[first.id])
+        assert {h.conversation_id for h in first_hits} == {first.id}
+        assert await memory.search("tok0003", conversation_ids=[second.id]) == []
+        assert await memory.search("tok0503", conversation_ids=[]) == []
+        both = await memory.search("tok0003 tok0503", limit=10)
+        assert {h.conversation_id for h in both} == {first.id, second.id}
+        scoped = await memory.search("tok0003 tok0503", limit=10,
+                                     conversation_ids=[first.id, second.id])
+        assert {h.conversation_id for h in scoped} == {first.id, second.id}
+
+    async def test_search_is_read_only(self, memory: Memory, completion: FakeCompletion):
+        empty = await memory.create_conversation(title="test")
+        conv = await memory.create_conversation(title="test")
+        await self.fill(memory, conv.id, tokens(0, 30))
+        await self.maintain(memory, conv.id, completion)
+        before = await snapshot(memory, conv.id)
+        listed = await memory.list_conversations()
 
         for query in ("tok0001", "fox committee", "", "\"unbalanced ( * OR", "a:b NEAR(c)"):
-            await memory.search(query, mode=Mode.CONTINUOUS)
-        assert await snapshot(memory, continuous.id) == before
-        assert await memory.list_conversations(Mode.CONTINUOUS) == listed
-        assert await active(memory, session.id) == []
+            await memory.search(query)
+        assert await snapshot(memory, conv.id) == before
+        assert await memory.list_conversations() == listed
+        assert await active(memory, empty.id) == []
 
     async def test_search_respects_limit(self, memory: Memory):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 10))
         assert len(await memory.search("fox", limit=3)) == 3
         assert await memory.search("nonexistentword") == []
 
     async def test_search_higher_score_is_better(self, memory: Memory):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 6))
         both = Message("both", Role.USER, (Text("zebra giraffe"),), time.time())
         one = Message("one", Role.USER, (Text("zebra and other words entirely"),), time.time())
@@ -580,7 +622,7 @@ class MemoryConformance:
     # ── Inspect ───────────────────────────────────────────────────────────
 
     async def test_inspect(self, memory: Memory, completion: FakeCompletion):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await self.fill(memory, conv.id, tokens(0, 30))
         view = await memory.inspect(conv.id)
         if view is None:
@@ -595,8 +637,8 @@ class MemoryConformance:
     # ── Serialization ─────────────────────────────────────────────────────
 
     async def test_concurrent_appends_keep_order(self, memory: Memory):
-        a = await memory.create_conversation(Mode.SESSION)
-        b = await memory.create_conversation(Mode.SESSION)
+        a = await memory.create_conversation(title="test")
+        b = await memory.create_conversation(title="test")
         batches = [[text_message(t)] for t in tokens(0, 20)]
         await asyncio.gather(
             *(memory.append(conv.id, batch) for batch in batches for conv in (a, b))
@@ -608,7 +650,7 @@ class MemoryConformance:
     async def test_reads_during_maintenance_see_a_consistent_state(
         self, memory: Memory, completion: FakeCompletion
     ):
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         messages = await self.fill(memory, conv.id, tokens(0, 30))
         before = await snapshot(memory, conv.id)
 
@@ -627,3 +669,133 @@ class MemoryConformance:
         assert len(tail) < len(messages)
         assert tail[:-1] == messages[len(messages) - len(tail) + 1:]
         await assert_archived(memory, conv.id, messages + late)
+
+    # ── Long-term memory the user can change ──────────────────────────────
+
+    async def editable(self, memory: Memory) -> None:
+        try:
+            await memory.memories()
+        except NotImplementedError:
+            pytest.skip("editing long-term memory is optional and not implemented")
+
+    async def test_remember_revise_forget(self, open_memory: MemoryFactory):
+        memory = open_memory()
+        await self.editable(memory)
+        conv = await memory.create_conversation(title="test")
+        await memory.append(conv.id, [text_message("tok0001")])
+        entry = await memory.remember("The user lives in Oslo.")
+        assert entry.text == "The user lives in Oslo." and entry.source_conversation_id is None
+        assert "Oslo" in await addendum(memory, conv.id)
+
+        revised = await memory.revise(entry.id, "The user lives in Bergen.")
+        assert (revised.id, revised.text) == (entry.id, "The user lives in Bergen.")
+        assert revised.created_at == entry.created_at
+        text = await addendum(memory, conv.id)
+        assert "Bergen" in text and "Oslo" not in text
+        await memory.aclose()
+
+        memory = open_memory()
+        assert await memory.memories() == [revised]
+        await memory.forget(entry.id)
+        assert await memory.memories() == []
+        assert "Bergen" not in await addendum(memory, conv.id)
+        for call in (memory.revise(entry.id, "x"), memory.forget(entry.id)):
+            with pytest.raises(KeyError):
+                await call
+
+    async def test_remember_off_neither_uses_nor_adds_long_term_memory(
+        self, memory: Memory, completion: FakeCompletion
+    ):
+        await self.editable(memory)
+        await memory.remember("The user lives in Oslo.")
+        private = await memory.create_conversation(title="test", remember=False)
+        await self.fill(memory, private.id, tokens(0, 30))
+        assert "Oslo" not in await addendum(memory, private.id)
+        view = await memory.inspect(private.id)
+        assert view is None or list(view.long_term) == []
+        assert await self.maintain(memory, private.id, completion)
+        assert [e.text for e in await memory.memories()] == ["The user lives in Oslo."]
+
+    # ── Continue from ─────────────────────────────────────────────────────
+
+    async def test_seeded_conversation_starts_from_the_source(
+        self, memory: Memory, completion: FakeCompletion
+    ):
+        source = await memory.create_conversation(title="source")
+        await self.fill(memory, source.id, tokens(0, 30))
+        await self.maintain(memory, source.id, completion)
+        before = await snapshot(memory, source.id)
+        seeded = await memory.create_conversation(title="seeded", seed_from=source.id)
+        assert "tok0029" not in await addendum(memory, seeded.id)
+        await memory.append(seeded.id, [text_message("tok0900")])
+
+        assert await self.maintain(memory, seeded.id, completion)
+        text = await addendum(memory, seeded.id)
+        assert "tok0029" in text  # the source's newest message reached the summary
+        assert await snapshot(memory, source.id) == before
+        assert len(await memory.history(seeded.id)) == 1  # its own archive starts empty
+        assert not await self.maintain(memory, seeded.id, completion)  # seeded once
+
+    # ── Titles ────────────────────────────────────────────────────────────
+
+    async def test_title_is_written_once_from_the_first_user_message(self, memory: Memory):
+        conv = await memory.create_conversation()
+        titler = FakeCompletion(render=lambda _kept, _text: "Trip plans")
+        assert not await self.maintain(memory, conv.id, titler)  # no user message yet
+        assert titler.calls == []
+        await memory.append(conv.id, [text_message("tok0001")])
+        assert await self.maintain(memory, conv.id, titler)
+        assert [c["light"] for c in titler.calls] == [True]
+        assert titler.calls[0]["max_tokens"] <= 20
+        [listed] = await memory.list_conversations()
+        assert listed.title == "Trip plans"
+        assert not await self.maintain(memory, conv.id, titler)
+        assert len(titler.calls) == 1
+
+    async def test_failed_or_empty_title_changes_nothing(self, memory: Memory):
+        conv = await memory.create_conversation()
+        await memory.append(conv.id, [text_message("tok0001")])
+        assert not await self.maintain(memory, conv.id, FakeCompletion(render=lambda *_: ""))
+        assert not await self.maintain(memory, conv.id, Failing(CoreError("down")))
+        [listed] = await memory.list_conversations()
+        assert listed.title is None
+        with pytest.raises(BudgetExhausted):
+            await self.maintain(memory, conv.id, Failing(BudgetExhausted("spent")))
+        assert (await memory.list_conversations())[0].title is None
+
+    async def test_a_set_title_is_never_overwritten(self, memory: Memory):
+        conv = await memory.create_conversation()
+        await memory.append(conv.id, [text_message("tok0001")])
+        await memory.update_conversation(conv.id, title="Mine")
+        titler = FakeCompletion(render=lambda *_: "Theirs")
+        await self.maintain(memory, conv.id, titler)
+        assert titler.calls == []
+        assert (await memory.list_conversations())[0].title == "Mine"
+
+    # ── Deletion ──────────────────────────────────────────────────────────
+
+    async def test_delete_conversation(self, open_memory: MemoryFactory,
+                                       completion: FakeCompletion):
+        memory = open_memory()
+        kept = await memory.create_conversation(title="kept")
+        doomed = await memory.create_conversation(title="doomed")
+        await self.fill(memory, kept.id, tokens(0, 4))
+        await self.fill(memory, doomed.id, tokens(100, 30))
+        await self.maintain(memory, doomed.id, completion)
+        seeded = await memory.create_conversation(title="seeded", seed_from=doomed.id)
+        try:
+            await memory.delete_conversation(doomed.id)
+        except NotImplementedError:
+            pytest.skip("deleting conversations is optional and not implemented")
+        assert [c.id for c in await memory.list_conversations(include_archived=True)] == [
+            seeded.id, kept.id]
+        [listed] = [c for c in await memory.list_conversations() if c.id == seeded.id]
+        assert listed.seed_from is None
+        assert await memory.search("tok0101 tok0120") == []
+        assert len(await memory.search("tok0001")) == 1
+        for call in (memory.history(doomed.id), memory.assemble(context(doomed.id)),
+                     memory.delete_conversation(doomed.id)):
+            with pytest.raises(KeyError):
+                await call
+        await memory.aclose()
+        assert (await open_memory().list_conversations())[-1].id == kept.id
