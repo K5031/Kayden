@@ -31,8 +31,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", type=Path, help="config file (default: <data dir>/config.toml)")
     args = parser.parse_args(argv)
     # load_config also reads the terminal launcher's flags; the app has none of them.
-    for name in ("mode", "activation", "conversation", "model", "maintenance_model",
-                 "permissions"):
+    for name in ("autonomous", "mode", "activation", "conversation", "model",
+                 "maintenance_model", "permissions"):
         setattr(args, name, None)
     return args
 

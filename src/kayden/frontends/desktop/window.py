@@ -12,9 +12,18 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeyEvent, QKeySequence
+from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QContextMenuEvent,
+    QDesktopServices,
+    QKeyEvent,
+    QKeySequence,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -22,11 +31,13 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -41,7 +52,9 @@ from PySide6.QtWidgets import (
 )
 
 from kayden.api import (
+    ConversationInfo,
     Decision,
+    MemoryEntry,
     ModelInfo,
     PermissionPolicy,
     PermissionRequest,
@@ -56,9 +69,11 @@ from kayden.frontends.desktop.viewmodel import (
     Change,
     Closed,
     Controller,
+    ConversationListChanged,
     ConversationModel,
     Inserted,
     Item,
+    MemoryListChanged,
     NoticeItem,
     PromptsChanged,
     Removed,
@@ -68,8 +83,10 @@ from kayden.frontends.desktop.viewmodel import (
     ToolItem,
     Updated,
     UserItem,
+    clip,
     conversation_label,
     limit_update,
+    memory_source,
     needs_welcome,
     settings_update,
     summarize_arguments,
@@ -85,6 +102,11 @@ KEY_PAGES = {
 }
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
 SEVERITY_COLORS = {"info": "palette(mid)", "warning": "#b26a00", "error": "#c62828"}
+PRIVATE_NOTE = "This chat won't use or add to long-term memory. Its messages are still kept."
+AUTONOMY_LABEL = "Let Kayden continue on its own"
+AUTONOMY_HINT = ("Kayden may keep working without waiting for you, for example when a "
+                 "background task finishes. It still asks before actions as set in Settings "
+                 "and stops at the spending limit.")
 
 
 def _spawn(coro: Any) -> asyncio.Task[Any]:
@@ -285,6 +307,22 @@ class PermissionCard(QFrame):
         self.resolve(request_id, decision)
 
 
+class ConversationList(QListWidget):
+    """Right-click, the Menu key or Shift+F10 asks for an entry's menu."""
+
+    menu_requested = Signal(QListWidgetItem, QPoint)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        if event.reason() == QContextMenuEvent.Reason.Mouse:
+            entry, at = self.itemAt(event.pos()), event.globalPos()
+        else:
+            entry = self.currentItem()
+            at = self.viewport().mapToGlobal(
+                self.visualItemRect(entry).center()) if entry else QPoint()
+        if entry is not None:
+            self.menu_requested.emit(entry, at)
+
+
 class MessageBox(QPlainTextEdit):
     """Enter sends; Shift+Enter starts a new line."""
 
@@ -312,6 +350,8 @@ class MainWindow(QMainWindow):
         self.model.on_change = self._changed
         self._widgets: dict[int, QWidget] = {}
         self._dialog: QDialog | None = None
+        self.memory_dialog: MemoryDialog | None = None
+        self._conversations: dict[str, ConversationInfo] = {}
         self.setWindowTitle("Kayden")
         self.resize(1000, 720)
         self._build()
@@ -323,16 +363,42 @@ class MainWindow(QMainWindow):
     def _build(self) -> None:
         sidebar = QWidget()
         side = QVBoxLayout(sidebar)
-        self.new_button = QPushButton("New conversation")
-        self.new_button.clicked.connect(lambda: self.open_conversation(None))
-        self.conversation_list = QListWidget()
+        self.new_action = QAction("&New conversation", self, shortcut=QKeySequence.StandardKey.New)
+        self.new_action.triggered.connect(lambda: self.open_conversation(None))
+        self.private_action = QAction("New &private chat", self,
+                                      shortcut=QKeySequence("Ctrl+Shift+N"))
+        self.private_action.setToolTip(PRIVATE_NOTE)
+        self.private_action.setStatusTip(PRIVATE_NOTE)
+        self.private_action.triggered.connect(lambda: self.open_conversation(None,
+                                                                             remember=False))
+        self.new_button = QToolButton(text="New conversation")
+        self.new_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.new_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.new_button.clicked.connect(self.new_action.trigger)
+        new_menu = QMenu(self.new_button)
+        new_menu.setToolTipsVisible(True)
+        new_menu.addAction(self.private_action)
+        self.new_button.setMenu(new_menu)
+        self.conversation_list = ConversationList()
         self.conversation_list.setAccessibleName("Conversations")
+        self.conversation_list.setToolTip("Right-click a conversation, or press the Menu key, "
+                                          "to rename, archive or delete it.")
         self.conversation_list.itemActivated.connect(self._conversation_chosen)
         self.conversation_list.itemClicked.connect(self._conversation_chosen)
+        self.conversation_list.menu_requested.connect(
+            lambda entry, at: self.conversation_menu(self._info_of(entry)).popup(at))
+        for keys, command in ((QKeySequence("F2"), self.rename_conversation),
+                              (QKeySequence.StandardKey.Delete, self.delete_conversation)):
+            shortcut = QShortcut(keys, self.conversation_list,
+                                 context=Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(lambda c=command: self._on_current(c))
+        self.show_archived = QCheckBox("Show archived")
+        self.show_archived.toggled.connect(lambda _: _spawn(self.fill_sidebar()))
         self.switch_reason = _label(selectable=False)
         self.switch_reason.setEnabled(False)
         side.addWidget(self.new_button)
         side.addWidget(self.conversation_list, 1)
+        side.addWidget(self.show_archived)
         side.addWidget(self.switch_reason)
 
         main = QWidget()
@@ -345,6 +411,21 @@ class MainWindow(QMainWindow):
         banner.addWidget(self.banner_text, 1)
         banner.addWidget(self.banner_settings)
         self.banner.hide()
+
+        header = QHBoxLayout()
+        self.title_label = _label(wrap=False)
+        self.title_label.setStyleSheet("font-weight: bold;")
+        self.private_label = _label("Private chat: " + PRIVATE_NOTE[0].lower() + PRIVATE_NOTE[1:],
+                                    selectable=False)
+        self.private_label.setEnabled(False)
+        self.autonomy = QCheckBox(AUTONOMY_LABEL)
+        self.autonomy.setToolTip(AUTONOMY_HINT)
+        self.autonomy.clicked.connect(self._set_autonomous)
+        self.spending_label = _label(wrap=False, selectable=False)
+        self.spending_label.setToolTip("What Kayden has spent so far, across all conversations.")
+        header.addWidget(self.title_label, 1)
+        header.addWidget(self.autonomy)
+        header.addWidget(self.spending_label)
 
         self.scroll = QScrollArea(widgetResizable=True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -377,6 +458,8 @@ class MainWindow(QMainWindow):
         composer.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
 
         column.addWidget(self.banner)
+        column.addLayout(header)
+        column.addWidget(self.private_label)
         column.addWidget(self.scroll, 1)
         column.addLayout(self.prompts)
         column.addLayout(composer)
@@ -405,8 +488,14 @@ class MainWindow(QMainWindow):
         stop.triggered.connect(self.controller.stop)
         quit_action = QAction("&Quit", self, shortcut=QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
-        for action in (settings, stop, quit_action):
-            file_menu.addAction(action)
+        self.memory_action = QAction("&Memory…", self)
+        self.memory_action.triggered.connect(self.open_memory)
+        for action in (self.new_action, self.private_action, None, self.memory_action,
+                       settings, None, stop, quit_action):
+            if action is None:
+                file_menu.addSeparator()
+            else:
+                file_menu.addAction(action)
         self.model_menu = self.menuBar().addMenu("&Model")
         self.model_menu.aboutToShow.connect(lambda: _spawn(self._fill_model_menu()))
 
@@ -415,6 +504,7 @@ class MainWindow(QMainWindow):
     async def begin(self) -> None:
         """First run shows the welcome; otherwise resume the newest conversation."""
         settings = await self.runtime.settings()
+        await self.check_memory()
         if needs_welcome(settings):
             self._dialog = WelcomeDialog(self, self.runtime, self.controller, settings)
             self._dialog.accepted.connect(lambda: self.open_conversation(None))
@@ -424,12 +514,19 @@ class MainWindow(QMainWindow):
             conversations = await self.controller.conversations()
             self.open_conversation(conversations[0].id if conversations else None)
 
-    def open_conversation(self, conversation_id: str | None) -> None:
+    async def check_memory(self) -> None:
+        """Hide Memory when the Memory module cannot show what it remembers."""
+        self.memory_action.setVisible(await self.controller.memories() is not None)
+
+    def open_conversation(self, conversation_id: str | None, *, remember: bool = True,
+                          seed_from: str | None = None) -> None:
         if reason := self.controller.can_switch():
             self.model.notify(reason)
+            _spawn(self.fill_sidebar())  # select the open conversation again
             return
-        task = self.controller.open_conversation(conversation_id)
-        task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self._fill_sidebar())))
+        task = self.controller.open_conversation(conversation_id, remember=remember,
+                                                 seed_from=seed_from)
+        task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar())))
 
     # ── view model changes ────────────────────────────────────────────────
 
@@ -437,7 +534,12 @@ class MainWindow(QMainWindow):
         match change:
             case Reset():
                 self._rebuild()
-                _spawn(self._fill_sidebar())
+                _spawn(self.fill_sidebar())
+            case ConversationListChanged():
+                _spawn(self.fill_sidebar())
+            case MemoryListChanged():
+                if self.memory_dialog is not None and self.memory_dialog.isVisible():
+                    self.memory_dialog.refresh()
             case Inserted(index=index, item=item):
                 widget = self._widget_for(item)
                 self._widgets[id(item)] = widget
@@ -488,15 +590,22 @@ class MainWindow(QMainWindow):
     def _refresh_status(self) -> None:
         model = self.model
         self.status_label.setText(model.status_text)
-        usage = " · ".join(p for p in (model.model or "", model.spending_text) if p)
-        self.usage_label.setText(usage)
+        self.usage_label.setText(model.model or "")
+        conversation = model.conversation
+        if conversation is not None:
+            self.title_label.setText(conversation_label(
+                self._conversations.get(conversation.id, conversation)))
+        self.private_label.setVisible(model.private)
+        self.autonomy.setEnabled(conversation is not None)
+        self.autonomy.setChecked(model.autonomous)
+        self.spending_label.setText(model.spending_text)
         self.send_button.setText("Stop" if model.busy else "Send")
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")
         self.load_earlier.setVisible(model.has_earlier)
         self.load_earlier.setEnabled(True)
         reason = self.controller.can_switch()
-        self.new_button.setEnabled(reason is None)
-        self.conversation_list.setEnabled(reason is None)
+        for widget in (self.new_button, self.new_action, self.private_action):
+            widget.setEnabled(reason is None)
         self.switch_reason.setText(reason or "")
         self.switch_reason.setVisible(reason is not None)
         if (failure := model.failure) is not None:
@@ -505,25 +614,96 @@ class MainWindow(QMainWindow):
             self.banner_settings.setVisible(budget)
         self.banner.setVisible(failure is not None)
 
-    async def _fill_sidebar(self) -> None:
+    async def fill_sidebar(self) -> None:
         try:
-            conversations = await self.controller.conversations()
+            conversations = await self.controller.conversations(
+                include_archived=self.show_archived.isChecked())
         except Exception as e:  # noqa: BLE001 - shown, never fatal
             self.model.notify(user_message(e))
             return
         current = self.model.conversation.id if self.model.conversation else None
+        self._conversations = {info.id: info for info in conversations}
         self.conversation_list.clear()
         for info in conversations:
-            entry = QListWidgetItem(conversation_label(info))
+            notes = [n for n, on in (("private", not info.remember),
+                                     ("archived", info.archived)) if on]
+            label = conversation_label(info) + (f"  ({', '.join(notes)})" if notes else "")
+            entry = QListWidgetItem(label)
             entry.setData(Qt.ItemDataRole.UserRole, info.id)
             self.conversation_list.addItem(entry)
             if info.id == current:
                 self.conversation_list.setCurrentItem(entry)
+        self._refresh_status()
+
+    def conversation_info(self, conversation_id: str) -> ConversationInfo:
+        return self._conversations[conversation_id]
+
+    def _info_of(self, entry: QListWidgetItem) -> ConversationInfo:
+        return self._conversations[entry.data(Qt.ItemDataRole.UserRole)]
+
+    def _on_current(self, command: Callable[[ConversationInfo], None]) -> None:
+        if (entry := self.conversation_list.currentItem()) is not None:
+            command(self._info_of(entry))
 
     def _conversation_chosen(self, entry: QListWidgetItem) -> None:
         conversation_id = entry.data(Qt.ItemDataRole.UserRole)
         if self.model.conversation is None or conversation_id != self.model.conversation.id:
             self.open_conversation(conversation_id)
+
+    def conversation_menu(self, info: ConversationInfo) -> QMenu:
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        menu.addAction("Rename…", lambda: self.rename_conversation(info))
+        go_on = menu.addAction("Continue in a new conversation",
+                               lambda: self.open_conversation(None, seed_from=info.id))
+        go_on.setToolTip("Start a new conversation that knows where this one left off.")
+        menu.addAction("Unarchive" if info.archived else "Archive",
+                       lambda: self.controller.archive(info.id, not info.archived))
+        menu.addSeparator()
+        menu.addAction("Delete…", lambda: self.delete_conversation(info)).setVisible(
+            self.controller.can_delete)
+        return menu
+
+    def rename_conversation(self, info: ConversationInfo) -> None:
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Rename conversation")
+        dialog.setLabelText("New name (leave it empty to let Kayden name it):")
+        dialog.setTextValue(info.title or "")
+        dialog.textValueSelected.connect(lambda title: self.controller.rename(info.id, title))
+        dialog.open()
+
+    def delete_conversation(self, info: ConversationInfo) -> None:
+        if reason := self.controller.delete_refusal(info.id):
+            QMessageBox(QMessageBox.Icon.Information, "Delete conversation", reason,
+                        QMessageBox.StandardButton.Ok, self).open()
+            return
+        box = QMessageBox(QMessageBox.Icon.Warning, "Delete conversation",
+                          f"Delete “{conversation_label(info)}” for good?", parent=self)
+        details = ("Its messages, its summary and what Kayden learned from it are erased. "
+                   "This cannot be undone.")
+        archive = None
+        if not info.archived:
+            details += "\n\nTo just hide it from the list, archive it instead."
+            archive = box.addButton("Archive instead", QMessageBox.ButtonRole.AcceptRole)
+        box.setInformativeText(details)
+        delete = box.addButton("Delete for good", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(archive or cancel)
+
+        def answered(button: Any) -> None:
+            if button is archive:
+                self.controller.archive(info.id, True)
+            elif button is delete:
+                self.controller.delete(info.id)
+
+        box.buttonClicked.connect(answered)
+        box.open()
+
+    def open_memory(self) -> None:
+        if self.memory_dialog is None:
+            self.memory_dialog = MemoryDialog(self, self.controller)
+        self.memory_dialog.refresh()
+        self.memory_dialog.open()
 
     # ── commands ──────────────────────────────────────────────────────────
 
@@ -538,6 +718,11 @@ class MainWindow(QMainWindow):
             self.controller.stop()
         else:
             self._send()
+
+    def _set_autonomous(self, autonomous: bool) -> None:
+        # Re-read the switch afterwards: a refused change leaves it as it was.
+        task = self.controller.set_autonomous(autonomous)
+        task.add_done_callback(lambda _: self._refresh_status())
 
     def _load_earlier(self) -> None:
         self.load_earlier.setEnabled(False)
@@ -575,6 +760,95 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self.closed.emit()
         super().closeEvent(event)
+
+
+# ── long-term memory ──────────────────────────────────────────────────────
+
+
+class MemoryDialog(QDialog):
+    """What Kayden remembers across conversations; the user adds, edits and forgets."""
+
+    def __init__(self, parent: QWidget, controller: Controller) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.setWindowTitle("Memory")
+        self.setMinimumSize(520, 420)
+        layout = QVBoxLayout(self)
+        layout.addWidget(_label("Kayden remembers these things across conversations. "
+                                "Private chats don't use or add to them."))
+        self.entries = QListWidget()
+        self.entries.setAccessibleName("Memories")
+        self.entries.setWordWrap(True)
+        self.entries.currentItemChanged.connect(lambda *_: self._selection_changed())
+        self.entries.itemActivated.connect(lambda _: self._edit())
+        self.empty = _label("Nothing yet. Kayden adds things here as it learns them, and you "
+                            "can add your own.", selectable=False)
+        self.empty.setEnabled(False)
+        layout.addWidget(self.entries, 1)
+        layout.addWidget(self.empty)
+        self.add_button = QPushButton("Add…")
+        self.add_button.clicked.connect(self._add)
+        self.edit_button = QPushButton("Edit…")
+        self.edit_button.clicked.connect(self._edit)
+        self.forget_button = QPushButton("Forget…")
+        self.forget_button.clicked.connect(self._forget)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        for button in (self.add_button, self.edit_button, self.forget_button):
+            row.addWidget(button)
+        row.addStretch()
+        row.addWidget(close)
+        layout.addLayout(row)
+        self._selection_changed()
+
+    def refresh(self) -> None:
+        async def load() -> None:
+            entries = await self.controller.memories()
+            selected = self._selected()
+            self.entries.clear()
+            for entry in entries or ():
+                item = QListWidgetItem(entry.text)
+                item.setData(Qt.ItemDataRole.UserRole, entry)
+                item.setToolTip(memory_source(entry))
+                self.entries.addItem(item)
+                if selected is not None and entry.id == selected.id:
+                    self.entries.setCurrentItem(item)
+            self.empty.setVisible(not entries)
+            self._selection_changed()
+
+        self.controller.command(load())
+
+    def _selected(self) -> MemoryEntry | None:
+        item = self.entries.currentItem()
+        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+
+    def _selection_changed(self) -> None:
+        for button in (self.edit_button, self.forget_button):
+            button.setEnabled(self._selected() is not None)
+
+    def _ask(self, title: str, text: str, then: Callable[[str], None]) -> None:
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText("What should Kayden remember?")
+        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
+        dialog.setTextValue(text)
+        dialog.textValueSelected.connect(then)
+        dialog.open()
+
+    def _add(self) -> None:
+        self._ask("Add to memory", "", self.controller.add_memory)
+
+    def _edit(self) -> None:
+        if (entry := self._selected()) is not None:
+            self._ask("Edit memory", entry.text,
+                      lambda text: self.controller.edit_memory(entry.id, text))
+
+    def _forget(self) -> None:
+        if (entry := self._selected()) is not None:
+            confirm(self, f"Forget “{clip(entry.text, 80)}”?\n\nKayden won't use it again. "
+                    "The messages it came from stay until you delete their conversation.",
+                    lambda: self.controller.forget_memory(entry.id))
 
 
 # ── settings ──────────────────────────────────────────────────────────────

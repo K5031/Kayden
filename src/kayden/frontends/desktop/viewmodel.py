@@ -20,17 +20,20 @@ from typing import Any
 from kayden.api import (
     AgentState,
     Budget,
+    ConversationDeleted,
     ConversationInfo,
+    ConversationUpdated,
     Decision,
     EventEnvelope,
     Failure,
     FailureKind,
     MaintenanceFinished,
     MaintenanceStarted,
+    MemoriesChanged,
+    MemoryEntry,
     Message,
     MessageCommitted,
     MessageQueued,
-    Mode,
     ModelRetry,
     ModelSelected,
     OperationResult,
@@ -71,6 +74,7 @@ from kayden.runtime import InstanceLockedError
 
 HISTORY_PAGE = 100
 MAX_ARGS_CHARS = 120
+LABEL_CHARS = 60  # a conversation's label in the sidebar
 
 STATE_LABELS = {
     AgentState.NOT_STARTED: "Not started",
@@ -212,7 +216,19 @@ class Closed:
     reason: str
 
 
-type Change = Reset | Inserted | Updated | Removed | PromptsChanged | StatusChanged | Closed
+@dataclass(frozen=True)
+class ConversationListChanged:
+    """A conversation was renamed, archived, deleted or switched to autonomy: re-read the
+    list."""
+
+
+@dataclass(frozen=True)
+class MemoryListChanged:
+    """Long-term memory entries changed: re-read them."""
+
+
+type Change = (Reset | Inserted | Updated | Removed | PromptsChanged | StatusChanged | Closed
+               | ConversationListChanged | MemoryListChanged)
 
 
 class ConversationModel:
@@ -243,6 +259,15 @@ class ConversationModel:
     def busy(self) -> bool:
         """A cycle runs: Send becomes Stop and messages are queued."""
         return self.state in BUSY_STATES
+
+    @property
+    def autonomous(self) -> bool:
+        return self.conversation is not None and self.conversation.autonomous
+
+    @property
+    def private(self) -> bool:
+        """The open conversation has Remember off."""
+        return self.conversation is not None and not self.conversation.remember
 
     @property
     def status_text(self) -> str:
@@ -390,6 +415,14 @@ class ConversationModel:
                     "that they stopped and may still be running.", "warning"))
             case UsageUpdated(snapshot=snapshot):
                 self.usage = snapshot
+            case ConversationUpdated(info=info):
+                if self.conversation is not None and info.id == self.conversation.id:
+                    self.conversation = info
+                self.on_change(ConversationListChanged())
+            case ConversationDeleted():
+                self.on_change(ConversationListChanged())
+            case MemoriesChanged():
+                self.on_change(MemoryListChanged())
             case Failure():
                 self.failure = event
                 self._add(NoticeItem(event.message, "error"))
@@ -531,9 +564,19 @@ class ConversationModel:
 
 
 def conversation_label(info: ConversationInfo) -> str:
+    """Its title, else the start of its first message, else when it began."""
     if info.title:
         return info.title
+    if info.preview and info.preview.strip():
+        return clip(info.preview, LABEL_CHARS)
     return time.strftime("Conversation of %d %b %Y, %H:%M", time.localtime(info.created_at))
+
+
+def memory_source(entry: MemoryEntry) -> str:
+    when = time.strftime("%d %b %Y", time.localtime(entry.created_at))
+    if entry.source_conversation_id is None:
+        return f"Added by you on {when}"
+    return f"Learned in a conversation on {when}"
 
 
 def newest_first(conversations: Sequence[ConversationInfo]) -> list[ConversationInfo]:
@@ -619,6 +662,9 @@ def limit_update(current: Settings, text: str) -> Budget:
 # ── controller ────────────────────────────────────────────────────────────
 
 BUSY_MESSAGE = "Finish or stop the current task first."
+OPEN_DELETE_MESSAGE = "This conversation is open. Open another one first, then delete it."
+EMPTY_MEMORY_MESSAGE = "Write something to remember first."
+NO_DELETE_MESSAGE = "Deleting conversations is not available with this memory setup."
 BUDGET_MESSAGE = "The spending limit is reached. Raise it in Settings to continue."
 _BUSY_REFUSALS = ("cannot start while", "outstanding", "idle")
 
@@ -646,6 +692,7 @@ class Controller:
         self._inbox: asyncio.Queue[EventEnvelope | Callable[[], Awaitable[None]] | None] = (
             asyncio.Queue())
         self._tasks: set[asyncio.Task[Any]] = set()
+        self.can_delete = True  # False once Memory said it cannot delete conversations
 
     async def run(self) -> None:
         """Until the event stream ends or ShuttingDown arrives."""
@@ -740,17 +787,75 @@ class Controller:
     def select_model(self, model_id: str) -> None:
         self.command(self.runtime.select_model(model_id))
 
-    def open_conversation(self, conversation_id: str | None) -> asyncio.Task[None]:
-        """Start a new conversation (None) or resume one."""
+    def open_conversation(self, conversation_id: str | None, *, remember: bool = True,
+                          seed_from: str | None = None) -> asyncio.Task[None]:
+        """Resume a conversation, or start a new one (None): private with remember=False,
+        continuing where `seed_from` left off when set."""
 
         async def start() -> None:
-            await self.runtime.start(StartOptions(Mode.SESSION, conversation_id=conversation_id))
+            await self.runtime.start(StartOptions(conversation_id, remember=remember,
+                                                  seed_from=seed_from))
             await self._inbox.put(self.recover)
 
         return self.command(start())
 
-    async def conversations(self) -> list[ConversationInfo]:
-        return newest_first(await self.runtime.list_conversations(Mode.SESSION))
+    async def conversations(self, *, include_archived: bool = False) -> list[ConversationInfo]:
+        return newest_first(await self.runtime.list_conversations(
+            include_archived=include_archived))
+
+    def set_autonomous(self, autonomous: bool) -> asyncio.Task[None]:
+        return self.command(self.runtime.set_autonomous(autonomous))
+
+    def rename(self, conversation_id: str, title: str) -> asyncio.Task[None]:
+        """An empty title lets Kayden name the conversation again."""
+        return self.command(self.runtime.rename_conversation(conversation_id, title.strip()))
+
+    def archive(self, conversation_id: str, archived: bool) -> asyncio.Task[None]:
+        return self.command(self.runtime.archive_conversation(conversation_id, archived))
+
+    def delete_refusal(self, conversation_id: str) -> str | None:
+        """Why this conversation cannot be deleted right now, or None."""
+        if self.model.conversation is not None and conversation_id == self.model.conversation.id:
+            return OPEN_DELETE_MESSAGE
+        return None
+
+    def delete(self, conversation_id: str) -> asyncio.Task[None]:
+        """Erase for good; the caller has asked the user to confirm."""
+
+        def failed(error: Exception) -> None:
+            if isinstance(error, NotImplementedError):
+                self.can_delete = False
+                self.model.notify(NO_DELETE_MESSAGE)
+            else:
+                self.model.notify(user_message(error))
+
+        if reason := self.delete_refusal(conversation_id):
+            self.model.notify(reason)
+            return self.command(asyncio.sleep(0))
+        return self.command(self.runtime.delete_conversation(conversation_id), failed=failed)
+
+    async def memories(self) -> list[MemoryEntry] | None:
+        """Long-term memory entries, oldest first; None when the Memory module cannot show
+        them, so their controls are hidden."""
+        try:
+            return list(await self.runtime.memories())
+        except NotImplementedError:
+            return None
+
+    def add_memory(self, text: str) -> asyncio.Task[None]:
+        if not text.strip():
+            self.model.notify(EMPTY_MEMORY_MESSAGE)
+            return self.command(asyncio.sleep(0))
+        return self.command(self.runtime.add_memory(text.strip()))
+
+    def edit_memory(self, entry_id: str, text: str) -> asyncio.Task[None]:
+        if not text.strip():
+            self.model.notify(EMPTY_MEMORY_MESSAGE)
+            return self.command(asyncio.sleep(0))
+        return self.command(self.runtime.edit_memory(entry_id, text.strip()))
+
+    def forget_memory(self, entry_id: str) -> asyncio.Task[None]:
+        return self.command(self.runtime.forget_memory(entry_id))
 
     def can_switch(self) -> str | None:
         """Why the conversation cannot change right now, or None."""
