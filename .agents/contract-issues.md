@@ -345,8 +345,12 @@ in section 9.
 ### 5.4 (S) When the lock is taken
 - **Status:** **Resolved** (2026-11-07). Stated in SPEC 10.4 and `RuntimeAPI` docstring.
 - **Where:** SPEC 10.4 lock per (directory, mode); the mode is known only at `start()`.
-- **Assumed:** Acquired at the first start(), released at shutdown. `fcntl.flock` (POSIX
-  only); the holder is named by the pid written into `<mode>.lock`.
+- **Assumed:** Acquired before the first Memory call (`run_instance` takes it before
+  building the modules; a `Runtime` built otherwise takes it at its first command that
+  reads or changes stored data), released at shutdown. `fcntl.flock` (POSIX only); the
+  holder is named by the pid written into `instance.lock`. A review of #1 found that reads
+  and writes before start() ran unlocked: a second process could delete a conversation
+  the first had open, and migrate the store under an older Kayden.
 
 ### 5.5 (S) When the ceiling is exported
 - **Status:** **Resolved** (2026-11-07). Stated in `PermissionPolicy.inherited_ceiling`.

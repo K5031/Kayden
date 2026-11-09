@@ -40,6 +40,7 @@ class InstanceLock:
 
     @classmethod
     def acquire(cls, data_dir: Path) -> InstanceLock:
+        data_dir.mkdir(parents=True, exist_ok=True)
         path = data_dir / LOCK_FILE
         legacy = [data_dir / name for name in LEGACY_LOCK_FILES if (data_dir / name).exists()]
         fds: list[int] = []
@@ -89,8 +90,9 @@ def load_module[T](spec: ModuleSpec, kind: type[T], paths: InstancePaths) -> T:
 async def run_instance(config: InstanceConfig, *, fallback: str | None = None
                        ) -> Restart | None:
     """Build the instance from its configuration, run the frontend, then shut down; the
-    Restart the frontend asked for, if any. When Core, Memory or Tools cannot be built (or
-    config.startup_error is set), the frontend runs on a SetupRuntime that shows why. A
+    Restart the frontend asked for, if any. The data directory lock is taken before Core,
+    Memory and Tools are built. When it is refused, they cannot be built, or
+    config.startup_error is set, the frontend runs on a SetupRuntime that shows why. A
     frontend that cannot be built is replaced by the `fallback` frontend id."""
     from kayden.runtime.orchestrator import Runtime
     from kayden.runtime.setup import SetupRuntime
@@ -111,20 +113,26 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
         runtime_config = replace(runtime_config, modules=replace(
             state, running={**state.running, "frontend": fallback}))
     built: list[Any] = []
+    lock: InstanceLock | None = None
     if error is None:
         try:
+            # Before any module: no Memory access without the data directory.
+            lock = InstanceLock.acquire(runtime_config.data_dir)
             for spec, kind in ((config.core, Core), (config.memory, Memory),
                                (config.tools, Tools)):
                 built.append(await asyncio.to_thread(load_module, spec, kind, paths))
-        except ModuleLoadError as e:
-            error = str(e)
+        except (InstanceLockedError, ModuleLoadError) as e:
+            error = (f"Kayden is already open in another window ({e})"
+                     if isinstance(e, InstanceLockedError) else str(e))
             for module in built:
                 await module.aclose()
+            if lock is not None:
+                lock.release()
     runtime: Runtime | SetupRuntime
     if error is None:
         core, memory, tools = built
         runtime = Runtime(core=core, memory=memory, tools=tools, frontend=frontend.info,
-                          config=runtime_config)
+                          config=runtime_config, lock=lock)
     else:
         runtime = SetupRuntime(runtime_config, frontend.info.kind, error)
     try:

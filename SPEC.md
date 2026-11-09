@@ -287,7 +287,7 @@ Routine task assistant.
 Organizational roles and ranks are not hardcoded into Kayden.
 Capabilities and authority depend on each instance's configuration, model, tools, and permissions.
 10.4 Instance Safety
-Each instance owns its data directory. The runtime holds an OS-level lock on it, taken at the first start and released at shutdown; a second process opening the same directory fails immediately with an error naming the holder.
+Each instance owns its data directory. The runtime holds an OS-level lock on it, taken before any stored data is read or changed and released at shutdown; a second process opening the same directory fails immediately with an error naming the holder, and touches none of its data.
 A launched instance cannot be more permissive than its launcher. At startup the runtime exports its permission policy as a ceiling in its environment, and every instance clamps its own policy to the stricter of its configuration and any inherited ceiling. Strictness order: deny, ask, allow read-only. The exported ceiling is the instance's effective policy, carried in the KAYDEN_PERMISSION_CEILING environment variable; tools that launch subprocesses must pass the environment through. Launched instances have their own independent budgets.
 This is a guardrail against accidental or naive escalation, not a sandbox. It follows the trust model in section 3.2: an agent with arbitrary terminal access can defeat it.
 

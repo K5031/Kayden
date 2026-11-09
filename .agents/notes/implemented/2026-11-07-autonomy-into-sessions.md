@@ -154,11 +154,12 @@ control what the agent sees; deletion controls what the disk keeps.
 - `long_term` entries of both modes become one list in the new tables; exact duplicates
   collapse into the older entry.
 
-The runtime, at the first start on a data folder: sums `usage-session.json` and
+The runtime locks `instance.lock`, and any `session.lock` or `continuous.lock` it finds,
+before its first Memory call, so the store is migrated only once nothing else uses it. At
+the first start on a data folder it also sums `usage-session.json` and
 `usage-continuous.json` into `usage.json` when it does not exist yet, leaving the old files
-in place; starts `events.jsonl` beside the old logs; and locks any `session.lock` or
-`continuous.lock` it finds along with `instance.lock`, so it refuses to start while an
-older Kayden holds one, and an older Kayden cannot start while it runs.
+in place, and starts `events.jsonl` beside the old logs. It refuses to start while an
+older Kayden holds a lock, and an older Kayden cannot start while it runs.
 
 `--mode` and `--activation` are accepted for one release with a warning naming
 `--autonomous`; `--mode continuous` and `--activation agent_controlled` mean

@@ -379,3 +379,26 @@ def test_the_handed_over_command_runs(tmp_path):
     out = subprocess.run([*command[:3], "--help"], capture_output=True, text=True, check=True,
                          timeout=60)
     assert out.stdout.startswith("usage: kayden-desktop ")
+
+
+async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, monkeypatch):
+    """A second Kayden on the same data folder shows why it cannot start, and touches no
+    stored data."""
+    from kayden.runtime.instance import InstanceLock
+
+    monkeypatch.setenv("FIRST_API_KEY", "k")
+    settings_file(tmp_path, FAKE_MODULES + 'frontend = "scripted"\n')
+    seen = []
+
+    async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
+        seen.append((await runtime.settings()).startup_error)
+        with pytest.raises(RuntimeStateError):
+            await runtime.list_conversations()
+
+    held = InstanceLock.acquire(tmp_path)
+    try:
+        scripted(monkeypatch, script)
+        await asyncio.wait_for(launcher.launch(args(tmp_path), TERMINAL), 10)
+    finally:
+        held.release()
+    assert seen[0].startswith("Kayden is already open in another window")
