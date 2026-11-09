@@ -4,21 +4,67 @@
 
 Press **F2** (or type `/settings`); in the [desktop app](desktop-app.md), choose
 **Kayden → Settings**. Change what you need and choose **Save**; only what you
-changed is saved, and most changes apply to the agent's next step.
+changed is saved.
 
-| Setting | Notes |
-|---|---|
-| AI provider | Claude, DeepSeek or OpenAI. Can only be switched while the agent is idle. |
-| API key | Stored in your system's keychain, never in a file. Leave empty to keep the current one. |
-| Model | The list shows each model's price per million tokens. |
-| Model for memory upkeep | A cheaper model for summarizing long conversations. |
-| Spending limit | In US dollars; empty means no limit. |
-| What the agent may do | See [Permissions](#permissions). |
-| Instructions | The system prompt: who the agent is and how it should behave. |
-| Work folder | Where the agent's commands and file tools work. Can only be changed while the agent is idle. |
+| Setting | Notes | Applies |
+|---|---|---|
+| AI provider | Claude, DeepSeek, OpenAI, or another one you installed. | At restart |
+| API key | Stored in your system's keychain, never in a file. Leave empty to keep the current one. | At restart |
+| Model | The list shows each model's price per million tokens. | At the next step |
+| Model for memory upkeep | A cheaper model for summarizing long conversations. | At the next step |
+| Spending limit | In US dollars; empty means no limit. | At once |
+| What the agent may do | See [Permissions](#permissions). | At the next step |
+| Instructions | The system prompt: who the agent is and how it should behave. | At the next step |
+| Work folder | Where the agent's commands and file tools work. | At restart |
+| Memory | Where conversations and long-term memory are kept. | At restart |
+| Tools | What the agent can do on your computer. | At restart |
+| Interface | The terminal app or the [desktop app](desktop-app.md). | At restart |
 
 Raising or removing the spending limit, or letting the agent do more, asks you to confirm
 first.
+
+## Changes that apply at restart
+
+The AI provider, its key, the work folder, Memory, Tools and Interface are saved at once but
+used from the next start of Kayden; until then you keep working as before. The settings
+screen says so and offers **Restart now**: Kayden stops what it is doing, as when you quit,
+and starts again with the new settings in the same conversation.
+
+After a provider change, the new provider starts with its first model; choose another one
+after the restart.
+
+**Switching between the terminal and the desktop app.** Choose the interface, then
+**Restart now**:
+
+- From the terminal app, choosing the desktop app closes the terminal app and opens the
+  desktop app in the same conversation. Without a screen to show it on (an SSH session, for
+  example), the terminal app says the desktop app will be used the next time you start
+  Kayden from your app menu.
+- The desktop app cannot open a terminal. Choosing the terminal app there means it is used
+  the next time you run `kayden` in a terminal; **Restart now** restarts the desktop app for
+  any other change.
+
+`kayden` always starts a terminal interface and the desktop app always a window, so each
+starts its own kind when the other kind is chosen. Both need to be installed; see
+[Desktop app](desktop-app.md#install).
+
+**A different Memory is a different archive.** Your conversations and long-term memory stay
+where they are, but are not shown while another Memory is used; they come back when you
+switch back. The settings screen asks before saving such a change.
+
+## When Kayden cannot start
+
+If Kayden cannot start with your settings (no API key yet, a provider or module that is no
+longer installed, wrong options in `config.toml`), it still opens, with the settings and a
+message saying what is wrong. Fix it there and choose **Restart now**. This is also what
+the first start looks like: enter your API key, then **Restart now**.
+
+## Installed modules
+
+The provider, Memory, Tools and Interface lists show every module installed with Kayden:
+its own, and those of any package you install that provides one. A module is a program
+that runs with your permissions, so install only ones you trust; see
+[Development](development.md#writing-a-module).
 
 ## Permissions
 
@@ -40,7 +86,7 @@ Everything is in Kayden's data folder, `~/.kayden` (or `--data-dir`, or `$KAYDEN
 
 | File | Holds |
 |---|---|
-| `settings.toml` | What you changed in the settings screen |
+| `settings.toml` | What you changed in the settings screen, the chosen modules under `[modules]` |
 | `config.toml` | Optional hand-written configuration, for advanced use |
 | `memory.db` | Your conversations and long-term memory |
 | `usage.json` | What has been spent so far; delete it, while Kayden is closed, to start counting from zero |
@@ -60,8 +106,7 @@ instructions from a file next to the config:
 
 ```toml
 [core]
-factory = "kayden.core.openai_compat:factory"
-options = { profile = "deepseek" }
+factory = "kayden.core.openai_compat:deepseek_factory"
 
 [runtime]
 model = "deepseek-flash"
@@ -77,9 +122,12 @@ max_tool_calls = 200
 ```
 
 `[core]`, `[memory]`, `[tools]` and `[frontend]` each take a `factory` and `options`; a
-section left out uses Kayden's default. The output of `kayden --show-config` is a valid
-`config.toml` to start from. A mistake in the file stops Kayden with a one-line message
-naming it.
+section left out uses Kayden's default. A module chosen in the settings screen replaces the
+one named here, keeping these `options` only when it is the same module. Options a module
+understands (prices, context windows, base URLs, compaction) are set here only, and apply
+at the next start. The output of `kayden --show-config` is a valid `config.toml` to start
+from. A file that is not valid stops Kayden with a one-line message naming the mistake; a
+module that rejects its options opens the settings with the message instead.
 
 ## API keys
 

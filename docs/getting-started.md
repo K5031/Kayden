@@ -14,7 +14,12 @@ git clone https://github.com/K5031/Kayden.git
 uv tool install --editable Kayden
 ```
 
-This puts the `kayden` command on your PATH.
+This puts the `kayden` command on your PATH. To also get the [desktop app](desktop-app.md)
+and switch between the two in Settings, install with its extra instead (Python 3.13):
+
+```bash
+uv tool install --python 3.13 --editable "Kayden[desktop]"
+```
 
 Without uv, use a virtual environment (systems such as Arch refuse a system-wide
 `pip install`):
@@ -33,8 +38,9 @@ Either export it in your shell profile (`~/.bashrc`, `~/.zshrc`):
 export ANTHROPIC_API_KEY=sk-ant-...     # or DEEPSEEK_API_KEY / OPENAI_API_KEY
 ```
 
-or start Kayden and enter it in the settings screen (F2), which stores it in your system's
-keychain. Kayden uses Claude unless you choose another provider.
+or start Kayden without one: it opens the settings screen, where you choose the provider
+and enter the key, which is stored in your system's keychain. Then choose **Restart now**.
+Kayden uses Claude unless you choose another provider.
 
 ## First run
 

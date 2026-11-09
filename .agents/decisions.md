@@ -336,9 +336,12 @@ missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
 `ANTHROPIC_AUTH_TOKEN`).
 
 Module startup errors are one line. `load_module` turns an `ImportError` or
-`AttributeError` from resolving the factory path, and a `ValueError` or `TypeError` from
-calling the factory (missing key, unknown option), into `ModuleLoadError("<factory>: <message>")`;
-`python -m kayden` prints `kayden: <message>` to stderr and exits 1. Other exceptions keep
+`AttributeError` from resolving the factory path, a `ValueError` or `TypeError` from
+calling the factory (missing key, unknown option), a malformed path and a factory that
+returns the wrong kind into `ModuleLoadError("<factory>: <message>")`. For Core, Memory and
+Tools that message becomes `Settings.startup_error` on the setup runtime (see Swappable
+modules below); only when even the launcher's own frontend cannot be built does
+`python -m kayden` print `kayden: <message>` to stderr and exit 1. Other exceptions keep
 their traceback, since they are bugs rather than configuration mistakes.
 
 `tests/test_e2e.py` is the end-to-end check. No API key was available, so it runs the real
@@ -357,8 +360,8 @@ Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
 | Entry points | `kayden-desktop` (`kayden.frontends.desktop.launcher:main`); bundles run `python -m kayden_desktop`, which calls it |
 | Dependencies | `pyside6-essentials` and `qasync`, in the `desktop` extra (also in the dev group) |
 | Default work folder | `~/Kayden`, created at launch when neither config file sets a root (`load_config(default_root=...)`) |
-| At launch | Reopens the most recently updated conversation, or starts one when there is none |
-| Welcome | Shown when the configured provider needs a key and no provider has one |
+| At launch | Opens `--conversation` (given by the TUI's hand-over), else the most recently updated conversation, or starts one when there is none |
+| Welcome | Shown on the setup runtime when the chosen provider needs a key and no provider has one; it saves the provider, key, work folder and limit, then restarts |
 | Markdown re-render | At most every 100 ms while streaming; at once on commit |
 | History page | 100 messages, then "Load earlier messages" |
 | Quit order | `setQuitOnLastWindowClosed(False)`: closing the window ends `Frontend.run`, the runtime shuts down, then `asyncio.run` returns |
@@ -441,3 +444,25 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
   `PRAGMA wal_checkpoint(TRUNCATE)`; a concurrent reader can keep it from completing,
   which is logged as a warning.
 
+## Swappable modules
+
+Design: [Agent Note](notes/implemented/2026-11-08-swappable-modules-in-app.md).
+
+| Choice | Value |
+|---|---|
+| Built-in ids | `anthropic`, `deepseek`, `openai`; `sqlite`; `shell-files`; `tui`, `desktop` |
+| Display names | Claude, DeepSeek, OpenAI; Built-in memory (SQLite); Shell and files; Terminal (TUI), Desktop app |
+| Discovery | `importlib.metadata.entry_points` per group; ids read from metadata alone at launch, factories imported only for `settings()`. A failing import is logged at INFO and the entry left out |
+| Desktop entry point | `kayden.frontends.desktop` imports `qasync` and `PySide6.QtWidgets` at the top, so it loads only with the `desktop` extra |
+| `kayden.core.openai_compat:factory` | Not registered: the profiles are `deepseek_factory` and `openai_factory`. A config naming the generic factory has no id ("Custom (from config.toml)") |
+| Saved choices | `[modules]` in `settings.toml`, only the kinds changed. A legacy `provider` key is read as `modules.core` and dropped when the Core is next chosen |
+| Options on a switch | A chosen module keeps `config.toml`'s options only when it is the module `config.toml` names; otherwise it gets none |
+| Core change | Saves `model = ""` and `maintenance_model = ""` (the new Core's first, the main model), overriding `config.toml`. Models chosen while another Core waits apply live and are not saved |
+| Restart | `RuntimeAPI.restart()` records a `Restart(frontend, frontend_kind, conversation_id)`, logs a `restart` decision and shuts down as on quit. `launch()` reloads the config and runs the next instance in the same process; the frontend gets `start = true` and the conversation unless the Memory changed |
+| Terminal to window | After the instance has shut down (the lock is released), `kayden` runs `python -m kayden.frontends.desktop.launcher --data-dir D [--config C] [--conversation ID]` with `start_new_session`, standard streams to `/dev/null`, and prints that Kayden continues in the desktop app |
+| Display check | macOS and Windows always; elsewhere `DISPLAY` or `WAYLAND_DISPLAY` set |
+| Frontend per launcher | The saved frontend when installed and of the launcher's kind, else `tui` (`kayden`) or `desktop` (`kayden-desktop`). An uninstalled saved frontend is not a startup error: the launcher's own runs, and settings show the saved id as not installed |
+| Startup errors | An uninstalled Core, Memory or Tools id, or a `ModuleLoadError` from building them, runs the frontend on `SetupRuntime`. A frontend that fails to build is replaced by the launcher's own, which shows the error |
+| Setup runtime | Saves module settings, budget, permissions and system prompt; refuses model choices (`ValueError`) and every other command (`RuntimeStateError` naming the error). It takes no lock and writes no event log: nothing runs, and another instance may hold the directory |
+| Work folder | The Tools `root` option, settable when the configured Tools has one (the built-in shell-files Tools always does) |
+| Frontend texts | `kayden.frontends.common`: `restart_notice`, `module_options`, `needs_restart`, the Memory warning |
