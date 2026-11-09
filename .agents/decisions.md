@@ -409,7 +409,10 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 
 - Version 3 (`PRAGMA user_version`). Version 2 stores are migrated in place, in the
   transaction that opens the store; any other version is refused. A failed migration
-  rolls back and leaves version 2 as it was.
+  rolls back and leaves version 2 as it was. The migration also drops and rebuilds
+  `messages_fts` from every message with the current `codec.searchable_text`, so erasing a
+  row repeats exactly the text it was indexed with (rows from schema 1 had been indexed
+  with call ids and raw arguments).
 - `conversations`: `autonomous`, `remember`, `archived`, `seed_from` columns. The
   migration sets `autonomous = 1` and the title "Continuous conversation" (if it had none)
   on the former continuous conversation, then drops the `mode` column rather than keeping

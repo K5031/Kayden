@@ -122,6 +122,9 @@ CREATE TABLE memory_revisions (
 CREATE INDEX memory_revisions_entry ON memory_revisions(entry_id, id);
 CREATE TABLE forgotten (hash TEXT PRIMARY KEY);
 """
+_FTS_TABLE = """CREATE VIRTUAL TABLE messages_fts USING fts5(
+    body, content='', tokenize='porter unicode61 remove_diacritics 2'
+);"""
 _SCHEMA = f"""
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
@@ -148,9 +151,7 @@ CREATE INDEX messages_conversation ON messages(conversation_id, seq);
 CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages
 BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
 {_NO_DELETE_TRIGGER}
-CREATE VIRTUAL TABLE messages_fts USING fts5(
-    body, content='', tokenize='porter unicode61 remove_diacritics 2'
-);
+{_FTS_TABLE}
 CREATE TABLE summaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id TEXT NOT NULL REFERENCES conversations(id),
@@ -181,6 +182,8 @@ INSERT INTO memory_revisions (entry_id, text, created_at)
 SELECT id, text, created_at FROM long_term WHERE id IN (SELECT id FROM memory_entries)
 ORDER BY id;
 DROP TABLE long_term;
+DROP TABLE messages_fts;
+{_FTS_TABLE}
 """
 _TRUNCATION_MARKER = (
     "\n[{omitted} characters truncated in this view. The full message ({id}) is kept in the"
@@ -696,6 +699,7 @@ def _open(path: Path) -> sqlite3.Connection:
             elif version == 2:
                 logger.info("migrating %s from memory schema 2 to %d", path, SCHEMA_VERSION)
                 _execute_script(conn, _MIGRATE_FROM_2)
+                _reindex(conn)
             elif version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"{path}: memory schema version {version} is not supported"
@@ -706,6 +710,14 @@ def _open(path: Path) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+def _reindex(conn: sqlite3.Connection) -> None:
+    """Index every message with today's searchable text. Erasure removes a row from the
+    contentless index by repeating the text it was indexed with, so the two must match."""
+    for seq, blocks in conn.execute("SELECT seq, blocks FROM messages").fetchall():
+        conn.execute("INSERT INTO messages_fts (rowid, body) VALUES (?, ?)",
+                     (seq, codec.searchable_text(blocks)))
 
 
 def _execute_script(conn: sqlite3.Connection, script: str) -> None:
