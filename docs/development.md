@@ -99,14 +99,37 @@ crashes on this loop; on 3.13 every file passes.
 ## Desktop bundles
 
 [Briefcase](https://briefcase.beeware.org/) builds them from `[tool.briefcase]` in
-`pyproject.toml`, with a Python the bundle then carries:
+`pyproject.toml`. The bundle installs Kayden itself (`requires = [".[desktop]"]`), so its
+dependencies come from `[project]` and its modules are found through their entry points.
+
+A package for the Linux you build on (here an Arch `.pkg.tar.zst`) uses the system Python,
+which must also run Briefcase and have its headers (`Python.h`) installed:
 
 ```bash
-uvx --python 3.13 briefcase build linux flatpak
+uvx --python /usr/bin/python3 briefcase create linux system
+```
+
+```bash
+uvx --python /usr/bin/python3 briefcase build linux system
+```
+
+```bash
+uvx --python /usr/bin/python3 briefcase package linux system
+```
+
+A Flatpak needs `flatpak-builder`; a macOS `.dmg` must be built on a Mac:
+
+```bash
+uvx --python 3.13 briefcase package linux flatpak
+```
+
+```bash
 uvx --python 3.13 briefcase package macOS
 ```
 
-`build/` and `logs/` are Briefcase output and are not committed.
+The package lands in `dist/`. `build/`, `dist/` and `logs/` are Briefcase output and are not
+committed. The package needs a `CHANGELOG` file (without an extension: Briefcase's Arch
+template looks for exactly that name).
 
 ## Design records
 

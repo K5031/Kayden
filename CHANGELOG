@@ -1,0 +1,6 @@
+# Changelog
+
+## 0.0.0
+
+First packaged build: the desktop app and the terminal app, with web search, automatic
+permissions, a work folder per conversation, long-term memory and tool servers (MCP).

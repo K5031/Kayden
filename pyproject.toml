@@ -83,20 +83,9 @@ author = "K5031"
 [tool.briefcase.app.kayden-desktop]
 formal_name = "Kayden"
 description = "An AI agent that works for you on your computer."
-sources = ["src/kayden", "src/kayden_desktop"]
-requires = [
-    "anthropic>=2.3.0",
-    "ddgs>=9.16.1",
-    "httpx2>=2.12",
-    "jsonschema>=4.26.0",
-    "keyring>=25.7.0",
-    "openai>=3.41.0",
-    "pyside6-essentials>=6.12.0",
-    "qasync>=0.28.0",
-    "textual>=8.2.8",
-    "tomli-w>=1.2.0",
-    "trafilatura>=2.3.1",
-]
+sources = ["src/kayden_desktop"]
+# Kayden itself, installed with its metadata: its modules are found through entry points.
+requires = [".[desktop]"]
 
 [tool.briefcase.app.kayden-desktop.linux.flatpak]
 finish_arg."talk-name=org.freedesktop.secrets" = true

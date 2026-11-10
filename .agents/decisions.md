@@ -407,9 +407,13 @@ teardown; the other files pass. A single run of the whole suite segfaults on bot
 after a few dozen tests, each of which creates its own `QEventLoop`; the app creates one.
 Bundles therefore carry Python 3.13.
 
-**Briefcase (0.4.7).** It accepts `[tool.briefcase]` and generates the Linux system
-template. The build stopped compiling its launcher stub: the machine's Python 3.14 had no
-`Python.h`. No bundle has been built, so sizes are not measured yet.
+**Briefcase (0.4.7).** The bundle installs Kayden as a package (`requires =
+[".[desktop]"]`), not its sources: Kayden finds its modules through entry points, which
+only package metadata carries (a bundle of sources opened the terminal frontend and listed
+no modules). The Linux system package for Arch builds and starts the desktop app
+(2026-11-10, system Python 3.14.9): 114 MB as `.pkg.tar.zst`, 398 MB installed, of which
+PySide6 is 244 MB. Not built yet: the Flatpak (needs `flatpak-builder`) and the macOS
+`.dmg` (needs a Mac).
 
 **Permission ceiling.** The runtime reads the inherited ceiling once, at construction and
 before exporting its own policy, and `update_settings` clamps to that. Clamping to the
