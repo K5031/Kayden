@@ -605,10 +605,13 @@ class SqliteMemory(Memory):
 
         return await self._run(run)
 
-    async def remember(self, text: str) -> MemoryEntry:
+    async def remember(self, text: str, *,
+                       conversation_id: ConversationId | None = None) -> MemoryEntry:
         def run(conn: sqlite3.Connection) -> MemoryEntry:
             with _transaction(conn):
-                return _add_entry(conn, text, None, time.time())
+                if conversation_id is not None:
+                    _require_conversation(conn, conversation_id)
+                return _add_entry(conn, text, conversation_id, time.time())
 
         return await self._run(run)
 

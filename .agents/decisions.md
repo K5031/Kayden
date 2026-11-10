@@ -539,3 +539,15 @@ Design: [Agent Note](notes/implemented/2026-11-10-auto-permissions.md).
 | Failures | Exhausted budget (checked first), any exception from the request: ask, with a reason saying Kayden could not check. No transient retries |
 | Stop | The review is raced against Stop with the grace period; the call is then not started |
 | Log | `permission_review` with call id and `allow`; the permission record says `by: "review"`. The reason is not logged |
+
+## remember and forget
+
+Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md) (long-term memory).
+
+| Choice | Value |
+|---|---|
+| Matching | Whitespace collapsed and casefolded; `remember` of a matching entry answers "Already remembered." and adds nothing; `forget` erases every matching entry |
+| Stored text | Whitespace collapsed; empty is an ERROR result |
+| Not found | `forget` answers ERROR with the current entries listed, so the model can retry with the exact text |
+| Offer | Probed once per `start()` with `Memory.memories()`; NotImplementedError drops both tools from the offer |
+| Log | `memory_added` / `memory_forgotten` with the entry id and `by: "agent"`, no text |

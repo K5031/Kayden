@@ -84,6 +84,13 @@ One list per store, shared by every conversation.
 
 - Allowed in any state, applied from the next assemble. Each emits `MemoriesChanged` and is
   logged by entry id, without text.
+- The agent edits the same list with two built-in tools: `remember(text)` adds an entry
+  from the open conversation (`Memory.remember(text, conversation_id=)`), so deleting
+  that conversation erases it; `forget(text)` erases the entries whose text matches, case
+  and whitespace ignored, since the prompt shows entries without ids. Both are never gated,
+  appear in the conversation as tool calls, and are offered only when the Memory module
+  can edit memories. Their descriptions carry the guidance (lasting facts about the user,
+  never secrets), so it holds with any instructions.
 - The Memory methods are optional: the base class raises `NotImplementedError`, which the
   runtime re-raises as "this memory module cannot edit memories", and frontends hide the
   controls.
@@ -202,6 +209,10 @@ command-line flags of the per-mode versions.
 - **Titles from the first message only, with no inference.** Free and deterministic, and
   it is the fallback (`preview`). Model-written titles read much better in a long list, for
   one small light-model call per conversation.
+- **Learning facts only during compaction.** No extra cost, but most conversations never
+  grow long enough to be compacted, so the agent learned almost nothing across
+  conversations. A separate extraction request after each conversation was the other way;
+  the `remember` tool costs nothing extra and the user sees each fact as it is kept.
 - **Editing long-term memory rows in place.** Simpler, but an edit would silently replace
   what the agent had learned. Revisions keep each change visible and allow an undo later.
 - **Archive and forget only, no deletion.** Keeps the archive strictly append-only, so

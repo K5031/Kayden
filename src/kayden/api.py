@@ -545,8 +545,10 @@ class Memory(abc.ABC):
         """Current entries, oldest first."""
         raise NotImplementedError
 
-    async def remember(self, text: str) -> MemoryEntry:
-        """Add an entry written by the user."""
+    async def remember(self, text: str, *,
+                       conversation_id: ConversationId | None = None) -> MemoryEntry:
+        """Add an entry: written by the user (None), or by the agent in that conversation
+        (the remember tool), so deleting the conversation erases it."""
         raise NotImplementedError
 
     async def revise(self, entry_id: str, text: str) -> MemoryEntry:
@@ -581,7 +583,10 @@ _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 # reports the final status; the outcome still arrives as an OperationResult. recall
 # returns hits as text, each preview capped at 1000 characters (the "runtime does not
 # truncate" rule applies to module tools). recall with scope "all" searches every
-# conversation that is not archived.
+# conversation that is not archived. remember adds a long-term memory entry from the open
+# conversation and forget erases the entries whose text matches (case and whitespace
+# ignored); both emit MemoriesChanged and are offered only when the Memory module can edit
+# memories.
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "op_status": ToolSpec(
         "op_status",
@@ -616,6 +621,23 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
             "required": ["query"],
         },
         read_only=True,
+    ),
+    "remember": ToolSpec(
+        "remember",
+        "Keep a fact in long-term memory, which every conversation with the user sees. Use it "
+        "when the user asks you to remember something, or tells you something lasting about "
+        "themselves, their work or their preferences that will matter later. One short fact "
+        "per call, written about the user (\"Is vegetarian\"). Never keep passwords, keys or "
+        "other secrets. Say in your reply what you remembered.",
+        {"type": "object", "properties": {"text": {"type": "string", "minLength": 1}},
+         "required": ["text"]},
+    ),
+    "forget": ToolSpec(
+        "forget",
+        "Remove a fact from long-term memory, when the user asks or it is no longer true. "
+        "`text` is the fact as it appears in your long-term memory.",
+        {"type": "object", "properties": {"text": {"type": "string", "minLength": 1}},
+         "required": ["text"]},
     ),
 }
 

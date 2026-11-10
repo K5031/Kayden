@@ -188,7 +188,7 @@ Recent conversation messages and tool interactions preserved in their original f
 A compact representation of older conversation history.
 The summary has a fixed token budget and is automatically carried into subsequent inference requests.
 3. Long-Term Memory
-Important durable information maintained by the Memory module.
+Important durable information maintained by the Memory module. The agent adds and removes entries itself with the built-in remember and forget tools, and the user can edit them; an entry the agent kept is erased with the conversation it came from.
 4. Permanent Verbatim Archive
 Original conversation messages and tool interactions are retained for historical retrieval until the user deletes their conversation.
 Information removed from active inference context is not deleted from the archive.
@@ -412,7 +412,7 @@ A backgrounded call gets a placeholder result with status backgrounded; its outc
 Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
 stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps the agent waiting until it ends or the user writes.
-The built-in tools (op_status, op_cancel, recall) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules.
+The built-in tools (op_status, op_cancel, recall, remember, forget) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules.
 Results are plain strings. Frontends may parse formats they know.
 Tools that launch subprocesses pass the environment through unmodified.
 use_folder is optional: the runtime calls it whenever it opens a conversation, with that conversation's work folder, before any of its calls. A module without it has one fixed folder, and conversations cannot choose another.

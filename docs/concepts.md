@@ -40,8 +40,12 @@ Kayden keeps every message of every conversation until you delete the conversati
 - The agent can **search** a conversation's full history, including summarized parts, and
   your other conversations that are not archived.
 - **Long-term memory** is one list of lasting facts (about you, your setup) shared by all
-  your conversations. Kayden adds to it as conversations get summarized. You can see the
-  list and add, correct or **forget** entries. A forgotten fact is erased, and Kayden does
+  your conversations. The agent keeps a fact when you ask it to ("remember that…") or tell
+  it something lasting about yourself, and drops one when you say it is no longer true;
+  each time, it shows in the conversation like any other action. Kayden also adds facts as
+  long conversations get summarized. It never keeps passwords or keys on purpose. You can
+  see the list and add, correct or **forget** entries. Deleting a conversation also erases
+  the facts the agent kept in it. A forgotten fact is erased, and Kayden does
   not pick the same fact up again from the summary it came from; it may learn it again
   from new messages, in which case forget it again or tell the agent not to remember it.
   Forgetting a fact does not delete the messages it came from.

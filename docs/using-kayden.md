@@ -65,8 +65,10 @@ open conversation opens a new chat in its place. You can only switch
 conversations while the agent is not working. See [Deleting](concepts.md#deleting) for what
 deletion does and does not reach.
 
-F4 shows long-term memory: facts Kayden keeps across conversations. Add one, correct one,
-or forget one. Forgetting a fact does not delete the messages it came from.
+F4 shows long-term memory: facts Kayden keeps across conversations. The agent adds one when
+you ask it to remember something or tell it something lasting about yourself, and removes
+one when you say it is no longer true; you see a `remember` or `forget` step in the
+conversation. In F4 you can add, correct or forget them yourself. Forgetting a fact does not delete the messages it came from.
 
 ## Folders
 

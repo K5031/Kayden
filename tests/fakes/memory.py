@@ -160,10 +160,11 @@ class InMemoryMemory(Memory):
             raise NotImplementedError
         return self.store.entries()
 
-    async def remember(self, text: str) -> MemoryEntry:
+    async def remember(self, text: str, *,
+                       conversation_id: ConversationId | None = None) -> MemoryEntry:
         if not self.editable:
             raise NotImplementedError
-        return self.store.add(text, None)
+        return self.store.add(text, conversation_id)
 
     async def revise(self, entry_id: str, text: str) -> MemoryEntry:
         if not self.editable:

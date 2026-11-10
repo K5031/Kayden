@@ -140,6 +140,11 @@ def _render(message: Message) -> str:
     return " ".join(parts)
 
 
+def _same(a: str, b: str) -> bool:
+    """Memory texts compare with case and whitespace ignored."""
+    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+
+
 def _format_hits(hits: Sequence[ArchiveHit]) -> str:
     if not hits:
         return "No matches."
@@ -284,6 +289,7 @@ class Runtime:
         # Tool name -> whether the grant also covers calls that reach outside the work
         # folder: one given for a confined call covers confined calls only.
         self._grants: dict[str, bool] = {}
+        self._can_edit_memories = True  # False once Memory says it cannot (start())
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
         self._unseen = False
@@ -380,6 +386,10 @@ class Runtime:
             self._scratch.mkdir(exist_ok=True)
             self._loop_task = asyncio.create_task(self._run_loop())
 
+        try:
+            await self._memory.memories()
+        except NotImplementedError:
+            self._can_edit_memories = False
         conversation, resumed = await self._open_conversation(options)
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
@@ -774,6 +784,8 @@ class Runtime:
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
         specs = dict(BUILTIN_TOOLS)
+        if not self._can_edit_memories:
+            del specs["remember"], specs["forget"]
         try:
             module_specs = await self._tools.list_tools()
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
@@ -1508,6 +1520,27 @@ class Runtime:
                 hits = await self._memory.search(args["query"], conversation_ids=scope,
                                                  limit=args.get("limit", 5))
                 return ToolStatus.OK, _format_hits(hits)
+            case "remember":
+                text = " ".join(args["text"].split())
+                if not text:
+                    return ToolStatus.ERROR, "The memory is empty."
+                if any(_same(e.text, text) for e in await self._memory.memories()):
+                    return ToolStatus.OK, "Already remembered."
+                entry = await self._memory.remember(text, conversation_id=self._conversation.id)
+                self._log.decision("memory_added", entry=entry.id, by="agent")
+                self._emit(MemoriesChanged())
+                return ToolStatus.OK, f"Remembered: {text}"
+            case "forget":
+                entries = await self._memory.memories()
+                matches = [e for e in entries if _same(e.text, args["text"])]
+                if not matches:
+                    listed = "\n".join(f"- {e.text}" for e in entries) or "(none)"
+                    return ToolStatus.ERROR, f"No memory says that. Long-term memory:\n{listed}"
+                for entry in matches:
+                    await self._memory.forget(entry.id)
+                    self._log.decision("memory_forgotten", entry=entry.id, by="agent")
+                self._emit(MemoriesChanged())
+                return ToolStatus.OK, f"Forgotten: {matches[0].text}"
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."
 
     def _describe(self, op: Operation) -> str:

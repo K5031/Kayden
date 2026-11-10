@@ -190,7 +190,8 @@ async def test_activate_in_idle(make: Any) -> None:
 
 async def test_failed_budget_blocks_send_and_activate(make: Any) -> None:
     core = ScriptedCore(default=Step(text="x", usage=Usage(1000, 100)))
-    h: Harness = await make(core=core, budget=Budget(max_tokens=500))
+    # Above the request's own estimate, below what the first turn reports.
+    h: Harness = await make(core=core, budget=Budget(max_tokens=1050))
     await h.start()
     await h.turn("spend")
     await h.runtime.send("more")
