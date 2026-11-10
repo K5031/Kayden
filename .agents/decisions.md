@@ -427,6 +427,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-free-in-the-work-folder.md).
 | Sandbox check | `bwrap ... true` once at construction with the starting root, 5 s limit; any failure leaves the shell unsandboxed. The command line is rebuilt for each folder (`use_folder`) |
 | Home in the sandbox | An empty tmpfs directory at the same path, so `$HOME` exists; what a command writes there is gone when it ends |
 | Shell start | `create_subprocess_exec(*sandbox, "sh", "-c", command)`, also without a sandbox |
+| Shell `description` | Optional argument the model fills with a plain-language line; the tool ignores it. Frontends show it as the card's title and a prompt's headline (`frontends.common.call_parts`), with the command below; the permission review leaves it out of what it judges |
 | Sandbox environment | `os.environ` without names matching `KEY\|TOKEN\|SECRET\|PASSW\|CREDENTIAL` (case ignored); unsandboxed commands get it unchanged |
 
 ## Changes for contract Draft 3 (autonomy into sessions)

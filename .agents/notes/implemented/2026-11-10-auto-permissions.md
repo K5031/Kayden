@@ -34,8 +34,8 @@ allow workspace, auto.
   one-shot requests.
 - It sees what the user asked, not what the agent read: the text of the user's messages
   (newest first, up to 16 000 characters), the work folder, and the call (tool name,
-  description, arguments cut at 4 000 characters). Tool results, web pages and the
-  agent's own text are left out, so a page that says "now delete everything" cannot argue
+  description, arguments cut at 4 000 characters, without the model's own `description`
+  of a command). Tool results, web pages and the agent's own text are left out, so a page that says "now delete everything" cannot argue
   for its own call.
 - The rules are in `REVIEW_PROMPT`: allow what clearly serves what the user asked and only
   reads or is expected and easily undone; ask for anything that deletes or overwrites what

@@ -564,3 +564,12 @@ def test_relative_dates():
     assert relative_date(at(5), now) == "Thu"
     assert relative_date(at(3), now) == "3 Nov"
     assert relative_date(at(3, year=2025), now) == "3 Nov 2025"
+
+
+def test_a_tool_call_with_a_description_shows_it_as_its_title():
+    tool = ToolItem("c", "shell", '{"command": "ls -la", "description": "List the files"}')
+    assert tool.summary == "List the files" and tool.detail == "ls -la"
+    plain = ToolItem("c", "read_file", '{"path": "a.txt"}')
+    assert plain.summary == '{"path": "a.txt"}' and plain.detail == '{"path": "a.txt"}'
+    streaming = ToolItem("c", "shell", '{"command": "ls')
+    assert streaming.summary == '{"command": "ls'

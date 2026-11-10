@@ -312,3 +312,11 @@ async def test_a_sandboxed_command_cannot_read_keys_from_the_environment(
     assert "key=none ceiling=auto" in out.content
     out = await run(tools, tmp_path, "shell", command=probe, unsandboxed=True)
     assert "key=sk-secret" in out.content  # asked for first, so it runs as the user would
+
+
+async def test_the_shell_takes_a_plain_language_description(tools, tmp_path):
+    [shell] = [s for s in await tools.list_tools() if s.name == "shell"]
+    assert "description" in shell.parameters["properties"]
+    assert "plain" in shell.parameters["properties"]["description"]["description"]
+    out = await run(tools, tmp_path, "shell", command="echo hi", description="Say hi")
+    assert not out.is_error and out.content.startswith("hi")

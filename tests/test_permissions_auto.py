@@ -204,3 +204,15 @@ async def test_ordinary_paths_are_still_reviewed(make: Any) -> None:
 
 def test_the_review_rules_name_secrets_and_kaydens_data() -> None:
     assert "passwords" in REVIEW_PROMPT and "Kayden's own" in REVIEW_PROMPT
+
+
+def test_the_reviewer_judges_the_command_not_its_description() -> None:
+    from kayden.api import ToolCall, ToolSpec
+    from kayden.runtime.review import review_messages
+
+    call = ToolCall("c", "shell", {"command": "rm -rf ~/photos",
+                                   "description": "Tidy up a few temporary files"})
+    [message] = review_messages(["clean up"], call, ToolSpec("shell", "Run a command", {}),
+                                "/work")
+    text = message.blocks[0].text
+    assert "rm -rf ~/photos" in text and "Tidy up" not in text

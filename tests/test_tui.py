@@ -10,7 +10,7 @@ from dataclasses import replace
 import pytest
 from rich.text import Text as RichText
 from textual.pilot import Pilot
-from textual.widgets import Button, Input, OptionList, Select, Static, Switch
+from textual.widgets import Button, Input, Label, OptionList, Select, Static, Switch
 
 from kayden.api import (
     AgentConfig,
@@ -1109,3 +1109,19 @@ async def test_memory_screen_unavailable_without_editable_memory():
         await until(pilot, lambda: any("cannot edit memories" in n.message
                                        for n in app._notifications))
         assert not isinstance(app.screen, MemoryScreen)
+
+
+async def test_a_command_shows_its_description_with_the_command_behind_it():
+    stub = StubRuntime()
+    app = make(stub)
+    call = ToolCall("c1", "shell", {"command": "rm -rf build",
+                                    "description": "Remove the old build"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        stub.emit(ToolStarted(call),
+                  PermissionRequested(PermissionRequest("p1", call, read_only=False)))
+        await caught_up(pilot, app, stub)
+        [entry] = entries(app, ToolEntry)
+        shown = plain(entry)
+        assert "shell Remove the old build" in shown and "\n  rm -rf build" in shown
+        prompt = str(app.query_one(PermissionPrompt).query_one(Label).render())
+        assert "Kayden wants to: Remove the old build" in prompt and "rm -rf build" in prompt

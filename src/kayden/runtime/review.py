@@ -113,7 +113,9 @@ def user_requests(history: Sequence[Message]) -> list[str]:
 
 def review_messages(requests: Sequence[str], call: ToolCall, spec: ToolSpec,
                     folder: str | None) -> list[Message]:
-    arguments = json.dumps(call.arguments, ensure_ascii=False, indent=1)
+    # The model's own description of the call is left out: the reviewer judges what runs.
+    shown = {k: v for k, v in call.arguments.items() if k != "description"}
+    arguments = json.dumps(shown, ensure_ascii=False, indent=1)
     if len(arguments) > MAX_ARGUMENT_CHARS:
         arguments = arguments[:MAX_ARGUMENT_CHARS] + " [cut]"
     asked = "\n\n".join(f"<message>\n{text}\n</message>" for text in requests) or "(none)"

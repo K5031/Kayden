@@ -71,7 +71,7 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.api import Text as TextBlock
-from kayden.frontends.common import money
+from kayden.frontends.common import call_parts, money
 from kayden.runtime import InstanceLockedError
 from kayden.runtime.instance import ALREADY_OPEN
 
@@ -110,11 +110,6 @@ BUSY_STATES = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITIN
 def clip(text: str, limit: int) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def summarize_arguments(arguments: Any) -> str:
-    raw = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-    return clip(raw, MAX_ARGS_CHARS)
 
 
 class Phase(StrEnum):
@@ -158,7 +153,20 @@ class ToolItem:
 
     @property
     def summary(self) -> str:
-        return summarize_arguments(self.arguments)
+        """The call's own plain-language description, else its arguments."""
+        headline, detail = self._parts()
+        return clip(headline, MAX_ARGS_CHARS) if headline else clip(detail, MAX_ARGS_CHARS)
+
+    @property
+    def detail(self) -> str:
+        """What runs: a command as it is, other arguments as JSON."""
+        return self._parts()[1]
+
+    def _parts(self) -> tuple[str | None, str]:
+        try:
+            return call_parts(json.loads(self.arguments))
+        except ValueError:  # still streaming
+            return None, self.arguments
 
     @property
     def state_label(self) -> str:

@@ -3,7 +3,9 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 from kayden.api import (
     ModelInfo,
@@ -33,6 +35,23 @@ def request_note(request: PermissionRequest) -> str:
         note = ("It only reads, but can reach outside the work folder." if request.read_only
                 else "It may change things, and can reach outside the work folder.")
     return f"{note} Why it asks: {request.reason}" if request.reason else note
+
+
+def call_parts(arguments: Any) -> tuple[str | None, str]:
+    """A tool call for display: the plain-language description it gives, if any, and the
+    rest of its arguments, a shell command as it is and anything else as JSON. Arguments
+    still streaming (a string) are shown as they are."""
+    if not isinstance(arguments, dict):
+        return None, str(arguments)
+    rest = {k: v for k, v in arguments.items() if k != "description"}
+    description = arguments.get("description")
+    headline = description.strip() if isinstance(description, str) else ""
+    command = rest.get("command")
+    if isinstance(command, str) and set(rest) <= {"command", "unsandboxed"}:
+        detail = command + (" (outside the sandbox)" if rest.get("unsandboxed") else "")
+    else:
+        detail = json.dumps(rest, ensure_ascii=False)
+    return headline or None, detail
 
 
 def folder_path(folder: str) -> str:

@@ -98,3 +98,16 @@ def test_a_prompt_says_what_the_call_does_and_where():
     reviewed = PermissionRequest("p", call, False, False, "It deletes your photos.")
     assert request_note(reviewed).endswith("folder. Why it asks: It deletes your photos.")
     assert next(iter(PERMISSION_LABELS)) is PermissionPolicy.AUTO  # the default, listed first
+
+
+def test_a_call_shows_its_description_and_then_its_command():
+    from kayden.frontends.common import call_parts
+
+    assert call_parts({"command": "ls -la", "description": "List the files"}) == (
+        "List the files", "ls -la")
+    assert call_parts({"command": "uv sync", "unsandboxed": True,
+                       "description": "Install the packages"}) == (
+        "Install the packages", "uv sync (outside the sandbox)")
+    assert call_parts({"path": "a.txt"}) == (None, '{"path": "a.txt"}')
+    assert call_parts({"command": "true", "description": "  "}) == (None, "true")
+    assert call_parts('{"command": "ls') == (None, '{"command": "ls')  # still streaming

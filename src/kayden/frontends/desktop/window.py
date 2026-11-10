@@ -76,6 +76,7 @@ from kayden.frontends.common import (
     AT_RESTART,
     MODULE_LABELS,
     PERMISSION_LABELS,
+    call_parts,
     delete_details,
     dollars,
     folder_path,
@@ -115,7 +116,6 @@ from kayden.frontends.desktop.viewmodel import (
     needs_welcome,
     relative_date,
     settings_update,
-    summarize_arguments,
     user_message,
 )
 
@@ -161,6 +161,13 @@ def _label(text: str = "", *, wrap: bool = True, selectable: bool = True,
     label.setProperty("tone", tone)
     label.setProperty("role", role)
     return label
+
+
+def _discard(widget: QWidget) -> None:
+    """Hidden at once: deleteLater runs only when the event loop next turns, and until then
+    a widget taken out of its layout would still be drawn where it was."""
+    widget.hide()
+    widget.deleteLater()
 
 
 def _primary(button: QPushButton) -> QPushButton:
@@ -485,7 +492,7 @@ class ToolCard(QFrame):
         item = self.item
         self.name.setText(item.name)
         self.title.setText(item.summary)
-        self.title.setToolTip(item.summary)
+        self.title.setToolTip(item.detail)
         duration = f" in {item.duration_s:.1f} s" if item.duration_s is not None else ""
         self.state.setText(item.state_label + duration)
         theme.mark(self.state, "tone", TOOL_TONES.get(item.status, "muted")
@@ -524,9 +531,11 @@ class PermissionCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
         call = request.call
-        layout.addWidget(_label(f"Kayden wants to use {call.name}", role="strong"))
-        layout.addWidget(_label(f"{request_note(request)} {summarize_arguments(call.arguments)}",
-                                tone="muted"))
+        headline, detail = call_parts(call.arguments)
+        layout.addWidget(_label(f"Kayden wants to: {headline}" if headline
+                                else f"Kayden wants to use {call.name}", role="strong"))
+        layout.addWidget(_label(request_note(request), tone="muted"))
+        layout.addWidget(_label(detail, tone="muted"))
         buttons = QHBoxLayout()
         for decision, label in ((Decision.ALLOW_ONCE, "Allow once"),
                                 (Decision.ALLOW_CONVERSATION, "Allow for this conversation"),
@@ -883,7 +892,7 @@ class MainWindow(QMainWindow):
                     widget.refresh()  # type: ignore[attr-defined]
             case Removed(item=item):
                 if (widget := self._widgets.pop(id(item), None)) is not None:
-                    widget.deleteLater()
+                    _discard(widget)
                 self._show_empty_state()
             case PromptsChanged():
                 self._rebuild_prompts()
@@ -905,7 +914,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild(self) -> None:
         for widget in self._widgets.values():
-            widget.deleteLater()
+            _discard(widget)
         self._widgets.clear()
         for index, item in enumerate(self.model.items):
             widget = self._widget_for(item)
@@ -918,7 +927,7 @@ class MainWindow(QMainWindow):
     def _rebuild_prompts(self) -> None:
         while (child := self.prompts.takeAt(0)) is not None:
             if child.widget() is not None:
-                child.widget().deleteLater()
+                _discard(child.widget())
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
 

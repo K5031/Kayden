@@ -61,7 +61,7 @@ another reason, the Settings window opens with the message.
 | Stop Kayden | Press the round button in the message box (it shows a square while Kayden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |
 | Cancel one task | Press **Cancel** on its card. |
-| See what a tool did | Press the arrow on its card. |
+| See what a tool did | Press the arrow on its card. A command's card shows what it does in plain words; point at it to see the command. |
 | See the model's reasoning | Open **Thinking** above a reply. |
 | Start over | **New chat** (**Ctrl+N**). |
 | Work in another folder | Click the folder above the conversation and choose one. A chat with no messages yet moves there; otherwise a new chat starts in it. See [Folders](using-kayden.md#folders). |

@@ -15,7 +15,7 @@ import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QContextMenuEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
 
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
 from kayden.frontends.desktop import app_menu, theme
@@ -496,3 +496,22 @@ async def test_the_folder_button_is_hidden_for_tools_with_a_fixed_folder(make, q
     window, _controller, _ = await open_window(h)
     window._refresh_status()
     assert not window.folder_button.isVisibleTo(window)
+
+
+async def test_a_command_shows_its_description_with_the_command_behind_it(make, qapp):
+    h: Harness = await make(permissions=PermissionPolicy.ASK)
+    h.tools.instant("shell", read_only=False)
+    h.core.add(Step(calls=[call("shell", {"command": "rm -rf build",
+                                          "description": "Remove the old build"})]),
+               Step(text="done"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("clean")
+    await eventually(lambda: window.prompts.count() == 1)
+    card = window.prompts.itemAt(0).widget()
+    texts = [label.text() for label in card.findChildren(QLabel)]
+    assert "Kayden wants to: Remove the old build" in texts
+    assert "rm -rf build" in texts  # what actually runs, on its own line
+    [tool] = widgets(window, ToolCard)
+    assert tool.title.text() == "Remove the old build"
+    assert tool.title.toolTip() == "rm -rf build"
