@@ -125,4 +125,5 @@ coding agents rather than users:
 ## Limits
 
 - POSIX only: the instance lock uses `fcntl` and the shell tool uses process groups.
-- The shell and file tools are not a sandbox.
+- Commands are sandboxed only on Linux with bubblewrap; elsewhere, and whenever the user
+  allows a call outside the work folder, the shell runs with the user's full rights.

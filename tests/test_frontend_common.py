@@ -83,3 +83,16 @@ def test_restart_notices_say_where_the_chosen_frontend_will_be_used():
         "Fix the settings above, then press Restart now.")
     assert restart_notice(settings(startup_error=f"{ALREADY_OPEN} (/d is in use)")) == (
         "Close the other Kayden window, then press Restart now.")
+
+
+def test_a_prompt_says_what_the_call_does_and_where():
+    from kayden.api import PermissionRequest, ToolCall
+    from kayden.frontends.common import PERMISSION_LABELS, request_note
+
+    call = ToolCall("c", "shell", {})
+    notes = {(read_only, confined): request_note(PermissionRequest("p", call, read_only, confined))
+             for read_only in (True, False) for confined in (True, False)}
+    assert notes[False, False] == "It may change things, and can reach outside the work folder."
+    assert notes[True, True] == "It only reads, inside the work folder."
+    assert len(set(notes.values())) == 4
+    assert next(iter(PERMISSION_LABELS)) is PermissionPolicy.ALLOW_WORKSPACE  # listed first

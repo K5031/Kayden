@@ -324,7 +324,7 @@ export ANTHROPIC_API_KEY=...
 cd <project to work in>          # shell/file tools are rooted here
 kayden [--config FILE] [--conversation ID]
     [--model MODEL_ID] [--maintenance-model MODEL_ID]
-    [--permissions ask|allow_read_only|deny] [--data-dir DIR]
+    [--permissions allow_workspace|allow_read_only|ask|deny] [--data-dir DIR]
 ```
 
 The `kayden` command (`[project.scripts]`, installed with `uv tool install --editable`) and
@@ -410,6 +410,21 @@ template. The build stopped compiling its launcher stub: the machine's Python 3.
 before exporting its own policy, and `update_settings` clamps to that. Clamping to the
 environment at update time would clamp to the runtime's own export, and permissions could
 never be loosened in a running instance (`test_permissions_loosen_past_the_policy_this_runtime_exported`).
+
+## Free in the work folder
+
+Design: [Agent Note](notes/implemented/2026-11-10-free-in-the-work-folder.md).
+
+| Choice | Value |
+|---|---|
+| Default policy | `allow_workspace`; saved or configured levels are kept |
+| `Tools.confined` | Called for every gated call before grants and policy; an exception is logged and counts as False |
+| Grants | Tool name -> whether calls that reach outside are covered; a grant from a confined prompt covers confined calls only |
+| File containment | `Path.resolve()` of the argument (default `.`) `is_relative_to` the resolved root, in a thread; a non-string path is not confined |
+| Boundary | None when the root is the home directory or one of its parents (so also `/`) |
+| Sandbox check | `bwrap ... true` once at construction, 5 s limit; any failure leaves the shell unsandboxed |
+| Home in the sandbox | An empty tmpfs directory at the same path, so `$HOME` exists; what a command writes there is gone when it ends |
+| Shell start | `create_subprocess_exec(*sandbox, "sh", "-c", command)`, also without a sandbox |
 
 ## Changes for contract Draft 3 (autonomy into sessions)
 

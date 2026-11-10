@@ -277,7 +277,9 @@ class Runtime:
         self._ops: dict[CallId, Operation] = {}  # running
         self._known_ops: dict[CallId, Operation] = {}  # launched by this process
         self._prompts: dict[str, tuple[PermissionRequest, asyncio.Future[Decision]]] = {}
-        self._grants: set[str] = set()
+        # Tool name -> whether the grant also covers calls that reach outside the work
+        # folder: one given for a confined call covers confined calls only.
+        self._grants: dict[str, bool] = {}
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
         self._unseen = False
@@ -1312,16 +1314,24 @@ class Runtime:
         if policy == PermissionPolicy.DENY:
             auto(Decision.DENY, "policy")
             return "Refused: the permission policy denies tool calls."
-        if call.name in self._grants:
+        try:
+            confined = await self._tools.confined(call)
+        except Exception:  # module calls are wrapped; not knowing means asking
+            logger.exception("Tools.confined failed for %s", call.name)
+            confined = False
+        if call.name in self._grants and (confined or self._grants[call.name]):
             auto(Decision.ALLOW_CONVERSATION, "grant")
             return None
         if policy == PermissionPolicy.ALLOW_READ_ONLY and spec.read_only:
             auto(Decision.ALLOW_ONCE, "policy")
             return None
+        if policy == PermissionPolicy.ALLOW_WORKSPACE and confined:
+            auto(Decision.ALLOW_ONCE, "policy")
+            return None
         if not self._frontend.interactive_permissions:
             auto(Decision.DENY, "non-interactive frontend")
             return "Refused: this call needs permission and the frontend cannot ask."
-        request = PermissionRequest(_new_id(), call, spec.read_only)
+        request = PermissionRequest(_new_id(), call, spec.read_only, confined)
         future: asyncio.Future[Decision] = asyncio.get_running_loop().create_future()
         self._prompts[request.id] = (request, future)
         self._emit(PermissionRequested(request))
@@ -1331,7 +1341,7 @@ class Runtime:
         if decision == Decision.DENY:
             return "Refused: permission denied."
         if decision == Decision.ALLOW_CONVERSATION:
-            self._grants.add(call.name)
+            self._grants[call.name] = self._grants.get(call.name, False) or not confined
         return None
 
     def _launch(self, call: ToolCall, spec: ToolSpec) -> Operation:

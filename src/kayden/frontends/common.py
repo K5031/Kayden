@@ -3,14 +3,31 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 
 from __future__ import annotations
 
-from kayden.api import ModelInfo, ModuleChoice, PermissionPolicy, Settings, SettingsUpdate
+from kayden.api import (
+    ModelInfo,
+    ModuleChoice,
+    PermissionPolicy,
+    PermissionRequest,
+    Settings,
+    SettingsUpdate,
+)
 from kayden.runtime.instance import ALREADY_OPEN
 
 PERMISSION_LABELS = {
-    PermissionPolicy.ASK: "Ask me before every action",
+    PermissionPolicy.ALLOW_WORKSPACE: "Work freely in the work folder, ask before anything else",
     PermissionPolicy.ALLOW_READ_ONLY: "Read freely, ask before changes",
+    PermissionPolicy.ASK: "Ask me before every action",
     PermissionPolicy.DENY: "Never run tools",
 }
+
+
+def request_note(request: PermissionRequest) -> str:
+    """What a call that asks for permission does, for the prompt."""
+    if request.confined:
+        return ("It only reads, inside the work folder." if request.read_only
+                else "It may change things inside the work folder.")
+    return ("It only reads, but can reach outside the work folder." if request.read_only
+            else "It may change things, and can reach outside the work folder.")
 
 
 def money(value: float) -> str:

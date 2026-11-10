@@ -185,6 +185,11 @@ class ToolsConformance:
         assert out.is_error
         assert out.content, "errors should explain themselves to the model"
 
+    async def test_confined_answers_for_every_call(self, tools: Tools, cases: ToolCases) -> None:
+        for call in (cases.quick, cases.failing, cases.long_running, *cases.extra):
+            assert isinstance(await tools.confined(call), bool), call.name
+        assert await tools.confined(ToolCall("x", "no-such-tool", {})) is False
+
     async def test_unknown_tool_is_an_error_output(self, tools, make_ctx) -> None:
         call = ToolCall("unknown", "no_such_tool_xyz", {})
         out = await tools.execute(call, make_ctx(call))

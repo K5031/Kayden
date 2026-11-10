@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 from pathlib import Path
 
 import pytest
@@ -139,6 +140,70 @@ async def test_search_files_skips_hidden(tools, tmp_path):
     assert out.content == "pkg/mod.py:1: def answer():"
     out = await run(tools, tmp_path, "search_files", pattern="(")
     assert out.is_error
+
+
+# ── confined to the work folder ──
+
+BWRAP = pytest.mark.skipif(shutil.which("bwrap") is None, reason="needs bubblewrap")
+
+
+async def confined(tools: ShellFilesTools, name: str, **args) -> bool:
+    return await tools.confined(ToolCall("c", name, args))
+
+
+async def test_file_calls_are_confined_by_path(tools, workspace, tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+    (workspace / "link").symlink_to(outside)
+    assert await confined(tools, "read_file", path="hello.txt")
+    assert await confined(tools, "read_file", path=str(workspace / "hello.txt"))
+    assert await confined(tools, "write_file", path="new/dir/file.txt", content="x")
+    assert await confined(tools, "list_files")
+    assert await confined(tools, "search_files", pattern="x", path="pkg")
+    assert not await confined(tools, "read_file", path=str(outside))
+    assert not await confined(tools, "read_file", path="../outside.txt")
+    assert not await confined(tools, "read_file", path="link")  # a symlink leading out
+    assert not await confined(tools, "list_files", path=str(tmp_path))
+    assert not await confined(tools, "read_file", path=3)
+    assert not await confined(tools, "nope")
+
+
+@BWRAP
+async def test_a_sandboxed_command_cannot_leave_the_workspace(tools, workspace, tmp_path):
+    assert await confined(tools, "shell", command="true")
+    assert not await confined(tools, "shell", command="true", unsandboxed=True)
+    outside = tmp_path / "outside.txt"
+    out = await run(tools, tmp_path, "shell", command=(
+        f"cat hello.txt; echo in > inside.txt; echo out > {outside}; "
+        'echo "home:$(ls -A ~ | wc -l)"; test -e /run/user/$(id -u)/bus && echo BUS; true'))
+    assert "hello" in out.content and "home:0" in out.content and "BUS" not in out.content
+    assert (workspace / "inside.txt").read_text() == "in\n"
+    assert not outside.exists()
+
+    out = await run(tools, tmp_path, "shell", command=f"echo out > {outside}", unsandboxed=True)
+    assert not out.is_error and outside.read_text() == "out\n"
+
+
+async def test_without_a_sandbox_the_shell_is_not_confined(workspace, tmp_path, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    tools = ShellFilesTools(workspace)
+    assert not await confined(tools, "shell", command="true")
+    assert await confined(tools, "read_file", path="hello.txt")
+    outside = tmp_path / "outside.txt"
+    out = await run(tools, tmp_path, "shell", command=f"echo out > {outside}")
+    assert not out.is_error and outside.exists()  # runs as before, after the user allowed it
+
+
+async def test_a_work_folder_that_holds_the_home_folder_confines_nothing(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "project").mkdir(parents=True)
+    (home / "notes.txt").write_text("x")
+    monkeypatch.setenv("HOME", str(home))
+    for root in (home, tmp_path):  # the home folder itself, and a folder that holds it
+        tools = ShellFilesTools(root)
+        assert not await confined(tools, "read_file", path=str(home / "notes.txt"))
+        assert not await confined(tools, "shell", command="true")
+    assert await confined(ShellFilesTools(home / "project"), "list_files")
 
 
 async def test_read_only_flags(tools):

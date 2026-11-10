@@ -16,7 +16,7 @@ kayden --conversation ID       # continue a conversation
 |---|---|
 | `--conversation ID` | Start right away in this conversation |
 | `--model ID`, `--maintenance-model ID` | Override the models for this run |
-| `--permissions ask\|allow_read_only\|deny` | Override the [permission level](settings.md#permissions) for this run |
+| `--permissions allow_workspace\|allow_read_only\|ask\|deny` | Override the [permission level](settings.md#permissions) for this run |
 | `--data-dir DIR`, `--config FILE` | Use another data folder or config file |
 | `--show-config` | Print the settings Kayden would use, then exit |
 

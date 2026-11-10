@@ -49,7 +49,8 @@ async def test_the_log_holds_no_content(make: Any) -> None:
     (finished,) = of(lines, "ToolFinished")
     assert finished["call_id"] == "c1" and finished["status"] == "ok"
     assert of(lines, "PermissionRequested") == [
-        {"request_id": request.id, "call_id": "c1", "name": "t", "read_only": False}]
+        {"request_id": request.id, "call_id": "c1", "name": "t", "read_only": False,
+         "confined": False}]
     (changed, *_) = of(lines, "SettingsChanged")
     assert changed["settings"]["system_prompt_chars"] == len("SECRET-PROMPT")
     assert "system_prompt" not in changed["settings"]

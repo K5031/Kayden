@@ -58,7 +58,8 @@ def _logged(event: RuntimeEvent) -> dict[str, Any]:
                     "duration_s": duration_s}
         case PermissionRequested(request=request):
             return {"request_id": request.id, "call_id": request.call.id,
-                    "name": request.call.name, "read_only": request.read_only}
+                    "name": request.call.name, "read_only": request.read_only,
+                    "confined": request.confined}
     data = dataclasses.asdict(event)
     match event:
         case SettingsChanged():

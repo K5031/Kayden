@@ -19,8 +19,8 @@ mkdir ~/kayden-work && cd ~/kayden-work
 kayden
 ```
 
-Kayden's tools work in the folder you start it from and are **not a sandbox**: start it in
-a folder made for it.
+Kayden works freely in the folder you start it from and asks before anything outside it.
+Start it in a folder made for it; your home folder is too broad to count.
 
 ## Documentation
 

@@ -197,7 +197,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", help="model id (default: the first the Core lists)")
     parser.add_argument("--maintenance-model", help="cheaper model for memory maintenance")
     parser.add_argument("--permissions", choices=[p.value for p in PermissionPolicy],
-                        help="tool permission policy (default: ask)")
+                        help="tool permission policy (default: allow_workspace)")
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
     return parser.parse_args(argv)

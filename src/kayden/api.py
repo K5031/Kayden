@@ -667,6 +667,13 @@ class Tools(abc.ABC):
     @abc.abstractmethod
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput: ...
 
+    async def confined(self, call: ToolCall) -> bool:
+        """True when this call can read and change nothing outside the module's work
+        folder. Optional: False (the default) makes the runtime ask under
+        ALLOW_WORKSPACE. Called before the permission decision; an exception counts as
+        False."""
+        return False
+
     async def aclose(self) -> None:
         pass
 
@@ -697,6 +704,8 @@ class PermissionPolicy(StrEnum):
     DENY: every module tool is refused (ToolStatus.REFUSED), no prompts.
     ASK: every module tool prompts unless covered by a conversation grant.
     ALLOW_READ_ONLY: read_only tools run; the rest prompt.
+    ALLOW_WORKSPACE: calls the Tools module reports as confined to its work folder
+    (Tools.confined) run; the rest prompt, read_only ones included.
     Built-in tools are never gated. With a non-interactive frontend, the calls that
     would have prompted are refused instead; automatic allows still apply.
     """
@@ -704,6 +713,7 @@ class PermissionPolicy(StrEnum):
     DENY = "deny"
     ASK = "ask"
     ALLOW_READ_ONLY = "allow_read_only"
+    ALLOW_WORKSPACE = "allow_workspace"
 
     def clamp(self, ceiling: PermissionPolicy) -> PermissionPolicy:
         """The stricter of this policy and the ceiling (spec 10.4)."""
@@ -782,6 +792,7 @@ class PermissionRequest:
     id: str
     call: ToolCall
     read_only: bool
+    confined: bool = False  # the call stays inside the Tools' work folder (Tools.confined)
 
 
 @dataclass(frozen=True, slots=True)

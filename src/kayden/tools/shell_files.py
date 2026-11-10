@@ -1,8 +1,13 @@
 """Minimal Tools module: shell commands and file operations (POSIX only).
 
 Relative paths resolve against the workspace root, which is also the shell's working
-directory. Absolute paths are accepted: this is a convenience, not a sandbox. Commands
-inherit the process environment unchanged (PERMISSION_CEILING_ENV included).
+directory. Commands inherit the process environment unchanged (PERMISSION_CEILING_ENV
+included).
+
+The workspace is a boundary the runtime can rely on (`confined`): a file call is confined
+when its path is inside it, and a shell command when it runs in the bubblewrap sandbox,
+where only the workspace is writable and the home directories are hidden. Calls that
+reach outside still work; the runtime asks the user first.
 """
 
 from __future__ import annotations
@@ -11,7 +16,9 @@ import asyncio
 import contextlib
 import os
 import re
+import shutil
 import signal
+import subprocess
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator, Sequence
@@ -59,9 +66,16 @@ SHELL = ToolSpec(
         "stderr plus the exit code. Output is truncated to the first and last part when "
         "long. Non-zero exit codes are reported as errors."
     ),
-    parameters=_object({"command": _STRING}, ["command"]),
+    parameters=_object({"command": _STRING, "unsandboxed": {"type": "boolean"}}, ["command"]),
     stall_timeout=SHELL_STALL_TIMEOUT,
 )
+SANDBOX_NOTE = (
+    " Commands run in a sandbox: they can read and write the workspace, read the system "
+    "and use the network, but the rest of the home directory is hidden and nothing "
+    "outside the workspace can be changed. Set `unsandboxed` to true only when a command "
+    "needs something outside; the user is then asked first, so say why."
+)
+SANDBOX_CHECK_TIMEOUT = 5.0  # seconds for the one test run of the sandbox at startup
 FILE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="read_file",
@@ -135,6 +149,32 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
 factory.display_name = "Shell and files"  # type: ignore[attr-defined]
 
 
+def _sandbox(root: Path, home: Path) -> list[str] | None:
+    """The bubblewrap command line that confines a shell command to `root`, or None when
+    the sandbox does not work here (not installed, user namespaces disabled, or already
+    inside a sandbox). Blocking: run it where module factories run, off the event loop.
+
+    The whole system is visible read-only, so installed programs run; home directories,
+    /tmp and the session's runtime directory are replaced by empty ones, and only the
+    workspace is bound back, writable. The network is left as it is."""
+    bwrap = shutil.which("bwrap")
+    if bwrap is None:
+        return None
+    hidden = [p for p in (Path("/home"), Path("/root"), Path("/run/user"), Path("/tmp"), home)
+              if p.is_dir()]
+    command = [bwrap, "--ro-bind", "/", "/"]
+    for path in hidden:
+        command += ["--tmpfs", str(path)]
+    command += ["--dir", str(home), "--bind", str(root), str(root), "--dev", "/dev",
+                "--proc", "/proc", "--unshare-pid", "--die-with-parent", "--chdir", str(root)]
+    try:
+        works = subprocess.run([*command, "true"], check=False, capture_output=True,
+                               timeout=SANDBOX_CHECK_TIMEOUT).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        works = False
+    return command if works else None
+
+
 class ShellFilesTools(Tools):
     """`shell_timeout`: hard limit per command (None = runtime default, math.inf = none).
     `shell_stall_timeout`: seconds without output before the command counts as hung."""
@@ -147,7 +187,13 @@ class ShellFilesTools(Tools):
         shell_stall_timeout: float | None = SHELL_STALL_TIMEOUT,
     ) -> None:
         self.root = Path(root).expanduser().resolve()
+        home = Path.home().resolve()
+        # A workspace that is or holds the home directory (or is /) is no boundary.
+        self._bounded = self.root != home and self.root not in home.parents
+        self._sandbox = _sandbox(self.root, home) if self._bounded else None
         shell = replace(SHELL, timeout=shell_timeout, stall_timeout=shell_stall_timeout)
+        if self._sandbox is not None:
+            shell = replace(shell, description=shell.description + SANDBOX_NOTE)
         self._spec_list = (shell, *FILE_SPECS)
         self._specs = {spec.name: spec for spec in self._spec_list}
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
@@ -161,6 +207,18 @@ class ShellFilesTools(Tools):
 
     async def list_tools(self) -> Sequence[ToolSpec]:
         return self._spec_list
+
+    async def confined(self, call: ToolCall) -> bool:
+        if not self._bounded or call.name not in self._handlers:
+            return False
+        if call.name == "shell":
+            return self._sandbox is not None and call.arguments.get("unsandboxed") is not True
+        path = call.arguments.get("path", ".")
+        return isinstance(path, str) and await asyncio.to_thread(self._inside, path)
+
+    def _inside(self, raw: str) -> bool:
+        """Whether the path, with symlinks followed, is in the workspace."""
+        return self._path(raw).resolve().is_relative_to(self.root)
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         spec = self._specs.get(call.name)
@@ -194,8 +252,9 @@ class ShellFilesTools(Tools):
         # to close, which never happens while a backgrounded child holds stdout.
         read_fd, write_fd = os.pipe()
         try:
-            proc = await asyncio.create_subprocess_shell(
-                args["command"],
+            sandbox = [] if self._sandbox is None or args.get("unsandboxed") else self._sandbox
+            proc = await asyncio.create_subprocess_exec(
+                *sandbox, "sh", "-c", args["command"],
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=write_fd,
                 stderr=asyncio.subprocess.STDOUT,

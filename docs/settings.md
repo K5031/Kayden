@@ -72,9 +72,31 @@ that runs with your permissions, so install only ones you trust; see
 
 | Level | The agent |
 |---|---|
-| Ask me before every action | Asks before every tool call (the default) |
-| Read freely, ask before changes | Reads, lists and searches files on its own; asks before commands and changes |
+| Work freely in the work folder, ask before anything else | Reads and changes files in its work folder and runs commands there without asking; asks before anything outside it (the default) |
+| Read freely, ask before changes | Reads, lists and searches files anywhere on its own; asks before commands and changes |
+| Ask me before every action | Asks before every tool call |
 | Never run tools | Can only talk |
+
+**How "in the work folder" is enforced.** A file action counts as inside when its path is
+in the work folder; a link that leads out of it counts as outside. Commands run in a
+sandbox ([bubblewrap](https://github.com/containers/bubblewrap)) in which they can:
+
+- read and change the work folder;
+- read the system, so installed programs run;
+- use the network.
+
+They cannot change anything else, and cannot see your home folder, other programs or your
+desktop session. When a command needs more, for example a tool installed in your home
+folder, the agent asks to run it outside the sandbox, and the question says so.
+
+Things to know:
+
+- **Keep secrets out of the work folder.** A command there can send the folder's contents
+  anywhere.
+- **Without the sandbox, commands ask.** That is the case on macOS and on Linux without
+  bubblewrap; file actions in the work folder still run freely.
+- **Your home folder is not a work folder.** If the work folder is your home folder, or a
+  folder that contains it, nothing counts as inside and every action asks.
 
 ## Spending limit
 
@@ -113,7 +135,7 @@ factory = "kayden.core.openai_compat:deepseek_factory"
 [runtime]
 model = "deepseek-flash"
 maintenance_model = "deepseek-flash"
-permissions = "ask"                 # ask | allow_read_only | deny
+permissions = "allow_workspace"     # allow_workspace | allow_read_only | ask | deny
 system_prompt_file = "prompt.md"    # or: system_prompt = "..."
 
 [runtime.budget]                    # each limit optional

@@ -44,9 +44,9 @@ Kayden uses Claude unless you choose another provider.
 
 ## First run
 
-Kayden's tools work in the folder you start it from, and they are **not a sandbox**: a
-command the agent runs can reach anything your user account can. Start in a folder made for
-it:
+Kayden's tools work in the folder you start it from, its **work folder**. By default the
+agent does what it likes inside that folder and asks before anything outside it (see
+[Permissions](settings.md#permissions)). Start in a folder made for it:
 
 ```bash
 mkdir ~/kayden-work && cd ~/kayden-work

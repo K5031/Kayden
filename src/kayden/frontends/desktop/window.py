@@ -83,6 +83,7 @@ from kayden.frontends.common import (
     model_label,
     module_options,
     needs_restart,
+    request_note,
     restart_notice,
 )
 from kayden.frontends.desktop import app_menu, theme
@@ -523,9 +524,9 @@ class PermissionCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
         call = request.call
-        kind = "It only reads." if request.read_only else "It may change things."
         layout.addWidget(_label(f"Kayden wants to use {call.name}", role="strong"))
-        layout.addWidget(_label(f"{kind} {summarize_arguments(call.arguments)}", tone="muted"))
+        layout.addWidget(_label(f"{request_note(request)} {summarize_arguments(call.arguments)}",
+                                tone="muted"))
         buttons = QHBoxLayout()
         for decision, label in ((Decision.ALLOW_ONCE, "Allow once"),
                                 (Decision.ALLOW_CONVERSATION, "Allow for this conversation"),
@@ -1467,8 +1468,9 @@ class WelcomeDialog(QDialog):
         self.limit = QLineEdit()
         self.limit.setPlaceholderText("No limit")
         column.addWidget(self.limit)
-        column.addWidget(_label("Kayden asks before every action. You can change that, and "
-                                "everything here, in Settings."))
+        column.addWidget(_label("Kayden works freely in its work folder and asks before "
+                                "anything outside it. You can change that, and everything "
+                                "here, in Settings."))
         self.finish_error = _label()
         theme.mark(self.finish_error, "tone", "error")
         self.finish_error.hide()

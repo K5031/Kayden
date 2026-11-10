@@ -98,6 +98,7 @@ from kayden.frontends.common import (
     model_label,
     module_options,
     needs_restart,
+    request_note,
     restart_notice,
 )
 
@@ -306,12 +307,11 @@ class PermissionPrompt(Vertical):
 
     def compose(self) -> ComposeResult:
         call = self.request.call
-        kind = "only reads" if self.request.read_only else "may change things"
         yield Label(
             Text.assemble(
                 ("Kayden wants to use ", "bold"),
                 (call.name, "bold cyan"),
-                f" ({kind})\n",
+                f"\n{request_note(self.request)}\n",
                 (_format_args(call.arguments), "dim"),
             )
         )
