@@ -186,6 +186,18 @@ three-page welcome window, shown before `start()`:
 
 Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the message box.
 
+### Look
+
+The app draws its own look instead of the platform's: Qt's Fusion style, a palette and a
+style sheet built from it (`kayden.frontends.desktop.theme`), and a few custom-painted
+widgets (the switches, sidebar and memory rows, the send and lock icons). There is one
+indigo accent; everything else is neutral gray. Light and dark follow the system's color
+scheme and switch while the app runs. Your messages are accent bubbles on the right;
+Kayden's replies are plain text beside an avatar, which stays readable when long. The
+message box is rounded with the send button inside it, and the status line sits under it
+instead of in a status bar. The view model stays free of Qt; only `window.py` and `theme.py`
+know about the look.
+
 ### Scope
 
 **Version 1:**
@@ -240,6 +252,12 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 - **PySide6 with QtWebEngine for the transcript.** HTML rendering would be reusable on the
   web, but QtWebEngine bundles Chromium, which multiplies the bundle size.
   `QTextBrowser` Markdown covers what the TUI shows.
+- **The platform's own widget style.** Plain Qt widgets need no styling code and match the
+  system, but the owner found them gray and dated for a chat app aimed at non-technical
+  users, and they look different on every platform.
+- **QML (Qt Quick) for a chat look.** It makes custom chat visuals easier, but it is a
+  second UI technology next to Widgets and would mean rewriting every window. A style sheet
+  reaches the approved design with small widget changes.
 - **PyQt6.** It has the same Qt and the same loop story, but a GPL or commercial license.
 - **A React UI in Electron or Tauri, with Kayden as a Python sidecar.** It gives the most
   polished UI for the least effort, the largest ecosystem (chat, Markdown, code
@@ -302,7 +320,9 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
   cannot do.
 - **Signing costs and gatekeeping.** Apple notarization needs a paid developer account.
   Unsigned builds are blocked by Gatekeeper.
-- **Qt look on GNOME.** On GNOME, Qt widgets look less native than GTK ones.
+- **Not the platform's look.** The app looks the same on macOS, GNOME and KDE, and matches
+  none of them exactly. System font size and light or dark are followed; the platform's
+  accent color, widget shapes and high-contrast themes are not.
 - **Web reuse is limited to the view model.** A web frontend will need its own rendering
   layer.
 - **Ignoring the configured frontend.** `kayden-desktop` ignores `[frontend]` in

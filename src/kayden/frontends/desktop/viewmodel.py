@@ -10,6 +10,7 @@ a slow command never blocks event handling.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -564,12 +565,34 @@ class ConversationModel:
 
 
 def conversation_label(info: ConversationInfo) -> str:
-    """Its title, else the start of its first message, else when it began."""
+    """Its title, else the start of its first message, else "New chat"."""
     if info.title:
         return info.title
     if info.preview and info.preview.strip():
         return clip(info.preview, LABEL_CHARS)
-    return time.strftime("Conversation of %d %b %Y, %H:%M", time.localtime(info.created_at))
+    return "New chat"
+
+
+def conversation_preview(info: ConversationInfo) -> str:
+    """The sidebar's second line: the start of the first message, unless it is the label."""
+    if not info.title or not info.preview or not info.preview.strip():
+        return ""
+    return clip(info.preview, LABEL_CHARS)
+
+
+def relative_date(timestamp: float, now: float | None = None) -> str:
+    """The time today, "Yesterday", the weekday within a week, else the date."""
+    when = time.localtime(timestamp)
+    today = time.localtime(time.time() if now is None else now)
+    days = (datetime.date(*today[:3]) - datetime.date(*when[:3])).days
+    if days <= 0:
+        return time.strftime("%H:%M", when)
+    if days == 1:
+        return "Yesterday"
+    if days < 7:
+        return time.strftime("%a", when)
+    date = f"{when.tm_mday} {time.strftime('%b', when)}"
+    return date if when.tm_year == today.tm_year else f"{date} {when.tm_year}"
 
 
 def memory_source(entry: MemoryEntry) -> str:

@@ -367,6 +367,12 @@ Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
 | Quit order | `setQuitOnLastWindowClosed(False)`: closing the window ends `Frontend.run`, the runtime shuts down, then `asyncio.run` returns |
 | "Get a key" pages | `platform.claude.com`, `platform.deepseek.com/api_keys`, `platform.openai.com/api-keys` |
 | Shared with the TUI | `kayden.frontends.common`: permission labels, money formatting, `loosening()` |
+| Look | Fusion style plus a palette and style sheet from `theme.py`; light or dark from `QStyleHints.colorScheme()`, followed live |
+| Accent | Indigo `#5B5BD6` (light), `#8C8CF5` (dark); the rest neutral gray |
+| Text sizes | Relative to the system font: small 0.85×, title 1.15×, heading 1.45× |
+| Sidebar row | Title (the title, else the first message, else "New chat"), date (time today, "Yesterday", weekday within a week, else "3 Nov", plus the year when not this year), and the first message as a second line when the title is not it |
+| Your messages | At most 75 % of the transcript's width |
+| Message box | Grows with its text to 6 lines |
 
 **PySide6 on Python 3.15.** With PySide6 6.12 loaded, reading a lazily imported module
 attribute (PEP 810) from another module returns the `lazy_import` object instead of

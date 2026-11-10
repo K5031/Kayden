@@ -52,10 +52,12 @@ from kayden.frontends.desktop.viewmodel import (
     ToolItem,
     UserItem,
     conversation_label,
+    conversation_preview,
     form_from,
     memory_source,
     needs_welcome,
     newest_first,
+    relative_date,
     settings_update,
     user_message,
 )
@@ -545,9 +547,13 @@ def test_welcome_conversation_labels_and_refusals():
     new = ConversationInfo("b", None, 0.0, 2.0)
     assert newest_first([old, new]) == [new, old]
     assert conversation_label(old) == "Trip plans"
-    assert conversation_label(new).startswith("Conversation of ")
+    assert conversation_label(new) == "New chat"
     previewed = ConversationInfo("c", None, 0.0, 3.0, preview="  What should I\npack for Oslo?")
     assert conversation_label(previewed) == "What should I pack for Oslo?"
+    assert conversation_preview(previewed) == ""  # already the label
+    assert conversation_preview(replace(previewed, title="Oslo trip")) == (
+        "What should I pack for Oslo?")
+    assert conversation_preview(old) == ""
     assert conversation_label(replace(previewed, preview="x" * 200)).endswith("…")
     assert len(conversation_label(replace(previewed, preview="x" * 200))) == LABEL_CHARS
     assert user_message(RuntimeStateError("cannot start while thinking")) == BUSY_MESSAGE
@@ -555,3 +561,18 @@ def test_welcome_conversation_labels_and_refusals():
     assert user_message(InstanceLockedError("session mode in /d is already in use by process 7")
                         ).startswith("Kayden is already open")
     assert user_message(ValueError("unknown model x")) == "unknown model x"
+
+
+def test_relative_dates():
+    import time
+
+    now = time.mktime((2026, 11, 10, 15, 30, 0, 0, 0, -1))  # a Tuesday
+
+    def at(day: int, hour: int = 9, month: int = 11, year: int = 2026) -> float:
+        return time.mktime((year, month, day, hour, 5, 0, 0, 0, -1))
+
+    assert relative_date(at(10), now) == "09:05"
+    assert relative_date(at(9, 23), now) == "Yesterday"
+    assert relative_date(at(5), now) == "Thu"
+    assert relative_date(at(3), now) == "3 Nov"
+    assert relative_date(at(3, year=2025), now) == "3 Nov 2025"

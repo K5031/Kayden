@@ -18,6 +18,8 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QP
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
 from kayden.frontends.desktop.viewmodel import OPEN_DELETE_MESSAGE, Controller, ConversationModel
 from kayden.frontends.desktop.window import (
+    DATE_ROLE,
+    PREVIEW_ROLE,
     AssistantBubble,
     MainWindow,
     PermissionCard,
@@ -266,6 +268,37 @@ async def test_sidebar_labels_rename_and_archive(make, qapp):
     menu = window.conversation_menu(window.conversation_info(other.id))
     action(menu, "Unarchive").trigger()
     await eventually(lambda: "Oslo trip" in entries(window))
+
+
+async def test_sidebar_rows_show_a_preview_and_a_date(make, qapp):
+    h: Harness = await make()
+    named = await h.start()
+    await h.turn("What should I pack for Oslo?")
+    await h.runtime.rename_conversation(named.id, "Oslo trip")
+    untitled = await h.start()
+    await h.turn("Tidy my invoices folder")
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    rows = {window.conversation_list.item(i).text(): window.conversation_list.item(i)
+            for i in range(window.conversation_list.count())}
+    assert set(rows) == {"New chat", "Tidy my invoices folder", "Oslo trip"}
+    assert rows["Oslo trip"].data(PREVIEW_ROLE) == "What should I pack for Oslo?"
+    assert rows["Tidy my invoices folder"].data(PREVIEW_ROLE) == ""  # the label already is
+    assert ":" in rows["Oslo trip"].data(DATE_ROLE)  # updated today: the time
+    assert untitled.id in window._conversations
+
+
+async def test_an_empty_conversation_shows_the_empty_state(make, qapp):
+    h: Harness = await make()
+    h.core.add(Step(text="hi"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    window._rebuild()
+    assert window.empty_state.isVisibleTo(window)
+    controller.send("hello")
+    await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
+    assert not window.empty_state.isVisibleTo(window)
 
 
 async def test_delete_asks_and_offers_archive_first(make, qapp):
