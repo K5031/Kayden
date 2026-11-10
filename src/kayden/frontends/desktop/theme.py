@@ -144,6 +144,8 @@ QToolButton {{ background: transparent; border: none; border-radius: 6px; paddin
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
 QToolButton#send {{ background: {c.accent}; border-radius: 16px; padding: 0; }}
 QToolButton#send:hover {{ background: {c.accent_hover}; }}
+QToolButton#folder {{ padding: 0 4px; }}
+QToolButton#folder:hover {{ background: {c.line}; color: {c.text}; }}
 
 QLineEdit, QComboBox, QPlainTextEdit, QTextEdit {{ background: {c.field}; color: {c.text};
     border: 1px solid {c.line}; border-radius: 8px; padding: 5px 8px;
@@ -209,7 +211,7 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
-    """A line icon: "send" (an up arrow) or "stop" (a square)."""
+    """A line icon: "send" (an up arrow), "stop" (a square) or "folder"."""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.setDevicePixelRatio(scale)
@@ -231,5 +233,14 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
         case "stop":
             painter.setBrush(QColor(color))
             painter.drawRoundedRect(QRectF(s * 0.3, s * 0.3, s * 0.4, s * 0.4), 1.5, 1.5)
+        case "folder":
+            path = QPainterPath(QPointF(s * 0.12, s * 0.78))
+            path.lineTo(s * 0.12, s * 0.24)
+            path.lineTo(s * 0.4, s * 0.24)
+            path.lineTo(s * 0.5, s * 0.36)
+            path.lineTo(s * 0.88, s * 0.36)
+            path.lineTo(s * 0.88, s * 0.78)
+            path.closeSubpath()
+            painter.drawPath(path)
     painter.end()
     return QIcon(pixmap)

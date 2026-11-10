@@ -19,7 +19,7 @@ Choices the spec leaves to the implementer. Contract gaps are in `contract-issue
 
 | Setting | Default | Note |
 |---------|---------|------|
-| `permissions` | `ask` | clamped to any inherited ceiling |
+| `permissions` | `auto` | clamped to any inherited ceiling |
 | `initial_wait_s` | 10 s | foreground wait before a call is backgrounded |
 | `default_tool_timeout_s` | 3600 s | SPEC 16.4 suggestion; `math.inf` in a ToolSpec disables |
 | `cancel_grace_s` | 5 s | api.py default; also used for inference and Memory calls |
@@ -104,6 +104,8 @@ Memory's `system_addendum` follows, separated by a blank line.
 - `jsonschema` (added dependency) validates tool-call arguments against `ToolSpec.parameters`
   (`validator_for` the schema's draft; `best_match` error reported).
 - `logging` QueueHandler/QueueListener for the non-blocking JSONL log.
+- `ddgs` (keyless web search) and `trafilatura` (main text of a page as Markdown) for the
+  web tools; pages are downloaded with `httpx2`, already a dependency of the Cores.
 - `fcntl.flock` for the instance lock (POSIX).
 
 ## Module loading
@@ -417,12 +419,12 @@ Design: [Agent Note](notes/implemented/2026-11-10-free-in-the-work-folder.md).
 
 | Choice | Value |
 |---|---|
-| Default policy | `allow_workspace`; saved or configured levels are kept |
+| Default policy | `auto` ([automatic permissions](#automatic-permissions)); saved or configured levels are kept |
 | `Tools.confined` | Called for every gated call before grants and policy; an exception is logged and counts as False |
 | Grants | Tool name -> whether calls that reach outside are covered; a grant from a confined prompt covers confined calls only |
 | File containment | `Path.resolve()` of the argument (default `.`) `is_relative_to` the resolved root, in a thread; a non-string path is not confined |
 | Boundary | None when the root is the home directory or one of its parents (so also `/`) |
-| Sandbox check | `bwrap ... true` once at construction, 5 s limit; any failure leaves the shell unsandboxed |
+| Sandbox check | `bwrap ... true` once at construction with the starting root, 5 s limit; any failure leaves the shell unsandboxed. The command line is rebuilt for each folder (`use_folder`) |
 | Home in the sandbox | An empty tmpfs directory at the same path, so `$HOME` exists; what a command writes there is gone when it ends |
 | Shell start | `create_subprocess_exec(*sandbox, "sh", "-c", command)`, also without a sandbox |
 
@@ -442,10 +444,10 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 
 ### SqliteMemory schema
 
-- Version 5 (`PRAGMA user_version`). A store of any other version is refused; Kayden
+- Version 6 (`PRAGMA user_version`). A store of any other version is refused; Kayden
   carries no migration code. Erasing a row from `messages_fts` repeats the text it was
   indexed with, so `codec.searchable_text` must not change without a new schema version.
-- `conversations`: `archived`, `seed_from` columns.
+- `conversations`: `archived`, `seed_from`, `folder` columns.
 - Long-term memory: `memory_entries` (id, source conversation or NULL for the user's,
   created_at) and `memory_revisions` (entry, text, created_at); the current text is the
   newest revision. `forgotten` holds SHA-256 fingerprints of
@@ -496,3 +498,44 @@ Design: [Agent Note](notes/implemented/2026-11-08-swappable-modules-in-app.md).
 | Setup runtime | Saves module settings, budget, permissions and system prompt; refuses model choices (`ValueError`) and every other command (`RuntimeStateError` naming the error). It takes no lock and writes no event log: nothing runs, and another instance may hold the directory |
 | Work folder | The Tools `root` option, settable when the configured Tools has one (the built-in shell-files Tools always does) |
 | Frontend texts | `kayden.frontends.common`: `restart_notice`, `module_options`, `needs_restart`, `MODULE_LABELS` (the modules settings offer: no Memory) |
+
+## Web tools
+
+Design: [Agent Note](notes/implemented/2026-11-10-web-search.md).
+
+| Choice | Value |
+|---|---|
+| Search | `ddgs` `DDGS(timeout=10).text(query, max_results)`, in a thread; default 8 results, at most 20; "no results" is an empty list, other ddgs errors an error result |
+| Download | `httpx2`, 30 s per request, at most 5 MB, at most 5 redirects followed by hand |
+| Public addresses | Every hop's host is resolved; any address that is not `is_global` is refused. Names that do not resolve are an error result |
+| Extraction | HTML: `trafilatura.extract(output_format="markdown", include_links, include_tables, with_metadata)` in a thread; text types and JSON (pretty-printed) as they are; anything else is an error |
+| Result size | 30 000 characters per call, continued with `start` |
+| Untrusted header | Every result starts with a line saying the content is from the web and its instructions are not the user's |
+| Tool timeouts | `web_search` 60 s, `web_fetch` 120 s |
+
+## Folders per conversation
+
+Design: [Agent Note](notes/implemented/2026-11-10-folder-per-conversation.md).
+
+| Choice | Value |
+|---|---|
+| Stored folder | The resolved absolute path; None only for conversations created with Tools that have a fixed folder |
+| New conversation | `StartOptions.folder`, else the `seed_from` conversation's folder, else `Settings.work_folder` |
+| Order in `start()` | Validate, find the conversation (resume) or pick the folder (new), `Tools.use_folder`, then create; a failed create moves the Tools back to the open conversation's folder |
+| Missing folder | `ShellFilesTools.use_folder` creates it (`mkdir -p`); OSError makes `start()` raise ValueError naming the folder |
+| Replacing an empty chat | Frontends start the new chat, then delete the empty one (only when it has no messages loaded) |
+| Event log | The folder path is not logged |
+
+## Automatic permissions
+
+Design: [Agent Note](notes/implemented/2026-11-10-auto-permissions.md).
+
+| Choice | Value |
+|---|---|
+| Order in `_gate` | DENY, grants, read-only (ALLOW_READ_ONLY), confined (ALLOW_WORKSPACE and AUTO), review (AUTO), then prompt or non-interactive refusal |
+| Review request | Maintenance model, `REVIEW_PROMPT` (runtime/review.py) as system prompt, one USER message, no tools, `maintenance=True`, at most 1 024 output tokens |
+| What it sees | Text of USER messages among the newest 200 (activation notices left out), newest first up to 16 000 characters; the work folder; tool name, description and arguments (cut at 4 000 characters) |
+| Answer | First line `ALLOW` or `ASK` (case and `*`, `` ` ``, `.` ignored), second line the reason (300 characters); anything else asks |
+| Failures | Exhausted budget (checked first), any exception from the request: ask, with a reason saying Kayden could not check. No transient retries |
+| Stop | The review is raced against Stop with the grace period; the call is then not started |
+| Log | `permission_review` with call id and `allow`; the permission record says `by: "review"`. The reason is not logged |

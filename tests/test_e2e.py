@@ -182,7 +182,7 @@ def test_command_line_flags_override_the_runtime_section(workspace, tmp_path):
 def test_runtime_defaults_without_a_runtime_section(workspace, tmp_path):
     runtime = build_config(["--data-dir", str(tmp_path)]).runtime
     assert runtime.model is None and runtime.maintenance_model is None
-    assert runtime.permissions is PermissionPolicy.ALLOW_WORKSPACE
+    assert runtime.permissions is PermissionPolicy.AUTO
     assert runtime.budget == Budget()
     assert runtime.system_prompt == DEFAULT_SYSTEM_PROMPT
 
@@ -267,7 +267,7 @@ def test_show_config_prints_the_effective_config_without_building_modules(
     assert shown["core"]["options"]["api_key"] == "<redacted>"
     assert shown["core"]["options"]["models"]["m"]["auth_token"] == "<redacted>"
     assert shown["tools"]["options"] == {"root": str(workspace)}
-    assert shown["runtime"]["permissions"] == "allow_workspace"
+    assert shown["runtime"]["permissions"] == "auto"
     assert shown["runtime"]["system_prompt"] == DEFAULT_SYSTEM_PROMPT
     assert shown["runtime"]["budget"] == {"max_cost_usd": 10.0}
     assert "model" not in shown["runtime"]

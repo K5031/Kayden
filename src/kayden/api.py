@@ -225,7 +225,8 @@ class InferenceRequest:
     messages: Sequence[Message]
     tools: Sequence[ToolSpec]
     max_output_tokens: int | None = None
-    # Set on Memory maintenance (requests made through Completion), never on a turn.
+    # Set on the runtime's own one-shot requests (Memory maintenance through Completion,
+    # permission reviews), never on a turn.
     maintenance: bool = False
 
 
@@ -341,6 +342,7 @@ class ConversationInfo:
     archived: bool = False  # hidden from list_conversations() and recall(scope="all")
     seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
     preview: str | None = None  # start of the first user message, for display
+    folder: str | None = None  # work folder, an absolute path; None = the Tools' default
 
 
 @dataclass(frozen=True, slots=True)
@@ -434,10 +436,12 @@ class Memory(abc.ABC):
         *,
         title: str | None = None,
         seed_from: ConversationId | None = None,
+        folder: str | None = None,
     ) -> ConversationInfo:
         """seed_from (KeyError if unknown) starts a conversation that continues another:
         on its first maintain, Memory writes its initial rolling summary from the
-        source's current summary and verbatim tail. The source is not changed."""
+        source's current summary and verbatim tail. The source is not changed. folder is
+        stored as given (ConversationInfo.folder)."""
 
     @abc.abstractmethod
     async def list_conversations(
@@ -667,9 +671,16 @@ class Tools(abc.ABC):
     @abc.abstractmethod
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput: ...
 
+    async def use_folder(self, folder: Path | None) -> None:
+        """Optional. Make `folder` the work folder of the calls that follow, creating it
+        when missing; None = the module's own default. The runtime calls it whenever it
+        opens a conversation, with no call running. Raises OSError when the folder cannot
+        be used. NotImplementedError (the default): the module has one fixed folder."""
+        raise NotImplementedError
+
     async def confined(self, call: ToolCall) -> bool:
-        """True when this call can read and change nothing outside the module's work
-        folder. Optional: False (the default) makes the runtime ask under
+        """True when this call can read and change nothing on this computer outside the
+        module's work folder (a web request reads nothing on it). Optional: False (the default) makes the runtime ask under
         ALLOW_WORKSPACE. Called before the permission decision; an exception counts as
         False."""
         return False
@@ -706,14 +717,21 @@ class PermissionPolicy(StrEnum):
     ALLOW_READ_ONLY: read_only tools run; the rest prompt.
     ALLOW_WORKSPACE: calls the Tools module reports as confined to its work folder
     (Tools.confined) run; the rest prompt, read_only ones included.
-    Built-in tools are never gated. With a non-interactive frontend, the calls that
-    would have prompted are refused instead; automatic allows still apply.
+    AUTO: confined calls run; every other call is reviewed by one request to the
+    maintenance model, which sees the text of the user's messages and the call (never tool
+    results). A clear allow runs it; anything else, a failed review or an exhausted budget
+    included, prompts with the reviewer's reason (PermissionRequest.reason). Reviews are
+    charged to the budget and cancelled by Stop.
+    Conversation grants apply under ASK and looser. Built-in tools are never gated. With a
+    non-interactive frontend, the calls that would have prompted are refused instead;
+    automatic allows still apply.
     """
 
     DENY = "deny"
     ASK = "ask"
     ALLOW_READ_ONLY = "allow_read_only"
     ALLOW_WORKSPACE = "allow_workspace"
+    AUTO = "auto"
 
     def clamp(self, ceiling: PermissionPolicy) -> PermissionPolicy:
         """The stricter of this policy and the ceiling (spec 10.4)."""
@@ -793,6 +811,7 @@ class PermissionRequest:
     call: ToolCall
     read_only: bool
     confined: bool = False  # the call stays inside the Tools' work folder (Tools.confined)
+    reason: str | None = None  # AUTO: why the review asks the user
 
 
 @dataclass(frozen=True, slots=True)
@@ -806,12 +825,15 @@ class OperationInfo:
 @dataclass(frozen=True, slots=True)
 class StartOptions:
     """conversation_id None = a new conversation, else resume that one (KeyError if
-    unknown). seed_from applies to a new conversation only (ValueError with
-    conversation_id) and must name an existing conversation."""
+    unknown). seed_from and folder apply to a new conversation only (ValueError with
+    conversation_id); seed_from must name an existing conversation. folder is the new
+    conversation's work folder (ValueError if it is not a folder, or the Tools have a
+    fixed one); without it, seed_from's folder, else Settings.work_folder."""
 
     conversation_id: ConversationId | None = None
     model: str | None = None
     seed_from: ConversationId | None = None
+    folder: str | None = None
 
 
 MODULE_KINDS = ("core", "memory", "tools", "frontend")
@@ -846,8 +868,8 @@ class Settings:
     """The user settings, in the terms a settings screen shows. Models come from
     list_models(), spending so far from snapshot().usage.
 
-    Runtime settings (model, maintenance model, budget, permissions, system prompt) apply
-    live. Module settings (modules, the API key, the work folder) are what module factories
+    Runtime settings (model, maintenance model, budget, permissions, system prompt, work
+    folder) apply live. Module settings (modules, the API key) are what module factories
     receive: they are saved at once and apply at the next start (restart())."""
 
     modules: Mapping[str, ModuleChoice]  # keyed by MODULE_KINDS
@@ -856,7 +878,9 @@ class Settings:
     budget: Budget
     permissions: PermissionPolicy  # effective: clamped to any inherited ceiling
     system_prompt: str
-    work_folder: str | None  # the Tools' working directory as saved; None = not settable
+    # The folder new conversations get (StartOptions.folder); None = the Tools have a fixed
+    # one. Conversations keep theirs (ConversationInfo.folder).
+    work_folder: str | None
     restart_needed: bool  # saved module settings differ from the running instance
     # The frontend restart() brings up: the chosen one, unless it cannot be shown from the
     # running one (a terminal frontend from a window frontend, a window frontend without a
@@ -970,8 +994,8 @@ class PermissionRequested:
 
 @dataclass(frozen=True, slots=True)
 class PermissionResolved:
-    """Also emitted for runtime-side outcomes, each with a fresh request_id: read-only
-    auto-allow is ALLOW_ONCE, a call covered by a grant is ALLOW_CONVERSATION, the DENY
+    """Also emitted for runtime-side outcomes, each with a fresh request_id: an automatic
+    allow (by policy or review) is ALLOW_ONCE, a call covered by a grant is ALLOW_CONVERSATION, the DENY
     policy, a non-interactive refusal and Stop are DENY. call_id says which call it
     concerned."""
 
@@ -1190,8 +1214,9 @@ class RuntimeAPI(Protocol):
         if any part is invalid (ValueError).
 
         Model, maintenance model, budget, permissions and system prompt apply in any state,
-        from the next inference. Permissions are clamped to any inherited ceiling. Module
-        settings (modules, api_key, work_folder) are saved in any state and build nothing:
+        from the next inference; the work folder from the next new conversation.
+        Permissions are clamped to any inherited ceiling. Module settings (modules,
+        api_key) are saved in any state and build nothing:
         they apply at the next start. A Core change also clears the saved model and
         maintenance model, so the new Core starts on its first model. Keys go to the OS
         keychain under key_name, never to a file.

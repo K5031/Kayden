@@ -199,7 +199,8 @@ async def test_choosing_the_running_module_again_needs_no_restart(make):
     assert saved(h)["modules"] == {"core": "first"}
 
 
-async def test_api_key_and_work_folder_apply_at_the_next_start(make, tmp_path, keychain):
+async def test_the_key_applies_at_the_next_start_the_folder_at_the_next_chat(
+        make, tmp_path, keychain):
     h = await setup(make)
     await h.start()
     s = await h.runtime.update_settings(SettingsUpdate(api_key="sk-1",

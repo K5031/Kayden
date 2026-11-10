@@ -1,8 +1,8 @@
 # Kayden documentation
 
 Kayden is an AI agent that runs on your computer. You talk to it, and it can use tools
-(run commands, read and write files) to get things done. It works with Claude, DeepSeek or
-OpenAI models, using your own API key.
+(run commands, read and write files, search the web) to get things done. It works with
+Claude, DeepSeek or OpenAI models, using your own API key.
 
 | Page | Read it to |
 |---|---|

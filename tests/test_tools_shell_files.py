@@ -215,6 +215,8 @@ async def test_read_only_flags(tools):
         "edit_file": False,
         "list_files": True,
         "search_files": True,
+        "web_search": True,
+        "web_fetch": True,
     }
     stall = {spec.name: spec.stall_timeout for spec in await tools.list_tools()}
     assert stall["shell"] and all(v is None for k, v in stall.items() if k != "shell")
@@ -243,3 +245,45 @@ async def test_factory(workspace, tmp_path, monkeypatch):
     assert isinstance(tools, ShellFilesTools) and tools.root == workspace.resolve()
     monkeypatch.chdir(workspace / "pkg")
     assert factory({}, InstancePaths(tmp_path)).root == (workspace / "pkg").resolve()
+
+
+async def test_use_folder_moves_every_tool_to_that_folder(tools, workspace, tmp_path):
+    other = tmp_path / "other" / "project"
+    await tools.use_folder(other)  # created when missing
+    assert other.is_dir() and tools.root == other.resolve()
+    await run(tools, tmp_path, "write_file", path="notes.txt", content="here")
+    assert (other / "notes.txt").read_text() == "here"
+    assert await confined(tools, "read_file", path="notes.txt")
+    assert not await confined(tools, "read_file", path=str(workspace / "hello.txt"))
+    out = await run(tools, tmp_path, "shell", command="pwd")
+    assert out.content.startswith(str(other.resolve()))
+    await tools.use_folder(None)  # back to the folder the module was built with
+    assert tools.root == workspace.resolve()
+    assert (await run(tools, tmp_path, "read_file", path="hello.txt")).content == "hello\nworld\n"
+
+
+@BWRAP
+async def test_the_sandbox_follows_the_folder(tools, workspace, tmp_path):
+    other = tmp_path / "other"
+    await tools.use_folder(other)
+    assert await confined(tools, "shell", command="true")
+    out = await run(tools, tmp_path, "shell", command=(
+        f"echo in > inside.txt; echo out > {workspace / 'escaped.txt'}; true"))
+    assert not out.is_error
+    assert (other / "inside.txt").exists() and not (workspace / "escaped.txt").exists()
+
+
+async def test_use_folder_on_a_folder_that_holds_home_confines_nothing(tools, tmp_path,
+                                                                       monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    await tools.use_folder(home)
+    assert not await confined(tools, "read_file", path="x.txt")
+    assert not await confined(tools, "shell", command="true")
+
+
+async def test_use_folder_fails_for_a_path_that_cannot_be_a_folder(tools, workspace):
+    with pytest.raises(OSError):
+        await tools.use_folder(workspace / "hello.txt" / "sub")
+    assert tools.root == workspace.resolve()

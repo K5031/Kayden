@@ -57,8 +57,8 @@ def test_module_lists_say_whether_a_key_is_saved():
 
 def test_module_settings_need_a_restart():
     assert needs_restart(SettingsUpdate(modules={"core": "local"}))
-    assert needs_restart(SettingsUpdate(api_key="k")) and needs_restart(
-        SettingsUpdate(work_folder="/x"))
+    assert needs_restart(SettingsUpdate(api_key="k"))
+    assert not needs_restart(SettingsUpdate(work_folder="/x"))  # the next new chat gets it
     assert not needs_restart(SettingsUpdate(model="m2", budget=Budget()))
 
 
@@ -95,4 +95,6 @@ def test_a_prompt_says_what_the_call_does_and_where():
     assert notes[False, False] == "It may change things, and can reach outside the work folder."
     assert notes[True, True] == "It only reads, inside the work folder."
     assert len(set(notes.values())) == 4
-    assert next(iter(PERMISSION_LABELS)) is PermissionPolicy.ALLOW_WORKSPACE  # listed first
+    reviewed = PermissionRequest("p", call, False, False, "It deletes your photos.")
+    assert request_note(reviewed).endswith("folder. Why it asks: It deletes your photos.")
+    assert next(iter(PERMISSION_LABELS)) is PermissionPolicy.AUTO  # the default, listed first

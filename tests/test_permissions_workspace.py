@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from kayden.api import AgentState, Decision, PermissionPolicy, ToolCall, Tools, ToolStatus
-from kayden.runtime import RuntimeConfig
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -63,10 +62,9 @@ async def test_tools_that_cannot_tell_ask_for_everything(make: Any) -> None:
     assert await Tools.confined(tools, ToolCall("x", "inside", {})) is False  # the default
 
 
-def test_it_is_the_default_and_the_loosest_level(tmp_path: Any) -> None:
-    assert RuntimeConfig(data_dir=tmp_path).permissions is PermissionPolicy.ALLOW_WORKSPACE
+def test_strictness_order() -> None:
     assert [p.value for p in PermissionPolicy] == [
-        "deny", "ask", "allow_read_only", "allow_workspace"]
+        "deny", "ask", "allow_read_only", "allow_workspace", "auto"]
     workspace, read_only = PermissionPolicy.ALLOW_WORKSPACE, PermissionPolicy.ALLOW_READ_ONLY
     assert workspace.clamp(read_only) is read_only and read_only.clamp(workspace) is read_only
 

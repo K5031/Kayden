@@ -3,6 +3,8 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from kayden.api import (
     ModelInfo,
     ModuleChoice,
@@ -14,6 +16,7 @@ from kayden.api import (
 from kayden.runtime.instance import ALREADY_OPEN
 
 PERMISSION_LABELS = {
+    PermissionPolicy.AUTO: "Decide automatically, ask me only when unsure",
     PermissionPolicy.ALLOW_WORKSPACE: "Work freely in the work folder, ask before anything else",
     PermissionPolicy.ALLOW_READ_ONLY: "Read freely, ask before changes",
     PermissionPolicy.ASK: "Ask me before every action",
@@ -22,12 +25,21 @@ PERMISSION_LABELS = {
 
 
 def request_note(request: PermissionRequest) -> str:
-    """What a call that asks for permission does, for the prompt."""
+    """What a call that asks for permission does, and why it asks, for the prompt."""
     if request.confined:
-        return ("It only reads, inside the work folder." if request.read_only
+        note = ("It only reads, inside the work folder." if request.read_only
                 else "It may change things inside the work folder.")
-    return ("It only reads, but can reach outside the work folder." if request.read_only
-            else "It may change things, and can reach outside the work folder.")
+    else:
+        note = ("It only reads, but can reach outside the work folder." if request.read_only
+                else "It may change things, and can reach outside the work folder.")
+    return f"{note} Why it asks: {request.reason}" if request.reason else note
+
+
+def folder_path(folder: str) -> str:
+    """A folder for display, with the home folder as ~."""
+    path, home = Path(folder), Path.home()
+    return f"~/{path.relative_to(home)}" if path.is_relative_to(home) and path != home else (
+        "~" if path == home else folder)
 
 
 def money(value: float) -> str:
@@ -66,8 +78,7 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
 # The modules settings offer. Memory is chosen in config.toml only: another Memory module
 # is another archive, so a choice in the app would hide every conversation.
 MODULE_LABELS = {"core": "AI provider", "tools": "Tools", "frontend": "Interface"}
-AT_RESTART = ("Changes to the AI provider, API key, modules and work folder take effect after "
-              "a restart.")
+AT_RESTART = "Changes to the AI provider, API key and modules take effect after a restart."
 
 
 def module_options(choice: ModuleChoice) -> list[tuple[str, str]]:
@@ -93,7 +104,7 @@ def delete_details(is_open: bool) -> str:
 
 def needs_restart(update: SettingsUpdate) -> bool:
     """Whether `update` holds module settings, which apply at the next start."""
-    return bool(update.modules) or update.api_key is not None or update.work_folder is not None
+    return bool(update.modules) or update.api_key is not None
 
 
 def restart_notice(settings: Settings) -> str | None:

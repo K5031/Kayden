@@ -81,7 +81,7 @@ from kayden.frontends.tui import (
 )
 from tests.fakes.settings import settings as fake_settings
 
-CONVERSATION = ConversationInfo("conv-1", "Test", 0.0, 0.0)
+CONVERSATION = ConversationInfo("conv-1", "Test", 0.0, 0.0, folder="/work")
 OTHERS = [
     ConversationInfo("conv-2", None, 0.0, 0.0, preview="What is the weather"),
     ConversationInfo("conv-3", None, 0.0, 0.0),
@@ -221,7 +221,8 @@ class StubRuntime:
     async def start(self, options: StartOptions) -> ConversationInfo:
         await self._record("start", options)
         if options.conversation_id is None:
-            info = ConversationInfo("conv-new", None, 0.0, 0.0, seed_from=options.seed_from)
+            info = ConversationInfo("conv-new", None, 0.0, 0.0, seed_from=options.seed_from,
+                                    folder=options.folder or "/work")
             self.conversations.insert(0, info)
         else:
             info = next(c for c in self.conversations if c.id == options.conversation_id)
@@ -331,6 +332,16 @@ def status(app: KaydenApp) -> str:
 async def type_text(pilot: Pilot, text: str) -> None:
     for char in text:
         await pilot.press("space" if char == " " else char)
+
+
+async def submit(pilot: Pilot, app: KaydenApp, text: str) -> None:
+    app.query_one("#prompt", Input).value = text
+    app.query_one("#prompt", Input).focus()
+    await pilot.press("enter")
+
+
+def notices(app: KaydenApp) -> str:
+    return "\n".join(n.message for n in app._notifications)
 
 
 def make(stub: StubRuntime, **kwargs) -> KaydenApp:
@@ -612,6 +623,43 @@ async def test_start_screen_starts_a_new_conversation():
         await until(pilot, lambda: ("history", "conv-new") in stub.calls)
 
 
+async def test_start_screen_starts_a_new_conversation_in_another_folder():
+    stub = StubRuntime(started=False)
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await until(pilot, lambda: isinstance(app.screen, StartScreen))
+        screen = app.screen
+        folder = screen.query_one("#folder", Input)
+        await until(pilot, lambda: folder.placeholder == "/work (the default)")
+        folder.value = "/projects/site"
+        await pilot.click("#start")
+        await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
+        [options] = [c[1] for c in stub.calls if c[0] == "start"]
+        assert options == StartOptions(folder="/projects/site")
+        await until(pilot, lambda: "/projects/site" in status(app))
+
+
+async def test_folder_command_moves_an_empty_chat_and_keeps_one_with_messages():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50), notifications=True) as pilot:
+        await until(pilot, lambda: ("history", "conv-1") in stub.calls)
+        await submit(pilot, app, "/folder")
+        await until(pilot, lambda: "Kayden works in" in notices(app))
+        await submit(pilot, app, "/folder /projects/site")
+        await until(pilot, lambda: ("delete_conversation", "conv-1") in stub.calls)
+        assert ("start", StartOptions(folder="/projects/site")) in stub.calls
+    stub = StubRuntime(history=[Message("u1", Role.USER, (Text("hi"),), 0.0)])
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await until(pilot, lambda: entries(app, UserEntry))
+        await submit(pilot, app, "/folder /projects/site")
+        await until(pilot, lambda: ("start", StartOptions(folder="/projects/site"))
+                    in stub.calls)
+        await pilot.pause(0.05)
+        assert not any(c[0] == "delete_conversation" for c in stub.calls)
+
+
 async def test_start_screen_lists_titles_and_resumes_a_conversation():
     stub = StubRuntime(started=False)
     app = make(stub)
@@ -627,6 +675,7 @@ async def test_start_screen_lists_titles_and_resumes_a_conversation():
         select.value = "conv-3"
         await pilot.pause()
         assert screen.query_one("#seed-from", Select).disabled
+        assert screen.query_one("#folder", Input).disabled
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
         [options] = [c[1] for c in stub.calls if c[0] == "start"]

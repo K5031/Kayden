@@ -45,7 +45,8 @@ Kayden uses Claude unless you choose another provider.
 ## First run
 
 Kayden's tools work in the folder you start it from, its **work folder**. By default the
-agent does what it likes inside that folder and asks before anything outside it (see
+agent does what it likes inside that folder, and a quick automatic check decides about
+anything outside it, asking you when it is unsure (see
 [Permissions](settings.md#permissions)). Start in a folder made for it:
 
 ```bash
@@ -56,8 +57,8 @@ kayden
 The start screen opens with a new conversation selected; press Enter to start it. (If you
 chose the [desktop app](desktop-app.md) as the interface in Settings, `kayden` opens that
 instead.) Type a
-message and press Enter. Before the agent uses a tool (running a command, reading or
-changing a file), it asks you first.
+message and press Enter. The agent can run commands, work with files and search the web;
+when it wants to do something it should not decide alone, it asks you first.
 
 Next: [Using Kayden](using-kayden.md).
 

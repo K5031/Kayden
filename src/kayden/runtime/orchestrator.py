@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import jsonschema
@@ -101,12 +102,15 @@ from kayden.runtime.events import EventBus, EventLog
 from kayden.runtime.instance import InstanceLock
 from kayden.runtime.modules import ModuleSettings
 from kayden.runtime.operations import Context, Operation
+from kayden.runtime.review import MAX_OUTPUT_TOKENS as REVIEW_OUTPUT_TOKENS
+from kayden.runtime.review import REVIEW_PROMPT, Verdict, parse, review_messages, user_requests
 
 logger = logging.getLogger(__name__)
 
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
 _HIT_PREVIEW_CHARS = 1000
 _OP_STATUS_MAX_WAIT_S = 60
+REVIEW_HISTORY = 200  # newest messages searched for the user's words in a permission review
 USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
 # Usage files of the Kayden versions that kept a budget per mode; summed into USAGE_FILE.
@@ -353,8 +357,11 @@ class Runtime:
             raise RuntimeStateError(f"cannot start while {self._state()}")
         if self._ops:
             raise RuntimeStateError("operations are still outstanding")
-        if options.conversation_id is not None and options.seed_from is not None:
-            raise ValueError("seed_from applies to a new conversation only")
+        if options.conversation_id is not None and (options.seed_from is not None
+                                                    or options.folder is not None):
+            raise ValueError("seed_from and folder apply to a new conversation only")
+        if options.folder is not None and not Path(options.folder).expanduser().is_dir():
+            raise ValueError(f"{options.folder} is not a folder")
         self._hold_lock()
         await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
@@ -782,10 +789,40 @@ class Runtime:
     # ── Conversations and resume repair ──────────────────────────────────
 
     async def _open_conversation(self, options: StartOptions) -> tuple[ConversationInfo, bool]:
-        if options.conversation_id is None:
-            return await self._memory.create_conversation(
-                seed_from=options.seed_from), False
-        return await self._find_conversation(options.conversation_id), True
+        """Find or create the conversation and move the Tools to its folder."""
+        if options.conversation_id is not None:
+            info = await self._find_conversation(options.conversation_id)
+            await self._use_folder(info.folder)
+            return info, True
+        folder = options.folder
+        if folder is None and options.seed_from is not None:
+            folder = (await self._find_conversation(options.seed_from)).folder
+        folder = folder or self._modules.work_folder
+        if folder is not None:
+            folder = str(Path(folder).expanduser().resolve())
+        if not await self._use_folder(folder):
+            if options.folder is not None:
+                raise ValueError("these tools work in one fixed folder")
+            folder = None
+        try:
+            info = await self._memory.create_conversation(seed_from=options.seed_from,
+                                                          folder=folder)
+        except BaseException:
+            if self._conversation is not None:
+                with contextlib.suppress(ValueError):
+                    await self._use_folder(self._conversation.folder)
+            raise
+        return info, False
+
+    async def _use_folder(self, folder: str | None) -> bool:
+        """Hand the Tools the folder; False when they have a fixed one."""
+        try:
+            await self._tools.use_folder(None if folder is None else Path(folder))
+        except NotImplementedError:
+            return False
+        except OSError as e:
+            raise ValueError(f"the folder {folder} cannot be used: {e.strerror or e}") from e
+        return True
 
     async def _repair(self) -> None:
         assert self._conversation is not None
@@ -1325,13 +1362,22 @@ class Runtime:
         if policy == PermissionPolicy.ALLOW_READ_ONLY and spec.read_only:
             auto(Decision.ALLOW_ONCE, "policy")
             return None
-        if policy == PermissionPolicy.ALLOW_WORKSPACE and confined:
+        if policy in (PermissionPolicy.ALLOW_WORKSPACE, PermissionPolicy.AUTO) and confined:
             auto(Decision.ALLOW_ONCE, "policy")
             return None
+        reason = None
+        if policy == PermissionPolicy.AUTO:
+            verdict = await self._review(call, spec)
+            if self._stopping:
+                return None  # the caller reports the call as not started
+            if verdict.allow:
+                auto(Decision.ALLOW_ONCE, "review")
+                return None
+            reason = verdict.reason
         if not self._frontend.interactive_permissions:
             auto(Decision.DENY, "non-interactive frontend")
             return "Refused: this call needs permission and the frontend cannot ask."
-        request = PermissionRequest(_new_id(), call, spec.read_only, confined)
+        request = PermissionRequest(_new_id(), call, spec.read_only, confined, reason)
         future: asyncio.Future[Decision] = asyncio.get_running_loop().create_future()
         self._prompts[request.id] = (request, future)
         self._emit(PermissionRequested(request))
@@ -1343,6 +1389,34 @@ class Runtime:
         if decision == Decision.ALLOW_CONVERSATION:
             self._grants[call.name] = self._grants.get(call.name, False) or not confined
         return None
+
+    async def _review(self, call: ToolCall, spec: ToolSpec) -> Verdict:
+        """The automatic permission check (review.py). Fails closed: any problem asks."""
+        if reason := self._check_budget("review"):
+            return Verdict(False, f"The spending limit is reached ({reason}), so Kayden "
+                                  "could not check this itself.")
+        assert self._conversation is not None
+        history = await self._memory.history(self._conversation.id, limit=REVIEW_HISTORY)
+        info = self._maintenance_info()
+        messages = review_messages(user_requests(history), call, spec,
+                                   self._conversation.folder)
+        request = InferenceRequest(info.id, REVIEW_PROMPT, messages, (),
+                                   min(REVIEW_OUTPUT_TOKENS,
+                                       info.max_output_tokens or REVIEW_OUTPUT_TOKENS),
+                                   maintenance=True)
+        task = asyncio.ensure_future(self._attempt(request, info, foreground=False))
+        if await self._race_stop(task):
+            return Verdict(False, "Stopped.")
+        try:
+            completed = task.result()
+        except Exception as e:  # noqa: BLE001 - module calls are wrapped; failing closed
+            logger.info("permission review failed: %s", e)
+            verdict = Verdict(False, "Kayden could not check this itself.")
+        else:
+            verdict = parse(
+                "".join(b.text for b in completed.message.blocks if isinstance(b, Text)))
+        self._log.decision("permission_review", call_id=call.id, allow=verdict.allow)
+        return verdict
 
     def _launch(self, call: ToolCall, spec: ToolSpec) -> Operation:
         op = Operation(call, spec, default_timeout=self._config.default_tool_timeout_s,

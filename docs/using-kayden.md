@@ -4,7 +4,7 @@
 
 `kayden` opens the start screen: pick an existing conversation or a new one, and the model,
 then press Enter. A new conversation can **Continue from** an earlier one, starting from
-where that one left off.
+where that one left off, and can work in another **Folder** (empty: the default folder).
 
 To skip the screen:
 
@@ -16,7 +16,7 @@ kayden --conversation ID       # continue a conversation
 |---|---|
 | `--conversation ID` | Start right away in this conversation |
 | `--model ID`, `--maintenance-model ID` | Override the models for this run |
-| `--permissions allow_workspace\|allow_read_only\|ask\|deny` | Override the [permission level](settings.md#permissions) for this run |
+| `--permissions auto\|allow_workspace\|allow_read_only\|ask\|deny` | Override the [permission level](settings.md#permissions) for this run |
 | `--data-dir DIR`, `--config FILE` | Use another data folder or config file |
 | `--show-config` | Print the settings Kayden would use, then exit |
 
@@ -51,6 +51,7 @@ The permission level is set in [Settings](settings.md#permissions).
 | Ctrl+K | `/cancel [id]` | Cancel one running tool |
 | F3 | `/conversations` | Open, start, rename, archive or delete conversations |
 | F4 | `/memory` | See, add, edit or forget long-term memory |
+| | `/folder [path]` | Show the work folder, or start a chat in another one |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
 | Ctrl+Q | `/quit` | Quit |
 | | `/help` | List the commands |
@@ -66,6 +67,25 @@ deletion does and does not reach.
 
 F4 shows long-term memory: facts Kayden keeps across conversations. Add one, correct one,
 or forget one. Forgetting a fact does not delete the messages it came from.
+
+## Folders
+
+Each conversation works in one folder: its commands run there and its files are read and
+written there. A new conversation gets the folder from Settings (**Folder for new chats**),
+or the one you type in the start screen; it keeps that folder when you come back to it,
+even after you change the setting. The status line shows it.
+
+`/folder PATH` starts a chat in another folder. If the open chat has no messages yet, it is
+replaced, so no empty chat is left behind. **Continue from** keeps the earlier
+conversation's folder.
+
+## The web
+
+The agent can search the web and read web pages, for anything recent or that it is not
+sure of. It links the pages its answer relies on. Searches go to DuckDuckGo and other
+search engines, and pages are fetched from the sites themselves. Anything the agent has
+read can end up in a search or an address, so keep secrets out of what you share with it.
+It reads public pages only, not pages on your computer or your local network.
 
 ## Long-running tools
 

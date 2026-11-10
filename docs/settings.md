@@ -15,7 +15,7 @@ changed is saved.
 | Spending limit | In US dollars; empty means no limit. | At once |
 | What the agent may do | See [Permissions](#permissions). | At the next step |
 | Instructions | The system prompt: who the agent is and how it should behave. | At the next step |
-| Work folder | Where the agent's commands and file tools work. | At restart |
+| Folder for new chats | The folder a new conversation works in. Each conversation keeps its own; see [Folders](using-kayden.md#folders). | At the next new chat |
 | Tools | What the agent can do on your computer. | At restart |
 | Interface | The terminal app or the [desktop app](desktop-app.md). | At restart |
 
@@ -24,7 +24,7 @@ first.
 
 ## Changes that apply at restart
 
-The AI provider, its key, the work folder, Tools and Interface are saved at once but
+The AI provider, its key, Tools and Interface are saved at once but
 used from the next start of Kayden; until then you keep working as before. The settings
 screen says so and offers **Restart now**: Kayden stops what it is doing, as when you quit,
 and starts again with the new settings in the same conversation.
@@ -75,10 +75,26 @@ set with `[memory]` in [config.toml](#configtoml).
 
 | Level | The agent |
 |---|---|
-| Work freely in the work folder, ask before anything else | Reads and changes files in its work folder and runs commands there without asking; asks before anything outside it (the default) |
+| Decide automatically, ask me only when unsure | Works freely in its work folder; a quick automatic check decides about anything outside it, and asks you when it is unsure (the default) |
+| Work freely in the work folder, ask before anything else | Reads and changes files in its work folder and runs commands there without asking; asks before anything outside it |
 | Read freely, ask before changes | Reads, lists and searches files anywhere on its own; asks before commands and changes |
 | Ask me before every action | Asks before every tool call |
 | Never run tools | Can only talk |
+
+**Deciding automatically.** When the agent wants to do something outside its work folder
+(run a command outside the sandbox, read a file elsewhere, push to GitHub), Kayden first
+asks the model for memory upkeep whether it fits what you asked for. It runs without
+asking when it clearly does and is easy to undo, or only reads. Kayden asks you when it
+deletes or overwrites something you did not mention, sends data anywhere, publishes,
+spends money, changes system settings, or when the check is unsure; the question then
+says why. If the check fails or the spending limit is reached, Kayden asks too.
+
+- The check sees your messages and the action, not what the agent read, so a web page or
+  a file cannot talk it into allowing something.
+- Each check is a small request to your provider and counts toward the spending limit. Set
+  a cheap **Model for memory upkeep** to keep it cheap.
+- It can be wrong. Choose "Work freely in the work folder, ask before anything else" to
+  decide everything outside the folder yourself.
 
 **How "in the work folder" is enforced.** A file action counts as inside when its path is
 in the work folder; a link that leads out of it counts as outside. Commands run in a
@@ -89,7 +105,8 @@ sandbox ([bubblewrap](https://github.com/containers/bubblewrap)) in which they c
 - use the network.
 
 They cannot change anything else, and cannot see your home folder, other programs or your
-desktop session. When a command needs more, for example a tool installed in your home
+desktop session. Searching the web and reading web pages also count as inside: they touch
+nothing on your computer. When a command needs more, for example a tool installed in your home
 folder, the agent asks to run it outside the sandbox, and the question says so.
 
 Things to know:
@@ -138,7 +155,7 @@ factory = "kayden.core.openai_compat:deepseek_factory"
 [runtime]
 model = "deepseek-flash"
 maintenance_model = "deepseek-flash"
-permissions = "allow_workspace"     # allow_workspace | allow_read_only | ask | deny
+permissions = "auto"                # auto | allow_workspace | allow_read_only | ask | deny
 system_prompt_file = "prompt.md"    # or: system_prompt = "..."
 
 [runtime.budget]                    # each limit optional

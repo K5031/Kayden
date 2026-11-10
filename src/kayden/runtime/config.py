@@ -58,7 +58,7 @@ class RuntimeConfig:
 
     data_dir: Path
     budget: Budget = field(default_factory=Budget)
-    permissions: PermissionPolicy = PermissionPolicy.ALLOW_WORKSPACE
+    permissions: PermissionPolicy = PermissionPolicy.AUTO
     model: str | None = None  # default model; None = first model Core lists
     maintenance_model: str | None = None  # Completion(light=True); None = main model
     system_prompt: str = DEFAULT_SYSTEM_PROMPT

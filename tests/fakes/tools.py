@@ -6,6 +6,7 @@ import asyncio
 import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 from kayden.api import ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
@@ -32,6 +33,8 @@ class FakeTools(Tools):
         self.options: dict[str, Any] = {}
         self.closed = False
         self.confined_names: set[str] = set()  # tools whose calls stay in the work folder
+        self.folders: list[Path | None] | None = None  # use_folder calls; None = fixed folder
+        self.folder_error: OSError | None = None
 
     def add(self, spec: ToolSpec, fn: ToolFn) -> ToolSpec:
         self.specs[spec.name] = spec
@@ -133,6 +136,13 @@ class FakeTools(Tools):
 
     async def confined(self, call: ToolCall) -> bool:
         return call.name in self.confined_names
+
+    async def use_folder(self, folder: Path | None) -> None:
+        if self.folders is None:
+            raise NotImplementedError
+        if self.folder_error is not None:
+            raise self.folder_error
+        self.folders.append(folder)
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         self.started.append(call.id)

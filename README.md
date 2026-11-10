@@ -1,7 +1,8 @@
 # Kayden
 
-A terminal AI agent that runs as a chat or as a long-running background agent. It asks
-before using tools and stops at hard spending limits. Works with Anthropic, DeepSeek and
+An AI agent for your computer, in a terminal or a desktop app. It runs commands, works with
+files and searches the web, decides on its own only what is safe and asks you about the
+rest, and stops at hard spending limits. Works with Anthropic, DeepSeek and
 OpenAI-compatible models.
 
 A runtime drives four swappable modules (Core, Memory, Tools, Frontend); see
@@ -19,8 +20,9 @@ mkdir ~/kayden-work && cd ~/kayden-work
 kayden
 ```
 
-Kayden works freely in the folder you start it from and asks before anything outside it.
-Start it in a folder made for it; your home folder is too broad to count.
+Kayden works freely in the folder you start it from; anything outside it gets a quick
+automatic check, and Kayden asks you when it is unsure. Start it in a folder made for it;
+your home folder is too broad to count.
 
 ## Documentation
 

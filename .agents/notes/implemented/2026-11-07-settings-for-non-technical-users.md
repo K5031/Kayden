@@ -22,13 +22,13 @@ The user settings, in the terms a settings screen shows (`api.Settings`):
 | API key | A password field, for the chosen provider | The OS keychain, under the key's variable name |
 | Model, maintenance model | A list with names and prices (`list_models()`) | `model`, `maintenance_model` |
 | Spending limit | "$10 in total", with spending so far (`snapshot().usage`) | `Budget` |
-| Permissions | "Ask me first" / "Read-only freely" / "Nothing" | `PermissionPolicy` |
+| Permissions | "Decide automatically, ask me only when unsure" and the stricter levels | `PermissionPolicy` |
 | Instructions | A text box, prefilled with the built-in prompt | `system_prompt` |
-| Work folder | A folder picker | the Tools `root` option |
+| Folder for new chats | A folder picker | `work_folder`, handed to the Tools per conversation ([folders per conversation](2026-11-10-folder-per-conversation.md)) |
 | Memory, Tools, Interface | A list of the installed modules | The Memory, Tools and Frontend modules |
 
-Model, maintenance model, spending limit, permissions and instructions are runtime
-settings and apply live. Provider, key, work folder and the other modules are module
+Model, maintenance model, spending limit, permissions, instructions and the folder for new
+chats are runtime settings and apply live. Provider, key and the other modules are module
 settings: saved at once, applied at the next start
 ([swappable modules](2026-11-08-swappable-modules-in-app.md)). Other module options
 (profiles, prices, context windows) are not user settings. They ship built in (the DeepSeek
@@ -47,7 +47,7 @@ overrides.
 - Model, maintenance model, budget, permissions and system prompt apply in any state, from
   the next inference. Permissions are clamped to any inherited ceiling, and the exported
   ceiling follows the new policy.
-- Module choices, the key and the work folder are saved in any state and build nothing;
+- Module choices and the key are saved in any state and build nothing;
   `restart()` applies them. When the modules cannot be built, a setup runtime still shows
   and saves the settings, so a provider without a key yet can be configured in the app.
 - Before `start()`, the Core is asked for its models only when a model must be checked.

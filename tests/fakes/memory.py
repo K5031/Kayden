@@ -111,11 +111,13 @@ class InMemoryMemory(Memory):
         return self.store.conversations[conversation_id]  # KeyError for unknown ids
 
     async def create_conversation(self, *, title: str | None = None,
-                                  seed_from: ConversationId | None = None) -> ConversationInfo:
+                                  seed_from: ConversationId | None = None,
+                                  folder: str | None = None) -> ConversationInfo:
         if seed_from is not None:
             self._conv(seed_from)
         now = time.time()
-        info = ConversationInfo(uuid.uuid4().hex, title, now, now, seed_from=seed_from)
+        info = ConversationInfo(uuid.uuid4().hex, title, now, now, seed_from=seed_from,
+                                folder=folder)
         self.store.conversations[info.id] = Conversation(info)
         return info
 

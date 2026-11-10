@@ -91,7 +91,7 @@ class ModuleSettings:
         self.chosen = {kind: state.chosen.get(kind, self.running[kind]) for kind in MODULE_KINDS}
         self.frontend_kind = frontend_kind
         self.startup_error = startup_error
-        self.running_folder = self.work_folder = state.work_folder
+        self.work_folder = state.work_folder  # for new conversations; applies live
         self.key_saved = False
 
     async def fields(self) -> dict[str, Any]:
@@ -102,8 +102,8 @@ class ModuleSettings:
             infos = [ModuleInfo(m.id, m.name, m.key_name, await has_key(m.key_name), m.kind)
                      for m in found[kind]]
             modules[kind] = ModuleChoice(self.running[kind], self.chosen[kind], infos)
-        restart_needed = (self.key_saved or self.work_folder != self.running_folder
-                          or any(self.chosen[k] != self.running[k] for k in MODULE_KINDS))
+        restart_needed = self.key_saved or any(self.chosen[k] != self.running[k]
+                                               for k in MODULE_KINDS)
         return {"modules": modules, "work_folder": self.work_folder,
                 "restart_needed": restart_needed,
                 "restart_frontend": self._restart_frontend(found["frontend"]),
@@ -154,9 +154,9 @@ class ModuleSettings:
         if u.work_folder is not None:
             if self.work_folder is None:
                 raise ValueError("the work folder of these tools cannot be changed")
-            folder = Path(u.work_folder).expanduser()
+            folder = Path(u.work_folder).expanduser().resolve()
             if not folder.is_dir():
-                raise ValueError(f"{folder} is not a folder")
+                raise ValueError(f"{u.work_folder} is not a folder")
             if str(folder) != self.work_folder:
                 saved["work_folder"] = str(folder)
         return saved

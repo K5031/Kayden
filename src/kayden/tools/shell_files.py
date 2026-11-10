@@ -1,4 +1,4 @@
-"""Minimal Tools module: shell commands and file operations (POSIX only).
+"""The built-in Tools module: shell commands, file operations and the web (POSIX only).
 
 Relative paths resolve against the workspace root, which is also the shell's working
 directory. Commands inherit the process environment unchanged (PERMISSION_CEILING_ENV
@@ -6,8 +6,9 @@ included).
 
 The workspace is a boundary the runtime can rely on (`confined`): a file call is confined
 when its path is inside it, and a shell command when it runs in the bubblewrap sandbox,
-where only the workspace is writable and the home directories are hidden. Calls that
-reach outside still work; the runtime asks the user first.
+where only the workspace is writable and the home directories are hidden. The web tools
+(`web.py`) touch nothing on this computer, so they are confined too. Calls that reach
+outside still work; the runtime asks the user first.
 """
 
 from __future__ import annotations
@@ -27,9 +28,11 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import jsonschema
 
 from kayden.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kayden.tools import web
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
@@ -146,33 +149,39 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
     return ShellFilesTools(Path(options.pop("root", Path.cwd())), **options)
 
 
-factory.display_name = "Shell and files"  # type: ignore[attr-defined]
+factory.display_name = "Shell, files and web"  # type: ignore[attr-defined]
 
 
-def _sandbox(root: Path, home: Path) -> list[str] | None:
-    """The bubblewrap command line that confines a shell command to `root`, or None when
-    the sandbox does not work here (not installed, user namespaces disabled, or already
-    inside a sandbox). Blocking: run it where module factories run, off the event loop.
+def _sandbox(bwrap: str, root: Path, home: Path) -> list[str]:
+    """The bubblewrap command line that confines a shell command to `root`.
 
     The whole system is visible read-only, so installed programs run; home directories,
     /tmp and the session's runtime directory are replaced by empty ones, and only the
     workspace is bound back, writable. The network is left as it is."""
-    bwrap = shutil.which("bwrap")
-    if bwrap is None:
-        return None
     hidden = [p for p in (Path("/home"), Path("/root"), Path("/run/user"), Path("/tmp"), home)
               if p.is_dir()]
     command = [bwrap, "--ro-bind", "/", "/"]
     for path in hidden:
         command += ["--tmpfs", str(path)]
-    command += ["--dir", str(home), "--bind", str(root), str(root), "--dev", "/dev",
-                "--proc", "/proc", "--unshare-pid", "--die-with-parent", "--chdir", str(root)]
+    return command + ["--dir", str(home), "--bind", str(root), str(root), "--dev", "/dev",
+                      "--proc", "/proc", "--unshare-pid", "--die-with-parent",
+                      "--chdir", str(root)]
+
+
+def _bwrap(root: Path, home: Path) -> str | None:
+    """bubblewrap, if a sandbox works here (not when it is missing, user namespaces are
+    disabled, or Kayden itself runs in a sandbox). Blocking: run it where module
+    factories run, off the event loop."""
+    bwrap = shutil.which("bwrap")
+    if bwrap is None:
+        return None
     try:
-        works = subprocess.run([*command, "true"], check=False, capture_output=True,
-                               timeout=SANDBOX_CHECK_TIMEOUT).returncode == 0
+        works = subprocess.run([*_sandbox(bwrap, root, home), "true"], check=False,
+                               capture_output=True, timeout=SANDBOX_CHECK_TIMEOUT
+                               ).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         works = False
-    return command if works else None
+    return bwrap if works else None
 
 
 class ShellFilesTools(Tools):
@@ -185,17 +194,14 @@ class ShellFilesTools(Tools):
         *,
         shell_timeout: float | None = None,
         shell_stall_timeout: float | None = SHELL_STALL_TIMEOUT,
+        web_tools: web.Web | None = None,
     ) -> None:
-        self.root = Path(root).expanduser().resolve()
-        home = Path.home().resolve()
-        # A workspace that is or holds the home directory (or is /) is no boundary.
-        self._bounded = self.root != home and self.root not in home.parents
-        self._sandbox = _sandbox(self.root, home) if self._bounded else None
-        shell = replace(SHELL, timeout=shell_timeout, stall_timeout=shell_stall_timeout)
-        if self._sandbox is not None:
-            shell = replace(shell, description=shell.description + SANDBOX_NOTE)
-        self._spec_list = (shell, *FILE_SPECS)
-        self._specs = {spec.name: spec for spec in self._spec_list}
+        self._default = Path(root).expanduser().resolve()
+        self._bwrap = _bwrap(self._default, Path.home().resolve())
+        self._shell_spec = replace(SHELL, timeout=shell_timeout,
+                                   stall_timeout=shell_stall_timeout)
+        self._web = web_tools or web.Web()
+        self._set_root(self._default)
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
             "shell": self._shell,
             "read_file": self._read_file,
@@ -203,12 +209,33 @@ class ShellFilesTools(Tools):
             "edit_file": self._edit_file,
             "list_files": self._list_files,
             "search_files": self._search_files,
+            **{name: self._web_call(name) for name in web.NAMES},
         }
+
+    def _set_root(self, root: Path) -> None:
+        self.root = root
+        home = Path.home().resolve()
+        # A workspace that is or holds the home directory (or is /) is no boundary.
+        self._bounded = root != home and root not in home.parents
+        self._sandbox = (_sandbox(self._bwrap, root, home)
+                         if self._bwrap is not None and self._bounded else None)
+        shell = self._shell_spec
+        if self._sandbox is not None:
+            shell = replace(shell, description=shell.description + SANDBOX_NOTE)
+        self._spec_list = (shell, *FILE_SPECS, *web.SPECS)
+        self._specs = {spec.name: spec for spec in self._spec_list}
 
     async def list_tools(self) -> Sequence[ToolSpec]:
         return self._spec_list
 
+    async def use_folder(self, folder: Path | None) -> None:
+        root = self._default if folder is None else Path(folder).expanduser().resolve()
+        await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
+        self._set_root(root)
+
     async def confined(self, call: ToolCall) -> bool:
+        if call.name in web.NAMES:
+            return True
         if not self._bounded or call.name not in self._handlers:
             return False
         if call.name == "shell":
@@ -230,10 +257,19 @@ class ShellFilesTools(Tools):
             return ToolOutput(f"Invalid arguments: {e.message}", is_error=True)
         try:
             return ToolOutput(await self._handlers[call.name](call.arguments, ctx))
-        except ToolError as e:
+        except (ToolError, web.WebError) as e:
             return ToolOutput(str(e), is_error=True)
+        except httpx2.HTTPError as e:
+            return ToolOutput(f"The page could not be read: {type(e).__name__}: {e}",
+                              is_error=True)
         except OSError as e:
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
+
+    def _web_call(self, name: str) -> Callable[[dict[str, Any], ToolContext], Awaitable[str]]:
+        async def call(args: dict[str, Any], ctx: ToolContext) -> str:
+            return await self._web.run(name, args)
+
+        return call
 
     def _path(self, raw: str | None) -> Path:
         path = Path(raw or ".").expanduser()

@@ -19,8 +19,8 @@ change the frontend from inside the app: from the TUI to the desktop app and bac
 A setting is a **runtime setting** if the runtime itself reads it while running: model,
 maintenance model, system prompt, budget, permissions. These apply live. A
 setting is a **module setting** if it is only passed into a module's factory or read when
-the module is built: which module of each kind, the API key, the work folder (the Tools
-`root`), profiles, prices, context windows, base URLs, compaction options. These are saved
+the module is built: which module of each kind, the API key, the Tools' starting `root`,
+profiles, prices, context windows, base URLs, compaction options. These are saved
 at once and apply at the next start of Kayden; the running instance keeps its modules until
 then, so the user keeps working. There are no exceptions: nothing rebuilds a module while
 Kayden runs, so module settings save in any state.
@@ -134,9 +134,11 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
 - **Swapping modules live, while running.** A frontend cannot replace itself, a different
   Memory under an open conversation has none of its messages, and the live Core swap needed
   quiescence checks and rollback. Restart-applied changes need none of that.
-- **Keeping the API key and work folder live** as settings "of the running modules". Two
-  rules for module settings, and the live Core and Tools rebuild with its quiescence checks
-  stays.
+- **Rebuilding the running Core and Tools for a new key or work folder** (keeping them
+  live as settings "of the running modules"). Two rules for module settings, and the live
+  rebuild with its quiescence checks stays. The folder for new conversations applies live
+  without a rebuild: the runtime hands each conversation's folder to the Tools when it
+  opens it ([folders per conversation](2026-11-10-folder-per-conversation.md)).
 - **Typing an import path in the app** (`package.module:factory`). Works for any module
   with no registration, but non-technical users cannot know paths, and a typo is found only
   at the next start.
@@ -160,7 +162,7 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
   lists, with no config editing. Plugins are code: an installed module runs with the user's
   permissions, and listing only installed packages leaves the trust decision to
   installation, which users may not treat as one. The docs say so.
-- Changing the provider, key or work folder needs a restart: a few seconds, and the
+- Changing the provider or key needs a restart: a few seconds, and the
   conversation continues after it. A key is checked by the provider only after the
   restart, so the desktop welcome no longer rejects a bad key on the spot; the error shows
   when the conversation starts.

@@ -8,9 +8,11 @@ order; runtime commands run as separate workers, so a slow or hanging runtime ca
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.console import Group, RenderableType
@@ -93,6 +95,7 @@ from kayden.frontends.common import (
     MODULE_LABELS,
     PERMISSION_LABELS,
     delete_details,
+    folder_path,
     loosening,
     model_label,
     module_options,
@@ -133,7 +136,7 @@ DECISION_ALIASES = {
 }
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
-    "/conversations (F3), /memory (F4), "
+    "/conversations (F3), /memory (F4), /folder [path], "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -457,7 +460,7 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
                          value=s.permissions, allow_blank=False, id="permissions")
             yield Label("Instructions")
             yield TextArea(s.system_prompt, id="instructions")
-            yield Label("Work folder")
+            yield Label("Folder for new chats")
             yield Input(s.work_folder or "", disabled=s.work_folder is None, id="work-folder")
             for kind in ("tools", "frontend"):
                 yield Label(MODULE_LABELS[kind])
@@ -881,12 +884,15 @@ class StartScreen(ModalScreen[StartOptions | None]):
             yield Label("Continue from")
             yield Select([("Nothing, start fresh", FRESH)], value=FRESH, allow_blank=False,
                          id="seed-from")
+            yield Label("Folder")
+            yield Input(placeholder="The default folder", id="folder")
             yield Button("Start", variant="primary", id="start")
 
     def on_mount(self) -> None:
         self.query_one("#start", Button).focus()  # Enter starts with the defaults
         self.run_worker(self._load_models(), exit_on_error=False)
         self.run_worker(self._load_conversations(), exit_on_error=False)
+        self.run_worker(self._load_folder(), exit_on_error=False)
 
     def action_cancel(self) -> None:
         if self.cancellable:
@@ -908,10 +914,19 @@ class StartScreen(ModalScreen[StartOptions | None]):
         self.query_one("#seed-from", Select).set_options(
             [("Nothing, start fresh", FRESH), *labels])
 
+    async def _load_folder(self) -> None:
+        folder = self.query_one("#folder", Input)
+        default = (await self.runtime.settings()).work_folder
+        if default is None:  # the Tools have a fixed folder
+            folder.placeholder, folder.disabled = "Set by the tools", True
+        else:
+            folder.placeholder = f"{folder_path(default)} (the default)"
+
     @on(Select.Changed, "#conversation")
     def _conversation_changed(self, event: Select.Changed) -> None:
         resumed = self.conversations.get(str(event.value))
         self.query_one("#seed-from").disabled = resumed is not None
+        self.query_one("#folder").disabled = resumed is not None
 
     @on(Button.Pressed, "#start")
     def _start(self) -> None:
@@ -922,9 +937,11 @@ class StartScreen(ModalScreen[StartOptions | None]):
             self.dismiss(StartOptions(conversation_id=str(conversation), model=model_id))
             return
         seed = self.query_one("#seed-from", Select).value
+        folder = self.query_one("#folder", Input).value.strip()
         self.dismiss(StartOptions(
             model=model_id,
             seed_from=None if seed == FRESH else str(seed),
+            folder=str(Path(folder).expanduser()) if folder else None,
         ))
 
 
@@ -1325,6 +1342,8 @@ class KaydenApp(App[None]):
         parts = [state + (f" · {self.pending_ops} running" if self.pending_ops else "")]
         if self.model:
             parts.append(self.model)
+        if self.conversation is not None and self.conversation.folder is not None:
+            parts.append(folder_path(self.conversation.folder))
         if self.usage is not None:
             u = self.usage.usage
             usage = f"{u.input_tokens}↑ {u.output_tokens}↓ tok"
@@ -1403,6 +1422,13 @@ class KaydenApp(App[None]):
                 self.action_conversations()
             case "memory":
                 self.action_memory()
+            case "folder" if arg:
+                self.new_in_folder(str(Path(arg).expanduser()))
+            case "folder":
+                folder = self.conversation.folder if self.conversation is not None else None
+                self.notify(f"Kayden works in {folder_path(folder)}. /folder PATH starts a "
+                            "chat in another folder." if folder is not None
+                            else "These tools work in one fixed folder.", markup=False)
             case "cancel" if arg:
                 self._call(self.runtime.cancel_operation(arg))
             case "cancel":
@@ -1421,6 +1447,21 @@ class KaydenApp(App[None]):
                 self.notify(HELP, markup=False, timeout=10)
             case _:
                 self.notify(f"Unknown command /{name}. {HELP}", severity="error", markup=False)
+
+    def new_in_folder(self, folder: str) -> None:
+        """Start a chat in `folder`. An open chat with no messages is replaced: it is
+        deleted, so the list gets no blank entries."""
+        if not self._can_switch():
+            return
+        empty = self.conversation if not self._rendered_ids else None
+
+        async def start() -> None:
+            await self.start_conversation(StartOptions(folder=folder))
+            if empty is not None:
+                with contextlib.suppress(NotImplementedError):
+                    await self.runtime.delete_conversation(empty.id)
+
+        self._call(start())
 
     def action_stop(self) -> None:
         self.notice = "Stop requested"

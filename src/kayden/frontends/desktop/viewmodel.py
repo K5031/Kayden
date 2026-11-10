@@ -10,6 +10,7 @@ a slow command never blocks event handling.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import json
 import time
@@ -813,6 +814,21 @@ class Controller:
         async def start() -> None:
             await self.runtime.start(StartOptions(conversation_id, seed_from=seed_from))
             await self._inbox.put(self.recover)
+
+        return self.command(start())
+
+    def new_in_folder(self, folder: str) -> asyncio.Task[None]:
+        """Start a new chat in `folder`. An open chat with no messages is replaced: it is
+        deleted, so the list gets no blank entries."""
+        model = self.model
+        empty = model.conversation if not model.items and not model.has_earlier else None
+
+        async def start() -> None:
+            await self.runtime.start(StartOptions(folder=folder))
+            await self._inbox.put(self.recover)
+            if empty is not None:
+                with contextlib.suppress(NotImplementedError):
+                    await self.runtime.delete_conversation(empty.id)
 
         return self.command(start())
 

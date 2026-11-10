@@ -21,16 +21,19 @@ Not asking "inside the work folder" would have meant not asking at all.
 
 ### A permission level: free in the work folder
 
-`PermissionPolicy.ALLOW_WORKSPACE` is the default, shown as "Work freely in the work
-folder, ask before anything else". A tool call that is **confined** runs without asking;
-every other call prompts, read-only ones included.
+`PermissionPolicy.ALLOW_WORKSPACE`, shown as "Work freely in the work folder, ask before
+anything else". A tool call that is **confined** runs without asking; every other call
+prompts, read-only ones included. The default, `auto`, builds on it: confined calls run the
+same way, and the others are reviewed first
+([automatic permissions](2026-11-10-auto-permissions.md)).
 
 | Level | Runs without asking |
 |---|---|
 | `deny` | nothing |
 | `ask` | nothing |
 | `allow_read_only` | read-only tools, on any path |
-| `allow_workspace` (default) | confined calls |
+| `allow_workspace` | confined calls |
+| `auto` (default) | confined calls, and the calls a review allows |
 
 That is also the strictness order used for an inherited ceiling. Loosening to it in a
 running instance is confirmed like any loosening.

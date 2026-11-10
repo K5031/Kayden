@@ -64,6 +64,7 @@ another reason, the Settings window opens with the message.
 | See what a tool did | Press the arrow on its card. |
 | See the model's reasoning | Open **Thinking** above a reply. |
 | Start over | **New chat** (**Ctrl+N**). |
+| Work in another folder | Click the folder above the conversation and choose one. A chat with no messages yet moves there; otherwise a new chat starts in it. See [Folders](using-kayden.md#folders). |
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **Show archived** under the list to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
@@ -84,7 +85,8 @@ learned from it, and cannot be undone. To only hide a conversation, choose **Arc
 conversation opens a new chat in its place, once Kayden is not working. See [Deleting](concepts.md#deleting) for what
 deletion does not reach.
 
-Above the conversation is what Kayden has spent so far, across all conversations. The
+Above the conversation are the conversation's folder and what Kayden has spent so far,
+across all conversations. The
 line under the message box shows what Kayden is doing, how many tasks run in the background
 and the model.
 
@@ -95,8 +97,8 @@ switched from the terminal app.
 
 The Settings window has the same settings as the terminal app; see [Settings](settings.md).
 Raising or removing the spending limit, or letting Kayden do more without asking, asks you
-to confirm first. The provider, key, work folder and modules apply when Kayden restarts:
-**Restart now** in the Settings window does that.
+to confirm first. The provider, key and modules apply when Kayden restarts: **Restart now**
+in the Settings window does that. **Folder for new chats** applies to the next new chat.
 
 ## Switching to the terminal app
 

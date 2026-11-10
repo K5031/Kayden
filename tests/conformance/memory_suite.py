@@ -246,13 +246,14 @@ class MemoryConformance:
     async def test_conversation_options_are_stored(self, open_memory: MemoryFactory):
         memory = open_memory()
         source = await memory.create_conversation(title="source")
-        conv = await memory.create_conversation(seed_from=source.id)
-        assert conv.seed_from == source.id
+        conv = await memory.create_conversation(seed_from=source.id, folder="/work/trip")
+        assert conv.seed_from == source.id and conv.folder == "/work/trip"
+        assert source.folder is None
         with pytest.raises(KeyError):
             await memory.create_conversation(seed_from="missing")
         await memory.aclose()
         [reopened] = [c for c in await open_memory().list_conversations() if c.id == conv.id]
-        assert reopened.seed_from == source.id
+        assert reopened.seed_from == source.id and reopened.folder == "/work/trip"
 
     async def test_update_conversation(self, memory: Memory):
         conv = await memory.create_conversation()

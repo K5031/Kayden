@@ -78,6 +78,7 @@ from kayden.frontends.common import (
     PERMISSION_LABELS,
     delete_details,
     dollars,
+    folder_path,
     loosening,
     model_label,
     module_options,
@@ -682,9 +683,17 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout(group)
         controls.setContentsMargins(10, 4, 10, 4)
         controls.setSpacing(10)
+        self.folder_button = QToolButton(objectName="folder")
+        self.folder_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.folder_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.folder_button.setAccessibleName("Work folder")
+        self.folder_button.clicked.connect(self._choose_folder)
+        self.folder_button.hide()
         self.spending_label = _label(wrap=False, selectable=False, tone="muted")
         self.spending_label.setToolTip("What Kayden has spent so far, across all conversations.")
+        controls.addWidget(self.folder_button)
         controls.addWidget(self.spending_label)
+        group.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.spending_group = group
         head.addWidget(self.title_label, 1)
         head.addWidget(group)
@@ -771,6 +780,22 @@ class MainWindow(QMainWindow):
         colors = theme.current()
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.on_accent))
+        self.folder_button.setIcon(theme.icon("folder", colors.muted))
+
+    def _choose_folder(self) -> None:
+        if reason := self.controller.can_switch():
+            self.model.notify(reason)
+            return
+        folder = self.model.conversation.folder if self.model.conversation else None
+        choose_folder(self, folder or str(Path.home()), self.folder_chosen)
+
+    def folder_chosen(self, folder: str) -> None:
+        """Start a chat in `folder`; an open chat with no messages moves there."""
+        if not folder or (self.model.conversation is not None
+                          and folder == self.model.conversation.folder):
+            return
+        task = self.controller.new_in_folder(folder)
+        task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar())))
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
@@ -910,7 +935,16 @@ class MainWindow(QMainWindow):
             self.title_label.setText(conversation_label(
                 self._conversations.get(conversation.id, conversation)))
         self.spending_label.setText(model.spending_text)
-        self.spending_group.setVisible(bool(model.spending_text))
+        self.spending_label.setVisible(bool(model.spending_text))
+        folder = conversation.folder if conversation is not None else None
+        self.folder_button.setVisible(folder is not None)
+        if folder is not None:
+            self.folder_button.setText(Path(folder).name or folder)
+            self.folder_button.setToolTip(
+                f"Kayden works in {folder_path(folder)}. Click to start a chat in another "
+                "folder." if self.model.items or self.model.has_earlier else
+                f"Kayden works in {folder_path(folder)}. Click to choose another folder.")
+        self.spending_group.setVisible(bool(model.spending_text) or folder is not None)
         self.send_button.setText("Stop" if model.busy else "Send")
         self.send_button.setToolTip("Stop (Esc)" if model.busy else "Send (Enter)")
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")
@@ -1286,7 +1320,7 @@ class SettingsDialog(QDialog):
         form.addRow("", _label(f"{dollars(spent)} spent so far", selectable=False, role="small"))
         form.addRow("What the agent may do", self.permissions)
         form.addRow("Instructions", self.instructions)
-        form.addRow("Work folder", folder_row)
+        form.addRow("Folder for new chats", folder_row)
         for kind in ("tools", "frontend"):
             form.addRow(MODULE_LABELS[kind], self.modules[kind])
         form.addRow(_label(AT_RESTART, selectable=False, role="small"))

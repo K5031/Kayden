@@ -18,9 +18,10 @@ Modules never call each other; only the runtime talks to them. Each module is a 
 to the runtime; `config.toml` can also name one by its import path,
 `"package.module:factory"`.
 
-Runtime settings (model, budget, permissions, instructions) are read by the
-runtime and apply live. Module settings (which module, the API key, the work folder, module
-options) are passed to factories, so they apply when Kayden restarts: `RuntimeAPI.restart()`
+Runtime settings (model, budget, permissions, instructions, the folder for new chats) are
+read by the runtime and apply live; the runtime hands each conversation's folder to the
+Tools (`Tools.use_folder`) when it opens it. Module settings (which module, the API key,
+module options) are passed to factories, so they apply when Kayden restarts: `RuntimeAPI.restart()`
 shuts the instance down and the launcher (`kayden`, or the desktop launcher) builds it again in
 the same process. When Core, Memory or Tools cannot be built, the frontend runs on a setup
 runtime (`runtime/setup.py`) that only shows and saves settings.

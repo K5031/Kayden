@@ -36,6 +36,7 @@ from kayden.runtime.config import RuntimeConfig
 from kayden.runtime.setup import SetupRuntime
 from tests.conftest import Harness, eventually
 from tests.fakes.core import Step, call
+from tests.fakes.tools import FakeTools
 
 RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
            "frontend": "scripted-window"}
@@ -457,3 +458,40 @@ async def test_unsupported_memory_hides_memory_and_delete(make, qapp):
     await eventually(lambda: not controller.can_delete)
     assert not [a for a in window.conversation_menu(window.conversation_info(other.id)).actions()
                 if a.text() == "Delete…" and a.isVisible()]
+
+
+async def test_the_folder_is_shown_and_choosing_another_starts_a_chat_there(make, qapp,
+                                                                           tmp_path):
+    default, project, other = (tmp_path / n for n in ("default", "project", "other"))
+    for folder in (default, project, other):
+        folder.mkdir()
+    tools = FakeTools()
+    tools.folders = []
+    h: Harness = await make(tools=tools, modules=ModuleState(work_folder=str(default)))
+    h.core.add(Step(text="hi"))
+    empty = await h.start()
+    window, controller, _ = await open_window(h)
+    await eventually(lambda: window.folder_button.text() == "default")
+    assert window.folder_button.isVisibleTo(window)
+    assert str(default) in window.folder_button.toolTip()
+
+    window.folder_chosen(str(project))  # an empty chat moves: no blank entry is left
+    await eventually(lambda: controller.model.conversation.folder == str(project))
+    await eventually(lambda: window.folder_button.text() == "project")
+    listed = await h.runtime.list_conversations()
+    assert [c.id for c in listed] == [controller.model.conversation.id] != [empty.id]
+
+    controller.send("hello")
+    await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
+    talked = controller.model.conversation.id
+    window.folder_chosen(str(other))  # a chat with messages stays; a new one starts
+    await eventually(lambda: controller.model.conversation.folder == str(other))
+    assert talked in [c.id for c in await h.runtime.list_conversations()]
+
+
+async def test_the_folder_button_is_hidden_for_tools_with_a_fixed_folder(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    window._refresh_status()
+    assert not window.folder_button.isVisibleTo(window)
