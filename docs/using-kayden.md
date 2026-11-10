@@ -24,8 +24,8 @@ kayden --conversation ID       # continue a conversation
 
 Type a message and press Enter. While the agent works you can keep typing; your messages
 are queued and delivered when it is ready. Its reasoning, replies and tool calls appear in
-the conversation as they happen; a command shows a short description of what it does, with
-the command itself below it.
+the conversation as they happen. Each step reads as a short sentence ("Read notes.md", or
+what a command does), with the exact input below it.
 
 ## Approving actions
 

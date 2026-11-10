@@ -77,6 +77,7 @@ from kayden.frontends.common import (
     MODULE_LABELS,
     PERMISSION_LABELS,
     call_parts,
+    call_title,
     delete_details,
     dollars,
     folder_path,
@@ -493,8 +494,10 @@ class ToolCard(QFrame):
     def refresh(self) -> None:
         item = self.item
         self.name.setText(item.name)
+        self.name.setVisible(item.sentence is None)  # a sentence says what the tool is
         self.title.setText(item.summary)
-        self.title.setToolTip(item.detail)
+        self.title.setToolTip(f"{item.name}: {item.detail}")
+        theme.mark(self.title, "tone", None if item.sentence else "muted")
         duration = f" in {item.duration_s:.1f} s" if item.duration_s is not None else ""
         self.state.setText(item.state_label + duration)
         theme.mark(self.state, "tone", TOOL_TONES.get(item.status, "muted")
@@ -534,6 +537,7 @@ class PermissionCard(QFrame):
         layout.setContentsMargins(14, 10, 12, 10)
         call = request.call
         headline, detail = call_parts(call.arguments)
+        headline = call_title(call.name, call.arguments) or headline
         layout.addWidget(_label(f"Kayden wants to: {headline}" if headline
                                 else f"Kayden wants to use {call.name}", role="strong"))
         layout.addWidget(_label(request_note(request), tone="muted"))

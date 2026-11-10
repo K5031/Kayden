@@ -95,6 +95,7 @@ from kayden.frontends.common import (
     MODULE_LABELS,
     PERMISSION_LABELS,
     call_parts,
+    call_title,
     delete_details,
     folder_path,
     loosening,
@@ -154,10 +155,10 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _call_label(arguments: Any) -> str:
-    """One line for a call: its description, else its arguments."""
+def _call_label(name: str, arguments: Any) -> str:
+    """One line for a call: a sentence, else its description, else its arguments."""
     headline, detail = _call_parts(arguments)
-    return headline or detail
+    return call_title(name, arguments) or headline or detail
 
 
 def _call_parts(arguments: Any) -> tuple[str | None, str]:
@@ -281,13 +282,18 @@ class ToolEntry(Static):
         self.refresh_content()
 
     def refresh_content(self) -> None:
-        out = Text.assemble(("⚙ ", "cyan"), (self.tool_name, "bold cyan"), " ")
         headline, detail = _call_parts(self.arguments)
-        if headline:
-            out.append(_clip(headline, MAX_ARGS_CHARS))
+        sentence = call_title(self.tool_name, self.arguments)
+        if sentence:  # the sentence says what the tool is
+            out = Text.assemble(("⚙ ", "cyan"), (_clip(sentence, MAX_ARGS_CHARS), "bold"))
             out.append(f"\n  {_clip(detail, MAX_ARGS_CHARS)}", style="dim")
         else:
-            out.append(_clip(detail, MAX_ARGS_CHARS), style="dim")
+            out = Text.assemble(("⚙ ", "cyan"), (self.tool_name, "bold cyan"), " ")
+            if headline:
+                out.append(_clip(headline, MAX_ARGS_CHARS))
+                out.append(f"\n  {_clip(detail, MAX_ARGS_CHARS)}", style="dim")
+            else:
+                out.append(_clip(detail, MAX_ARGS_CHARS), style="dim")
         if self.phase in ("running", "background"):
             label = self.phase
             out.append(f"\n  ⋯ {label}", style="yellow")
@@ -328,6 +334,7 @@ class PermissionPrompt(Vertical):
     def compose(self) -> ComposeResult:
         call = self.request.call
         headline, detail = _call_parts(call.arguments)
+        headline = call_title(call.name, call.arguments) or headline
         yield Label(
             Text.assemble(
                 *((("Kayden wants to: ", "bold"), (headline, "bold cyan")) if headline else
@@ -368,7 +375,7 @@ class OperationsScreen(ModalScreen[str | None]):
         with Vertical(classes="dialog"):
             yield Label("Cancel a running task" if self.operations else "Nothing is running")
             yield OptionList(
-                *(Option(f"{op.call.name} {_clip(_call_label(op.call.arguments), 60)}"
+                *(Option(f"{op.call.name} {_clip(_call_label(op.call.name, op.call.arguments), 60)}"
                          f"  [{op.call.id}]"
                          + (f"  {_clip(op.last_progress, 40)}" if op.last_progress else ""),
                          id=op.call.id)

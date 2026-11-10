@@ -1,5 +1,7 @@
 """Settings texts and the loosening check shared by the TUI and the desktop app."""
 
+import pytest
+
 from kayden.api import Budget, ModelInfo, ModuleChoice, PermissionPolicy, Settings, SettingsUpdate
 from kayden.frontends.common import (
     dollars,
@@ -120,3 +122,30 @@ def test_a_call_with_one_text_argument_shows_just_that_text():
     assert call_parts({"query": "python 3.14"}) == (None, "python 3.14")
     assert call_parts({"path": "notes.md", "offset": 3}) == (
         None, '{"path": "notes.md", "offset": 3}')
+
+
+@pytest.mark.parametrize(("name", "arguments", "title"), [
+    ("shell", {"command": "rm -rf build", "description": "Remove the old build"},
+     "Remove the old build"),
+    ("shell", {"command": "ls"}, "Run a command"),
+    ("remember", {"text": "Studies CS at UCL"}, "Remember “Studies CS at UCL”"),
+    ("forget", {"text": "Lives in Oslo"}, "Forget “Lives in Oslo”"),
+    ("recall", {"query": "trip plans", "scope": "all"}, "Search past conversations for “trip plans”"),
+    ("web_search", {"query": "python 3.14"}, "Search the web for “python 3.14”"),
+    ("web_fetch", {"url": "https://docs.python.org/3/whatsnew/"},
+     "Read docs.python.org/3/whatsnew/"),
+    ("read_file", {"path": "notes.md", "offset": 3}, "Read notes.md"),
+    ("write_file", {"path": "a/b.txt", "content": "x"}, "Write a/b.txt"),
+    ("edit_file", {"path": "main.py", "old_string": "a", "new_string": "b"}, "Edit main.py"),
+    ("list_files", {}, "List the files"),
+    ("list_files", {"path": "src"}, "List the files in src"),
+    ("search_files", {"pattern": "TODO"}, "Search the files for “TODO”"),
+    ("op_status", {"call_id": "c1"}, "Check on a background task"),
+    ("op_cancel", {"call_id": "c1"}, "Cancel a background task"),
+    ("their_tool", {"x": 1}, None),
+    ("read_file", '{"path": "no', None),  # still streaming
+])
+def test_calls_read_as_a_sentence(name, arguments, title):
+    from kayden.frontends.common import call_title
+
+    assert call_title(name, arguments) == title

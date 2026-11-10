@@ -1123,7 +1123,7 @@ async def test_a_command_shows_its_description_with_the_command_behind_it():
         await caught_up(pilot, app, stub)
         [entry] = entries(app, ToolEntry)
         shown = plain(entry)
-        assert "shell Remove the old build" in shown and "\n  rm -rf build" in shown
+        assert shown.startswith("⚙ Remove the old build\n  rm -rf build")
         prompt = str(app.query_one(PermissionPrompt).query_one(Label).render())
         assert "Kayden wants to: Remove the old build" in prompt and "rm -rf build" in prompt
 
@@ -1139,4 +1139,4 @@ async def test_a_reply_with_nothing_to_show_takes_no_space():
         await until(pilot, lambda: entries(app, ToolEntry))
         assert [e.display for e in entries(app, AssistantEntry)] in ([], [False])
         [tool] = entries(app, ToolEntry)
-        assert "remember Studies CS" in plain(tool)
+        assert plain(tool).startswith("⚙ Remember “Studies CS”\n  Studies CS")

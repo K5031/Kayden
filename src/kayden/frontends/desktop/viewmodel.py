@@ -71,7 +71,7 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.api import Text as TextBlock
-from kayden.frontends.common import call_parts, money
+from kayden.frontends.common import call_parts, call_title, money
 from kayden.runtime import InstanceLockedError
 from kayden.runtime.instance import ALREADY_OPEN
 
@@ -152,10 +152,16 @@ class ToolItem:
     notes: list[str] = field(default_factory=list)
 
     @property
+    def sentence(self) -> str | None:
+        """The call as a short sentence, for the tools Kayden knows."""
+        title = call_title(self.name, self.arguments)
+        return clip(title, MAX_ARGS_CHARS) if title else None
+
+    @property
     def summary(self) -> str:
-        """The call's own plain-language description, else its arguments."""
+        """The call as a sentence, else its own description, else its arguments."""
         headline, detail = self._parts()
-        return clip(headline, MAX_ARGS_CHARS) if headline else clip(detail, MAX_ARGS_CHARS)
+        return self.sentence or clip(headline or detail, MAX_ARGS_CHARS)
 
     @property
     def detail(self) -> str:

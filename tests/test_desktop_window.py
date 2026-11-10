@@ -514,7 +514,8 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     assert "rm -rf build" in texts  # what actually runs, on its own line
     [tool] = widgets(window, ToolCard)
     assert tool.title.text() == "Remove the old build"
-    assert tool.title.toolTip() == "rm -rf build"
+    assert tool.title.toolTip() == "shell: rm -rf build"
+    assert tool.name.isHidden()  # the sentence says what the tool is
 
 
 def test_a_reply_with_nothing_to_show_is_not_drawn(qapp):
