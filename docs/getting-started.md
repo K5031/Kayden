@@ -21,6 +21,14 @@ and switch between the two in Settings, install with its extra instead (Python 3
 uv tool install --python 3.13 --editable "Kayden[desktop]"
 ```
 
+**Updating.** `git pull` in the `Kayden` folder updates the code. When an update adds a
+library, Kayden says one is missing; install again with `--reinstall` added, then restart
+Kayden:
+
+```bash
+uv tool install --python 3.13 --editable "Kayden[desktop]" --reinstall
+```
+
 Without uv, use a virtual environment (systems such as Arch refuse a system-wide
 `pip install`):
 

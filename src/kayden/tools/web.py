@@ -113,9 +113,15 @@ class Web:
         self._resolve = resolve
 
     async def run(self, name: str, args: dict[str, Any]) -> str:
-        if name == "web_search":
-            return await self.search(args["query"], args.get("max_results", DEFAULT_RESULTS))
-        return await self.fetch(args["url"], args.get("start", 0))
+        try:
+            if name == "web_search":
+                return await self.search(args["query"],
+                                         args.get("max_results", DEFAULT_RESULTS))
+            return await self.fetch(args["url"], args.get("start", 0))
+        except ImportError as e:  # an install that predates these libraries
+            raise WebError(f"{name} is not available: the library {e.name!r} is not "
+                           "installed. Tell the user to reinstall Kayden (Getting started, "
+                           "Updating) and restart it.") from None
 
     async def search(self, query: str, max_results: int) -> str:
         results = await asyncio.to_thread(self._search, query, max_results)

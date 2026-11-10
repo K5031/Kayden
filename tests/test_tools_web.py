@@ -172,3 +172,13 @@ async def test_a_network_error_is_an_error_result(tmp_path):
         transport=httpx2.MockTransport(fail), resolve=fake_resolve))
     out = await run(tools, tmp_path, "web_fetch", url="https://example.com/")
     assert out.is_error and "could not be read" in out.content
+
+
+async def test_a_missing_library_says_to_reinstall(tmp_path):
+    def missing(query: str, max_results: int) -> list[dict]:
+        raise ModuleNotFoundError("No module named 'ddgs'", name="ddgs")
+
+    tools = ShellFilesTools(tmp_path, web_tools=web.Web(search=missing))
+    out = await run(tools, tmp_path, "web_search", query="x")
+    assert out.is_error and "'ddgs' is not installed" in out.content
+    assert "reinstall Kayden" in out.content
