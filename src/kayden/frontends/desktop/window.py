@@ -617,6 +617,7 @@ class MainWindow(QMainWindow):
         self._dialog: QDialog | None = None
         self.memory_dialog: MemoryDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
+        self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
         self.setWindowTitle("Kayden")
         self.resize(1000, 720)
         self._build()
@@ -802,7 +803,8 @@ class MainWindow(QMainWindow):
             else:
                 file_menu.addAction(action)
         self.model_menu = self.menuBar().addMenu("&Model")
-        self.model_menu.aboutToShow.connect(lambda: _spawn(self._fill_model_menu()))
+        self.model_menu.aboutToShow.connect(self._fill_model_menu)
+        self._fill_model_menu()
 
     # ── startup ───────────────────────────────────────────────────────────
 
@@ -845,6 +847,7 @@ class MainWindow(QMainWindow):
             case Reset():
                 self._rebuild()
                 _spawn(self.fill_sidebar())
+                _spawn(self.refresh_models())
             case ConversationListChanged():
                 _spawn(self.fill_sidebar())
             case MemoryListChanged():
@@ -1037,16 +1040,24 @@ class MainWindow(QMainWindow):
         self._at_end = False
         self.controller.load_earlier()
 
-    async def _fill_model_menu(self) -> None:
+    async def refresh_models(self) -> None:
+        try:
+            self._models = await self.runtime.list_models()
+        except Exception as e:  # noqa: BLE001 - e.g. no key yet
+            self._models = user_message(e)
+        self._fill_model_menu()
+
+    def _fill_model_menu(self) -> None:
+        """From the models already loaded: a menu that is empty when clicked does not
+        open, so it is never filled while it opens."""
         menu = self.model_menu
         menu.clear()
-        try:
-            models = await self.runtime.list_models()
-        except Exception as e:  # noqa: BLE001
-            menu.addAction(user_message(e)).setEnabled(False)
+        if self._models is None or isinstance(self._models, str):
+            menu.addAction(self._models or "Loading models…").setEnabled(False)
             return
-        for info in models:
+        for info in self._models:
             action = menu.addAction(model_label(info))
+            action.setData(info.id)
             action.setCheckable(True)
             action.setChecked(info.id == self.model.model)
             action.triggered.connect(lambda _=False, m=info.id: self.controller.select_model(m))

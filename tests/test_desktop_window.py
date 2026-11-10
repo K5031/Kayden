@@ -224,6 +224,36 @@ async def test_choosing_the_tui_says_when_it_is_used(make, installed, qapp):
     assert h.runtime.restart_request.frontend == "scripted-window"
 
 
+async def test_model_menu_is_filled_before_it_opens(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    await eventually(lambda: [a.data() for a in window.model_menu.actions()]
+                     == [m.id for m in h.core.models])
+    window.model_menu.aboutToShow.emit()
+    actions = window.model_menu.actions()  # there at once: an empty menu does not open
+    assert [a.data() for a in actions if a.isChecked()] == [h.runtime.snapshot().model]
+    other = next(a for a in actions if not a.isChecked())
+    chosen = other.data()
+    other.trigger()
+    await eventually(lambda: h.runtime.snapshot().model == chosen)
+    window.model_menu.aboutToShow.emit()
+    assert [a.data() for a in window.model_menu.actions() if a.isChecked()] == [chosen]
+
+
+async def test_model_menu_says_why_it_has_no_models(make, qapp):
+    h: Harness = await make()
+    window, _controller, _ = await open_window(h)
+
+    async def fail() -> Any:
+        raise RuntimeError("no key")
+
+    h.runtime.list_models = fail
+    await window.refresh_models()
+    (only,) = window.model_menu.actions()
+    assert only.text() == "no key" and not only.isEnabled()
+
+
 # ── conversations and long-term memory ───────────────────────────────────
 
 
