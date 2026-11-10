@@ -1,4 +1,6 @@
-"""Settings texts and the loosening check, shared by every frontend so the rule that
+"""What every frontend shows the same way, independent of its toolkit: how steps read
+(their sentence and input, past tense, results, folded groups), permission and settings
+texts, restart notices and formatting. The loosening check is here too, so the rule that
 loosening needs the user's confirmation (api.py update_settings) has one implementation."""
 
 from __future__ import annotations
