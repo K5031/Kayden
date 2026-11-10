@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessag
 
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
 from kayden.frontends.desktop import app_menu, theme
+from kayden.frontends.desktop import window as window_module
 from kayden.frontends.desktop.viewmodel import AssistantItem, Controller, ConversationModel
 from kayden.frontends.desktop.window import (
     DATE_ROLE,
@@ -553,3 +554,57 @@ def test_replies_have_no_avatar_and_roomy_lines(qapp):
     block = bubble.body.document().begin()
     assert block.blockFormat().lineHeight() >= 140  # percent of the font's line
     assert block.blockFormat().bottomMargin() >= 8
+
+
+@pytest.fixture
+def unzoomed(qapp):
+    yield
+    theme.set_zoom(qapp, 1.0)
+
+
+def test_zoom_scales_the_text(qapp, unzoomed):
+    base = qapp.font().pointSizeF()
+    theme.set_zoom(qapp, 1.5)
+    assert qapp.font().pointSizeF() == pytest.approx(base * 1.5)
+    assert f"{base * 1.5 * 1.45:.1f}pt" in qapp.styleSheet()
+    theme.apply(qapp, dark=True)  # restyling keeps the zoom
+    assert qapp.font().pointSizeF() == pytest.approx(base * 1.5)
+    theme.apply(qapp, dark=False)
+    theme.set_zoom(qapp, 1.0)
+    assert qapp.font().pointSizeF() == pytest.approx(base)
+
+
+def test_zoom_steps_stop_at_the_ends():
+    assert theme.zoom_step(1.0, 1) > 1.0 and theme.zoom_step(1.0, -1) < 1.0
+    assert theme.zoom_step(theme.ZOOM_LEVELS[-1], 1) == theme.ZOOM_LEVELS[-1]
+    assert theme.zoom_step(theme.ZOOM_LEVELS[0], -1) == theme.ZOOM_LEVELS[0]
+    assert theme.zoom_step(1.3, 1) == 1.5  # a level saved by hand moves to the next one
+
+
+async def test_ctrl_plus_minus_and_zero_zoom_and_are_remembered(make, qapp, unzoomed, tmp_path):
+    h: Harness = await make()
+    await h.start()
+    controller = Controller(h.runtime, ConversationModel())
+    saved = tmp_path / "desktop.json"
+    window = MainWindow(h.runtime, controller, zoom_file=saved)
+    actions = {a.text().replace("&", ""): a for a in window.findChildren(QAction)}
+    actions["Zoom In"].trigger()
+    actions["Zoom In"].trigger()
+    assert theme.zoom() == theme.zoom_step(theme.zoom_step(1.0, 1), 1)
+    await eventually(lambda: saved.exists() and str(theme.zoom()) in saved.read_text())
+    actions["Zoom Out"].trigger()
+    assert theme.zoom() == theme.zoom_step(1.0, 1)
+    actions["Actual Size"].trigger()
+    assert theme.zoom() == 1.0
+    assert "Ctrl+=" in [k.toString() for k in actions["Zoom In"].shortcuts()]
+    assert actions["Actual Size"].shortcut().toString() == "Ctrl+0"
+    await eventually(lambda: '"zoom": 1.0' in saved.read_text())
+
+
+async def test_a_saved_zoom_is_read_back(tmp_path):
+    saved = tmp_path / "desktop.json"
+    assert await window_module.load_zoom(saved) == 1.0
+    saved.write_text('{"zoom": 1.25}')
+    assert await window_module.load_zoom(saved) == 1.25
+    saved.write_text("not json")
+    assert await window_module.load_zoom(saved) == 1.0

@@ -8,6 +8,7 @@ the qasync loop that also runs the runtime.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -124,6 +126,7 @@ from kayden.frontends.desktop.viewmodel import (
 LINE_HEIGHT_PERCENT = 145  # reply text, of the font's line spacing
 PARAGRAPH_SPACING = 10  # px below a reply paragraph
 LIST_ITEM_SPACING = 4  # px below a list item
+ZOOM_SAVE_DELAY_S = 0.4
 HEADING_SPACING = 6  # px above a heading, on top of the paragraph below the previous block
 RENDER_INTERVAL_MS = 100  # Markdown of a streaming reply is re-rendered at most this often
 DEFAULT_WORK_FOLDER = Path("~/Kayden")
@@ -147,6 +150,20 @@ FLAGS_ROLE = Qt.ItemDataRole.UserRole + 4  # {"archived"}
 
 def _spawn(coro: Any) -> asyncio.Task[Any]:
     return asyncio.ensure_future(coro)
+
+
+async def load_zoom(path: Path) -> float:
+    """The zoom saved in `path`; 1.0 when there is none or it is unreadable."""
+    def read() -> float:
+        try:
+            return float(json.loads(path.read_text(encoding="utf-8"))["zoom"])
+        except (OSError, ValueError, TypeError, KeyError):
+            return 1.0
+    return await asyncio.to_thread(read)
+
+
+async def save_zoom(path: Path, level: float) -> None:
+    await asyncio.to_thread(path.write_text, json.dumps({"zoom": level}), encoding="utf-8")
 
 
 def _right(*widgets: QWidget) -> QHBoxLayout:
@@ -637,10 +654,13 @@ class MessageBox(QPlainTextEdit):
 class MainWindow(QMainWindow):
     closed = Signal()
 
-    def __init__(self, runtime: RuntimeAPI, controller: Controller) -> None:
+    def __init__(self, runtime: RuntimeAPI, controller: Controller,
+                 zoom_file: Path | None = None) -> None:
         super().__init__()
         self.runtime = runtime
         self.controller = controller
+        self.zoom_file = zoom_file  # where the zoom is remembered; None: not remembered
+        self._zoom_saver: asyncio.Task[None] | None = None
         self.model: ConversationModel = controller.model
         self.model.on_change = self._changed
         self._widgets: dict[int, QWidget] = {}
@@ -855,9 +875,33 @@ class MainWindow(QMainWindow):
                 file_menu.addSeparator()
             else:
                 file_menu.addAction(action)
+        view_menu = self.menuBar().addMenu("&View")
+        for text, keys, steps in (
+                ("Zoom &In", [QKeySequence.StandardKey.ZoomIn, QKeySequence("Ctrl+=")], 1),
+                ("Zoom &Out", [QKeySequence.StandardKey.ZoomOut], -1),
+                ("&Actual Size", [QKeySequence("Ctrl+0")], 0)):
+            action = QAction(text, self)
+            action.setShortcuts(keys)
+            action.triggered.connect(lambda _=False, s=steps: self.zoom(s))
+            view_menu.addAction(action)
         self.model_menu = self.menuBar().addMenu("&Model")
         self.model_menu.aboutToShow.connect(self._fill_model_menu)
         self._fill_model_menu()
+
+    def zoom(self, steps: int) -> None:
+        """Make everything larger (steps > 0), smaller, or its normal size (0)."""
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        theme.set_zoom(app, theme.zoom_step(theme.zoom(), steps) if steps else 1.0)
+        if self.zoom_file is None:
+            return
+        if self._zoom_saver is not None:  # once the keys stop: one write, never a stale one
+            self._zoom_saver.cancel()
+        self._zoom_saver = _spawn(self._save_zoom(self.zoom_file))
+
+    async def _save_zoom(self, path: Path) -> None:
+        await asyncio.sleep(ZOOM_SAVE_DELAY_S)
+        await save_zoom(path, theme.zoom())
 
     # ── startup ───────────────────────────────────────────────────────────
 

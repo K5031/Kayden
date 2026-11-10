@@ -71,6 +71,7 @@ another reason, the Settings window opens with the message.
 | See what Kayden remembers | **Kayden → Memory…**: add, edit or forget what it keeps across conversations. |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |
+| Make everything larger or smaller | **Ctrl +** and **Ctrl −** (also in the **View** menu); **Ctrl+0** goes back to normal. Kayden remembers the size. |
 
 Each conversation in the list shows its name, when it was last used, and the start of its
 first message. Until Kayden names a conversation, the start of its first message is its

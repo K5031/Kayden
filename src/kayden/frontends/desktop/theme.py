@@ -3,7 +3,8 @@ from it, and the few icons the app draws itself.
 
 Widgets pick their styling with object names and dynamic properties (`primary`, `tone`,
 `role`); custom-painted widgets read `current()` when they paint, so a change of the
-system's light or dark setting restyles everything.
+system's light or dark setting restyles everything. The zoom scales the app font and every
+font size in the style sheet.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
+    QFont,
     QGuiApplication,
     QIcon,
     QPainter,
@@ -64,6 +66,9 @@ DARK = Palette(
 ICONS = Path(__file__).parent / "icons"
 
 _current = LIGHT
+ZOOM_LEVELS = (0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0)
+_zoom = 1.0
+_base_pt: float | None = None  # the app font's size before any zoom
 
 
 def current() -> Palette:
@@ -74,13 +79,35 @@ def system_is_dark() -> bool:
     return QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
 
 
+def zoom() -> float:
+    return _zoom
+
+
+def zoom_step(level: float, steps: int) -> float:
+    """The level `steps` places up (positive) or down from `level`, stopping at the ends."""
+    if steps > 0:
+        return next((z for z in ZOOM_LEVELS if z > level), ZOOM_LEVELS[-1])
+    return next((z for z in reversed(ZOOM_LEVELS) if z < level), ZOOM_LEVELS[0])
+
+
+def set_zoom(app: QApplication, level: float) -> None:
+    global _zoom
+    _zoom = min(max(level, ZOOM_LEVELS[0]), ZOOM_LEVELS[-1])
+    apply(app, _current.dark)
+
+
 def apply(app: QApplication, dark: bool | None = None) -> None:
-    """Style the app for `dark`, or for the system's color scheme when None."""
-    global _current
+    """Style the app for `dark`, or for the system's color scheme when None, at the zoom."""
+    global _current, _base_pt
     _current = DARK if (system_is_dark() if dark is None else dark) else LIGHT
+    if _base_pt is None:
+        _base_pt = app.font().pointSizeF()
+    font = QFont(app.font())
+    font.setPointSizeF(_base_pt * _zoom)
+    app.setFont(font)
     app.setStyle(QStyleFactory.create("Fusion"))
     app.setPalette(qt_palette(_current))
-    app.setStyleSheet(style_sheet(_current, app.font().pointSizeF()))
+    app.setStyleSheet(style_sheet(_current, _base_pt * _zoom))
 
 
 def follow_system(app: QApplication) -> None:

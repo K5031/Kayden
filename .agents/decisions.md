@@ -558,3 +558,13 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md) (lo
 | Not found | `forget` answers ERROR with the current entries listed, so the model can retry with the exact text |
 | Offer | Probed once per `start()` with `Memory.memories()`; NotImplementedError drops both tools from the offer |
 | Log | `memory_added` / `memory_forgotten` with the entry id and `by: "agent"`, no text |
+
+## Desktop zoom
+
+| Choice | Value |
+|---|---|
+| Mechanism | The app font and every style-sheet font size scale by the zoom (`theme.set_zoom`), live; pixel sizes (padding, icons, radii) stay |
+| Levels | 67, 80, 90, 100, 110, 125, 150, 175, 200 %, as in browsers |
+| Keys | Zoom In: the platform's Zoom In (Ctrl++) and Ctrl+=; Zoom Out: Ctrl+−; Actual Size: Ctrl+0; all in a View menu |
+| Stored | `<data dir>/desktop.json` (`{"zoom": 1.25}`), written 0.4 s after the last change; missing or unreadable means 100 % |
+| Not a setting | A desktop-only view preference, so it stays out of `settings.toml` and the runtime |

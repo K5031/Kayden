@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from pathlib import Path
 from typing import Any
 
 from kayden.api import Frontend, FrontendInfo, InstancePaths, RuntimeAPI
@@ -25,7 +26,10 @@ from PySide6 import QtWidgets  # noqa: F401
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> DesktopFrontend:
     """Options: conversation_id (open it first; default: the newest)."""
-    return DesktopFrontend(options.get("conversation_id"))
+    return DesktopFrontend(options.get("conversation_id"), paths.data_dir / ZOOM_FILE)
+
+
+ZOOM_FILE = "desktop.json"  # the app's own view preferences, in the data folder
 
 
 factory.display_name = "Desktop app"  # type: ignore[attr-defined]
@@ -33,8 +37,10 @@ factory.kind = "window"  # type: ignore[attr-defined]
 
 
 class DesktopFrontend(Frontend):
-    def __init__(self, conversation_id: str | None = None) -> None:
+    def __init__(self, conversation_id: str | None = None,
+                 zoom_file: Path | None = None) -> None:
         self.conversation_id = conversation_id
+        self.zoom_file = zoom_file
 
     @property
     def info(self) -> FrontendInfo:
@@ -44,13 +50,17 @@ class DesktopFrontend(Frontend):
         """Returns when the main window closes or the runtime's event stream ends."""
         from PySide6.QtWidgets import QApplication
 
+        from kayden.frontends.desktop import theme
         from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
-        from kayden.frontends.desktop.window import MainWindow
+        from kayden.frontends.desktop.window import MainWindow, load_zoom
 
-        if QApplication.instance() is None:
+        app = QApplication.instance()
+        if app is None:
             raise RuntimeError("the desktop frontend runs through kayden.frontends.desktop.launcher")
+        if self.zoom_file is not None:
+            theme.set_zoom(app, await load_zoom(self.zoom_file))
         controller = Controller(runtime, ConversationModel())
-        window = MainWindow(runtime, controller)
+        window = MainWindow(runtime, controller, self.zoom_file)
         closed = asyncio.Event()
         window.closed.connect(closed.set)
         window.show()
