@@ -428,7 +428,7 @@ A frontend that cannot answer prompts is never sent any; calls that would prompt
 16.6 Runtime behavior
 Model failures are retried with backoff and never trigger a silent model switch.
 Budget semantics are in section 9.
-Each instance writes a JSONL event log of runtime decisions to its data directory (events.jsonl), in addition to the event stream: every event except deltas and progress, plus decision records (budget checks, permission outcomes, stop, backgrounding, abandonment, late completions, retries, idle and wake-up, cycle start and end, resume repair).
+Each instance writes a JSONL event log of runtime decisions to its data directory (events.jsonl), in addition to the event stream: every event except deltas and progress, without content (messages, tool calls and results are recorded by id, kind and size, never by text, arguments or output), plus decision records (budget checks, permission outcomes, stop, backgrounding, abandonment, late completions, retries, idle and wake-up, cycle start and end, resume repair).
 Graceful shutdown cancels running calls. Only a crash produces interrupted results.
 
 Final Product Definition

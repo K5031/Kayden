@@ -744,7 +744,8 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Assumed:** `delete_conversation` refuses the open conversation and nothing else.
 
 ### A7 (S) The event log keeps message text after deletion
-- **Status:** Open.
+- **Status:** Resolved. The log records events without content (SPEC 16.6), and logs
+  written before that are rewritten without it at the next start.
 - **Where:** SPEC 16.6 (the event log records every event except deltas and progress,
   `MessageCommitted` included) vs. the note's "deletion controls what the disk keeps".
 - **Problem:** `events.jsonl` holds the full text of every committed message. Deleting a

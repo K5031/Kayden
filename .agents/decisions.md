@@ -46,15 +46,21 @@ exact/estimate, clamped to [0.25, 4].
 |------|--------|
 | `instance.lock` | `fcntl.flock` lock, taken at the first `start()`; contents: holder pid. `session.lock` and `continuous.lock`, left by the per-mode versions, are also locked when present, so an older Kayden cannot run on the folder meanwhile, and one that holds them makes `start()` fail naming its pid |
 | `usage.json` | `{"schema_version": 1, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, elapsed_s}`; written with temp file + `os.replace` at the first start, after each charge, each tool-call reservation and whenever activity drops to zero. When it does not exist, the first start sums `usage-session.json` and `usage-continuous.json` into it and leaves them in place |
-| `events.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread. The per-mode `events-<mode>.jsonl` files are left as they are |
+| `events.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread. Its first line is `{"log_format": 2}`. A log without that line, the per-mode `events-<mode>.jsonl` files included, is rewritten once at the first start without content (temp file + `os.replace`); lines that are not JSON are dropped |
 | `scratch/` | `ToolContext.data_dir`, shared by all calls |
 
 Event log records:
 
 ```json
-{"ts": 1793283281.2, "seq": 12, "event": "ToolStarted", "data": {...dataclass fields...}}
+{"ts": 1793283281.2, "seq": 12, "event": "ToolStarted", "data": {"call_id": "c1", "name": "shell"}}
 {"ts": 1793283281.2, "decision": "budget_check", "before": "tool", "ok": true, "reason": null}
 ```
+
+`data` holds the event's dataclass fields, except that content is replaced: `MessageCommitted`
+has `message_id`, `role`, `blocks` (type tags) and `stop`; `MessageQueued` has `chars`;
+`ToolStarted`, `ToolFinished` and `PermissionRequested` name the call without arguments or
+output; `SettingsChanged` has `system_prompt_chars`; `ConversationUpdated` has no title or
+preview.
 
 Decision kinds: `start`, `cycle_requested`, `cycle_start`, `cycle_end`, `budget_check`,
 `permission`, `backgrounded`, `cancel_operation`, `abandoned`, `late_completion`, `idle`,

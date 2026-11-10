@@ -276,7 +276,7 @@ async def test_jsonl_event_log(make: Any) -> None:
     await h.rec.wait_state(AgentState.STOPPED)
     await h.close()
     lines = [json.loads(line) for line in
-             (h.data_dir / "events.jsonl").read_text().splitlines()]
+             (h.data_dir / "events.jsonl").read_text().splitlines()][1:]  # after the header
     kinds = {line.get("event") for line in lines}
     assert {"StateChanged", "ToolStarted", "ToolFinished", "MessageCommitted"} <= kinds
     decisions = {line.get("decision") for line in lines}

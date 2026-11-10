@@ -142,11 +142,12 @@ control what the agent sees; deletion controls what the disk keeps.
   `messages` exempts; each message is removed from the contentless FTS index with its
   original text; everything else is deleted; the FTS index is optimized so no segment keeps
   the terms. Deletion and forgetting then checkpoint the write-ahead log (`TRUNCATE`).
+- The event log holds no content, so deletion leaves nothing there: messages, tool calls
+  and results are logged by id, kind and size, and titles, previews and the system prompt
+  are left out. A log written before that is rewritten without content at the next start.
 - Docs say what deletion does not reach: backups and other copies outside the data folder,
-  what the AI provider already received, and the activity log (`events.jsonl`), which
-  records message text (contract issue A7).
-- Frontends ask for confirmation naming the conversation, say it cannot be undone, and
-  offer archive.
+  and what the AI provider already received.
+- Frontends ask for confirmation naming the conversation and say it is permanent.
 
 ### Migrating existing data
 
@@ -224,9 +225,9 @@ older Kayden holds a lock, and an older Kayden cannot start while it runs.
 - **The user curates the context.** New, Continue from, Remember, archive, forget and
   delete each change what the agent sees; long-term memory is visible and correctable.
 - **Deletion is real but bounded.** Content is overwritten in `memory.db` and the
-  write-ahead log, but not in backups, at the provider, or in the activity log, which
-  records message text. That last gap is open (contract issue A7); docs tell the user how to
-  remove the log.
+  write-ahead log, and the event log never holds it, but backups and the provider are out
+  of reach. The content-free log is less useful for debugging what the agent said or ran;
+  the conversation itself has that until it is deleted.
 - **Forgetting is by wording.** A forgotten fact does not come back in the same words; a
   reworded one can, and the user forgets it again. Forgetting a fact does not delete the
   messages it came from.

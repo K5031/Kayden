@@ -74,10 +74,11 @@ Deletion only reaches Kayden's database. It does not reach:
 
 - copies outside Kayden's data folder, such as backups of your computer;
 - what the AI provider already received to answer each message; the provider keeps that
-  according to its own retention policy;
-- Kayden's activity log (`events.jsonl` in the data folder, and the older
-  `events-session.jsonl` and `events-continuous.jsonl`), which records every message as it
-  happened. Delete those files yourself, while Kayden is closed, to remove that record.
+  according to its own retention policy.
+
+Kayden's activity log (`events.jsonl` in the data folder) holds nothing to delete: it
+records what Kayden did and when, never what was said, what a tool was asked or what it
+returned.
 
 To tidy the list without losing anything, archive instead.
 

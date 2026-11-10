@@ -92,7 +92,7 @@ Everything is in Kayden's data folder, `~/.kayden` (or `--data-dir`, or `$KAYDEN
 | `config.toml` | Optional hand-written configuration, for advanced use |
 | `memory.db` | Your conversations and long-term memory |
 | `usage.json` | What has been spent so far; delete it, while Kayden is closed, to start counting from zero |
-| `events.jsonl` | Activity log of everything Kayden did, messages included |
+| `events.jsonl` | Activity log of what Kayden did and when; it holds no message text, tool input or tool output |
 
 Settings from the screen override `config.toml`, and command-line options override both.
 To see the result, with defaults filled in and secrets hidden:
