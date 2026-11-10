@@ -37,7 +37,7 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
         if old is not None and (new is None or new > old):
             reasons.append(f"raises the spending limit from {dollars(old)} to {dollars(new)}"
                            if new is not None else
-                           f"removes the {dollars(old)} limit: no spending limit")
+                           f"removes the {dollars(old)} spending limit")
     if update.permissions is not None:
         order = list(PermissionPolicy)
         if order.index(update.permissions) > order.index(current.permissions):
@@ -48,10 +48,11 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
 
 MODULE_LABELS = {"core": "AI provider", "memory": "Memory", "tools": "Tools",
                  "frontend": "Interface"}
-MEMORY_WARNING = ("A different memory keeps its own conversations and memories: the ones "
-                  "you have now are not shown after the restart, and come back when you "
-                  "switch back.")
-AT_RESTART = "The AI provider, key, modules and work folder apply when Kayden restarts."
+MEMORY_WARNING = ("Each memory module keeps its own conversations and memories. After the "
+                  "restart, your current ones won't appear; they come back if you switch "
+                  "back.")
+AT_RESTART = ("Changes to the AI provider, API key, modules and work folder take effect after "
+              "a restart.")
 
 
 def module_options(choice: ModuleChoice) -> list[tuple[str, str]]:
@@ -85,17 +86,17 @@ def restart_notice(settings: Settings) -> str | None:
     if settings.startup_error is not None:
         if settings.startup_error.startswith(ALREADY_OPEN):
             return "Close the other Kayden window, then press Restart now."
-        return "Fix the settings above, then restart Kayden."
+        return "Fix the settings above, then press Restart now."
     if not settings.restart_needed:
         return None
     frontend = settings.modules["frontend"]
-    notice = "Saved changes apply when Kayden restarts."
+    notice = "Your changes take effect after a restart."
     if frontend.chosen is not None and frontend.chosen != settings.restart_frontend:
         kind = next((m.kind for m in frontend.installed if m.id == frontend.chosen), None)
-        where = ("the next time Kayden is started from the app menu" if kind == "window"
-                 else "the next time you run kayden in a terminal")
+        where = ("the next time you start Kayden on a computer with a display"
+                 if kind == "window" else "the next time you run kayden in a terminal")
         notice = f"{module_name(frontend, frontend.chosen)} will be used {where}. " + notice
     elif settings.restart_frontend != frontend.running:
-        notice += (f" Restart now continues in "
+        notice += (f" Restart now to switch to "
                    f"{module_name(frontend, settings.restart_frontend)}.")
     return notice

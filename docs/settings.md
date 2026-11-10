@@ -39,7 +39,7 @@ after the restart.
 - From the terminal app, choosing the desktop app closes the terminal app and opens the
   desktop app in the same conversation. Without a screen to show it on (an SSH session, for
   example), the terminal app says the desktop app will be used the next time you start
-  Kayden from your app menu.
+  Kayden on a computer with a display.
 - The desktop app cannot open a terminal. Choosing the terminal app there means it is used
   the next time you run `kayden` in a terminal; **Restart now** restarts the desktop app for
   any other change.

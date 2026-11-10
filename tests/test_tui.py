@@ -367,7 +367,7 @@ async def test_streams_text_and_commits_markdown():
         await caught_up(pilot, app, stub)
         [entry] = entries(app, AssistantEntry)
         assert entry.final and entry.body == "Hello **there**" and not entry.interrupted
-        assert "Idle" in status(app)
+        assert "Ready" in status(app)
 
 
 async def test_model_retry_discards_the_failed_attempts_stream():
@@ -380,7 +380,7 @@ async def test_model_retry_discards_the_failed_attempts_stream():
         await caught_up(pilot, app, stub)
         assert [e.body for e in entries(app, AssistantEntry)] == ["Hello"]
         assert not entries(app, ToolEntry)
-        assert "model retry 1/3" in status(app)
+        assert "Retrying (1 of 3)" in status(app)
 
 
 async def test_tool_call_deltas_progress_and_results():
@@ -401,7 +401,7 @@ async def test_tool_call_deltas_progress_and_results():
         [tool] = entries(app, ToolEntry)
         assert len(entries(app, AssistantEntry)) == 1
         assert "running: compiling 3/10" in plain(tool)
-        assert "Running tools… · 1 ops" in status(app)
+        assert "Working… · 1 running" in status(app)
 
         stub.emit(ToolBackgrounded("c1"))
         stub.emit(MessageCommitted(msg("t0", Role.TOOL,
@@ -428,7 +428,7 @@ async def test_permission_prompt_offers_every_decision(decision: Decision):
         stub.emit(StateChanged(AgentState.AWAITING_PERMISSION))
         stub.emit(PermissionRequested(PermissionRequest("p1", call, read_only=False)))
         await caught_up(pilot, app, stub)
-        assert "Awaiting permission" in status(app)
+        assert "Waiting for you" in status(app)
         prompt = app.query_one(PermissionPrompt)
         assert {b.id for b in prompt.query(Button)} == {d.value for d in Decision}
 
@@ -521,7 +521,7 @@ async def test_stop_keeps_ui_responsive_and_reports_progress():
         stub.emit(StopStalled(["c-9"]))
         await caught_up(pilot, app, stub)
         assert "c-9" in plain(entries(app, SystemEntry)[-1])
-        assert "stop stalled" in status(app)
+        assert "Some tasks did not stop in time" in status(app)
 
         stub.emit(StateChanged(AgentState.STOPPED))
         await caught_up(pilot, app, stub)
@@ -644,7 +644,7 @@ async def test_start_screen_lists_titles_and_resumes_a_conversation():
         labels = [str(prompt) for prompt, _ in select._options]
         # Archived conversations are left out; untitled ones show their preview.
         assert labels == ["New conversation", "Test", "What is the weather",
-                          "Untitled conversation"]
+                          "New chat"]
         select.value = "conv-3"
         await pilot.pause()
         assert screen.query_one("#autonomous", Switch).value is True  # its current value
@@ -759,7 +759,7 @@ async def test_always_allow_is_not_offered():
         await caught_up(pilot, app, stub)
         await type_text(pilot, "/allow always")
         await pilot.press("enter")
-        await until(pilot, lambda: any("always" in n.message for n in app._notifications))
+        await until(pilot, lambda: any("/allow once" in n.message for n in app._notifications))
         assert not any(c[0] == "resolve_permission" for c in stub.calls)
 
 
@@ -929,7 +929,7 @@ async def test_conversation_list_shows_titles_and_opens_one():
     async with app.run_test(size=(120, 50)) as pilot:
         screen = await open_conversations(pilot, app, stub, how="command")
         assert listed(screen) == ["● Test", "  What is the weather",
-                                  "  Untitled conversation  · autonomous"]
+                                  "  New chat  · autonomous"]
         screen.query_one("#show-archived", Switch).value = True
         await until(pilot, lambda: len(listed(screen)) == 4)
         assert listed(screen)[-1] == "  Old plans  · archived"
@@ -950,7 +950,7 @@ async def test_conversation_cannot_be_switched_while_the_agent_runs():
         screen = await open_conversations(pilot, app, stub)
         highlight(screen, "conv-2")
         screen.query_one("#open", Button).press()
-        await until(pilot, lambda: any("Stop" in n.message for n in app._notifications))
+        await until(pilot, lambda: any("stop the current task" in n.message for n in app._notifications))
         assert not any(c[0] == "start" for c in stub.calls)
 
 
@@ -1092,7 +1092,7 @@ async def test_memory_screen_adds_edits_and_forgets():
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
         message = plain(app.screen.query_one("#confirm-message"))
         assert "Lives in Oslo" in message
-        assert "stay until their conversation is deleted" in message
+        assert "stay until you delete their conversation" in message
         app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: ("forget_memory", "e2") in stub.calls)
         await until(pilot, lambda: len(memory_rows(screen)) == 2)

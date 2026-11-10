@@ -1189,19 +1189,27 @@ class MemoryDialog(QDialog):
 
     def _forget(self) -> None:
         if (entry := self._selected()) is not None:
-            confirm(self, f"Forget “{clip(entry.text, 80)}”?\n\nKayden won't use it again. "
-                    "The messages it came from stay until you delete their conversation.",
-                    lambda: self.controller.forget_memory(entry.id))
+            confirm(self, f"Forget “{clip(entry.text, 80)}”?",
+                    lambda: self.controller.forget_memory(entry.id), yes="Forget", danger=True,
+                    details="Kayden won't use it again. The messages it came from stay until "
+                            "you delete their conversation.")
 
 
 # ── settings ──────────────────────────────────────────────────────────────
 
 
-def confirm(parent: QWidget, text: str, then: Callable[[], None]) -> QMessageBox:
-    box = QMessageBox(QMessageBox.Icon.Warning, "Kayden", text,
-                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, parent)
-    box.setDefaultButton(QMessageBox.StandardButton.No)
-    box.finished.connect(lambda result: result == QMessageBox.StandardButton.Yes and then())
+def confirm(parent: QWidget, text: str, then: Callable[[], None], *, yes: str = "Continue",
+            details: str = "", danger: bool = False) -> QMessageBox:
+    """Cancel is the default; `yes` names the action."""
+    box = QMessageBox(QMessageBox.Icon.NoIcon, "Kayden", text, parent=parent)
+    box.setInformativeText(details)
+    cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+    action = box.addButton(yes, QMessageBox.ButtonRole.AcceptRole)
+    if danger:
+        action.setProperty("danger", True)
+        action.style().polish(action)
+    box.setDefaultButton(cancel)
+    box.buttonClicked.connect(lambda button: button is action and then())
     box.open()
     return box
 
@@ -1351,7 +1359,8 @@ class SettingsDialog(QDialog):
         if update.modules and "memory" in update.modules:
             text += MEMORY_WARNING + " "
         if text:
-            confirm(self, text + "Continue?", lambda: self._apply(update, restart))
+            confirm(self, "Save these changes?", lambda: self._apply(update, restart),
+                    yes="Save", details=text.strip())
         else:
             self._apply(update, restart)
 
@@ -1374,8 +1383,9 @@ class SettingsDialog(QDialog):
         def saved(settings: Settings) -> None:
             self.accept()
             if not restart and needs_restart(update) and (notice := restart_notice(settings)):
-                confirm(self.parentWidget(), notice + " Restart now?",
-                        lambda: self.controller.command(self.runtime.restart()))
+                confirm(self.parentWidget(), "Restart Kayden now?",
+                        lambda: self.controller.command(self.runtime.restart()),
+                        yes="Restart now", details=notice)
 
         self.controller.command(apply(), done=saved, failed=failed)
 
@@ -1461,7 +1471,7 @@ class WelcomeDialog(QDialog):
         page = QWidget()
         column = QVBoxLayout(page)
         column.setContentsMargins(0, 8, 0, 0)
-        column.addWidget(_label("Kayden reads and writes files only inside its work folder."))
+        column.addWidget(_label("Kayden runs commands and works with files in this folder."))
         folder_row = QHBoxLayout()
         self.folder = QLineEdit(settings.work_folder or str(DEFAULT_WORK_FOLDER.expanduser()))
         self.folder.setEnabled(settings.work_folder is not None)

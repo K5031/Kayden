@@ -141,7 +141,7 @@ async def test_saving_a_module_change_offers_restart_now():
         await save(pilot, app)
         await until(pilot, lambda: isinstance(app.screen, RestartScreen))
         message = str(app.screen.query_one("#restart-message").render())
-        assert "Desktop app will be used the next time Kayden is started from the app menu" \
+        assert "Desktop app will be used the next time you start Kayden on a computer with a display" \
             in message
         app.screen.query_one("#restart-later", Button).press()
         await until(pilot, lambda: not isinstance(app.screen, RestartScreen))
@@ -156,7 +156,7 @@ async def test_a_memory_change_warns_first():
         field(app, "#module-memory", Select).value = "notes"
         await save(pilot, app)
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
-        assert "not shown after the restart" in str(
+        assert "your current ones won't appear" in str(
             app.screen.query_one("#confirm-message").render())
         app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: updates(stub))
@@ -214,7 +214,7 @@ async def test_removing_the_limit_and_loosening_permissions_ask_first():
         field(app, "#permissions", Select).value = PermissionPolicy.ASK
         await save(pilot, app)
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
-        assert "no spending limit" in str(app.screen.query_one("#confirm-message").render())
+        assert "removes the $10 spending limit" in str(app.screen.query_one("#confirm-message").render())
         app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: updates(stub))
         assert updates(stub) == [SettingsUpdate(budget=Budget(),

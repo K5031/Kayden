@@ -7,7 +7,7 @@ then press Enter. For a new conversation you can also set:
 
 | Field | Does |
 |---|---|
-| Autonomous | The agent may wait for its background work and continue on its own (see [Autonomy](concepts.md#autonomy)) |
+| Let Kayden continue on its own | The agent may wait for its background work and continue on its own (see [Autonomy](concepts.md#autonomy)) |
 | Continue from | Start from where an earlier conversation left off |
 | Remember | Off: this chat won't use or add to long-term memory |
 
@@ -44,7 +44,7 @@ Kayden asks:
 | Answer | Effect |
 |---|---|
 | Allow once | Runs this one call |
-| Allow for conversation | Runs this tool without asking again in this conversation, until you quit |
+| Allow for this conversation | Runs this tool without asking again in this conversation, until you quit |
 | Deny | The agent is told the call was refused |
 
 The permission level is set in [Settings](settings.md#permissions).

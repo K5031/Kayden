@@ -131,12 +131,14 @@ async def test_loosening_in_settings_asks_first_and_no_sends_nothing(make, qapp)
     dialog.permissions.setCurrentIndex(dialog.permissions.findData(PermissionPolicy.ASK))
     dialog._save()
     box = message_box(dialog)
-    assert "$10 to $50" in box.text() and "ask me before every action" in box.text()
-    box.button(QMessageBox.StandardButton.No).click()
+    assert box.text() == "Save these changes?"
+    assert "$10 to $50" in box.informativeText()
+    assert "ask me before every action" in box.informativeText()
+    box.defaultButton().click()  # Cancel
     await asyncio.sleep(0.05)
     assert (await h.runtime.settings()).budget.max_cost_usd == 10.0
     dialog._save()
-    message_box(dialog).button(QMessageBox.StandardButton.Yes).click()
+    next(b for b in message_box(dialog).buttons() if b.text() == "Save").click()
     await eventually(lambda: not dialog.isVisible())
     after = await h.runtime.settings()
     assert after.budget.max_cost_usd == 50.0
@@ -215,9 +217,9 @@ async def test_choosing_the_tui_says_when_it_is_used(make, installed, qapp):
     dialog._save()
     box = await eventually(lambda: next((b for b in window.findChildren(QMessageBox)
                                          if b.isVisible()), None))
-    assert box.text().startswith("Terminal (TUI) will be used the next time you run kayden "
-                                 "in a terminal.")
-    box.button(QMessageBox.StandardButton.Yes).click()  # restarts the desktop app itself
+    assert box.informativeText().startswith("Terminal (TUI) will be used the next time you run "
+                                            "kayden in a terminal.")
+    next(b for b in box.buttons() if b.text() == "Restart now").click()  # restarts the desktop app itself
     await h.rec.wait_for(lambda r: r.of(ShuttingDown))
     assert h.runtime.restart_request.frontend == "scripted-window"
 
@@ -383,8 +385,8 @@ async def test_memory_dialog_add_edit_forget(make, qapp):
     dialog.entries.setCurrentRow(0)
     dialog.forget_button.click()
     box = visible(dialog, QMessageBox)
-    assert "stay until you delete their conversation" in box.text()
-    box.button(QMessageBox.StandardButton.Yes).click()
+    assert "stay until you delete their conversation" in box.informativeText()
+    next(b for b in box.buttons() if b.text() == "Forget").click()
     await eventually(lambda: dialog.entries.count() == 1)
     assert [e.text for e in await h.runtime.memories()] == ["Lives in Oslo"]
 

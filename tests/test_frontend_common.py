@@ -31,7 +31,7 @@ def test_raising_removing_and_loosening_are_each_named():
     assert loosening(current, SettingsUpdate(budget=Budget(max_cost_usd=50.0))) == [
         "raises the spending limit from $10 to $50"]
     assert loosening(current, SettingsUpdate(budget=Budget())) == [
-        "removes the $10 limit: no spending limit"]
+        "removes the $10 spending limit"]
     reasons = loosening(current, SettingsUpdate(budget=Budget(max_cost_usd=20.0),
                                                 permissions=PermissionPolicy.ALLOW_READ_ONLY))
     assert len(reasons) == 2
@@ -66,20 +66,20 @@ def test_restart_notices_say_where_the_chosen_frontend_will_be_used():
     base = settings()
     assert restart_notice(base) is None
     assert restart_notice(settings(restart_needed=True)) == (
-        "Saved changes apply when Kayden restarts.")
+        "Your changes take effect after a restart.")
     to_desktop = chosen(base, "frontend", "desktop")
     assert restart_notice(settings(modules=to_desktop, restart_needed=True,
                                    restart_frontend="desktop")) == (
-        "Saved changes apply when Kayden restarts. Restart now continues in Desktop app.")
+        "Your changes take effect after a restart. Restart now to switch to Desktop app.")
     assert restart_notice(settings(modules=to_desktop, restart_needed=True)) == (
-        "Desktop app will be used the next time Kayden is started from the app menu. "
-        "Saved changes apply when Kayden restarts.")
+        "Desktop app will be used the next time you start Kayden on a computer with a display. "
+        "Your changes take effect after a restart.")
     window = {**base.modules, "frontend": ModuleChoice(
         "desktop", "tui", base.modules["frontend"].installed)}
     assert restart_notice(settings(modules=window, restart_needed=True,
                                    restart_frontend="desktop")).startswith(
         "Terminal (TUI) will be used the next time you run kayden in a terminal.")
     assert restart_notice(settings(startup_error="no key")) == (
-        "Fix the settings above, then restart Kayden.")
+        "Fix the settings above, then press Restart now.")
     assert restart_notice(settings(startup_error=f"{ALREADY_OPEN} (/d is in use)")) == (
         "Close the other Kayden window, then press Restart now.")

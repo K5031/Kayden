@@ -390,8 +390,8 @@ def saved_window(config: InstanceConfig) -> tuple[str | None, str | None]:
     if info is None:
         return None, f"The interface {chosen!r} is not installed, so Kayden opens in the terminal."
     if not has_display():
-        return None, (f"No display here, so Kayden opens in the terminal; {info.name} opens "
-                      "when you start Kayden from the app menu.")
+        return None, (f"No display here, so Kayden opens in the terminal. {info.name} opens "
+                      "when you start Kayden on a computer with a display.")
     return info.id, None
 
 

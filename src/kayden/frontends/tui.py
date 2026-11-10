@@ -103,10 +103,10 @@ from kayden.frontends.common import (
 
 STATE_LABELS = {
     AgentState.NOT_STARTED: "Not started",
-    AgentState.IDLE: "Idle",
+    AgentState.IDLE: "Ready",
     AgentState.THINKING: "Thinking…",
-    AgentState.RUNNING_TOOLS: "Running tools…",
-    AgentState.AWAITING_PERMISSION: "Awaiting permission",
+    AgentState.RUNNING_TOOLS: "Working…",
+    AgentState.AWAITING_PERMISSION: "Waiting for you",
     AgentState.STOPPING: "Stopping…",
     AgentState.STOPPED: "Stopped",
     AgentState.FAILED: "Failed",
@@ -123,7 +123,7 @@ STATUS_ICONS = {
 }
 DECISION_LABELS = {
     Decision.ALLOW_ONCE: "Allow once",
-    Decision.ALLOW_CONVERSATION: "Allow for conversation",
+    Decision.ALLOW_CONVERSATION: "Allow for this conversation",
     Decision.DENY: "Deny",
 }
 DECISION_ALIASES = {
@@ -137,7 +137,7 @@ HELP = (
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
-UNTITLED = "Untitled conversation"
+UNTITLED = "New chat"
 REMEMBER_HINT = "Off: this chat won't use or add to long-term memory."
 # States in which runtime.start() may switch conversations (given no outstanding call).
 SWITCHABLE = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
@@ -219,7 +219,7 @@ class AssistantEntry(Static):
         if self.interrupted:
             parts.append(Text("(interrupted)", style="dim"))
         if self.refused:
-            parts.append(Text("⛔ The model declined to respond.", style="bold red"))
+            parts.append(Text("The model declined to answer.", style="bold red"))
         self.update(Group(*parts))
 
 
@@ -307,10 +307,10 @@ class PermissionPrompt(Vertical):
 
     def compose(self) -> ComposeResult:
         call = self.request.call
-        kind = "read-only" if self.request.read_only else "may modify state"
+        kind = "only reads" if self.request.read_only else "may change things"
         yield Label(
             Text.assemble(
-                ("Permission requested: ", "bold"),
+                ("Kayden wants to use ", "bold"),
                 (call.name, "bold cyan"),
                 f" ({kind})\n",
                 (_format_args(call.arguments), "dim"),
@@ -346,7 +346,7 @@ class OperationsScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label("Cancel a running call" if self.operations else "Nothing is running")
+            yield Label("Cancel a running task" if self.operations else "Nothing is running")
             yield OptionList(
                 *(Option(f"{op.call.name} {_clip(_format_args(op.call.arguments), 60)}"
                          f"  [{op.call.id}]"
@@ -371,7 +371,7 @@ class ModelScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label("Select model (applies from the next inference)")
+            yield Label("Choose a model (applies from the next reply)")
             options = [
                 Option(f"{'● ' if m.id == self.current else '  '}{m.name}  [{m.id}]", id=m.id)
                 for m in self.models
@@ -450,7 +450,7 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
             yield Select([("Same as the main model", SAME_MODEL), *models],
                          value=s.maintenance_model or SAME_MODEL, allow_blank=False,
                          id="maintenance-model", disabled=not models)
-            yield Label("Spending limit in US dollars (empty = no limit)")
+            yield Label("Spending limit in US dollars (leave empty for no limit)")
             limit = s.budget.max_cost_usd
             yield Input("" if limit is None else f"{limit:g}", id="spending-limit")
             yield Static(f"${self.spent:.2f} spent so far", id="spent")
@@ -523,7 +523,8 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
             if yes:
                 self.dismiss((update, restart))
 
-        self.app.push_screen(ConfirmScreen(message + "Continue?"), confirmed)
+        self.app.push_screen(ConfirmScreen("Save these changes? " + message.strip(),
+                                           yes="Save", no="Cancel"), confirmed)
 
     def _update(self) -> SettingsUpdate | None:
         """The changed fields, or None (with a message) if a value is invalid."""
@@ -794,7 +795,8 @@ class MemoryScreen(ListScreen):
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Long-term memory", classes="title")
-            yield Label("Shared by every conversation that remembers.", classes="hint")
+            yield Label("Kayden remembers these things across conversations. Private chats "
+                        "don't use or add to them.", classes="hint")
             yield OptionList(id="memories")
             with Horizontal(classes="buttons actions"):
                 yield Button("Add", variant="primary", id="add")
@@ -821,7 +823,7 @@ class MemoryScreen(ListScreen):
             if text:
                 self._run(self.runtime.add_memory(text))
 
-        self.app.push_screen(TextPromptScreen("Add a memory"), added)
+        self.app.push_screen(TextPromptScreen("Add to memory"), added)
 
     @on(OptionList.OptionSelected)
     @on(Button.Pressed, "#edit")
@@ -845,8 +847,9 @@ class MemoryScreen(ListScreen):
                 self._run(self.runtime.forget_memory(selected.id))
 
         self.app.push_screen(ConfirmScreen(
-            f'Forget "{_clip(selected.text, 200)}"? The messages it came from stay until '
-            "their conversation is deleted."), confirmed)
+            f'Forget "{_clip(selected.text, 200)}"? Kayden won\'t use it again. The messages it '
+            "came from stay until you delete their conversation.",
+            yes="Forget", no="Cancel", danger=True), confirmed)
 
 
 NEW_CONVERSATION = "__new__"
@@ -876,12 +879,12 @@ class StartScreen(ModalScreen[StartOptions | None]):
             )
             yield Label("Model")
             yield Select(
-                [("Runtime default", DEFAULT_MODEL)],
+                [("Default", DEFAULT_MODEL)],
                 value=DEFAULT_MODEL, allow_blank=False, id="model",
             )
             with Horizontal(classes="switch-row"):
                 yield Switch(False, id="autonomous")
-                yield Label("Autonomous: the agent may wait for its work and wake itself")
+                yield Label("Let Kayden continue on its own")
             yield Label("Continue from")
             yield Select([("Nothing, start fresh", FRESH)], value=FRESH, allow_blank=False,
                          id="seed-from")
@@ -1001,7 +1004,7 @@ class KaydenApp(App[None]):
         Binding("f3", "conversations", "Conversations", priority=True),
         Binding("f4", "memory", "Memory", priority=True),
         Binding("ctrl+t", "autonomous", "Autonomy", priority=True),
-        Binding("ctrl+k", "operations", "Cancel op", priority=True),
+        Binding("ctrl+k", "operations", "Cancel task", priority=True),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
 
@@ -1194,7 +1197,7 @@ class KaydenApp(App[None]):
                 if entry := self._tool_entries.get(call_id):
                     entry.note(f"permission: {DECISION_LABELS[decision].lower()}")
             case ModelRetry(attempt=attempt, max_attempts=max_attempts, delay_s=delay, error=err):
-                self.notice = f"model retry {attempt}/{max_attempts} in {delay:.0f}s: {err}"
+                self.notice = f"Retrying ({attempt} of {max_attempts}) in {delay:.0f}s: {err}"
                 await self._discard_stream()  # the retried request streams from scratch
             case ModelSelected(model_id=model_id):
                 self.model = model_id
@@ -1207,15 +1210,15 @@ class KaydenApp(App[None]):
             case MemoriesChanged():
                 self._reload(MemoryScreen)
             case MaintenanceStarted():
-                self.notice = "maintaining memory…"
+                self.notice = "Tidying up memory…"
             case MaintenanceFinished():
                 self.notice = ""
             case StopStalled(call_ids=call_ids):
-                self.notice = f"stop stalled: abandoned {', '.join(call_ids)}"
+                self.notice = "Some tasks did not stop in time"
                 await self._mount(
                     SystemEntry(
-                        f"These calls did not confirm cancellation and were abandoned (they "
-                        f"may still have effects): {', '.join(call_ids)}",
+                        f"These tasks did not confirm that they stopped and may still be "
+                        f"running: {', '.join(call_ids)}",
                         severity="warning",
                     )
                 )
@@ -1224,7 +1227,7 @@ class KaydenApp(App[None]):
             case Failure(kind=kind, message=message):
                 await self._mount(SystemEntry(f"{kind.value} failure: {message}", severity="error"))
             case ShuttingDown(reason=reason):
-                await self._mount(SystemEntry(f"Shutting down: {reason}", severity="warning"))
+                await self._mount(SystemEntry(f"Kayden is closing: {reason}", severity="warning"))
                 self.exit()
 
     def _reload(self, kind: type[ListScreen]) -> None:
@@ -1337,7 +1340,7 @@ class KaydenApp(App[None]):
 
     def _render_status(self) -> None:
         state = STATE_LABELS[self.state]
-        parts = [state + (f" · {self.pending_ops} ops" if self.pending_ops else "")]
+        parts = [state + (f" · {self.pending_ops} running" if self.pending_ops else "")]
         if self.conversation is not None and self.conversation.autonomous:
             parts.append("autonomous")
         if self.model:
@@ -1380,8 +1383,7 @@ class KaydenApp(App[None]):
         """Whether runtime.start() may open another conversation now; tells the user if not."""
         if self.state in SWITCHABLE and not self.pending_ops:
             return True
-        self.notify("Stop the agent and wait for running calls to finish before switching "
-                    "conversations.", severity="warning")
+        self.notify("Finish or stop the current task first.", severity="warning")
         return False
 
     def _on_start_chosen(self, options: StartOptions | None) -> None:
@@ -1434,9 +1436,9 @@ class KaydenApp(App[None]):
             case "allow" | "deny":
                 decision = Decision.DENY if name == "deny" else DECISION_ALIASES.get(arg or "once")
                 if decision is None:
-                    self.notify(f"Unknown grant '{arg}'", severity="error", markup=False)
+                    self.notify("Use /allow once or /allow conversation.", severity="error")
                 elif not self._prompts:
-                    self.notify("No pending permission request", severity="warning")
+                    self.notify("Nothing is waiting for permission.", severity="warning")
                 else:
                     self.resolve_permission(next(iter(self._prompts)), decision)
             case "quit" | "exit":
@@ -1447,7 +1449,7 @@ class KaydenApp(App[None]):
                 self.notify(f"Unknown command /{name}. {HELP}", severity="error", markup=False)
 
     def action_stop(self) -> None:
-        self.notice = "stop requested"
+        self.notice = "Stop requested"
         self._render_status()
         self._call(self.runtime.stop())
 

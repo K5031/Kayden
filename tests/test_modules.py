@@ -490,8 +490,8 @@ def test_kayden_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize(("saved", "display", "notice"), [
-    ("desktop", False, ("No display here, so Kayden opens in the terminal; Desktop app "
-                       "opens when you start Kayden from the app menu.")),
+    ("desktop", False, ("No display here, so Kayden opens in the terminal. Desktop app "
+                       "opens when you start Kayden on a computer with a display.")),
     ("gone", True, ("The interface 'gone' is not installed, so Kayden opens in the "
                    "terminal.")),
 ])
