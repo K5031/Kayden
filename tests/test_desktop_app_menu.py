@@ -75,7 +75,8 @@ def test_a_new_icon_gets_a_new_name_and_replaces_the_old_one(data_home: Path) ->
 
 def test_install_tells_running_programs_to_reload_icons(data_home: Path,
                                                         monkeypatch: pytest.MonkeyPatch) -> None:
-    """KDE's app launcher keeps icons it has looked up until it is told they changed."""
+    """KDE keeps menu entries and icons it has read until it is told they changed: its
+    menu cache is rebuilt, or a click still runs the old command."""
     ran: list[list[str]] = []
     monkeypatch.undo()  # the real _reload_icons, with which and run replaced below
     monkeypatch.setattr(sys, "platform", "linux")
@@ -83,7 +84,8 @@ def test_install_tells_running_programs_to_reload_icons(data_home: Path,
     monkeypatch.setattr(app_menu.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(app_menu.subprocess, "run", lambda args, **kw: ran.append(args))
     app_menu.install()
-    assert ran == [["/usr/bin/dbus-send", "--session", "--type=signal", "/KIconLoader",
+    assert ran == [["/usr/bin/kbuildsycoca6"],
+                   ["/usr/bin/dbus-send", "--session", "--type=signal", "/KIconLoader",
                     "org.kde.KIconLoader.iconChanged", "int32:0"]]
 
 

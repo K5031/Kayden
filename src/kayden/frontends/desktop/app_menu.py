@@ -84,12 +84,15 @@ def install() -> None:
 
 
 def _reload_icons() -> None:
-    """Best effort: desktops other than KDE ignore the signal."""
-    if (dbus_send := shutil.which("dbus-send")) is None:
-        return
-    try:
-        subprocess.run([dbus_send, "--session", "--type=signal", "/KIconLoader",
-                        "org.kde.KIconLoader.iconChanged", "int32:0"],
-                       check=False, capture_output=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    """Best effort, for KDE, which keeps the entries and icons it has read: rebuild its menu
+    cache (else a click runs the entry's old command) and signal that icons changed. Other
+    desktops have neither program or ignore the signal."""
+    commands = [["kbuildsycoca6"], ["dbus-send", "--session", "--type=signal", "/KIconLoader",
+                                    "org.kde.KIconLoader.iconChanged", "int32:0"]]
+    for name, *rest in commands:
+        if (program := shutil.which(name)) is None:
+            continue
+        try:
+            subprocess.run([program, *rest], check=False, capture_output=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
