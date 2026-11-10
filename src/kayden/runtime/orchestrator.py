@@ -98,7 +98,7 @@ from kayden.runtime.config import (
     Restart,
     RuntimeConfig,
 )
-from kayden.runtime.events import EventBus, EventLog, strip_content
+from kayden.runtime.events import EventBus, EventLog
 from kayden.runtime.instance import InstanceLock
 from kayden.runtime.modules import ModuleSettings
 from kayden.runtime.operations import Context, Operation
@@ -110,7 +110,6 @@ _HIT_PREVIEW_CHARS = 1000
 _OP_STATUS_MAX_WAIT_S = 60
 USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
-LEGACY_EVENT_LOG_FILES = ("events-session.jsonl", "events-continuous.jsonl")
 # Usage files of the Kayden versions that kept a budget per mode; summed into USAGE_FILE.
 LEGACY_USAGE_FILES = ("usage-session.json", "usage-continuous.json")
 _NO_MEMORY_EDITING = "this memory module cannot edit memories"
@@ -376,9 +375,6 @@ class Runtime:
             self._started = True
             self._budget.load(data_dir / USAGE_FILE, [data_dir / f for f in LEGACY_USAGE_FILES])
             self._budget.save()
-            for name in LEGACY_EVENT_LOG_FILES:
-                await asyncio.to_thread(strip_content, data_dir / name)
-            await asyncio.to_thread(strip_content, data_dir / EVENT_LOG_FILE, create=True)
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._scratch.mkdir(exist_ok=True)
             self._loop_task = asyncio.create_task(self._run_loop())

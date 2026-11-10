@@ -46,7 +46,7 @@ exact/estimate, clamped to [0.25, 4].
 |------|--------|
 | `instance.lock` | `fcntl.flock` lock, taken at the first `start()`; contents: holder pid. `session.lock` and `continuous.lock`, left by the per-mode versions, are also locked when present, so an older Kayden cannot run on the folder meanwhile, and one that holds them makes `start()` fail naming its pid |
 | `usage.json` | `{"schema_version": 1, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, elapsed_s}`; written with temp file + `os.replace` at the first start, after each charge, each tool-call reservation and whenever activity drops to zero. When it does not exist, the first start sums `usage-session.json` and `usage-continuous.json` into it and leaves them in place |
-| `events.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread. Its first line is `{"log_format": 2}`. A log without that line, the per-mode `events-<mode>.jsonl` files included, is rewritten once at the first start without content (temp file + `os.replace`); lines that are not JSON are dropped |
+| `events.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread. |
 | `scratch/` | `ToolContext.data_dir`, shared by all calls |
 
 Event log records:

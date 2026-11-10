@@ -11,7 +11,6 @@ import dataclasses
 import json
 import logging
 import logging.handlers
-import os
 import queue
 import time
 from collections import deque
@@ -20,79 +19,53 @@ from typing import Any
 
 from kayden.api import (
     BLOCK_TYPES,
+    ConversationUpdated,
     EventEnvelope,
     MessageCommitted,
+    MessageQueued,
     OpaqueBlock,
+    PermissionRequested,
     ReasoningDelta,
     RuntimeEvent,
+    SettingsChanged,
     ShuttingDown,
     TextDelta,
     ToolCallDelta,
+    ToolFinished,
     ToolProgress,
+    ToolStarted,
 )
 
 # High-volume events stay out of the decision log.
 _UNLOGGED = (TextDelta, ReasoningDelta, ToolCallDelta, ToolProgress)
-# First line of a log. 2: records carry no message text, tool arguments, tool output,
-# system prompt or conversation titles.
-LOG_FORMAT = 2
-_HEADER = json.dumps({"log_format": LOG_FORMAT})
 _BLOCK_TAGS = {kind: tag for tag, kind in BLOCK_TYPES.items()}
 
 
-def _content_free(event: str, data: dict[str, Any]) -> dict[str, Any]:
-    """An event's logged data without content. Also applied to the records of a log
-    written before LOG_FORMAT 2, so it leaves data it does not recognize as it is."""
-    match event, data:
-        case "MessageCommitted", {"message": {"id": message_id, "role": role, **message}}:
-            blocks = message.get("blocks")
-            tagged = bool(blocks) and all(isinstance(b, str) for b in blocks)
-            return {"message_id": message_id, "role": role,
-                    **({"blocks": blocks} if tagged else {}), "stop": data.get("stop")}
-        case "MessageQueued", {"message_id": message_id, "text": str(text)}:
+def _logged(event: RuntimeEvent) -> dict[str, Any]:
+    """An event's record: what happened, without what was said or run."""
+    match event:
+        case MessageCommitted(message=message, stop=stop):
+            blocks = [b.type if isinstance(b, OpaqueBlock) else _BLOCK_TAGS[type(b)]
+                      for b in message.blocks]
+            return {"message_id": message.id, "role": message.role, "blocks": blocks,
+                    "stop": stop}
+        case MessageQueued(message_id=message_id, text=text):
             return {"message_id": message_id, "chars": len(text)}
-        case "ToolStarted", {"call": {"id": call_id, "name": name}}:
-            return {"call_id": call_id, "name": name}
-        case "ToolFinished", {"result": {"call_id": call_id, "status": status}}:
-            return {"call_id": call_id, "status": status, "duration_s": data.get("duration_s")}
-        case "PermissionRequested", {"request": {"id": request_id, "call": {
-                "id": call_id, "name": name}, **request}}:
-            return {"request_id": request_id, "call_id": call_id, "name": name,
-                    "read_only": request.get("read_only")}
-        case "SettingsChanged", {"settings": {"system_prompt": str(prompt), **settings}}:
-            return {"settings": {**settings, "system_prompt_chars": len(prompt)}}
-        case "ConversationUpdated", {"info": dict(info)}:
-            return {"info": {k: v for k, v in info.items() if k not in ("title", "preview")}}
+        case ToolStarted(call=call):
+            return {"call_id": call.id, "name": call.name}
+        case ToolFinished(result=result, duration_s=duration_s):
+            return {"call_id": result.call_id, "status": result.status,
+                    "duration_s": duration_s}
+        case PermissionRequested(request=request):
+            return {"request_id": request.id, "call_id": request.call.id,
+                    "name": request.call.name, "read_only": request.read_only}
+    data = dataclasses.asdict(event)
+    match event:
+        case SettingsChanged():
+            data["settings"]["system_prompt_chars"] = len(data["settings"].pop("system_prompt"))
+        case ConversationUpdated():
+            del data["info"]["title"], data["info"]["preview"]
     return data
-
-
-def strip_content(path: Path, *, create: bool = False) -> None:
-    """Bring a log to LOG_FORMAT: rewrite one written before it without content, once.
-    `create` starts a missing log. Blocking; call it off the event loop."""
-    try:
-        with path.open(encoding="utf-8") as f:
-            if f.readline().strip() == _HEADER:
-                return
-            f.seek(0)
-            lines = f.readlines()
-    except FileNotFoundError:
-        if not create:
-            return
-        lines = []
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", encoding="utf-8") as out:
-        out.write(_HEADER + "\n")
-        for line in lines:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue  # unreadable, so not known to be free of content
-            if not isinstance(record, dict):
-                continue
-            if isinstance(record.get("event"), str) and isinstance(record.get("data"), dict):
-                record["data"] = _content_free(record["event"], record["data"])
-            out.write(json.dumps(record) + "\n")
-    os.replace(tmp, path)
 
 
 class EventLog:
@@ -110,7 +83,6 @@ class EventLog:
         self._handler: logging.FileHandler | None = None
 
     def open(self, path: Path) -> None:
-        """`path` is at LOG_FORMAT (strip_content)."""
         self._handler = logging.FileHandler(path, encoding="utf-8", delay=True)
         self._handler.setFormatter(logging.Formatter("%(message)s"))
         self._listener = logging.handlers.QueueListener(self._queue, self._handler)
@@ -128,18 +100,9 @@ class EventLog:
             self._logger.info(line)
 
     def event(self, envelope: EventEnvelope) -> None:
-        event = envelope.event
-        if isinstance(event, _UNLOGGED):
-            return
-        data = dataclasses.asdict(event)
-        if isinstance(event, MessageCommitted):
-            data["message"]["blocks"] = [
-                b.type if isinstance(b, OpaqueBlock) else _BLOCK_TAGS[type(b)]
-                for b in event.message.blocks]
-        name = type(event).__name__
-        # Through JSON first, so enums are plain values for _content_free.
-        data = json.loads(json.dumps(data, default=str))
-        self.write({"seq": envelope.seq, "event": name, "data": _content_free(name, data)})
+        if not isinstance(envelope.event, _UNLOGGED):
+            self.write({"seq": envelope.seq, "event": type(envelope.event).__name__,
+                        "data": _logged(envelope.event)})
 
     def decision(self, kind: str, /, **fields: Any) -> None:
         self.write({"decision": kind, **fields})

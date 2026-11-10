@@ -144,7 +144,7 @@ control what the agent sees; deletion controls what the disk keeps.
   the terms. Deletion and forgetting then checkpoint the write-ahead log (`TRUNCATE`).
 - The event log holds no content, so deletion leaves nothing there: messages, tool calls
   and results are logged by id, kind and size, and titles, previews and the system prompt
-  are left out. A log written before that is rewritten without content at the next start.
+  are left out.
 - Docs say what deletion does not reach: backups and other copies outside the data folder,
   and what the AI provider already received.
 - Frontends ask for confirmation naming the conversation and say it is permanent.
