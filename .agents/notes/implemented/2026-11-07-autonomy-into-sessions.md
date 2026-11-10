@@ -1,6 +1,6 @@
 # Agent Note: Autonomy into sessions
 
-Status: implemented — Continuous Mode is retired; autonomy is a per-conversation switch, and the user controls what the agent sees
+Status: implemented — Continuous Mode is retired; autonomy is chosen per conversation when it starts, and the user controls what the agent sees
 
 ## Problem
 
@@ -54,12 +54,11 @@ data folder: `instance.lock`, `usage.json` and `events.jsonl`.
 | Who starts a cycle | Only the user | The user, and the end of awaited background work |
 | `idle()` offered | No | Yes, with `AUTONOMY_PROMPT` added to the system prompt |
 
-- `StartOptions.autonomous` sets it for a new conversation; None keeps a resumed one's.
-- `RuntimeAPI.set_autonomous(bool)` changes the open conversation in any state, from the
-  next turn. Turning it on while IDLE with operations running sets the wake set to them, so
-  the agent wakes when they finish, as if it had idled waiting for them. Turning it off
-  drops any pending wake-up; background operations keep running and their results wait for
-  the user.
+- Autonomy is chosen when a conversation starts and kept for its whole life, so its system
+  prompt and tools never change. `StartOptions.autonomous` sets it for a new conversation
+  (ValueError with a `conversation_id`), and `RuntimeAPI.set_autonomous(bool)` changes the
+  open conversation only while it has no message (RuntimeStateError afterwards). To go on
+  autonomously from an ordinary conversation, the user continues it in a new one.
 - `start()` always leaves the agent IDLE. A resumed autonomous conversation has no pending
   wake-up, so it never runs before the user sends a message or activates it.
 - `activate()` is allowed in IDLE for every conversation.
@@ -158,12 +157,16 @@ command-line flags of the per-mode versions.
   delete with confirmation; a memory screen lists, adds, edits and forgets entries; the
   status bar shows when the open conversation is autonomous.
 - **Desktop app.** The sidebar shows titles and offers rename, continue from, archive and
-  delete; the open conversation has an autonomy switch with
-  the spending next to it; a Memory window lists, adds, edits and forgets entries. See
+  delete; the open conversation has an autonomy switch, locked after the first message,
+  with the spending next to it; a Memory window lists, adds, edits and forgets entries. See
   [Desktop app](../proposed/2026-11-07-desktop-app.md).
 
 ## Alternatives considered
 
+- **Switching autonomy at any time.** More flexible, but each switch changes the system
+  prompt and the tools mid-conversation: Claude then rejects its earlier thinking blocks,
+  the provider's prompt cache is lost, and the runtime needs rules for a switch in every
+  state (mid-turn, idle with work running, a wake-up pending).
 - **A Remember switch per conversation** (off = a private chat that neither uses nor adds
   to long-term memory and cannot search other conversations). The owner did not ask for
   it; forgetting an entry and deleting a conversation already cover what the agent keeps.

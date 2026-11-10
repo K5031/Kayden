@@ -267,6 +267,11 @@ class ConversationModel:
         return self.conversation is not None and self.conversation.autonomous
 
     @property
+    def can_set_autonomous(self) -> bool:
+        """Autonomy is chosen before a conversation's first message."""
+        return self.conversation is not None and not self.items and not self.has_earlier
+
+    @property
     def status_text(self) -> str:
         parts = [STATE_LABELS[self.state]]
         if background := sum(1 for t in self._tools.values()

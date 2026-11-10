@@ -373,14 +373,17 @@ async def test_autonomy_switch_with_spending_next_to_it(make, qapp):
     h: Harness = await make()
     h.core.add(Step(text="hi"))
     await h.start()
-    await h.turn("hello")
-    window, _controller, _ = await open_window(h)
+    window, controller, _ = await open_window(h)
     assert window.autonomy.text() == "Autonomous mode"
     assert not window.autonomy.isChecked() and window.spending_label.text().endswith("spent")
+    assert window.autonomy.isEnabled()
     window.autonomy.click()
     await eventually(lambda: h.runtime.snapshot().conversation.autonomous)
-    await h.runtime.set_autonomous(False)
-    await eventually(lambda: not window.autonomy.isChecked())
+    controller.send("hello")
+    await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
+    # Fixed once the conversation has begun; the switch still shows which kind it is.
+    assert not window.autonomy.isEnabled() and window.autonomy.isChecked()
+    assert "when a conversation starts" in window.autonomy.toolTip()
 
 
 async def test_memory_dialog_add_edit_forget(make, qapp):

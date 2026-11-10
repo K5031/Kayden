@@ -130,6 +130,8 @@ AUTONOMY_LABEL = "Autonomous mode"
 AUTONOMY_HINT = ("Kayden may keep working without waiting for you, for example when a "
                  "background task finishes. It still asks before actions as set in Settings "
                  "and stops at the spending limit.")
+AUTONOMY_LOCKED = ("Autonomous mode is chosen when a conversation starts. To change it, "
+                   "continue this conversation in a new one.")
 EMPTY_TITLE = "Start a conversation"
 EMPTY_HINT = "Ask a question or describe a task."
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
@@ -914,8 +916,10 @@ class MainWindow(QMainWindow):
         if conversation is not None:
             self.title_label.setText(conversation_label(
                 self._conversations.get(conversation.id, conversation)))
-        self.autonomy.setEnabled(conversation is not None)
+        self.autonomy.setEnabled(model.can_set_autonomous)
         self.autonomy.setChecked(model.autonomous)
+        self.autonomy.setToolTip(AUTONOMY_HINT if model.can_set_autonomous or conversation is None
+                                 else AUTONOMY_LOCKED)
         self.spending_label.setText(model.spending_text)
         self.spending_divider.setVisible(bool(model.spending_text))
         self.spending_label.setVisible(bool(model.spending_text))

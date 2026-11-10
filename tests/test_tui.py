@@ -644,12 +644,13 @@ async def test_start_screen_lists_titles_and_resumes_a_conversation():
                           "New chat"]
         select.value = "conv-3"
         await pilot.pause()
-        assert screen.query_one("#autonomous", Switch).value is True  # its current value
+        switch = screen.query_one("#autonomous", Switch)
+        assert switch.value is True and switch.disabled  # shown, set when it started
         assert screen.query_one("#seed-from", Select).disabled
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
         [options] = [c[1] for c in stub.calls if c[0] == "start"]
-        assert options == StartOptions(conversation_id="conv-3", autonomous=True)
+        assert options == StartOptions(conversation_id="conv-3")
 
 
 async def test_start_screen_fits_a_small_terminal():
@@ -846,35 +847,25 @@ async def test_factory_builds_start_options(tmp_path):
     assert factory({"start": True}, paths).start_options == StartOptions()
     frontend = factory({"start": True, "conversation_id": "conv-1", "autonomous": True,
                         "model": "m2"}, paths)
-    assert frontend.start_options == StartOptions("conv-1", "m2", True)
+    assert frontend.start_options == StartOptions("conv-1", "m2")  # keeps its own autonomy
+    assert factory({"start": True, "autonomous": True}, paths).start_options == StartOptions(
+        autonomous=True)
 
 
 # ── autonomy ─────────────────────────────────────────────────────────────
 
 
-async def test_autonomous_command_binding_and_status():
-    stub = StubRuntime()
+async def test_status_shows_an_autonomous_conversation():
+    stub = StubRuntime(autonomous=True)
     app = make(stub)
     async with app.run_test(notifications=True) as pilot:
         await caught_up(pilot, app, stub)
-        assert "autonomous" not in status(app)
-        await type_text(pilot, "/autonomous on")
-        await pilot.press("enter")
-        await until(pilot, lambda: ("set_autonomous", True) in stub.calls)
-        await caught_up(pilot, app, stub)
-        assert app.conversation is not None and app.conversation.autonomous
         assert "autonomous" in status(app)
-
-        await pilot.press("ctrl+t")  # toggles
-        await until(pilot, lambda: ("set_autonomous", False) in stub.calls)
-        await caught_up(pilot, app, stub)
-        assert "autonomous" not in status(app)
-
-        await type_text(pilot, "/autonomous maybe")
+        await type_text(pilot, "/autonomous off")  # set when a conversation starts, only
         await pilot.press("enter")
-        await until(pilot, lambda: any("/autonomous on" in n.message
+        await until(pilot, lambda: any("Unknown command" in n.message
                                        for n in app._notifications))
-        assert len([c for c in stub.calls if c[0] == "set_autonomous"]) == 2
+        assert not any(c[0] == "set_autonomous" for c in stub.calls)
 
 
 async def test_conversation_events_for_other_conversations_and_memories():

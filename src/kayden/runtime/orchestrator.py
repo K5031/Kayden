@@ -357,8 +357,9 @@ class Runtime:
             raise RuntimeStateError(f"cannot start while {self._state()}")
         if self._ops:
             raise RuntimeStateError("operations are still outstanding")
-        if options.conversation_id is not None and options.seed_from is not None:
-            raise ValueError("seed_from applies to a new conversation only")
+        if options.conversation_id is not None and (
+                options.seed_from is not None or options.autonomous is not None):
+            raise ValueError("autonomous and seed_from apply to a new conversation only")
         self._hold_lock()
         await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
@@ -479,22 +480,22 @@ class Runtime:
     async def set_autonomous(self, autonomous: bool) -> None:
         if self._conversation is None:
             raise RuntimeStateError("not started")
+        # The system prompt and the tools depend on it, and they stay as they are for a
+        # conversation's whole life.
         previous = self._conversation
-        # In memory first, so a wake-up check during the write already sees it.
+        begun = bool(await self._memory.history(previous.id, limit=1))
+        if (begun or self._inbox or self._cycle_requested or self._cycle_active
+                or self._conversation.id != previous.id):
+            raise RuntimeStateError(
+                "autonomy is chosen before a conversation's first message")
+        # In memory first, so a turn that starts during the write already has it.
         self._conversation = replace(previous, autonomous=autonomous)
-        if not autonomous:
-            self._wake_set, self._immediate_wake = None, False
-        elif (self._base == AgentState.IDLE and not self._cycle_active and self._ops
-              and not self._wake_set):
-            self._wake_set = set(self._ops)  # wake when the running work finishes
         try:
             info = await self._memory.update_conversation(previous.id, autonomous=autonomous)
         except BaseException:
             if self._conversation.id == previous.id:
                 self._conversation = replace(self._conversation,
                                              autonomous=previous.autonomous)
-                if not previous.autonomous:
-                    self._wake_set = None
             raise
         self._log.decision("set_autonomous", conversation=info.id, autonomous=autonomous)
         self._conversation_updated(info)
@@ -822,11 +823,7 @@ class Runtime:
         if options.conversation_id is None:
             return await self._memory.create_conversation(
                 autonomous=bool(options.autonomous), seed_from=options.seed_from), False
-        info = await self._find_conversation(options.conversation_id)
-        if options.autonomous is not None and options.autonomous != info.autonomous:
-            info = await self._memory.update_conversation(info.id,
-                                                          autonomous=options.autonomous)
-        return info, True
+        return await self._find_conversation(options.conversation_id), True
 
     async def _repair(self) -> None:
         assert self._conversation is not None

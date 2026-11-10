@@ -202,7 +202,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="tool permission policy (default: ask)")
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.conversation is not None and args.autonomous is not None:
+        parser.error("--autonomous and --no-autonomous apply to a new conversation; "
+                     "they cannot be combined with --conversation")
+    return args
 
 
 def start_options(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -318,7 +322,10 @@ def load_config(args: argparse.Namespace, *, default_root: Path | None = None,
         start = start_options(args)
     if start is not None:
         frontend = modules["frontend"]
-        modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
+        options = {**frontend.options, **start}
+        if "conversation_id" in options:
+            options.pop("autonomous", None)  # kept from when the conversation started
+        modules["frontend"] = ModuleSpec(frontend.factory, options)
     state = ModuleState(running=running, chosen=chosen, work_folder=tools.options.get("root"))
     return InstanceConfig(
         runtime=RuntimeConfig(data_dir=data_dir, modules=state, **runtime),

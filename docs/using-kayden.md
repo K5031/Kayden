@@ -20,7 +20,7 @@ kayden --autonomous            # a new autonomous conversation
 | Option | Does |
 |---|---|
 | `--conversation ID` | Start right away in this conversation |
-| `--autonomous`, `--no-autonomous` | Start right away; turn autonomy on or off for the conversation |
+| `--autonomous`, `--no-autonomous` | Start a new conversation right away, autonomous or not; cannot be combined with `--conversation` |
 | `--model ID`, `--maintenance-model ID` | Override the models for this run |
 | `--permissions ask\|allow_read_only\|deny` | Override the [permission level](settings.md#permissions) for this run |
 | `--data-dir DIR`, `--config FILE` | Use another data folder or config file |
@@ -57,7 +57,6 @@ The permission level is set in [Settings](settings.md#permissions).
 | Ctrl+K | `/cancel [id]` | Cancel one running tool |
 | F3 | `/conversations` | Open, start, rename, archive or delete conversations |
 | F4 | `/memory` | See, add, edit or forget long-term memory |
-| Ctrl+T | `/autonomous [on\|off]` | Turn autonomy on or off for this conversation |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
 | Ctrl+Q | `/quit` | Quit |
 | | `/help` | List the commands |

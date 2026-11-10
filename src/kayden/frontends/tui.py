@@ -133,7 +133,7 @@ DECISION_ALIASES = {
 }
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
-    "/conversations (F3), /memory (F4), /autonomous [on|off] (Ctrl+T toggles), "
+    "/conversations (F3), /memory (F4), "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -917,7 +917,9 @@ class StartScreen(ModalScreen[StartOptions | None]):
     def _conversation_changed(self, event: Select.Changed) -> None:
         resumed = self.conversations.get(str(event.value))
         self.query_one("#autonomous", Switch).value = resumed is not None and resumed.autonomous
-        self.query_one("#seed-from").disabled = resumed is not None
+        # Both are chosen when a conversation starts.
+        for selector in ("#autonomous", "#seed-from"):
+            self.query_one(selector).disabled = resumed is not None
 
     @on(Button.Pressed, "#start")
     def _start(self) -> None:
@@ -926,8 +928,7 @@ class StartScreen(ModalScreen[StartOptions | None]):
         model_id = None if model == DEFAULT_MODEL else str(model)
         autonomous = self.query_one("#autonomous", Switch).value
         if conversation != NEW_CONVERSATION:
-            self.dismiss(StartOptions(conversation_id=str(conversation), model=model_id,
-                                      autonomous=autonomous))
+            self.dismiss(StartOptions(conversation_id=str(conversation), model=model_id))
             return
         seed = self.query_one("#seed-from", Select).value
         self.dismiss(StartOptions(
@@ -995,7 +996,6 @@ class KaydenApp(App[None]):
         Binding("f2", "settings", "Settings", priority=True),
         Binding("f3", "conversations", "Conversations", priority=True),
         Binding("f4", "memory", "Memory", priority=True),
-        Binding("ctrl+t", "autonomous", "Autonomy", priority=True),
         Binding("ctrl+k", "operations", "Cancel task", priority=True),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
@@ -1415,12 +1415,6 @@ class KaydenApp(App[None]):
                 self.action_conversations()
             case "memory":
                 self.action_memory()
-            case "autonomous" if arg in ("on", "off"):
-                self._call(self.runtime.set_autonomous(arg == "on"))
-            case "autonomous" if not arg:
-                self.action_autonomous()
-            case "autonomous":
-                self.notify("Use /autonomous on or /autonomous off.", severity="error")
             case "cancel" if arg:
                 self._call(self.runtime.cancel_operation(arg))
             case "cancel":
@@ -1448,12 +1442,8 @@ class KaydenApp(App[None]):
     def action_activate(self) -> None:
         self._call(self.runtime.activate())
 
-    def action_autonomous(self) -> None:
-        if self.conversation is not None:
-            self._call(self.runtime.set_autonomous(not self.conversation.autonomous))
-
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action in ("activate", "autonomous"):
+        if action == "activate":
             return self.config is not None and self.conversation is not None
         return True
 
@@ -1557,10 +1547,11 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> TuiFrontend:
     right away with the others; otherwise the start screen asks."""
     if not options.get("start"):
         return TuiFrontend()
+    conversation_id = options.get("conversation_id")
     return TuiFrontend(StartOptions(
-        conversation_id=options.get("conversation_id"),
+        conversation_id=conversation_id,
         model=options.get("model"),
-        autonomous=options.get("autonomous"),
+        autonomous=None if conversation_id else options.get("autonomous"),
     ))
 
 

@@ -196,7 +196,7 @@ async def test_completion_budget_exhausted(make: Any) -> None:
 async def test_resume_repair(make: Any) -> None:
     store = MemoryStore()
     seed: Harness = await make(store=store)
-    info = await seed.memory.create_conversation()
+    info = await seed.memory.create_conversation(autonomous=True)
     await seed.memory.append(info.id, [
         Message("u1", Role.USER, (Text("start"),), 1.0),
         Message("a1", Role.ASSISTANT, (ToolCall("bg", "slow", {}),), 2.0),
@@ -207,7 +207,7 @@ async def test_resume_repair(make: Any) -> None:
 
     h: Harness = await make(store=store, data_dir=seed.data_dir,
                             core=ScriptedCore(default=Step(text="I see")))
-    await h.start(info.id, autonomous=True)
+    await h.start(info.id)
     assert h.runtime.snapshot().state == AgentState.IDLE
     transcript = await h.transcript()
     assert [m.role for m in transcript[4:]] == [Role.TOOL, Role.USER]

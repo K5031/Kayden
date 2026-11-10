@@ -86,7 +86,7 @@ Inference does not autonomously restart between user-authorized turns.
 A new conversation is a fresh start: no messages and no summary, with long-term memory included. "Continue from" starts a new conversation that knows where an earlier one left off: on its first maintenance, Memory writes its initial rolling summary from the earlier conversation's summary and recent messages, and the earlier conversation is unchanged.
 Conversations get a title automatically from their first message unless the user sets one. The user can rename, archive (hide from the list and from cross-conversation recall) and delete conversations.
 4.2 Autonomy
-Autonomy is a per-conversation switch, off by default, that the user can flip at any time; it applies from the next turn.
+Autonomy is chosen for each conversation when it starts, off by default, and can be changed only until its first message; after that it stays as it is, so the agent's instructions and tools never change during a conversation.
 In an autonomous conversation the model may:
 Continue reasoning.
 Invoke tools.

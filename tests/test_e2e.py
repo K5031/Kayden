@@ -136,10 +136,18 @@ def test_command_line_start_options_override_the_frontend_options(workspace, tmp
     path = tmp_path / "config.toml"
     path.write_text('[frontend]\noptions = { autonomous = true, model = "m" }\n')
     config = build_config(["--data-dir", str(tmp_path), "--config", str(path),
-                           "--conversation", "c1", "--no-autonomous"])
-    assert config.frontend.options == {"start": True, "conversation_id": "c1",
-                                       "autonomous": False, "model": "m"}
+                           "--no-autonomous"])
+    assert config.frontend.options == {"start": True, "autonomous": False, "model": "m"}
     assert build_config(["--data-dir", str(tmp_path / "plain")]).frontend.options == {}
+
+
+def test_autonomy_cannot_be_set_for_an_existing_conversation(workspace, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        build_config(["--data-dir", str(tmp_path), "--conversation", "c1", "--autonomous"])
+    assert "new conversation" in capsys.readouterr().err
+    (tmp_path / "config.toml").write_text("[frontend]\noptions = { autonomous = true }\n")
+    config = build_config(["--data-dir", str(tmp_path), "--conversation", "c1"])
+    assert config.frontend.options == {"start": True, "conversation_id": "c1"}
 
 
 RUNTIME = """

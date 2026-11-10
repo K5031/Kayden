@@ -420,7 +420,7 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 | `activate()` in IDLE | Allowed for every conversation; in an autonomous one it also drops a pending wake-up (a new cycle clears the wake set) |
 | `start()` | Always leaves the agent IDLE. A resumed autonomous conversation has no wake set, so nothing runs before the user acts |
 | `StartOptions` validation | `seed_from` with a `conversation_id`: ValueError, before anything is opened |
-| `set_autonomous` | Changes the in-memory conversation first (so a wake-up check during the write sees it), then Memory; reverts if Memory fails |
+| `set_autonomous` | Refused once the conversation has a message, a queued message or a cycle. Changes the in-memory conversation first (so a turn that starts during the write has it), then Memory; reverts if Memory fails |
 | Untitled display | `ConversationInfo.preview`: the Text of the first USER message, whitespace collapsed, 100 characters |
 | `Memory.search` scope | `conversation_ids` (None = all). `recall(scope="all")` passes the open conversation plus every listed (not archived) conversation; `search_archive` without an id searches everything, archived included |
 | Memory entry ids | Strings; SqliteMemory uses its integer row ids |

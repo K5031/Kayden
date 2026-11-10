@@ -816,9 +816,8 @@ class OperationInfo:
 @dataclass(frozen=True, slots=True)
 class StartOptions:
     """conversation_id None = a new conversation, else resume that one (KeyError if
-    unknown). autonomous sets the new conversation's switch (None = off); for a resumed
-    one, None keeps its value. seed_from applies to a new conversation only (ValueError
-    with conversation_id) and must name an existing conversation."""
+    unknown). autonomous (None = off) and seed_from apply to a new conversation only
+    (ValueError with conversation_id); seed_from must name an existing conversation."""
 
     conversation_id: ConversationId | None = None
     model: str | None = None
@@ -1133,9 +1132,9 @@ class RuntimeAPI(Protocol):
     stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
     which case it performs a full Stop.
 
-    Conversation and memory management (set_autonomous, rename_conversation,
-    archive_conversation, delete_conversation, memories, add_memory, edit_memory,
-    forget_memory) is allowed in any state; set_autonomous needs a started agent.
+    Conversation and memory management (rename_conversation, archive_conversation,
+    delete_conversation, memories, add_memory, edit_memory, forget_memory) is allowed in
+    any state; set_autonomous only before the open conversation's first message.
     Changes apply from the next turn or assemble. Each emits ConversationUpdated,
     ConversationDeleted or MemoriesChanged and is logged without any text. The memory
     commands raise NotImplementedError ("this memory module cannot ...") when the Memory
@@ -1239,11 +1238,10 @@ class RuntimeAPI(Protocol):
         """User-initiated cancel of one running call, with Stop's grace and abandon rules."""
 
     async def set_autonomous(self, autonomous: bool) -> None:
-        """Flip the open conversation's switch, in any state, from the next turn. Turning
-        it on while IDLE with operations running makes the agent wake when they finish, as
-        if it had idled waiting for them. Turning it off drops any pending wake-up:
-        background operations keep running and their results wait for the user.
-        RuntimeStateError before start()."""
+        """Set the open conversation's switch while it has no message yet. Autonomy is
+        chosen when a conversation starts and kept for its whole life, so the agent's
+        system prompt and tools never change under it. RuntimeStateError before start()
+        and once the conversation has a message."""
 
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
         """An empty (or whitespace-only) title clears it, so an automatic title follows."""

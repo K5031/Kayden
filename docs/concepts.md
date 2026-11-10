@@ -17,8 +17,10 @@ conversation after its first message; you can rename it.
 
 ## Autonomy
 
-A conversation is either ordinary (the default) or autonomous. You can switch at any time;
-the change applies from the agent's next step.
+A conversation is either ordinary (the default) or autonomous. You choose when it starts,
+and can still change your mind until you send its first message; after that it stays as it
+is. To carry on an ordinary conversation autonomously, continue it in a new one
+(**Continue from**) and turn autonomy on there.
 
 | | Ordinary | Autonomous |
 |---|---|---|
@@ -26,9 +28,7 @@ the change applies from the agent's next step.
 | Results of background tasks | Wait for you | Wake the agent |
 
 An autonomous agent can say it is done for now ("idle"); it then waits until the tasks it
-started finish, or until you write. Turning autonomy on while the agent waits with tasks
-running makes it continue when they finish. Turning autonomy off stops any such wake-up; tasks
-keep running and their results wait for you. After Kayden restarts, an autonomous
+started finish, or until you write. After Kayden restarts, an autonomous
 conversation waits for you before doing anything. Spending limits apply as always, so
 watch the costs of a conversation left to work on its own.
 
