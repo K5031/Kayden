@@ -22,10 +22,12 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
+    Collapsible,
     Footer,
     Input,
     Label,
@@ -94,6 +96,7 @@ from kayden.frontends.common import (
     AT_RESTART,
     MODULE_LABELS,
     PERMISSION_LABELS,
+    RESULT_LABELS,
     call_parts,
     delete_details,
     folder_path,
@@ -104,6 +107,8 @@ from kayden.frontends.common import (
     past_tense,
     request_note,
     restart_notice,
+    step_problems,
+    steps_title,
 )
 
 STATE_LABELS = {
@@ -146,6 +151,7 @@ UNTITLED = "New chat"
 # States in which runtime.start() may switch conversations (given no outstanding call).
 SWITCHABLE = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 HISTORY_PAGE = 100  # messages loaded per history page
+UNDERWAY = {"requested": "starting", "running": "running", "background": "in the background"}
 MAX_ARGS_CHARS = 300
 MAX_RESULT_LINES = 6
 MAX_RESULT_CHARS = 600
@@ -276,7 +282,27 @@ class ToolEntry(Static):
         self.duration = duration if duration is not None else self.duration
         self.refresh_content()
 
+    @property
+    def headline(self) -> str:
+        """The model's sentence for the step (past tense once it went fine), else the call."""
+        headline, detail = _call_parts(self.arguments)
+        if headline is None:
+            return _clip(f"{self.tool_name} {detail}", MAX_ARGS_CHARS)
+        ok = self.result is not None and self.result.status is ToolStatus.OK
+        return _clip(past_tense(headline) if ok else headline, MAX_ARGS_CHARS)
+
+    @property
+    def problem(self) -> str:
+        """How it ended, when worth pointing out: '' when it went fine or has not ended."""
+        if self.phase == "not run":
+            return "not run"
+        if self.result is None or self.result.status is ToolStatus.OK:
+            return ""
+        return RESULT_LABELS.get(self.result.status, self.result.status.value)
+
     def refresh_content(self) -> None:
+        if isinstance(group := self.parent and self.parent.parent, StepGroup):
+            group.refresh_title()
         headline, detail = _call_parts(self.arguments)
         if headline and self.result is not None and self.result.status is ToolStatus.OK:
             headline = past_tense(headline)
@@ -306,6 +332,31 @@ class ToolEntry(Static):
             if body:
                 out.append("\n" + _clip(body, MAX_RESULT_CHARS), style="dim")
         self.update(out)
+
+
+class StepGroup(Collapsible):
+    """A run of steps, and the thinking before and between them, folded into one line: the
+    step under way while it runs, then how many there were and what went wrong."""
+
+    def __init__(self) -> None:
+        super().__init__(title="", collapsed=True)
+
+    async def add(self, widget: Widget) -> None:
+        await self.query_one(Collapsible.Contents).mount(widget)
+        self.refresh_title()
+
+    def refresh_title(self) -> None:
+        steps = list(self.query(ToolEntry))
+        if not steps:
+            return
+        active = next((s for s in reversed(steps) if s.phase in UNDERWAY), None)
+        if active is not None:
+            title, state = active.headline, UNDERWAY[active.phase]
+        elif len(steps) == 1:
+            title, state = steps[0].headline, steps[0].problem
+        else:
+            title, state = steps_title(len(steps)), step_problems(s.problem for s in steps)
+        self.title = Content(f"{title} · {state}" if state else title)  # type: ignore[assignment]
 
 
 class SystemEntry(Static):
@@ -991,6 +1042,10 @@ class KaydenApp(App[None]):
     #status { height: 1; padding: 0 1; background: $panel; }
     #transcript { height: 1fr; padding: 0 1; }
     #transcript > * { margin-bottom: 1; }
+    StepGroup { background: transparent; border-top: none; padding: 0; }
+    StepGroup CollapsibleTitle { color: $text-muted; padding: 0; }
+    StepGroup Contents { padding: 0 0 0 2; }
+    StepGroup Contents > * { margin-top: 1; }
     UserEntry { color: $accent; }
     SystemEntry.warning { color: $warning; }
     SystemEntry.error { color: $error; }
@@ -1182,7 +1237,7 @@ class KaydenApp(App[None]):
             case ToolCallDelta(call_id=call_id, name=name, arguments_chunk=chunk):
                 entry = self._tool_entries.get(call_id)
                 if entry is None:
-                    entry = await self._mount(ToolEntry(call_id, name))
+                    entry = await self._mount_step(ToolEntry(call_id, name))
                     self._tool_entries[call_id] = entry
                     self._stream.append(entry)
                 entry.stream_arguments(name, chunk)
@@ -1211,6 +1266,7 @@ class KaydenApp(App[None]):
             case ModelRetry(attempt=attempt, max_attempts=max_attempts, delay_s=delay, error=err):
                 self.notice = f"Retrying ({attempt} of {max_attempts}) in {delay:.0f}s: {err}"
                 await self._discard_stream()  # the retried request streams from scratch
+                await self._prune_groups()
             case ModelSelected(model_id=model_id):
                 self.model = model_id
             case ConversationUpdated(info=info):
@@ -1261,8 +1317,37 @@ class KaydenApp(App[None]):
         return widget
 
     async def _mount_tool(self, call: ToolCall) -> ToolEntry:
-        entry = await self._mount(ToolEntry(call.id, call.name, call.arguments))
+        entry = await self._mount_step(ToolEntry(call.id, call.name, call.arguments))
         self._tool_entries[call.id] = entry
+        return entry
+
+    async def _mount_step(self, entry: ToolEntry) -> ToolEntry:
+        """Add a step to the group just before it, or start one, taking along the thinking
+        that came right before the step."""
+        transcript = self.query_one("#transcript", VerticalScroll)
+        children = list(transcript.children)
+        end = (children.index(self._insert_before) if self._insert_before is not None
+               else len(children))
+        start = end
+        while start > 0 and isinstance(prior := children[start - 1], AssistantEntry) \
+                and not prior.body and not prior.refused:
+            start -= 1
+        thinking = children[start:end]
+        group = children[start - 1] if start > 0 else None
+        if not isinstance(group, StepGroup):
+            group = StepGroup()
+            if thinking:
+                await transcript.mount(group, before=thinking[0])
+            else:
+                await self._mount(group)
+        for old in thinking:  # moved by copy: a widget cannot change parents
+            assert isinstance(old, AssistantEntry)
+            copy = AssistantEntry(old.body, old.reasoning, final=old.final)
+            copy.interrupted = old.interrupted
+            self._stream = [copy if w is old else w for w in self._stream]
+            await old.remove()
+            await group.add(copy)
+        await group.add(entry)
         return entry
 
     async def _stream_text(self, text: str, *, reasoning: bool) -> None:
@@ -1278,6 +1363,12 @@ class KaydenApp(App[None]):
                 self._tool_entries.pop(widget.call_id, None)
             await widget.remove()
         self._stream.clear()
+
+    async def _prune_groups(self) -> None:
+        """Remove step groups whose steps were all discarded."""
+        for group in self.query_one("#transcript").query(StepGroup):
+            if not group.query(ToolEntry):
+                await group.remove()
 
     def _end_stream(self) -> None:
         """The cycle ended without committing what was streamed (Stop or failure)."""
@@ -1298,6 +1389,7 @@ class KaydenApp(App[None]):
         if message.role is Role.ASSISTANT:
             await self._discard_stream()  # replaced by the authoritative message
         last = await self._render_message(message)
+        await self._prune_groups()
         if stop is StopReason.REFUSAL:
             if last is None:
                 last = await self._mount(AssistantEntry(final=True))
@@ -1339,7 +1431,7 @@ class KaydenApp(App[None]):
                            ) -> None:
         entry = self._tool_entries.get(result.call_id)
         if entry is None:
-            entry = await self._mount(ToolEntry(result.call_id, None))
+            entry = await self._mount_step(ToolEntry(result.call_id, None))
             self._tool_entries[result.call_id] = entry
         entry.finish(result, duration)
 

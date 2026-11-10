@@ -115,11 +115,13 @@ from kayden.frontends.desktop.viewmodel import (
     clip,
     conversation_label,
     conversation_preview,
+    group_heading,
     limit_update,
     memory_source,
     needs_welcome,
     relative_date,
     settings_update,
+    step_segments,
     user_message,
 )
 
@@ -188,7 +190,10 @@ def _label(text: str = "", *, wrap: bool = True, selectable: bool = True,
 
 def _discard(widget: QWidget) -> None:
     """Hidden at once: deleteLater runs only when the event loop next turns, and until then
-    a widget taken out of its layout would still be drawn where it was."""
+    a widget taken out of its layout would still be drawn where it was. Its timers stop, so a
+    pending redraw cannot show it again."""
+    for timer in widget.findChildren(QTimer):
+        timer.stop()
     widget.hide()
     widget.deleteLater()
 
@@ -533,11 +538,13 @@ class ToolCard(QFrame):
         item = self.item
         self.name.setText(item.name)
         self.name.setVisible(item.sentence is None)  # a sentence says what the tool is
-        self.title.setText(item.summary)
-        self.title.setToolTip(f"{item.name}: {item.detail}")
-        theme.mark(self.title, "tone", None if item.sentence else "muted")
         duration = f" in {item.duration_s:.1f} s" if item.duration_s is not None else ""
+        self.title.setText(item.summary)
+        self.title.setToolTip(f"{item.name}: {item.detail}"
+                              + (f" ({item.state_label}{duration})" if item.status else ""))
+        theme.mark(self.title, "tone", None if item.sentence else "muted")
         self.state.setText(item.state_label + duration)
+        self.state.setVisible(item.status is not ToolStatus.OK)
         theme.mark(self.state, "tone", TOOL_TONES.get(item.status, "muted")
                    if item.status is not None else "muted")
         self.cancel.setVisible(item.cancellable)
@@ -549,6 +556,94 @@ class ToolCard(QFrame):
     def _toggle(self, shown: bool) -> None:
         self.toggle.setArrowType(Qt.ArrowType.UpArrow if shown else Qt.ArrowType.DownArrow)
         self.details.setVisible(shown)
+
+
+class StepGroup(QFrame):
+    """A run of steps, and the thinking between them, folded into one line: the step under
+    way while it runs, then how many there were and what went wrong. Opens on a click."""
+
+    def __init__(self, cancel: Callable[[str], None]) -> None:
+        super().__init__()
+        self.setObjectName("steps")
+        self.active: ToolItem | None = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self.header = QFrame(objectName="stepsHeader")
+        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.header.mousePressEvent = lambda event: self.toggle.click()  # type: ignore[method-assign]
+        head = QHBoxLayout(self.header)
+        head.setContentsMargins(0, 2, 6, 2)
+        head.setSpacing(6)
+        self.toggle = QToolButton(checkable=True)
+        self.toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.toggle.setAccessibleName("Show the steps")
+        self.toggle.toggled.connect(self._toggle)
+        self.title = ElidedLabel()
+        self.title.setProperty("tone", "muted")
+        self.state = _label(wrap=False, selectable=False)
+        self.cancel = QPushButton("Cancel")
+        self.cancel.setAccessibleName("Cancel this task")
+        self.cancel.clicked.connect(lambda: self.active and cancel(self.active.call_id))
+        head.addWidget(self.toggle)
+        head.addWidget(self.title, 1)
+        head.addWidget(self.state)
+        head.addWidget(self.cancel)
+        layout.addWidget(self.header)
+        self.body = QFrame(objectName="stepsBody")
+        self.steps = QVBoxLayout(self.body)
+        self.steps.setContentsMargins(12, 0, 0, 0)
+        self.steps.setSpacing(2)
+        self.body.hide()
+        layout.addWidget(self.body)
+
+    def set_members(self, widgets: Sequence[QWidget]) -> None:
+        for index, widget in enumerate(widgets):
+            _place(self.steps, index, widget)
+        self.refresh()
+
+    def members(self) -> list[QWidget]:
+        return [w for i in range(self.steps.count()) if (w := self.steps.itemAt(i).widget())]
+
+    def refresh(self) -> None:
+        steps = [w.item for w in self.members() if isinstance(w, ToolCard)]
+        title, state, self.active = group_heading(steps)
+        self.title.setText(title)
+        self.title.setToolTip("\n".join(step.summary for step in steps))
+        self.state.setText(state)
+        tone = "muted" if self.active is not None else "error" if state else None
+        theme.mark(self.state, "tone", tone)
+        self.state.setVisible(bool(state))
+        self.cancel.setVisible(self.active is not None and self.active.cancellable)
+
+    def _toggle(self, shown: bool) -> None:
+        self.toggle.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
+        self.toggle.setAccessibleName("Hide the steps" if shown else "Show the steps")
+        self.body.setVisible(shown)
+
+
+def _place(layout: QVBoxLayout, index: int, widget: QWidget) -> None:
+    """Put `widget` at `index` of `layout`, taking it out of wherever it was."""
+    if layout.indexOf(widget) == index:
+        return
+    hidden = widget.isHidden() and widget.testAttribute(
+        Qt.WidgetAttribute.WA_WState_ExplicitShowHide)
+    _detach(widget)
+    layout.insertWidget(index, widget)
+    widget.setHidden(hidden)  # a new parent hides it, and Qt would show it only later
+
+
+def _detach(widget: QWidget) -> None:
+    """Take `widget` out of its layout, which may be nested in its parent's."""
+    parent = widget.parentWidget()
+    layouts = [parent.layout()] if parent is not None and parent.layout() is not None else []
+    while layouts:
+        layout = layouts.pop()
+        if layout.indexOf(widget) >= 0:
+            layout.removeWidget(widget)
+            return
+        layouts.extend(child for i in range(layout.count())
+                       if (child := layout.itemAt(i).layout()) is not None)
 
 
 class NoticeLine(QLabel):
@@ -663,7 +758,8 @@ class MainWindow(QMainWindow):
         self._zoom_saver: asyncio.Task[None] | None = None
         self.model: ConversationModel = controller.model
         self.model.on_change = self._changed
-        self._widgets: dict[int, QWidget] = {}
+        self._widgets: dict[int, QWidget] = {}  # by id() of its item
+        self._groups: dict[int, StepGroup] = {}  # by id() of its first step
         self._dialog: QDialog | None = None
         self.memory_dialog: MemoryDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
@@ -950,17 +1046,23 @@ class MainWindow(QMainWindow):
             case MemoryListChanged():
                 if self.memory_dialog is not None and self.memory_dialog.isVisible():
                     self.memory_dialog.refresh()
-            case Inserted(index=index, item=item):
-                widget = self._widget_for(item)
-                self._widgets[id(item)] = widget
-                self.items_layout.insertWidget(index, widget)
+            case Inserted(item=item):
+                self._widgets[id(item)] = self._widget_for(item)
+                self._arrange()
                 self._show_empty_state()
             case Updated(item=item):
                 if (widget := self._widgets.get(id(item))) is not None:
                     widget.refresh()  # type: ignore[attr-defined]
+                    if isinstance(group := self._group_of(widget), StepGroup):
+                        if isinstance(item, AssistantItem) and (item.text or item.refused):
+                            self._arrange()  # a reply now: out of the group
+                        else:
+                            group.refresh()
             case Removed(item=item):
                 if (widget := self._widgets.pop(id(item), None)) is not None:
+                    _detach(widget)
                     _discard(widget)
+                self._arrange()
                 self._show_empty_state()
             case PromptsChanged():
                 self._rebuild_prompts()
@@ -981,16 +1083,40 @@ class MainWindow(QMainWindow):
                 return NoticeLine(item)
 
     def _rebuild(self) -> None:
-        for widget in self._widgets.values():
+        for widget in (*self._widgets.values(), *self._groups.values()):
             _discard(widget)
         self._widgets.clear()
-        for index, item in enumerate(self.model.items):
-            widget = self._widget_for(item)
-            self._widgets[id(item)] = widget
-            self.items_layout.insertWidget(index, widget)
+        self._groups.clear()
+        for item in self.model.items:
+            self._widgets[id(item)] = self._widget_for(item)
+        self._arrange()
         self._at_end = True
         self._rebuild_prompts()
         self._refresh_status()
+
+    def _arrange(self) -> None:
+        """Lay the item widgets out as step_segments groups them, keeping each group (and
+        whether it is open) for as long as its first step stays first."""
+        groups: dict[int, StepGroup] = {}
+        for index, segment in enumerate(step_segments(self.model.items)):
+            if isinstance(segment, list):
+                key = id(next(item for item in segment if isinstance(item, ToolItem)))
+                group = self._groups.get(key) or StepGroup(self.controller.cancel)
+                groups[key] = group
+                group.set_members([self._widgets[id(item)] for item in segment])
+                _place(self.items_layout, index, group)
+            else:
+                _place(self.items_layout, index, self._widgets[id(segment)])
+        for key, group in self._groups.items():
+            if key not in groups:
+                _detach(group)
+                _discard(group)
+        self._groups = groups
+
+    @staticmethod
+    def _group_of(widget: QWidget) -> QWidget | None:
+        body = widget.parentWidget()
+        return body.parentWidget() if body is not None else None
 
     def _rebuild_prompts(self) -> None:
         while (child := self.prompts.takeAt(0)) is not None:

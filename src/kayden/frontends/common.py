@@ -4,6 +4,8 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 from __future__ import annotations
 
 import json
+from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ from kayden.api import (
     PermissionRequest,
     Settings,
     SettingsUpdate,
+    ToolStatus,
 )
 from kayden.runtime.instance import ALREADY_OPEN
 
@@ -90,6 +93,28 @@ def past_tense(sentence: str) -> str:
     if first[:1].isupper():
         past = past[0].upper() + past[1:]
     return f"{past} {rest}" if rest else past
+
+
+RESULT_LABELS = {  # how a step ended, in words
+    ToolStatus.OK: "done",
+    ToolStatus.ERROR: "failed",
+    ToolStatus.REFUSED: "declined",
+    ToolStatus.CANCELLED: "cancelled",
+    ToolStatus.TIMED_OUT: "timed out",
+    ToolStatus.ABANDONED: "abandoned, may still be running",
+    ToolStatus.INTERRUPTED: "interrupted",
+}
+
+
+def steps_title(count: int) -> str:
+    """A finished group of steps, by count: the tools behind them are not known here."""
+    return f"{count} step{'s' if count != 1 else ''}"
+
+
+def step_problems(labels: Iterable[str]) -> str:
+    """'2 failed, 1 declined' from each step's problem label ('' for a step that went fine)."""
+    counts = Counter(label for label in labels if label)
+    return ", ".join(f"{n} {label}" for label, n in counts.items())
 
 
 def call_parts(arguments: Any) -> tuple[str | None, str]:

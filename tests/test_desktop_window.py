@@ -28,6 +28,7 @@ from kayden.frontends.desktop.window import (
     MainWindow,
     PermissionCard,
     SettingsDialog,
+    StepGroup,
     ToolCard,
     UserBubble,
     WelcomeDialog,
@@ -608,3 +609,69 @@ async def test_a_saved_zoom_is_read_back(tmp_path):
     assert await window_module.load_zoom(saved) == 1.25
     saved.write_text("not json")
     assert await window_module.load_zoom(saved) == 1.0
+
+
+def groups(window: MainWindow) -> list[StepGroup]:
+    layout = window.items_layout
+    return [w for i in range(layout.count())
+            if isinstance(w := layout.itemAt(i).widget(), StepGroup)]
+
+
+async def test_steps_fold_into_one_line_until_opened(make, qapp):
+    h: Harness = await make()
+    h.tools.instant("look", "found")
+    h.tools.failing("open")
+    h.core.add(Step(calls=[call("look", {"q": 1, "description": "Search the web"}),
+                           call("open", {"url": "u", "description": "Open the page"})]),
+               Step(text="Here it is."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    window.show()
+    controller.send("go")
+    await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    (group,) = groups(window)
+    assert group.title.text() == "2 steps" and group.state.text() == "1 failed"
+    cards = widgets(window, ToolCard)
+    assert len(cards) == 2 and not any(card.isVisible() for card in cards)
+    group.toggle.click()
+    assert all(card.isVisible() for card in cards)
+    assert not cards[0].state.isVisible() and cards[1].state.text().startswith("failed")
+    reply = widgets(window, AssistantBubble)[0]
+    layout = window.items_layout
+    assert layout.indexOf(reply) == layout.indexOf(group) + 1  # the reply stays outside
+    window.close()
+
+
+async def test_a_running_group_shows_its_current_step(make, qapp):
+    h: Harness = await make()
+    h.tools.instant("look", "found")
+    h.tools.hanging("wait")
+    h.core.add(Step(calls=[call("look", {"description": "Search the web"})]),
+               Step(calls=[call("wait", {"description": "Wait for the build"})]))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("go")
+    await eventually(lambda: groups(window) and groups(window)[0].title.text()
+                     == "Wait for the build")
+    (group,) = groups(window)
+    assert group.state.text() == "running" and group.cancel.isVisibleTo(group)
+    group.cancel.click()
+    await eventually(lambda: not controller.model.busy)
+    await eventually(lambda: group.title.text() == "2 steps")
+    assert group.state.text() == "1 cancelled" and not group.cancel.isVisibleTo(group)
+
+
+async def test_a_replaced_streaming_reply_stays_hidden(make, qapp):
+    h: Harness = await make()
+    h.core.add(Step(text="Reply text."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    window.show()
+    controller.send("q")
+    await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
+    await asyncio.sleep(0.2)  # past the redraw delay of the streamed bubble
+    qapp.processEvents()
+    shown = [b for b in window.findChildren(AssistantBubble) if b.isVisible()]
+    assert shown == widgets(window, AssistantBubble)
+    window.close()

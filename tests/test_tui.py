@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
@@ -74,6 +75,7 @@ from kayden.frontends.tui import (
     OperationsScreen,
     PermissionPrompt,
     StartScreen,
+    StepGroup,
     SystemEntry,
     TextPromptScreen,
     ToolEntry,
@@ -382,6 +384,7 @@ async def test_model_retry_discards_the_failed_attempts_stream():
         await caught_up(pilot, app, stub)
         assert [e.body for e in entries(app, AssistantEntry)] == ["Hello"]
         assert not entries(app, ToolEntry)
+        assert not entries(app, StepGroup)
         assert "Retrying (1 of 3)" in status(app)
 
 
@@ -1140,3 +1143,52 @@ async def test_a_reply_with_nothing_to_show_takes_no_space():
         assert [e.display for e in entries(app, AssistantEntry)] in ([], [False])
         [tool] = entries(app, ToolEntry)
         assert plain(tool).startswith("⚙ remember Studies CS")  # no description given
+
+
+def look(id: str, description: str) -> ToolCall:
+    return ToolCall(id, "look", {"q": "x", "description": description})
+
+
+async def test_steps_fold_into_one_group_with_the_thinking_before_them():
+    stub = StubRuntime()
+    app = make(stub)
+    a, b = look("c1", "Search the web"), look("c2", "Open the page")
+    async with app.run_test() as pilot:
+        stub.emit(StateChanged(AgentState.THINKING), ReasoningDelta("Let me look."))
+        stub.emit(ToolCallDelta("c1", "look", json.dumps(a.arguments)))
+        await caught_up(pilot, app, stub)
+        [group] = entries(app, StepGroup)
+        assert group.collapsed and group.title == "Search the web · starting"
+        assert [e.reasoning for e in group.query(AssistantEntry)] == ["Let me look."]
+        stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, Reasoning("Let me look."), a)))
+        stub.emit(ToolStarted(a), ToolFinished(ToolResult("c1", ToolStatus.OK, "found"), 0.1))
+        stub.emit(MessageCommitted(msg("t1", Role.TOOL, ToolResult("c1", ToolStatus.OK, "found"))))
+        stub.emit(MessageCommitted(msg("a2", Role.ASSISTANT, Reasoning("Next."), b)))
+        stub.emit(ToolStarted(b))
+        await caught_up(pilot, app, stub)
+        [group] = entries(app, StepGroup)
+        assert group.title == "Open the page · running"
+        failed = ToolResult("c2", ToolStatus.ERROR, "blocked")
+        stub.emit(ToolFinished(failed, 0.1), MessageCommitted(msg("t2", Role.TOOL, failed)))
+        stub.emit(MessageCommitted(msg("a3", Role.ASSISTANT, Text("Here it is."))))
+        await caught_up(pilot, app, stub)
+        [group] = entries(app, StepGroup)
+        assert group.title == "2 steps · 1 failed"
+        assert len(group.query(ToolEntry)) == 2 and len(group.query(AssistantEntry)) == 2
+        [reply] = [e for e in entries(app, AssistantEntry) if e.body]
+        assert reply.parent is app.query_one("#transcript")
+
+
+async def test_a_lone_step_shows_its_sentence_and_text_starts_a_new_group():
+    stub = StubRuntime()
+    app = make(stub)
+    a, b = look("c1", "Search the web"), look("c2", "Search again")
+    ok = ToolResult("c1", ToolStatus.OK, "found")
+    async with app.run_test() as pilot:
+        stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, a)), ToolFinished(ok, 0.1))
+        stub.emit(MessageCommitted(msg("t1", Role.TOOL, ok)))
+        stub.emit(MessageCommitted(msg("a2", Role.ASSISTANT, Text("One more."), b)))
+        await caught_up(pilot, app, stub)
+        first, second = entries(app, StepGroup)
+        assert first.title == "Searched the web"
+        assert second.title == "Search again · starting"

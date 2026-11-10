@@ -219,7 +219,10 @@ QFrame#user:disabled {{ background: {c.accent_soft}; }}
 QFrame#user QLabel:disabled {{ color: {c.accent_text}; }}
 QLabel#bigAvatar {{ background: {c.accent_soft}; color: {c.accent_text}; border-radius: 24px;
     font-size: {heading}; font-weight: 600; }}
-QFrame#tool {{ background: {c.card}; border: 1px solid {c.line}; border-radius: 10px; }}
+QFrame#tool {{ background: transparent; border: none; }}
+QFrame#stepsHeader {{ border-radius: 6px; }}
+QFrame#stepsHeader:hover {{ background: {c.card}; }}
+QFrame#stepsBody {{ border-left: 2px solid {c.line}; margin-left: 9px; }}
 QFrame#tool QPlainTextEdit {{ background: {c.bg}; }}
 QFrame#prompt {{ background: {c.bg}; border: 1px solid {c.line};
     border-left: 3px solid {c.accent}; }}

@@ -25,7 +25,10 @@ kayden --conversation ID       # continue a conversation
 Type a message and press Enter. While the agent works you can keep typing; your messages
 are queued and delivered when it is ready. Its reasoning, replies and tool calls appear in
 the conversation as they happen. Each step reads as a short sentence the agent writes
-("Read your notes"), with the exact input below it.
+("Read your notes"), with the exact input below it. The steps between two replies, and the
+agent's thinking between them, fold into one line that shows the step under way, then how
+many there were and any that failed ("4 steps · 1 failed"); open it to see them all. In the
+terminal app, select the line and press Enter.
 
 ## Approving actions
 

@@ -71,7 +71,14 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.api import Text as TextBlock
-from kayden.frontends.common import call_parts, money, past_tense
+from kayden.frontends.common import (
+    RESULT_LABELS,
+    call_parts,
+    money,
+    past_tense,
+    step_problems,
+    steps_title,
+)
 from kayden.runtime import InstanceLockedError
 from kayden.runtime.instance import ALREADY_OPEN
 
@@ -88,15 +95,6 @@ STATE_LABELS = {
     AgentState.STOPPING: "Stopping",
     AgentState.STOPPED: "Stopped",
     AgentState.FAILED: "Failed",
-}
-RESULT_LABELS = {
-    ToolStatus.OK: "done",
-    ToolStatus.ERROR: "failed",
-    ToolStatus.REFUSED: "declined",
-    ToolStatus.CANCELLED: "cancelled",
-    ToolStatus.TIMED_OUT: "timed out",
-    ToolStatus.ABANDONED: "abandoned, may still be running",
-    ToolStatus.INTERRUPTED: "interrupted",
 }
 BUSY_STATES = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
                AgentState.STOPPING)
@@ -176,6 +174,11 @@ class ToolItem:
         return self.phase.value
 
     @property
+    def problem(self) -> str:
+        """The state worth pointing out once ended: '' when it went fine."""
+        return "" if self.status is ToolStatus.OK else self.state_label
+
+    @property
     def cancellable(self) -> bool:
         return self.status is None and self.phase in (Phase.RUNNING, Phase.BACKGROUND)
 
@@ -187,6 +190,47 @@ class NoticeItem:
 
 
 type Item = UserItem | AssistantItem | ToolItem | NoticeItem
+type Segment = Item | list[Item]
+
+
+def _in_steps(item: Item) -> bool:
+    return isinstance(item, ToolItem) or (
+        isinstance(item, AssistantItem) and not item.text and not item.refused)
+
+
+def step_segments(items: Sequence[Item]) -> list[Segment]:
+    """Items as shown: each run of steps, with the thinking before and between them, as one
+    group (a list); every other item on its own. Thinking after a run's last step stays out
+    until another step follows it, so a reply's thinking is never folded away."""
+    segments: list[Segment] = []
+    run: list[Item] = []
+
+    def flush() -> None:
+        last = max((i for i, item in enumerate(run) if isinstance(item, ToolItem)), default=-1)
+        if last >= 0:
+            segments.append(run[: last + 1])
+        segments.extend(run[last + 1:])
+        run.clear()
+
+    for item in items:
+        if _in_steps(item):
+            run.append(item)
+        else:
+            flush()
+            segments.append(item)
+    flush()
+    return segments
+
+
+def group_heading(steps: Sequence[ToolItem]) -> tuple[str, str, ToolItem | None]:
+    """A group's title, its state, and the step still underway (None when all ended)."""
+    active = next((s for s in reversed(steps)
+                   if s.status is None and s.phase is not Phase.NOT_RUN), None)
+    if active is not None:
+        return active.summary, active.state_label, active
+    if len(steps) == 1:
+        return steps[0].summary, steps[0].problem, None
+    return steps_title(len(steps)), step_problems(s.problem for s in steps), None
 
 
 # ── change notifications for the widget layer ─────────────────────────────

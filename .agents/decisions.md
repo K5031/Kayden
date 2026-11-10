@@ -568,3 +568,15 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md) (lo
 | Keys | Zoom In: the platform's Zoom In (Ctrl++) and Ctrl+=; Zoom Out: Ctrl+−; Actual Size: Ctrl+0; all in a View menu |
 | Stored | `<data dir>/desktop.json` (`{"zoom": 1.25}`), written 0.4 s after the last change; missing or unreadable means 100 % |
 | Not a setting | A desktop-only view preference, so it stays out of `settings.toml` and the runtime |
+
+## Step groups
+
+Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
+
+| Choice | Value |
+|---|---|
+| Opened | Closed by default; the desktop app keeps a group open while its first step stays first |
+| Live title | The latest step not yet ended, with its state (desktop: preparing, running, in the background; TUI: starting, running, in the background) |
+| Ended title | One step: its sentence and its problem; several: "N steps" and problems counted by label ("1 failed, 1 declined") |
+| Cancel | The desktop group line has Cancel for its live step; each step keeps its own |
+| Step rows | No box; "done" is not shown, its duration is in the tooltip; other states stay visible |

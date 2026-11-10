@@ -24,10 +24,24 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
   `frontends.common.past_tense`) when it is a verb in Kayden's list; other sentences, and
   failed or refused steps, stay as the model wrote them. Without
   one they show the tool name and its input. No frontend knows any tool by name.
+- Steps fold into groups. A run of steps, with the thinking before and between them, shows
+  as one closed line until clicked: the latest unfinished step's description and state
+  while any runs, then the one step's description, or "N steps" with what went wrong
+  ("4 steps · 1 failed", `frontends.common.steps_title` and `step_problems`). Reply text,
+  notices and user messages end a group; thinking after a run's last step stays outside
+  until a step follows it, so a reply's thinking is never folded away. The desktop app
+  derives groups from its items (`viewmodel.step_segments`); the TUI files each step into
+  the group before it as it mounts.
 - The automatic permission review leaves the description out of what it judges: the model
   could describe `rm -rf ~/photos` as "tidy up a few files".
 
 ## Alternatives considered
+
+- **Group lines by kind of tool** ("Ran 3 commands, read 2 files"). Says more than "5
+  steps", but the frontends would have to know the tools again. The count, the failures and
+  the live step's own sentence need no tool knowledge.
+- **One card per step, always visible.** What shipped first: on a busy turn the cards
+  outweighed the answer, and "done" on every card was noise.
 
 - **A fixed sentence per tool in the frontends** ("Search the web for “{query}”"). Built
   first. The frontends had to know the built-in Tools module's tool names, tools from any
@@ -50,3 +64,5 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
   input is one hover away.
 - The sentence can mislead. Prompts always show the exact input under it, the docs say to
   trust the input, and the review ignores the sentence.
+- The answer, not the work, fills the conversation; seeing every step takes one click, which
+  matters when checking what the agent did.
