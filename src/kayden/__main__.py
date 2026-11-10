@@ -8,7 +8,7 @@ is a default: SQLite Memory, the Anthropic Core, shell/file Tools rooted at the 
 directory, the Textual TUI and no budget. --show-config prints the result.
 
 The saved frontend runs here when it is a terminal frontend. A saved window frontend opens
-instead: kayden hands over to the desktop launcher as a detached process when a display is
+instead: kayden hands over to the window launcher as a detached process when a display is
 available, and runs the TUI (saying why) when there is none or the frontend is not
 installed. Restart now in a frontend starts the instance again in this process, or hands
 over the same way to a window frontend.
@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import os
 import subprocess
 import sys
 import tomllib
-from collections.abc import Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -345,22 +346,53 @@ def mcp_options(server: McpServer) -> dict[str, Any]:
     return {"name": server.name, **target, "env": env}
 
 
-async def launch(args: argparse.Namespace, launcher: str, *, default_root: Path | None = None
+type EventLoop = Callable[[Coroutine[Any, Any, Any]], Any]
+
+
+def frontend_loop(spec: ModuleSpec) -> EventLoop:
+    """How a frontend runs: its factory's event_loop, else asyncio.run. Imports the factory
+    without calling it."""
+    module_name, _, attr = spec.factory.partition(":")
+    factory: Any = importlib.import_module(module_name)
+    for part in attr.split("."):
+        factory = getattr(factory, part)
+    return getattr(factory, "event_loop", asyncio.run)
+
+
+async def launch(args: argparse.Namespace, launcher: str, *, default_root: Path | None = None,
+                 restart: Restart | None = None,
+                 runs_here: Callable[[InstanceConfig], bool] = lambda config: True,
                  ) -> Restart | None:
-    """Run instances until the user quits; a Restart to a frontend of another kind is
-    returned for the caller to hand over."""
-    restart: Restart | None = None
+    """Run instances until the user quits. A Restart is returned for the caller when it is
+    to a frontend of another kind, or to one that `runs_here` says needs another loop."""
     while True:
         config = load_config(args, default_root=default_root, launcher=launcher,
                              restart=restart)
+        if not runs_here(config):
+            return restart
         restart = await run_instance(config, fallback=LAUNCHER_FRONTENDS[launcher])
         if restart is None or restart.frontend_kind != launcher:
             return restart
 
 
+def run_frontends(args: argparse.Namespace, launcher: str, *,
+                  default_root: Path | None = None) -> Restart | None:
+    """Run instances, each frontend on the event loop it names, until the user quits or
+    a Restart asks for a frontend of the other kind (returned)."""
+    restart: Restart | None = None
+    while True:
+        config = load_config(args, default_root=default_root, launcher=launcher,
+                             restart=restart)
+        run = frontend_loop(config.frontend)
+        restart = run(launch(args, launcher, default_root=default_root, restart=restart,
+                             runs_here=lambda c, run=run: frontend_loop(c.frontend) is run))
+        if restart is None or restart.frontend_kind != launcher:
+            return restart
+
+
 def window_command(args: argparse.Namespace, restart: Restart) -> list[str]:
-    """The desktop launcher on the same data directory, config file and conversation."""
-    command = [sys.executable, "-m", "kayden.frontends.desktop.launcher",
+    """The window launcher on the same data directory, config file and conversation."""
+    command = [sys.executable, "-m", "kayden.window",
                "--data-dir", str(args.data_dir.expanduser())]
     if args.config:
         command += ["--config", str(args.config.expanduser())]
@@ -409,7 +441,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if notice is not None:
         print(notice)
     try:
-        restart = asyncio.run(launch(args, TERMINAL))
+        restart = run_frontends(args, TERMINAL)
     except ModuleLoadError as e:
         print(f"kayden: {e}", file=sys.stderr)
         raise SystemExit(1) from None

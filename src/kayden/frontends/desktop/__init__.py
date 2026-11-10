@@ -1,9 +1,8 @@
 """Desktop app frontend: PySide6 widgets on a qasync event loop.
 
-It runs through kayden.frontends.desktop.launcher, which creates the
-QApplication and runs the instance on qasync's loop; `run` needs both. PySide6 and qasync
-are imported here, so the entry point loads (and the app is offered in settings) only where
-the `desktop` extra is installed.
+Its factory names the event loop it runs on (loop.run_on_qt: a QApplication and qasync's
+loop); `run` needs both. PySide6 and qasync are imported here, so the entry point loads (and
+the app is offered in settings) only where the `desktop` extra is installed.
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import Frontend, FrontendInfo, InstancePaths, RuntimeAPI
+from kayden.frontends.desktop.loop import run_on_qt
 
 # PySide6 6.12 on Python 3.15 breaks reading a lazily imported module attribute (PEP 810)
 # from another module once Qt is loaded. asyncio.to_thread reads this one, so resolve it
@@ -34,6 +34,7 @@ ZOOM_FILE = "desktop.json"  # the app's own view preferences, in the data folder
 
 factory.display_name = "Desktop app"  # type: ignore[attr-defined]
 factory.kind = "window"  # type: ignore[attr-defined]
+factory.event_loop = run_on_qt  # type: ignore[attr-defined]
 
 
 class DesktopFrontend(Frontend):
@@ -56,7 +57,7 @@ class DesktopFrontend(Frontend):
 
         app = QApplication.instance()
         if app is None:
-            raise RuntimeError("the desktop frontend runs through kayden.frontends.desktop.launcher")
+            raise RuntimeError("the desktop frontend runs on its own event loop (factory.event_loop)")
         if self.zoom_file is not None:
             theme.set_zoom(app, await load_zoom(self.zoom_file))
         controller = Controller(runtime, ConversationModel())

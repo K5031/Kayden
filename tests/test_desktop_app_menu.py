@@ -31,8 +31,8 @@ def test_install_adds_a_launcher_that_starts_the_desktop_app(data_home: Path) ->
     app_menu.install()
     e = entry(data_home)
     assert (e["Type"], e["Name"], e["Terminal"]) == ("Application", "Kayden", "false")
-    # The desktop launcher, not `kayden`: a menu has no terminal for the terminal app.
-    assert e["Exec"] == f"{sys.executable} -m kayden.frontends.desktop.launcher"
+    # The window launcher, not `kayden`: a menu has no terminal for the terminal app.
+    assert e["Exec"] == f"{sys.executable} -m kayden.window"
     assert e["StartupWMClass"] == "io.github.k5031.kayden"
     assert e["Icon"] == app_menu.ICON_NAME and e["Icon"].startswith("io.github.k5031.kayden-")
     icon = data_home / f"icons/hicolor/scalable/apps/{app_menu.ICON_NAME}.svg"
@@ -47,7 +47,7 @@ def test_an_entry_for_another_install_is_not_current(data_home: Path,
     assert not app_menu.is_current()
     app_menu.install()
     assert entry(data_home)["Exec"] == (
-        '"/opt/my tools/kayden/bin/python" -m kayden.frontends.desktop.launcher')
+        '"/opt/my tools/kayden/bin/python" -m kayden.window')
     assert app_menu.is_current()
 
 

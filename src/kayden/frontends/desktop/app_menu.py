@@ -1,7 +1,7 @@
 """A launcher for Kayden in the Linux app menu, for an install that is not a bundle.
 
 A desktop entry and an icon in the user's XDG data directory, which desktops pick up by
-themselves. The entry starts the desktop launcher with this install's Python: a menu has
+themselves. The entry starts the window launcher with this install's Python: a menu has
 no terminal for `kayden` to run a terminal frontend in.
 
 The icon's name carries a hash of its content: desktops cache icons by name (KDE keeps
@@ -55,7 +55,7 @@ def _entry() -> str:
         "Type=Application",
         "Name=Kayden",
         "Comment=An AI agent that works for you on your computer",
-        f"Exec={_quoted(sys.executable)} -m kayden.frontends.desktop.launcher",
+        f"Exec={_quoted(sys.executable)} -m kayden.window",
         f"Icon={ICON_NAME}",
         "Terminal=false",
         "Categories=Utility;",

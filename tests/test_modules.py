@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import kayden.__main__ as launcher
+from kayden import window as window_launcher
 from kayden.api import (
     RuntimeStateError,
     SettingsChanged,
@@ -19,7 +20,6 @@ from kayden.api import (
     ShuttingDown,
     StartOptions,
 )
-from kayden.frontends.desktop import launcher as desktop_launcher
 from kayden.runtime import ModuleSpec, ModuleState, Restart, run_instance
 from kayden.runtime.instance import InstanceLock
 from kayden.runtime.modules import TERMINAL, WINDOW, installed
@@ -77,7 +77,7 @@ def test_installed_modules_are_the_entry_points_that_load():
     assert (cores["keyless"].name, cores["keyless"].key_name) == ("keyless", None)
     frontends = {m.id: m.kind for m in installed("frontend")}
     assert frontends == {"tui": TERMINAL, "desktop": WINDOW, "scripted": TERMINAL,
-                         "scripted-window": WINDOW}
+                         "scripted-window": WINDOW, "scripted-window-2": WINDOW}
 
 
 async def test_an_installed_package_appears_in_settings(make):
@@ -169,8 +169,8 @@ def test_the_saved_work_folder_roots_the_tools(tmp_path):
     assert config.runtime.modules.work_folder == str(folder)
 
 
-def test_the_desktop_launcher_opens_the_conversation_it_is_given(tmp_path):
-    desktop_args = desktop_launcher.parse_args(["--data-dir", str(tmp_path),
+def test_the_window_launcher_opens_the_conversation_it_is_given(tmp_path):
+    desktop_args = window_launcher.parse_args(["--data-dir", str(tmp_path),
                                                 "--conversation", "c1"])
     config = launcher.load_config(desktop_args, launcher=WINDOW)
     assert config.frontend == ModuleSpec("kayden.frontends.desktop:factory",
@@ -414,12 +414,12 @@ def test_the_terminal_hands_over_to_the_desktop_app(tmp_path, monkeypatch, capsy
     scripted(monkeypatch, script)
     launcher.main(["--data-dir", str(tmp_path)])
     [(command, kw)] = spawned
-    assert command == [sys.executable, "-m", "kayden.frontends.desktop.launcher",
+    assert command == [sys.executable, "-m", "kayden.window",
                        "--data-dir", str(tmp_path), "--conversation", seen["conversation"]]
     assert kw["start_new_session"] and kw["stdin"] == subprocess.DEVNULL
     assert "continues in the desktop app" in capsys.readouterr().out
-    # The desktop launcher then runs the desktop app on that conversation.
-    desktop_args = desktop_launcher.parse_args(command[3:])
+    # The window launcher then runs the desktop app on that conversation.
+    desktop_args = window_launcher.parse_args(command[3:])
     config = launcher.load_config(desktop_args, launcher=WINDOW)
     assert config.frontend == ModuleSpec("kayden.frontends.desktop:factory",
                                          {"start": True, "conversation_id": seen["conversation"]})
@@ -427,11 +427,11 @@ def test_the_terminal_hands_over_to_the_desktop_app(tmp_path, monkeypatch, capsy
 
 
 def test_the_handed_over_command_runs(tmp_path):
-    """The command the terminal launches is a working desktop launcher."""
+    """The command the terminal launches is a working window launcher."""
     command = launcher.window_command(args(tmp_path), Restart("desktop", WINDOW, None))
     out = subprocess.run([*command[:3], "--help"], capture_output=True, text=True, check=True,
                          timeout=60)
-    assert out.stdout.startswith("usage: python -m kayden.frontends.desktop.launcher ")
+    assert out.stdout.startswith("usage: python -m kayden.window ")
 
 
 async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, monkeypatch):
@@ -479,7 +479,7 @@ def test_kayden_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
     scripted(monkeypatch, script)
     launcher.main(["--data-dir", str(tmp_path), "--conversation", "c1"])
     assert not ran
-    assert spawned == [[sys.executable, "-m", "kayden.frontends.desktop.launcher",
+    assert spawned == [[sys.executable, "-m", "kayden.window",
                         "--data-dir", str(tmp_path), "--conversation", "c1"]]
     assert capsys.readouterr().out == "Kayden opens in the desktop app.\n"
 

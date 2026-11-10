@@ -22,7 +22,7 @@ Runtime settings (model, budget, permissions, instructions, the folder for new c
 read by the runtime and apply live; the runtime hands each conversation's folder to the
 Tools (`Tools.use_folder`) when it opens it. Module settings (which module, the API key,
 module options) are passed to factories, so they apply when Kayden restarts: `RuntimeAPI.restart()`
-shuts the instance down and the launcher (`kayden`, or the desktop launcher) builds it again in
+shuts the instance down and the launcher (`kayden`, or the window launcher) builds it again in
 the same process. When Core, Memory or Tools cannot be built, the frontend runs on a setup
 runtime (`runtime/setup.py`) that only shows and saves settings.
 
@@ -39,8 +39,10 @@ my-ui = "my_package.ui:factory"
 
 Optional attributes on the factory: `display_name` (shown instead of the id), `key_name`
 for a Core (the environment variable and keychain entry of its API key, which the settings
-ask for), and `kind` for a frontend: `"terminal"` (started by `kayden`, the default) or
-`"window"` (run by `kayden.frontends.desktop.launcher`, inside its Qt event loop). An entry point whose
+ask for), and for a frontend `kind`: `"terminal"` (started by `kayden`, the default) or
+`"window"` (run by the window launcher, `python -m kayden.window`), and `event_loop`: a
+callable that runs a coroutine on the loop the frontend needs, like `asyncio.run` (the
+default). The desktop app names Qt's; a GTK or web frontend names its own. An entry point whose
 package does not import is not listed. Launchers may pass a frontend the options `start`,
 `conversation_id` and `model`.
 
@@ -103,18 +105,12 @@ crashes on this loop; on 3.13 every file passes.
 dependencies come from `[project]` and its modules are found through their entry points.
 
 A package for the Linux you build on (here an Arch `.pkg.tar.zst`) uses the system Python,
-which must also run Briefcase and have its headers (`Python.h`) installed:
+which must also run Briefcase and have its headers (`Python.h`) installed. The script runs
+Briefcase and adds `kayden` and `kd` to the package as links to its program, which then
+starts the terminal app (Briefcase itself makes one program per app):
 
 ```bash
-uvx --python /usr/bin/python3 briefcase create linux system
-```
-
-```bash
-uvx --python /usr/bin/python3 briefcase build linux system
-```
-
-```bash
-uvx --python /usr/bin/python3 briefcase package linux system
+packaging/linux-system.sh
 ```
 
 A Flatpak needs `flatpak-builder`; a macOS `.dmg` must be built on a Mac:

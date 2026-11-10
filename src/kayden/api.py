@@ -1319,14 +1319,17 @@ class FrontendInfo:
     # False -> the runtime never sends PermissionRequested; calls that would prompt
     # are refused (see PermissionPolicy) instead of blocking on an absent user.
     interactive_permissions: bool = True
-    # "terminal" (run by kayden in a terminal) or "window" (run by the desktop launcher,
-    # inside its Qt event loop).
+    # "terminal" (run by kayden in a terminal) or "window" (run by the window launcher,
+    # which a double-clicked app starts; it needs a display).
     kind: str = "terminal"
 
 
 class Frontend(abc.ABC):
-    """Owns the UI; its launcher chooses the event loop (kayden: asyncio's, the desktop
-    launcher: qasync's). Launchers may pass these factory options: start (true: start right away),
+    """Owns the UI. Its factory may carry `event_loop`: a callable that runs a coroutine to
+    completion on the loop the frontend needs (a GUI toolkit's, for example), as asyncio.run
+    does, which is the default. Launchers run each frontend that way and know no toolkit;
+    after a Restart to a frontend that names another loop, the next instance runs on that
+    one. Launchers may pass these factory options: start (true: start right away),
     conversation_id, model; a frontend ignores the ones it does not use."""
 
     @property

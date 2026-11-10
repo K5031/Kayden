@@ -49,7 +49,7 @@ main thread.
 The `kayden` launcher calls `asyncio.run` and only then loads the frontend, so a frontend
 module cannot choose the event loop. That is wrong for any GUI toolkit, whose loop must be
 the one that runs. The desktop app therefore gets its own launcher,
-`kayden.frontends.desktop.launcher` (what the bundle runs; `kayden` hands over to it). It does the following:
+`kayden.window`, the window launcher (what the bundle runs; `kayden` hands over to it). It does the following:
 
 1. Reads `config.toml` and `settings.toml` with the same `load_config` as `kayden`.
 2. Uses the desktop frontend factory instead of the configured frontend.

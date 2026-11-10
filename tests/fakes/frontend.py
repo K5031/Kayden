@@ -110,6 +110,11 @@ def window_factory(options: dict[str, Any], paths: Any) -> ScriptedFrontend:
     return ScriptedFrontend(options.get("script"), kind="window", options=options)
 
 
+def other_window_factory(options: dict[str, Any], paths: Any) -> ScriptedFrontend:
+    return ScriptedFrontend(options.get("script"), kind="window", options=options)
+
+
 factory.display_name = "Scripted"  # type: ignore[attr-defined]
 window_factory.display_name = "Scripted window"  # type: ignore[attr-defined]
 window_factory.kind = "window"  # type: ignore[attr-defined]
+other_window_factory.kind = "window"  # type: ignore[attr-defined]

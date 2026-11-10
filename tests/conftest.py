@@ -174,6 +174,7 @@ fake-tools = tests.fakes.tools:factory
 [kayden.frontends]
 scripted = tests.fakes.frontend:factory
 scripted-window = tests.fakes.frontend:window_factory
+scripted-window-2 = tests.fakes.frontend:other_window_factory
 """
 
 
