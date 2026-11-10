@@ -70,6 +70,7 @@ async def test_settings_reflect_the_configuration(make, monkeypatch):
     assert s.budget == Budget()
     assert s.work_folder == "/start"
     assert not s.restart_needed and s.startup_error is None
+    assert not s.already_open
     assert s.restart_frontend == "scripted"
 
 

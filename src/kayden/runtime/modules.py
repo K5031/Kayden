@@ -85,12 +85,13 @@ class ModuleSettings:
     for the next start; nothing is built."""
 
     def __init__(self, data_dir: Path, state: ModuleState, frontend_kind: str,
-                 startup_error: str | None = None):
+                 startup_error: str | None = None, already_open: bool = False):
         self.data_dir = data_dir
         self.running = {kind: state.running.get(kind) for kind in MODULE_KINDS}
         self.chosen = {kind: state.chosen.get(kind, self.running[kind]) for kind in MODULE_KINDS}
         self.frontend_kind = frontend_kind
         self.startup_error = startup_error
+        self.already_open = already_open
         self.work_folder = state.work_folder  # for new conversations; applies live
         self.key_saved = False
 
@@ -107,7 +108,7 @@ class ModuleSettings:
         return {"modules": modules, "work_folder": self.work_folder,
                 "restart_needed": restart_needed,
                 "restart_frontend": self._restart_frontend(found["frontend"]),
-                "startup_error": self.startup_error}
+                "startup_error": self.startup_error, "already_open": self.already_open}
 
     def _restart_frontend(self, frontends: list[Installed]) -> str | None:
         running, chosen = self.running["frontend"], self.chosen["frontend"]

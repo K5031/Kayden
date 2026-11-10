@@ -545,8 +545,8 @@ def test_welcome_conversation_labels_and_refusals():
     assert len(conversation_label(replace(previewed, preview="x" * 200))) == LABEL_CHARS
     assert user_message(RuntimeStateError("cannot start while thinking")) == BUSY_MESSAGE
     assert user_message(RuntimeStateError("budget exhausted: max_cost_usd")) == BUDGET_MESSAGE
-    assert user_message(InstanceLockedError("session mode in /d is already in use by process 7")
-                        ).startswith("Kayden is already open")
+    assert user_message(InstanceLockedError("Kayden is already open in another window (x)")
+                        ) == "Kayden is already open in another window (x)."
     assert user_message(ValueError("unknown model x")) == "unknown model x"
 
 

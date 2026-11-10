@@ -794,11 +794,7 @@ class RuntimeStateError(Exception):
 
 
 class InstanceLockedError(RuntimeError):
-    """Another process uses this data directory."""
-
-
-# Settings.startup_error starts with this when the lock was held at startup.
-ALREADY_OPEN = "Kayden is already open in another window"
+    """Another process uses this data directory. The message is written for the user."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -931,6 +927,9 @@ class Settings:
     # bad options). Only settings and restart() work then; the frontend shows the settings
     # with this message so the user can fix it.
     startup_error: str | None = None
+    # With startup_error: another process holds the data directory, so closing it, not
+    # changing settings, is the fix.
+    already_open: bool = False
 
 
 @dataclass(frozen=True, slots=True)

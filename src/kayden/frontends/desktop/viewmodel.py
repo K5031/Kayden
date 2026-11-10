@@ -20,7 +20,6 @@ from enum import StrEnum
 from typing import Any
 
 from kayden.api import (
-    ALREADY_OPEN,
     AgentState,
     Budget,
     ConversationDeleted,
@@ -742,7 +741,7 @@ def user_message(error: Exception) -> str:
     """A refused command as the user should read it."""
     text = str(error) or type(error).__name__
     if isinstance(error, InstanceLockedError):
-        return f"{ALREADY_OPEN} ({text})."
+        return f"{text}."
     if isinstance(error, RuntimeStateError):
         if text.startswith("budget exhausted"):
             return BUDGET_MESSAGE

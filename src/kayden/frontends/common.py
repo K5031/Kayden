@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import (
-    ALREADY_OPEN,
     DESCRIPTION_ARG,
     ModelInfo,
     ModuleChoice,
@@ -211,7 +210,7 @@ def needs_restart(update: SettingsUpdate) -> bool:
 def restart_notice(settings: Settings) -> str | None:
     """What waits for a restart, for a line next to Restart now; None when nothing does."""
     if settings.startup_error is not None:
-        if settings.startup_error.startswith(ALREADY_OPEN):
+        if settings.already_open:
             return "Close the other Kayden window, then press Restart now."
         return "Fix the settings above, then press Restart now."
     if not settings.restart_needed:

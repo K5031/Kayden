@@ -204,7 +204,7 @@ async def test_instance_lock(make: Any) -> None:
     h: Harness = await make()
     await h.start()
     other: Harness = await make(data_dir=h.data_dir)
-    with pytest.raises(InstanceLockedError, match=str(os.getpid())):
+    with pytest.raises(InstanceLockedError, match=f"already open.*{os.getpid()}"):
         await other.start()
     await h.close()
     await other.start()  # released on shutdown

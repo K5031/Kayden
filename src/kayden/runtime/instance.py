@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import (
-    ALREADY_OPEN,
     Core,
     Frontend,
     InstanceLockedError,
@@ -23,7 +22,6 @@ from kayden.runtime.config import InstanceConfig, ModuleSpec, Restart
 from kayden.runtime.modules import targets
 
 LOCK_FILE = "instance.lock"
-# Starts startup_error and refusals when another process holds the data directory.
 class ModuleLoadError(Exception):
     """A module could not be built from its configuration (bad factory path, bad options,
     missing credentials). The message names the factory and fits on one line."""
@@ -47,7 +45,8 @@ class InstanceLock:
             os.close(fd)
             holder = path.read_text().strip() or "unknown"
             raise InstanceLockedError(
-                f"{data_dir} is already in use by process {holder}") from None
+                f"Kayden is already open in another window ({data_dir} is in use by "
+                f"process {holder})") from None
         os.ftruncate(fd, 0)
         os.write(fd, f"{os.getpid()}\n".encode())
         return cls(path, fd)
@@ -103,6 +102,7 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
             state, running={**state.running, "frontend": fallback}))
     built: list[Any] = []
     lock: InstanceLock | None = None
+    already_open = False
     if error is None:
         try:
             # Before any module: no Memory access without the data directory.
@@ -111,8 +111,7 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
                                (config.tools, Tools)):
                 built.append(await asyncio.to_thread(load_module, spec, kind, paths))
         except (InstanceLockedError, ModuleLoadError) as e:
-            error = (f"{ALREADY_OPEN} ({e})"
-                     if isinstance(e, InstanceLockedError) else str(e))
+            error, already_open = str(e), isinstance(e, InstanceLockedError)
             for module in built:
                 await module.aclose()
             if lock is not None:
@@ -123,7 +122,8 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
         runtime = Runtime(core=core, memory=memory, tools=tools, frontend=frontend.info,
                           config=runtime_config, lock=lock)
     else:
-        runtime = SetupRuntime(runtime_config, frontend.info.kind, error)
+        runtime = SetupRuntime(runtime_config, frontend.info.kind, error,
+                               already_open=already_open)
     try:
         await frontend.run(runtime)
     finally:

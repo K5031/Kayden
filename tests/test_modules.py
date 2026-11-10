@@ -444,7 +444,8 @@ async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, 
     seen = []
 
     async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
-        seen.append((await runtime.settings()).startup_error)
+        settings = await runtime.settings()
+        seen.append((settings.startup_error, settings.already_open))
         with pytest.raises(RuntimeStateError):
             await runtime.list_conversations()
 
@@ -454,7 +455,8 @@ async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, 
         await asyncio.wait_for(launcher.launch(args(tmp_path), TERMINAL), 10)
     finally:
         held.release()
-    assert seen[0].startswith("Kayden is already open in another window")
+    error, already_open = seen[0]
+    assert error.startswith("Kayden is already open in another window") and already_open
 
 
 # ── Launching kayden with a window frontend saved ──

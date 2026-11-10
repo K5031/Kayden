@@ -41,13 +41,15 @@ class SetupRuntime:
     system prompt) are saved for the next start; restart() tries again. Every other command
     raises RuntimeStateError. Nothing is locked, so the event log is not written."""
 
-    def __init__(self, config: RuntimeConfig, frontend_kind: str, error: str):
+    def __init__(self, config: RuntimeConfig, frontend_kind: str, error: str, *,
+                 already_open: bool = False):
         self._config = config
         self._error = error
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self._ceiling = PermissionPolicy.inherited_ceiling()
         self._closed = False
-        self._modules = ModuleSettings(config.data_dir, config.modules, frontend_kind, error)
+        self._modules = ModuleSettings(config.data_dir, config.modules, frontend_kind, error,
+                                       already_open)
         self._bus = EventBus(config.subscriber_queue_size, EventLog())
         self.restart_request: Restart | None = None
 

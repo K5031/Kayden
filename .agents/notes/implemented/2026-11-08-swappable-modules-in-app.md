@@ -58,7 +58,9 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
   no id.
 - `Settings.restart_needed` says saved module settings differ from the running instance;
   `restart_frontend` names the frontend Restart now brings up; `startup_error` says why the
-  modules could not be built. `work_folder` is the saved one.
+  modules could not be built, and `already_open` marks the case where another Kayden holds
+  the data folder, so frontends say to close it rather than to fix the settings.
+  `work_folder` is the saved one.
 - `SettingsUpdate.modules` maps kinds to installed ids (`ValueError` otherwise). Choices
   are saved under `[modules]` in `settings.toml`. A Core change also saves `model = ""`
   and `maintenance_model = ""`, so the new Core starts on its first model; model changes
