@@ -690,7 +690,6 @@ def limit_update(current: Settings, text: str) -> Budget:
 # ── controller ────────────────────────────────────────────────────────────
 
 BUSY_MESSAGE = "Finish or stop the current task first."
-OPEN_DELETE_MESSAGE = "This conversation is open. Open another one first, then delete it."
 EMPTY_MEMORY_MESSAGE = "Write something to remember first."
 NO_DELETE_MESSAGE = "Deleting conversations is not available with this memory setup."
 BUDGET_MESSAGE = "The spending limit is reached. Raise it in Settings to continue."
@@ -841,14 +840,12 @@ class Controller:
     def archive(self, conversation_id: str, archived: bool) -> asyncio.Task[None]:
         return self.command(self.runtime.archive_conversation(conversation_id, archived))
 
-    def delete_refusal(self, conversation_id: str) -> str | None:
-        """Why this conversation cannot be deleted right now, or None."""
-        if self.model.conversation is not None and conversation_id == self.model.conversation.id:
-            return OPEN_DELETE_MESSAGE
-        return None
+    def is_open(self, conversation_id: str) -> bool:
+        return self.model.conversation is not None and conversation_id == self.model.conversation.id
 
     def delete(self, conversation_id: str) -> asyncio.Task[None]:
-        """Erase for good; the caller has asked the user to confirm."""
+        """Erase for good; the caller has asked the user to confirm. The open conversation
+        is first replaced by a new chat."""
 
         def failed(error: Exception) -> None:
             if isinstance(error, NotImplementedError):
@@ -857,10 +854,13 @@ class Controller:
             else:
                 self.model.notify(user_message(error))
 
-        if reason := self.delete_refusal(conversation_id):
-            self.model.notify(reason)
-            return self.command(asyncio.sleep(0))
-        return self.command(self.runtime.delete_conversation(conversation_id), failed=failed)
+        async def erase() -> None:
+            if self.is_open(conversation_id):
+                await self.runtime.start(StartOptions())
+                await self._inbox.put(self.recover)
+            await self.runtime.delete_conversation(conversation_id)
+
+        return self.command(erase(), failed=failed)
 
     async def memories(self) -> list[MemoryEntry] | None:
         """Long-term memory entries, oldest first; None when the Memory module cannot show

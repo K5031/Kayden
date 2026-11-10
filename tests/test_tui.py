@@ -998,12 +998,6 @@ async def test_delete_a_conversation_after_confirmation():
     app = make(stub)
     async with app.run_test(size=(120, 50), notifications=True) as pilot:
         screen = await open_conversations(pilot, app, stub)
-        highlight(screen, "conv-1")  # the open conversation
-        screen.query_one("#delete", Button).press()
-        await until(pilot, lambda: any("open another conversation first" in n.message
-                                       for n in app._notifications))
-        assert not isinstance(app.screen, ConfirmScreen)
-
         highlight(screen, "conv-2")
         screen.query_one("#delete", Button).press()
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
@@ -1018,6 +1012,23 @@ async def test_delete_a_conversation_after_confirmation():
         app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: ("delete_conversation", "conv-2") in stub.calls)
         await until(pilot, lambda: "  What is the weather" not in listed(screen))
+
+
+async def test_deleting_the_open_conversation_opens_a_new_chat():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await open_conversations(pilot, app, stub)
+        highlight(screen, "conv-1")  # the open conversation
+        screen.query_one("#delete", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+        assert "A new chat opens" in plain(app.screen.query_one("#confirm-message"))
+        app.screen.query_one("#confirm-yes", Button).press()
+        await until(pilot, lambda: ("delete_conversation", "conv-1") in stub.calls)
+        starts = [i for i, c in enumerate(stub.calls) if c[0] == "start"]
+        assert starts[-1] < stub.calls.index(("delete_conversation", "conv-1"))
+        assert app.conversation.id == "conv-new"
+        await until(pilot, lambda: not any("conv-1" in line for line in listed(screen)))
 
 
 async def test_delete_is_disabled_when_memory_cannot_delete():

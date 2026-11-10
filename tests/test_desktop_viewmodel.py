@@ -40,7 +40,6 @@ from kayden.frontends.desktop.viewmodel import (
     BUSY_MESSAGE,
     LABEL_CHARS,
     NO_DELETE_MESSAGE,
-    OPEN_DELETE_MESSAGE,
     AssistantItem,
     Closed,
     Controller,
@@ -353,20 +352,28 @@ async def test_rename_and_archive_keep_the_list_current(make):
     assert other.id in [c.id for c in await controller.conversations()]
 
 
-async def test_delete_refuses_the_open_conversation(make):
+async def test_delete_erases_another_conversation(make):
     h: Harness = await make()
     other = await h.start()
     current = await h.start()
     model, controller, _ = await attach(h)
-    assert controller.delete_refusal(current.id) == OPEN_DELETE_MESSAGE
-    assert controller.delete_refusal(other.id) is None
-    await controller.delete(current.id)
-    assert of(model, NoticeItem)[-1].text == OPEN_DELETE_MESSAGE
     seen = changes(model)
     await controller.delete(other.id)
     await eventually(lambda: any(isinstance(c, ConversationListChanged) for c in seen))
     assert [c.id for c in await controller.conversations()] == [current.id]
     assert controller.can_delete
+
+
+async def test_deleting_the_open_conversation_opens_a_new_chat(make):
+    h: Harness = await make()
+    other = await h.start()
+    current = await h.start()
+    model, controller, _ = await attach(h)
+    await controller.delete(current.id)
+    await eventually(lambda: model.conversation is not None
+                     and model.conversation.id not in (current.id, other.id))
+    ids = [c.id for c in await controller.conversations()]
+    assert current.id not in ids and other.id in ids and model.conversation.id in ids
 
 
 async def test_unsupported_memory_hides_its_controls(make):

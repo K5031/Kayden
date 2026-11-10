@@ -1024,14 +1024,12 @@ class MainWindow(QMainWindow):
         dialog.open()
 
     def delete_conversation(self, info: ConversationInfo) -> None:
-        if reason := self.controller.delete_refusal(info.id):
-            QMessageBox(QMessageBox.Icon.Information, "Delete conversation", reason,
-                        QMessageBox.StandardButton.Ok, self).open()
-            return
         box = QMessageBox(QMessageBox.Icon.Warning, "Delete conversation",
                           f"Delete “{conversation_label(info)}” for good?", parent=self)
         details = ("Its messages, its summary and what Kayden learned from it are erased. "
                    "This cannot be undone.")
+        if self.controller.is_open(info.id):
+            details += " A new chat opens in its place."
         archive = None
         if not info.archived:
             details += "\n\nTo just hide it from the list, archive it instead."

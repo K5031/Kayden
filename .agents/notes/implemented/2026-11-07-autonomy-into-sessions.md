@@ -131,7 +131,9 @@ control what the agent sees; deletion controls what the disk keeps.
 - `delete_conversation(id)` erases the conversation's messages, summaries, search index
   entries and metadata, and the long-term entries extracted from it with their revisions.
   It is refused for the open conversation, which is also the only one that can have
-  outstanding operations. It is backed by the optional `Memory.delete_conversation`; without
+  outstanding operations. Frontends let the user delete the open conversation anyway: they
+  start a new chat first (refused while the agent works, like any switch), then delete the
+  old one. It is backed by the optional `Memory.delete_conversation`; without
   it the runtime says "this memory module cannot delete conversations".
 - A conversation seeded from a deleted one keeps its own summary; its `seed_from` becomes
   None.

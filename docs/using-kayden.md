@@ -70,8 +70,8 @@ The permission level is set in [Settings](settings.md#permissions).
 
 F3 lists your conversations, newest first; "Show archived" includes archived ones. Open
 one, start a new one, rename it (leave the name empty for an automatic one), archive it to
-hide it, or delete it for good. Deleting asks first and cannot be undone; the open
-conversation cannot be deleted, so open another one first. You can only switch
+hide it, or delete it for good. Deleting asks first and cannot be undone; deleting the
+open conversation opens a new chat in its place. You can only switch
 conversations while the agent is not working. See [Deleting](concepts.md#deleting) for what
 deletion does and does not reach.
 

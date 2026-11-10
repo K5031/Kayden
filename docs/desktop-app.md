@@ -78,8 +78,8 @@ You can switch conversations only while Kayden is not working on anything; renam
 archiving and deleting work any time.
 
 **Delete…** asks first and offers **Archive instead**: deleting erases the conversation,
-its summary and what Kayden learned from it, and cannot be undone. The open conversation
-cannot be deleted; open another one first. See [Deleting](concepts.md#deleting) for what
+its summary and what Kayden learned from it, and cannot be undone. Deleting the open
+conversation opens a new chat in its place, once Kayden is not working. See [Deleting](concepts.md#deleting) for what
 deletion does not reach.
 
 Next to the autonomy switch is what Kayden has spent so far, across all conversations. The

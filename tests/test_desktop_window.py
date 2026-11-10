@@ -16,7 +16,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QPushButton
 
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
-from kayden.frontends.desktop.viewmodel import OPEN_DELETE_MESSAGE, Controller, ConversationModel
+from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
 from kayden.frontends.desktop.window import (
     DATE_ROLE,
     PREVIEW_ROLE,
@@ -310,8 +310,9 @@ async def test_delete_asks_and_offers_archive_first(make, qapp):
     await window.fill_sidebar()
     action(window.conversation_menu(window.conversation_info(current.id)), "Delete…").trigger()
     box = visible(window, QMessageBox)
-    assert box.text() == OPEN_DELETE_MESSAGE
-    box.accept()
+    assert "A new chat opens" in box.informativeText()
+    next(b for b in box.buttons() if b.text() == "Cancel").click()
+    await eventually(lambda: not box.isVisible())
     action(window.conversation_menu(window.conversation_info(other.id)), "Delete…").trigger()
     box = visible(window, QMessageBox)
     assert "“Old notes”" in box.text() and "cannot be undone" in box.informativeText()

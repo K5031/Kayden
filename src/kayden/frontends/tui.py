@@ -762,19 +762,24 @@ class ConversationsScreen(ListScreen):
     def _delete(self) -> None:
         if (selected := self._selected()) is None:
             return
-        if selected.id == self.open_id:
-            self.notify("This conversation is open. To delete it, open another conversation "
-                        "first.", severity="warning")
-            return
 
         def confirmed(yes: bool | None) -> None:
             if yes:
-                self._run(self.runtime.delete_conversation(selected.id), unsupported="#delete")
+                self._run(self._erase(selected.id), unsupported="#delete")
 
+        replaced = " A new chat opens in its place." if selected.id == self.open_id else ""
         self.app.push_screen(ConfirmScreen(
             f'Delete "{conversation_label(selected)}" for good? Its messages and the memories '
-            "learned from it are erased. This cannot be undone. To only hide it, archive it "
-            "instead."), confirmed)
+            f"learned from it are erased. This cannot be undone.{replaced} To only hide it, "
+            "archive it instead."), confirmed)
+
+    async def _erase(self, conversation_id: ConversationId) -> None:
+        """The open conversation is first replaced by a new chat."""
+        if conversation_id == self.open_id:
+            assert isinstance(self.app, KaydenApp)
+            await self.app.start_conversation(StartOptions())
+            self.open_id = self.app.conversation.id
+        await self.runtime.delete_conversation(conversation_id)
 
 
 class MemoryScreen(ListScreen):
@@ -1044,7 +1049,7 @@ class KaydenApp(App[None]):
             self._render_status()
             self.action_settings()
         elif self.start_options is not None:
-            await self._start(self.start_options)
+            await self.start_conversation(self.start_options)
         else:
             self.push_screen(StartScreen(self.runtime), self._on_start_chosen)
 
@@ -1379,9 +1384,9 @@ class KaydenApp(App[None]):
 
     def _on_start_chosen(self, options: StartOptions | None) -> None:
         if options is not None:
-            self._call(self._start(options))
+            self._call(self.start_conversation(options))
 
-    async def _start(self, options: StartOptions) -> None:
+    async def start_conversation(self, options: StartOptions) -> None:
         self.conversation = await self.runtime.start(options)
         await self._inbox.put(RESYNC)
 
@@ -1470,7 +1475,7 @@ class KaydenApp(App[None]):
         if choice == NEW_CONVERSATION:
             self.push_screen(StartScreen(self.runtime, cancellable=True), self._on_start_chosen)
         else:
-            self._call(self._start(StartOptions(conversation_id=choice)))
+            self._call(self.start_conversation(StartOptions(conversation_id=choice)))
 
     def action_memory(self) -> None:
         async def open_screen() -> None:
