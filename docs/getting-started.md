@@ -14,7 +14,7 @@ git clone https://github.com/K5031/Kayden.git
 uv tool install --editable Kayden
 ```
 
-This puts the `kayden` command on your PATH. To also get the [desktop app](desktop-app.md)
+This puts the `kayden` command on your PATH, and `kd`, a shorter name for the same thing. To also get the [desktop app](desktop-app.md)
 and switch between the two in Settings, install with its extra instead (Python 3.13):
 
 ```bash
