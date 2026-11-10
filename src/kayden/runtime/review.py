@@ -66,6 +66,9 @@ CREDENTIALS = re.compile("|".join([
     (rf"{_START}\.(?:ssh|gnupg|password-store|aws|azure|kube|netrc|pgpass|git-credentials|"
      rf"npmrc|pypirc|mozilla){_END}"),
     rf"{_START}\.env(?:\.[\w-]+)?{_END}",
+    # Shell startup files, where people export keys.
+    rf"{_START}\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zshenv|zprofile){_END}",
+    r"\.config/fish/config\.fish|\.config/environment\.d\b",
     r"\.docker/config\.json|\.config/(?:gcloud|gh|google-chrome|chromium|BraveSoftware)\b",
     r"\.local/share/(?:keyrings|kwalletd)\b|\bkwallet|\bsecret-tool\b|\bid_(?:rsa|ed25519|ecdsa)",
 ]))

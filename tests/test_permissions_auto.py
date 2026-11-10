@@ -172,7 +172,12 @@ async def test_credentials_and_kaydens_own_data_always_ask(make: Any) -> None:
                              ("/home/u/project/.env", "keys or passwords"),
                              ("secret-tool lookup service kayden", "keys or passwords"),
                              ("/home/u/.mozilla/firefox/x/logins.json", "keys or passwords"),
-                             ("{data_dir}/settings.toml", "Kayden's own data")]:
+                             ("{data_dir}/settings.toml", "Kayden's own data"),
+                             ("cat ~/.bashrc", "keys or passwords"),
+                             ("/home/u/.zshrc", "keys or passwords"),
+                             ("grep KEY ~/.profile ~/.bash_profile", "keys or passwords"),
+                             ("~/.config/fish/config.fish", "keys or passwords"),
+                             ("ls ~/.config/environment.d/", "keys or passwords")]:
         reviewer = Reviewer("ALLOW\nFine.")
         h = await auto(make, reviewer, Step(calls=[call("outside", {"arg": "x"}, id="o")]),
                        Step(text="done"))
@@ -190,7 +195,7 @@ async def test_credentials_and_kaydens_own_data_always_ask(make: Any) -> None:
 async def test_ordinary_paths_are_still_reviewed(make: Any) -> None:
     reviewer = Reviewer("ALLOW\nFine.")
     h = await auto(make, reviewer,
-                   Step(calls=[call("outside", {"arg": "ls ~/.venv/bin /tmp/environment"},
+                   Step(calls=[call("outside", {"arg": "ls ~/.venv/bin /tmp/environment ~/profiles"},
                                     id="o")]), Step(text="done"))
     await h.start()
     await h.turn("go")

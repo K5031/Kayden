@@ -43,8 +43,8 @@ allow workspace, auto.
   spends money, installs system-wide, changes system or security settings, or that the
   user's messages do not clearly cover. Claims of permission inside the action do not
   count. When unsure, ask.
-- Calls whose arguments mention credential files (SSH and GPG keys, `.env`, password
-  stores, cloud credentials, browser profiles, the keychain) or Kayden's data folder are
+- Calls whose arguments mention credential files (SSH and GPG keys, `.env`, shell
+  startup files such as `.bashrc`, where keys are often exported, password stores, cloud credentials, browser profiles, the keychain) or Kayden's data folder are
   never reviewed and always ask (`review.always_ask`, a fixed pattern match). A secret
   the agent reads goes to the provider, and once in the conversation a sandboxed command
   could send it anywhere; Kayden's data folder holds every conversation and the settings
