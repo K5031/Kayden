@@ -51,8 +51,12 @@ from kayden.api import (
     Text,
     TokenCounter,
     ToolCall,
+    ToolContext,
+    ToolOutput,
     ToolResult,
+    ToolSpec,
 )
+from kayden.memory.tools import memory_tools, run_memory_tool
 
 from . import codec
 
@@ -586,6 +590,14 @@ class SqliteMemory(Memory):
     async def inspect(self, conversation_id: ConversationId) -> MemoryView:
         state = await self._run(_read_state, conversation_id, False)
         return MemoryView(summary=state.summary, long_term=state.long_term)
+
+    # ── Tools ─────────────────────────────────────────────────────────────
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        return memory_tools(editable=True)
+
+    async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
+        return await run_memory_tool(self, call, ctx)
 
     # ── Long-term memory ──────────────────────────────────────────────────
 

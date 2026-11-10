@@ -14,8 +14,9 @@ from kayden.api import ToolCall, ToolOutput, ToolResult, ToolSpec, ToolStatus
 class Context:
     """ToolContext handed to Tools.execute. progress() is safe from any thread."""
 
-    def __init__(self, op: Operation):
+    def __init__(self, op: Operation, conversation_id: str):
         self.call_id = op.call.id
+        self.conversation_id = conversation_id
         self._op = op
         self._loop = asyncio.get_running_loop()
         self._thread = threading.get_ident()

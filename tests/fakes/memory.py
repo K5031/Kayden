@@ -29,8 +29,12 @@ from kayden.api import (
     Role,
     Text,
     ToolCall,
+    ToolContext,
+    ToolOutput,
     ToolResult,
+    ToolSpec,
 )
+from kayden.memory.tools import memory_tools, run_memory_tool
 
 
 @dataclass
@@ -106,6 +110,12 @@ class InMemoryMemory(Memory):
         self.auto_title = auto_title  # write titles during maintain with a light call
         self.editable = editable  # False: the optional memory methods are unsupported
         self.extract: list[str] = []  # facts the next compaction extracts
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        return memory_tools(editable=self.editable)
+
+    async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
+        return await run_memory_tool(self, call, ctx)
 
     def _conv(self, conversation_id: ConversationId) -> Conversation:
         return self.store.conversations[conversation_id]  # KeyError for unknown ids

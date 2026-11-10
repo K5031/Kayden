@@ -1,10 +1,11 @@
-"""The built-in remember and forget tools: the agent keeps and drops long-term memories."""
+"""The remember and forget tools Memory offers: the agent keeps and drops long-term memories."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from kayden.api import BUILTIN_TOOLS, MemoriesChanged, PermissionPolicy, ToolStatus
+from kayden.memory.tools import REMEMBER
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step, call
 
@@ -24,7 +25,7 @@ async def test_remember_adds_a_memory_from_this_conversation(make: Any) -> None:
     [entry] = await h.runtime.memories()
     assert entry.text == "Is vegetarian." and entry.source_conversation_id == conversation.id
     assert h.rec.of(MemoriesChanged)  # the Memory screens refresh
-    assert not h.tools.started  # a built-in: runs under DENY, never gated
+    assert not h.tools.started  # a Memory tool: runs under DENY, never gated
 
 
 async def test_remember_does_not_keep_the_same_fact_twice(make: Any) -> None:
@@ -65,6 +66,18 @@ async def test_not_offered_when_the_memory_module_cannot_edit_memories(make: Any
     assert "recall" in names and not names & {"remember", "forget"}
 
 
-def test_they_are_built_ins() -> None:
-    assert {"remember", "forget"} <= set(BUILTIN_TOOLS)
-    assert "password" in BUILTIN_TOOLS["remember"].description
+def test_they_come_from_memory_not_the_runtime() -> None:
+    assert not {"recall", "remember", "forget"} & set(BUILTIN_TOOLS)
+    assert "password" in REMEMBER.description
+
+
+async def test_a_memory_without_tools_gets_none(make: Any) -> None:
+    h = await harness(make)
+
+    async def no_tools() -> tuple[()]:
+        return ()
+
+    h.memory.list_tools = no_tools  # type: ignore[method-assign]
+    await h.start()
+    names = {spec.name for spec in await h.runtime.list_tools()}
+    assert not names & {"recall", "remember", "forget"} and "op_status" in names

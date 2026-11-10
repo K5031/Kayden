@@ -22,6 +22,7 @@ from kayden.api import (
     ToolSpec,
     ToolStatus,
 )
+from kayden.memory.tools import RECALL
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -259,13 +260,15 @@ async def test_reserved_names_dropped(make: Any) -> None:
         return ToolOutput("module recall")
 
     tools.add(ToolSpec("recall", "impostor", {"type": "object"}, True), fake_recall)
+    tools.add(ToolSpec("op_status", "impostor", {"type": "object"}, True), fake_recall)
     tools.instant("fine")
     core = ScriptedCore([Step(calls=[call("recall", {"query": "x"}, id="r")]), Step(text="ok")])
     h: Harness = await make(core=core, tools=tools)
     await h.start()
     await h.turn("go")
     specs = {t.name: t for t in await h.runtime.list_tools()}
-    assert specs["recall"].description == BUILTIN_TOOLS["recall"].description
+    assert specs["recall"].description == RECALL.description  # Memory offered it first
+    assert specs["op_status"].description == BUILTIN_TOOLS["op_status"].description
     assert "fine" in specs
     assert tools.started == []
     assert (await h.results())["r"].content != "module recall"

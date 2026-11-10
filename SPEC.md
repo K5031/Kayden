@@ -188,7 +188,7 @@ Recent conversation messages and tool interactions preserved in their original f
 A compact representation of older conversation history.
 The summary has a fixed token budget and is automatically carried into subsequent inference requests.
 3. Long-Term Memory
-Important durable information maintained by the Memory module. The agent adds and removes entries itself with the built-in remember and forget tools, and the user can edit them. Entries outlive the conversation they came from.
+Important durable information maintained by the Memory module. The agent adds and removes entries itself with the remember and forget tools the Memory module offers, and the user can edit them. Entries outlive the conversation they came from.
 4. Permanent Verbatim Archive
 Original conversation messages and tool interactions are retained for historical retrieval until the user deletes their conversation.
 Information removed from active inference context is not deleted from the archive.
@@ -236,7 +236,7 @@ Avoid cyclic orchestration dependencies.
 Memory maintenance must never independently restart LLM inference after the agent has gone idle.
 Consolidation may occur during an authorized inference cycle or be deferred until the next one.
 8.8 Cross-Conversation Retrieval
-The built-in recall tool searches the current conversation's archive, or with scope "all" every conversation that is not archived. It is read-only and never merges conversation histories.
+The recall tool, offered by the Memory module, searches the current conversation's archive, or with scope "all" every conversation that is not archived. It is read-only and never merges conversation histories.
 9. Budgets
 Budget management belongs to the runtime.
 Each Kayden instance has independent configuration and resource limits.
@@ -404,7 +404,7 @@ The archive is append-only, full-fidelity and schema-versioned. Blocks are persi
 history returns the full transcript from the archive regardless of compaction. The runtime uses it for reopening conversations and for resume repair.
 assemble is read-only, performs no inference, and always fits the token budget. Its messages are a suffix that starts at a user message, never splits a call from its result, and includes the newest message. A single oversized message is truncated in the assembled view only.
 maintain runs only inside an authorized inference cycle, so it can never restart the agent by itself. It also writes a seeded conversation's first summary and a title for an untitled conversation (light model; a failed title call changes nothing; a title that is set is never overwritten). It receives the current context window, a metered Completion, and returns whether it acted. The Completion raises BudgetExhausted or CoreError. A maintain failure becomes a failure event without changing the agent state. Archive writes and compaction state are atomic.
-search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one list per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive. Editing long-term memory (memories, remember, revise, forget) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
+search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one list per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. A Memory module may offer tools of its own (recall, remember and forget come with the built-in SQLite Memory); they run without prompts and outside the tool-call budget, since they touch only Kayden's memory. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive. Editing long-term memory (memories, remember, revise, forget) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
 
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.
@@ -412,7 +412,7 @@ A backgrounded call gets a placeholder result with status backgrounded; its outc
 Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
 stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps the agent waiting until it ends or the user writes.
-Every tool the runtime offers takes an optional step_summary argument: a few plain words the model writes about the call, which frontends show in place of the tool and its input. The runtime adds it to each schema and removes it before the Tools module sees the call; the transcript keeps it. The built-in tools (op_status, op_cancel, recall, remember, forget) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules.
+Every tool the runtime offers takes an optional step_summary argument: a few plain words the model writes about the call, which frontends show in place of the tool and its input. The runtime adds it to each schema and removes it before the Tools module sees the call; the transcript keeps it. The runtime's own tools (op_status, op_cancel) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules. Tools are offered in order: the runtime's, then Memory's, then the Tools module's; a name already offered is dropped from a later module, and each call goes to the module that offered it.
 Results are plain strings. Frontends may parse formats they know.
 Tools that launch subprocesses pass the permission ceiling variable through unmodified; they may leave out other variables, such as secrets from sandboxed commands.
 use_folder is optional: the runtime calls it whenever it opens a conversation, with that conversation's work folder, before any of its calls. A module without it has one fixed folder, and conversations cannot choose another.

@@ -12,7 +12,6 @@ import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,6 @@ from kayden.api import (
     BUILTIN_TOOLS,
     DESCRIPTION_ARG,
     PERMISSION_CEILING_ENV,
-    RESERVED_TOOL_NAMES,
     AgentConfig,
     AgentState,
     ArchiveHit,
@@ -116,7 +114,6 @@ from kayden.runtime.review import (
 logger = logging.getLogger(__name__)
 
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
-_HIT_PREVIEW_CHARS = 1000
 _OP_STATUS_MAX_WAIT_S = 60
 # The description every offered tool takes (api.DESCRIPTION_ARG).
 _DESCRIPTION_SCHEMA = {
@@ -128,7 +125,6 @@ _DESCRIPTION_SCHEMA = {
 REVIEW_HISTORY = 200  # newest messages searched for the user's words in a permission review
 USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
-# Usage files of the Kayden versions that kept a budget per mode; summed into USAGE_FILE.
 _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
 
@@ -142,34 +138,15 @@ def _effective_policy(configured: PermissionPolicy,
     return configured.clamp(ceiling) if ceiling is not None else configured
 
 
-def _render(message: Message) -> str:
-    parts = []
-    for b in message.blocks:
-        match b:
-            case Text(text=t):
-                parts.append(t)
-            case ToolCall(name=n, arguments=a):
-                parts.append(f"[call {n} {json.dumps(a)}]")
-            case ToolResult(status=s, content=c) | OperationResult(status=s, content=c):
-                parts.append(f"[{s}] {c}")
-    return " ".join(parts)
+class _MemoryContext:
+    """ToolContext for a Memory tool: quick, so progress is not shown."""
 
+    def __init__(self, call_id: CallId, conversation_id: ConversationId) -> None:
+        self.call_id = call_id
+        self.conversation_id = conversation_id
 
-def _same(a: str, b: str) -> bool:
-    """Memory texts compare with case and whitespace ignored."""
-    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
-
-
-def _format_hits(hits: Sequence[ArchiveHit]) -> str:
-    if not hits:
-        return "No matches."
-    lines = []
-    for hit in hits:
-        m = hit.message
-        when = datetime.fromtimestamp(m.created_at, UTC).isoformat(timespec="seconds")
-        lines.append(f"[{hit.conversation_id}/{m.id} {m.role} {when}] "
-                     f"{_render(m)[:_HIT_PREVIEW_CHARS]}")
-    return "\n".join(lines)
+    def progress(self, text: str) -> None:
+        pass
 
 
 class _AppendFailed(Exception):
@@ -303,7 +280,7 @@ class Runtime:
         # Tool name -> whether the grant also covers calls that reach outside the work
         # folder: one given for a confined call covers confined calls only.
         self._grants: dict[str, bool] = {}
-        self._can_edit_memories = True  # False once Memory says it cannot (start())
+        self._memory_tools: set[str] = set()  # offered by Memory this request
         self._own_description: set[str] = set()  # tools whose schema declares DESCRIPTION_ARG
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
@@ -401,10 +378,6 @@ class Runtime:
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._loop_task = asyncio.create_task(self._run_loop())
 
-        try:
-            await self._memory.memories()
-        except NotImplementedError:
-            self._can_edit_memories = False
         conversation, resumed = await self._open_conversation(options)
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
@@ -799,19 +772,25 @@ class Runtime:
     # ── Tools offered to the model ───────────────────────────────────────
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
+        """The runtime's built-ins, then Memory's tools, then the Tools module's; a name
+        offered already is dropped from the later module."""
         specs = dict(BUILTIN_TOOLS)
-        if not self._can_edit_memories:
-            del specs["remember"], specs["forget"]
-        try:
-            module_specs = await self._tools.list_tools()
-        except Exception as e:  # noqa: BLE001 - module calls are wrapped
-            self._failure(FailureKind.INTERNAL, f"Tools.list_tools failed: {e}")
-            module_specs = []
-        for spec in module_specs:
-            if spec.name in RESERVED_TOOL_NAMES:
-                self._log.decision("reserved_tool_dropped", name=spec.name)
-                continue
-            specs[spec.name] = spec
+        self._memory_tools = set()
+        for module, owned in ((self._memory, self._memory_tools), (self._tools, None)):
+            try:
+                offered = await module.list_tools()
+            except Exception as e:  # noqa: BLE001 - module calls are wrapped
+                self._failure(FailureKind.INTERNAL,
+                              f"{type(module).__name__}.list_tools failed: {e}")
+                offered = []
+            for spec in offered:
+                if spec.name in specs:
+                    self._log.decision("duplicate_tool_dropped", name=spec.name,
+                                       module=type(module).__name__)
+                    continue
+                specs[spec.name] = spec
+                if owned is not None:
+                    owned.add(spec.name)
         return {name: self._describable(spec) for name, spec in specs.items()}
 
     def _describable(self, spec: ToolSpec) -> ToolSpec:
@@ -1343,8 +1322,8 @@ class Runtime:
         if after:
             await asyncio.wait(after)
         try:
-            if call.name in BUILTIN_TOOLS:
-                return await self._run_builtin(call)
+            if call.name in BUILTIN_TOOLS or call.name in self._memory_tools:
+                return await self._run_builtin(call, spec)
             return await self._run_module_call(call, spec)
         except Exception as e:
             logger.exception("tool call handling failed")
@@ -1474,7 +1453,8 @@ class Runtime:
         self._known_ops[call.id] = op
         self._budget.begin_activity()
         self._watch_duration()
-        ctx = Context(op)
+        assert self._conversation is not None
+        ctx = Context(op, self._conversation.id)
         self._emit(ToolStarted(call))
         op.supervisor = asyncio.create_task(self._supervise(op, ctx))
         self._update_state()
@@ -1513,17 +1493,27 @@ class Runtime:
 
     # ── Built-in tools ───────────────────────────────────────────────────
 
-    async def _run_builtin(self, call: ToolCall) -> tuple[ToolResult, float]:
+    async def _run_builtin(self, call: ToolCall, spec: ToolSpec) -> tuple[ToolResult, float]:
+        """A built-in or a Memory tool: never gated, not counted, cancelled by Stop."""
         started = time.monotonic()
         self._emit(ToolStarted(call))
-        task = asyncio.ensure_future(self._builtin(call))
+        task = asyncio.ensure_future(self._builtin(call) if call.name in BUILTIN_TOOLS
+                                     else self._memory_call(call))
         if await self._race_stop(task) or task.cancelled():
             return ToolResult(call.id, ToolStatus.CANCELLED, "Cancelled."), 0.0
         try:
             status, content = task.result()
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
             status, content = ToolStatus.ERROR, f"{call.name} failed: {e}"
+        if call.name in self._memory_tools and not spec.read_only:
+            self._emit(MemoriesChanged())
         return ToolResult(call.id, status, content), time.monotonic() - started
+
+    async def _memory_call(self, call: ToolCall) -> tuple[ToolStatus, str]:
+        assert self._conversation is not None
+        output = await self._memory.execute(self._bare(call),
+                                            _MemoryContext(call.id, self._conversation.id))
+        return (ToolStatus.ERROR if output.is_error else ToolStatus.OK), output.content
 
     async def _builtin(self, call: ToolCall) -> tuple[ToolStatus, str]:
         args = call.arguments
@@ -1548,35 +1538,6 @@ class Runtime:
                 await asyncio.wait({op.supervisor})
                 return ToolStatus.OK, (f"Cancellation requested; operation {op.call.id} ended "
                                        f"as {op.supervisor.result().status}.")
-            case "recall":
-                scope = [self._conversation.id]
-                if args.get("scope", "conversation") == "all":
-                    scope += [c.id for c in await self._memory.list_conversations()
-                              if c.id != self._conversation.id]
-                hits = await self._memory.search(args["query"], conversation_ids=scope,
-                                                 limit=args.get("limit", 5))
-                return ToolStatus.OK, _format_hits(hits)
-            case "remember":
-                text = " ".join(args["text"].split())
-                if not text:
-                    return ToolStatus.ERROR, "The memory is empty."
-                if any(_same(e.text, text) for e in await self._memory.memories()):
-                    return ToolStatus.OK, "Already remembered."
-                entry = await self._memory.remember(text, conversation_id=self._conversation.id)
-                self._log.decision("memory_added", entry=entry.id, by="agent")
-                self._emit(MemoriesChanged())
-                return ToolStatus.OK, f"Remembered: {text}"
-            case "forget":
-                entries = await self._memory.memories()
-                matches = [e for e in entries if _same(e.text, args["text"])]
-                if not matches:
-                    listed = "\n".join(f"- {e.text}" for e in entries) or "(none)"
-                    return ToolStatus.ERROR, f"No memory says that. Long-term memory:\n{listed}"
-                for entry in matches:
-                    await self._memory.forget(entry.id)
-                    self._log.decision("memory_forgotten", entry=entry.id, by="agent")
-                self._emit(MemoriesChanged())
-                return ToolStatus.OK, f"Forgotten: {matches[0].text}"
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."
 
     def _describe(self, op: Operation) -> str:

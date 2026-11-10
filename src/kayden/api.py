@@ -38,10 +38,11 @@ Runtime guarantees to modules:
   the tail, then the OperationResults as one USER message.
 - Tool calls are validated (known name, arguments match the schema) before they
   start; violations are answered with ToolResult(ERROR) and the tool is not run. A
-  known name is one offered in this turn's request: the conversation's built-ins plus the
-  module tools listed this turn (Tools.list_tools is called once per request). Module
-  tools that redeclare a reserved name are dropped from the offer and logged. If
-  list_tools fails, Failure(INTERNAL) is emitted and the turn offers built-ins only.
+  known name is one offered in this turn's request: the runtime's built-ins, then Memory's
+  tools, then the Tools module's, each listed once per request. A name already offered
+  (a reserved one included) is dropped from the later module's offer and logged; each
+  call goes to the module that offered its name. If a list_tools fails,
+  Failure(INTERNAL) is emitted and the turn offers the others only.
 - Every module call is wrapped: an exception becomes a Failure event (an ERROR
   ToolResult for a tool), never a crash. An unexpected exception from Core.stream is
   treated as a permanent CoreError. A failed maintain is Failure(MODEL) for CoreError
@@ -539,6 +540,19 @@ class Memory(abc.ABC):
         """Optional. Return None to expose nothing to frontends."""
         return None
 
+    # Optional: tools the model can call to work with memory (kayden.memory.tools has
+    # recall, remember and forget, built on this contract). They run without permission
+    # prompts and outside the tool-call budget: they read and change only Kayden's own
+    # memory, which the user manages in the Memory window. ctx.conversation_id is the open
+    # conversation. After a tool that is not read_only, the runtime emits MemoriesChanged.
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        """Called once per request, like Tools.list_tools."""
+        return ()
+
+    async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
+        raise NotImplementedError
+
     # Optional: long-term memory the user can see and change. The base class raises
     # NotImplementedError; the runtime then reports that memories cannot be edited.
 
@@ -577,18 +591,12 @@ class Memory(abc.ABC):
 
 _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 
-# Runtime built-ins. Never gated by permissions; they don't count as tool calls for
-# budgets.
+# Runtime built-ins, about the runtime's own operations. Never gated by permissions; they
+# don't count as tool calls for budgets.
 # op_status and op_cancel answer ERROR for an unknown or finished id; operations from
 # before a restart are unknown, their outcome is the INTERRUPTED OperationResult from
 # resume repair. op_cancel waits for termination (bounded by the grace period) and
-# reports the final status; the outcome still arrives as an OperationResult. recall
-# returns hits as text, each preview capped at 1000 characters (the "runtime does not
-# truncate" rule applies to module tools). recall with scope "all" searches every
-# conversation that is not archived. remember adds a long-term memory entry from the open
-# conversation and forget erases the entries whose text matches (case and whitespace
-# ignored); both emit MemoriesChanged and are offered only when the Memory module can edit
-# memories.
+# reports the final status; the outcome still arrives as an OperationResult.
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "op_status": ToolSpec(
         "op_status",
@@ -608,42 +616,9 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
         "Request cancellation of a backgrounded call.",
         {"type": "object", "properties": {"call_id": _CALL_ID}, "required": ["call_id"]},
     ),
-    "recall": ToolSpec(
-        "recall",
-        "Search the archive of this conversation, including messages no longer in context. "
-        'With scope "all", search the user\'s other conversations too.',
-        {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "default": 5},
-                "scope": {"type": "string", "enum": ["conversation", "all"],
-                          "default": "conversation"},
-            },
-            "required": ["query"],
-        },
-        read_only=True,
-    ),
-    "remember": ToolSpec(
-        "remember",
-        "Keep a fact in long-term memory, which every conversation with the user sees. Use it "
-        "when the user asks you to remember something, or tells you something lasting about "
-        "themselves, their work or their preferences that will matter later. One short fact "
-        "per call, written about the user (\"Is vegetarian\"). Never keep passwords, keys or "
-        "other secrets. Say in your reply what you remembered.",
-        {"type": "object", "properties": {"text": {"type": "string", "minLength": 1}},
-         "required": ["text"]},
-    ),
-    "forget": ToolSpec(
-        "forget",
-        "Remove a fact from long-term memory, when the user asks or it is no longer true. "
-        "`text` is the fact as it appears in your long-term memory.",
-        {"type": "object", "properties": {"text": {"type": "string", "minLength": 1}},
-         "required": ["text"]},
-    ),
 }
 
-# Tools modules must not declare these names.
+# No module may declare these names.
 RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS)
 
 # Every tool the runtime offers takes an optional argument under this name: a few plain
@@ -657,6 +632,7 @@ DESCRIPTION_ARG = "step_summary"
 
 class ToolContext(Protocol):
     call_id: CallId
+    conversation_id: ConversationId  # the open conversation
 
     def progress(self, text: str) -> None:
         """Report progress. Also counts as liveness for stall detection. Safe to call

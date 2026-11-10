@@ -552,15 +552,15 @@ Design: [Agent Note](notes/implemented/2026-11-10-auto-permissions.md).
 
 ## remember and forget
 
-Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md) (long-term memory).
+Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md) (long-term memory). Offered by the Memory module through `kayden.memory.tools` (with recall), not by the runtime.
 
 | Choice | Value |
 |---|---|
 | Matching | Whitespace collapsed and casefolded; `remember` of a matching entry answers "Already remembered." and adds nothing; `forget` erases every matching entry |
 | Stored text | Whitespace collapsed; empty is an ERROR result |
 | Not found | `forget` answers ERROR with the current entries listed, so the model can retry with the exact text |
-| Offer | Probed once per `start()` with `Memory.memories()`; NotImplementedError drops both tools from the offer |
-| Log | `memory_added` / `memory_forgotten` with the entry id and `by: "agent"`, no text |
+| Offer | `memory_tools(editable=...)`: the SQLite Memory offers all three; a module that cannot edit long-term memory offers recall only |
+| Events | The runtime emits `MemoriesChanged` after any Memory tool that is not read-only; the event log has the call like any tool's, not the entry ids |
 
 ## Desktop zoom
 
