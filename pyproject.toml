@@ -79,10 +79,10 @@ version = "0.0.0"
 url = "https://github.com/K5031/Kayden"
 author = "K5031"
 
-[tool.briefcase.app.kayden]
+[tool.briefcase.app.kayden-desktop]
 formal_name = "Kayden"
 description = "An AI agent that works for you on your computer."
-sources = ["src/kayden"]
+sources = ["src/kayden", "src/kayden_desktop"]
 requires = [
     "anthropic>=2.3.0",
     "ddgs>=9.16.1",
@@ -97,5 +97,5 @@ requires = [
     "trafilatura>=2.3.1",
 ]
 
-[tool.briefcase.app.kayden.linux.flatpak]
+[tool.briefcase.app.kayden-desktop.linux.flatpak]
 finish_arg."talk-name=org.freedesktop.secrets" = true

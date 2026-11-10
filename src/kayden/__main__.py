@@ -369,35 +369,11 @@ def saved_window(config: InstanceConfig) -> tuple[str | None, str | None]:
     return info.id, None
 
 
-def in_terminal() -> bool:
-    return sys.stdin.isatty()
-
-
-def open_window(args: argparse.Namespace) -> bool:
-    """Without a terminal to run the TUI in (a bundle or a menu started `python -m kayden`),
-    run the desktop app in this process, where it is installed and a display is there."""
-    if in_terminal() or not has_display():
-        return False
-    try:
-        from kayden.frontends.desktop import launcher
-    except ImportError:
-        return False
-    argv = ["--data-dir", str(args.data_dir.expanduser())]
-    if args.config:
-        argv += ["--config", str(args.config.expanduser())]
-    if args.conversation is not None:
-        argv += ["--conversation", args.conversation]
-    launcher.main(argv)
-    return True
-
-
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     config = load_config(args)
     if args.show_config:
         print(show_config(config, config_path(args)), end="")
-        return
-    if open_window(args):
         return
     window, notice = saved_window(config)
     if window is not None:
