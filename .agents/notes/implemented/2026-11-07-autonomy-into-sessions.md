@@ -53,6 +53,10 @@ data folder: `instance.lock`, `usage.json` and `events.jsonl`.
 |---|---|---|
 | Who starts a cycle | Only the user | The user, and the end of awaited background work |
 | `idle()` offered | No | Yes, with `AUTONOMY_PROMPT` added to the system prompt |
+| The agent is told to | Work with the user | Work on the task until done or blocked, decide rather than ask, report its choices |
+
+Autonomy changes neither permissions nor budgets: the agent still asks as the settings
+say, so a hands-off run needs a permission level that lets it work.
 
 - Autonomy is chosen when a conversation starts and kept for its whole life, so its system
   prompt and tools never change. `StartOptions.autonomous` sets it for a new conversation
@@ -163,6 +167,13 @@ command-line flags of the per-mode versions.
 
 ## Alternatives considered
 
+- **Autonomy that also loosens permissions** (read freely, or anything inside the work
+  folder). It would make hands-off runs work with no other setting, but the shell tool is
+  not a sandbox, and a switch on a chat should not quietly widen what the agent may do.
+  The permission level stays one setting, in Settings.
+- **Timed wake-ups with no message from the user** (an agent that looks around and acts
+  under standing instructions). A different product, closer to a scheduled assistant;
+  open-ended spending and no task to finish.
 - **Switching autonomy at any time.** More flexible, but each switch changes the system
   prompt and the tools mid-conversation: Claude then rejects its earlier thinking blocks,
   the provider's prompt cache is lost, and the runtime needs rules for a switch in every

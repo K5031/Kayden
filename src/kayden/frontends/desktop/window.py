@@ -127,9 +127,9 @@ KEY_PAGES = {
 }
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
 AUTONOMY_LABEL = "Autonomous mode"
-AUTONOMY_HINT = ("Kayden may keep working without waiting for you, for example when a "
-                 "background task finishes. It still asks before actions as set in Settings "
-                 "and stops at the spending limit.")
+AUTONOMY_HINT = ("Give Kayden a task and let it work: it decides by itself instead of "
+                 "asking you, and carries on when its background tasks finish. It still asks "
+                 "before actions as set in Settings and stops at the spending limit.")
 AUTONOMY_LOCKED = ("Autonomous mode is chosen when a conversation starts. To change it, "
                    "continue this conversation in a new one.")
 EMPTY_TITLE = "Start a conversation"

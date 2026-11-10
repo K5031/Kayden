@@ -7,7 +7,7 @@ then press Enter. For a new conversation you can also set:
 
 | Field | Does |
 |---|---|
-| Autonomous mode | The agent may wait for its background work and continue on its own (see [Autonomy](concepts.md#autonomy)) |
+| Autonomous mode | The agent works on your task without stopping to ask, and carries on when its background work finishes (see [Autonomy](concepts.md#autonomy)) |
 | Continue from | Start from where an earlier conversation left off |
 
 To skip the screen:

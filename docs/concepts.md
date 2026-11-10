@@ -24,13 +24,19 @@ is. To carry on an ordinary conversation autonomously, continue it in a new one
 
 | | Ordinary | Autonomous |
 |---|---|---|
-| The agent works | When you send a message or press Ctrl+R | Also by itself, when background tasks it waits for finish |
-| Results of background tasks | Wait for you | Wake the agent |
+| Meant for | Working together, step by step | Handing over a task and coming back to the result |
+| When it is unsure | Asks you | Decides by itself and tells you what it chose; asks only when a wrong guess would be costly |
+| Results of background tasks | Wait for your next message | Wake the agent, which carries on |
 
-An autonomous agent can say it is done for now ("idle"); it then waits until the tasks it
-started finish, or until you write. After Kayden restarts, an autonomous
-conversation waits for you before doing anything. Spending limits apply as always, so
-watch the costs of a conversation left to work on its own.
+An autonomous agent does not act out of nowhere: it works on what you gave it, then
+waits until its background tasks finish or you write again. After Kayden restarts, it waits
+for you before doing anything.
+
+Autonomy does not change what the agent may do. It still asks before actions as your
+[permissions](settings.md#permissions) say, and a question nobody answers stops the work.
+For a hands-off run, choose "Read freely, ask before changes" or review what it asks for
+before you leave. Spending limits apply as always, so watch the costs of a conversation
+left to work on its own.
 
 ## Background tasks
 

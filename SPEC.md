@@ -87,7 +87,7 @@ A new conversation is a fresh start: no messages and no summary, with long-term 
 Conversations get a title automatically from their first message unless the user sets one. The user can rename, archive (hide from the list and from cross-conversation recall) and delete conversations.
 4.2 Autonomy
 Autonomy is chosen for each conversation when it starts, off by default, and can be changed only until its first message; after that it stays as it is, so the agent's instructions and tools never change during a conversation.
-In an autonomous conversation the model may:
+In an autonomous conversation the user hands over a task: the model is told to work on it until it is done or blocked, to decide by itself rather than ask, and to report its choices. Permissions and budgets apply unchanged. The model may:
 Continue reasoning.
 Invoke tools.
 Take permitted actions.
