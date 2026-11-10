@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import Frontend, FrontendInfo, InstancePaths, RuntimeAPI
+from kayden.frontends.desktop import single
 from kayden.frontends.desktop.loop import run_on_qt
 
 # PySide6 6.12 on Python 3.15 breaks reading a lazily imported module attribute (PEP 810)
@@ -26,7 +27,7 @@ from PySide6 import QtWidgets  # noqa: F401
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> DesktopFrontend:
     """Options: conversation_id (open it first; default: the newest)."""
-    return DesktopFrontend(options.get("conversation_id"), paths.data_dir / ZOOM_FILE)
+    return DesktopFrontend(options.get("conversation_id"), paths.data_dir)
 
 
 ZOOM_FILE = "desktop.json"  # the app's own view preferences, in the data folder
@@ -39,9 +40,10 @@ factory.event_loop = run_on_qt  # type: ignore[attr-defined]
 
 class DesktopFrontend(Frontend):
     def __init__(self, conversation_id: str | None = None,
-                 zoom_file: Path | None = None) -> None:
+                 data_dir: Path | None = None) -> None:
         self.conversation_id = conversation_id
-        self.zoom_file = zoom_file
+        self.data_dir = data_dir  # None: no zoom remembered, no single window
+        self.zoom_file = data_dir / ZOOM_FILE if data_dir is not None else None
 
     @property
     def info(self) -> FrontendInfo:
@@ -58,10 +60,15 @@ class DesktopFrontend(Frontend):
         app = QApplication.instance()
         if app is None:
             raise RuntimeError("the desktop frontend runs on its own event loop (factory.event_loop)")
+        if self.data_dir is not None and (await runtime.settings()).already_open:
+            await self._hand_over(self.data_dir)
+            return
         if self.zoom_file is not None:
             theme.set_zoom(app, await load_zoom(self.zoom_file))
         controller = Controller(runtime, ConversationModel())
         window = MainWindow(runtime, controller, self.zoom_file)
+        server = (await single.listen(self.data_dir, window.bring_forward)
+                  if self.data_dir is not None else None)
         closed = asyncio.Event()
         window.closed.connect(closed.set)
         window.show()
@@ -73,5 +80,23 @@ class DesktopFrontend(Frontend):
         finally:
             for task in (events, waiter):
                 task.cancel()
+            if server is not None:
+                server.close()
+                single.socket_path(self.data_dir).unlink(missing_ok=True)
             window.close()
             await window.save_pending_zoom()
+
+    async def _hand_over(self, data_dir: Path) -> None:
+        """Another Kayden has the data folder: bring its window forward, or, when none
+        answers (a terminal has it), say so once."""
+        from PySide6.QtWidgets import QMessageBox
+
+        if await single.show_other(data_dir):
+            return
+        box = QMessageBox(QMessageBox.Icon.Information, "Kayden",
+                          "Kayden is already open, probably in a terminal. Quit it there, "
+                          "then open Kayden again.")
+        closed = asyncio.get_running_loop().create_future()
+        box.finished.connect(lambda _: closed.done() or closed.set_result(None))
+        box.open()
+        await closed

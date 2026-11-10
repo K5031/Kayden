@@ -74,6 +74,7 @@ from kayden.frontends.tui import (
     ModelScreen,
     OperationsScreen,
     PermissionPrompt,
+    SettingsScreen,
     StartScreen,
     StepGroup,
     SystemEntry,
@@ -1208,3 +1209,16 @@ async def test_a_tool_the_provider_ran_is_a_finished_step():
         assert group.title == "Searched the web for “worlds”"
         [step] = entries(app, ToolEntry)
         assert "w.example" in plain(step)
+
+
+async def test_a_second_kayden_says_it_is_already_open_and_quits():
+    from dataclasses import replace
+
+    stub = StubRuntime(started=False)
+    stub.current_settings = replace(stub.current_settings, already_open=True,
+                                    startup_error="Kayden is already open in another window")
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await until(pilot, lambda: app.return_code is not None)
+        assert app.return_code == 1
+        assert not any(isinstance(s, SettingsScreen) for s in app.screen_stack)

@@ -1237,7 +1237,10 @@ class KaydenApp(App[None]):
         """Settings with the error when Kayden could not start (first run: no key yet);
         otherwise the start options or the start screen."""
         settings = await self.runtime.settings()
-        if settings.startup_error is not None:
+        if settings.already_open:  # nothing to fix in Settings: the other one is in use
+            self.exit(return_code=1, message=f"{settings.startup_error}. Use that one, or "
+                                             "quit it and start Kayden again.")
+        elif settings.startup_error is not None:
             self.notice = "Kayden could not start: fix it in Settings (F2)"
             self._render_status()
             self.action_settings()

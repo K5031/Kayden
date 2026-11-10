@@ -112,5 +112,7 @@ same conversation.
 ## Good to know
 
 - The app and the terminal app share the same data folder (`~/.kayden`). Only one of them
-  can be open at a time; the other says Kayden is already open.
+  can be open at a time. Opening the app again brings the open window forward; when the
+  terminal app has it, the app says so once and closes, and `kayden` in a terminal says so
+  and exits.
 - Closing the window stops running tasks, as quitting the terminal app does.

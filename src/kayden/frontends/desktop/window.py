@@ -1279,6 +1279,12 @@ class MainWindow(QMainWindow):
         self.memory_dialog.refresh()
         self.memory_dialog.open()
 
+    def bring_forward(self) -> None:
+        """Another launch of Kayden asked for this window."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def open_tool_servers(self) -> None:
         if self.mcp_dialog is None:
             self.mcp_dialog = McpDialog(self, self.runtime, self.controller)
