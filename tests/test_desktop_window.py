@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessag
 
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
 from kayden.frontends.desktop import app_menu, theme
-from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
+from kayden.frontends.desktop.viewmodel import AssistantItem, Controller, ConversationModel
 from kayden.frontends.desktop.window import (
     DATE_ROLE,
     PREVIEW_ROLE,
@@ -515,3 +515,18 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     [tool] = widgets(window, ToolCard)
     assert tool.title.text() == "Remove the old build"
     assert tool.title.toolTip() == "rm -rf build"
+
+
+def test_a_reply_with_nothing_to_show_is_not_drawn(qapp):
+    """Claude's thinking can arrive with no readable text, in a turn that only calls a tool."""
+    empty = AssistantBubble(AssistantItem(reasoning="", final=True))
+    assert empty.isHidden()
+    for item in (AssistantItem(text="Hi", final=True),
+                 AssistantItem(reasoning="Let me think", final=True),
+                 AssistantItem(interrupted=True, final=True)):
+        assert not AssistantBubble(item).isHidden()
+    filling = AssistantItem()
+    bubble = AssistantBubble(filling)
+    filling.text, filling.final = "Hello", True
+    bubble.refresh()
+    assert not bubble.isHidden()

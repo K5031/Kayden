@@ -235,6 +235,7 @@ class AssistantEntry(Static):
         if self.refused:
             parts.append(Text("The model declined to answer.", style="bold red"))
         self.update(Group(*parts))
+        self.display = bool(parts)  # thinking with no readable text, before a tool call
 
 
 class ToolEntry(Static):

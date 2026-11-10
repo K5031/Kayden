@@ -37,6 +37,7 @@ from kayden.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
+    Reasoning,
     ReasoningDelta,
     Role,
     RuntimeEvent,
@@ -1125,3 +1126,17 @@ async def test_a_command_shows_its_description_with_the_command_behind_it():
         assert "shell Remove the old build" in shown and "\n  rm -rf build" in shown
         prompt = str(app.query_one(PermissionPrompt).query_one(Label).render())
         assert "Kayden wants to: Remove the old build" in prompt and "rm -rf build" in prompt
+
+
+async def test_a_reply_with_nothing_to_show_takes_no_space():
+    history = [msg("u1", Role.USER, Text("I study CS")),
+               msg("a1", Role.ASSISTANT, Reasoning(""),
+                   ToolCall("c1", "remember", {"text": "Studies CS"})),
+               msg("t1", Role.TOOL, ToolResult("c1", ToolStatus.OK, "Remembered"))]
+    stub = StubRuntime(history=history)
+    app = make(stub)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await until(pilot, lambda: entries(app, ToolEntry))
+        assert [e.display for e in entries(app, AssistantEntry)] in ([], [False])
+        [tool] = entries(app, ToolEntry)
+        assert "remember Studies CS" in plain(tool)

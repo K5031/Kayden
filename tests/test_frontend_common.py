@@ -108,6 +108,15 @@ def test_a_call_shows_its_description_and_then_its_command():
     assert call_parts({"command": "uv sync", "unsandboxed": True,
                        "description": "Install the packages"}) == (
         "Install the packages", "uv sync (outside the sandbox)")
-    assert call_parts({"path": "a.txt"}) == (None, '{"path": "a.txt"}')
+    assert call_parts({"path": "a.txt", "limit": 5}) == (None, '{"path": "a.txt", "limit": 5}')
     assert call_parts({"command": "true", "description": "  "}) == (None, "true")
     assert call_parts('{"command": "ls') == (None, '{"command": "ls')  # still streaming
+
+
+def test_a_call_with_one_text_argument_shows_just_that_text():
+    from kayden.frontends.common import call_parts
+
+    assert call_parts({"text": "Studies CS at UCL"}) == (None, "Studies CS at UCL")
+    assert call_parts({"query": "python 3.14"}) == (None, "python 3.14")
+    assert call_parts({"path": "notes.md", "offset": 3}) == (
+        None, '{"path": "notes.md", "offset": 3}')

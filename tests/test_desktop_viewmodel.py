@@ -101,7 +101,7 @@ async def test_a_turn_with_reasoning_and_a_tool(make):
     assert isinstance(user, UserItem) and user.text == "find x" and not user.queued
     assert isinstance(first, AssistantItem) and first.final
     assert (first.reasoning, first.text) == ("hmm", "Let me look.")
-    assert isinstance(tool, ToolItem) and tool.name == "look" and tool.summary == '{"q": "x"}'
+    assert isinstance(tool, ToolItem) and tool.name == "look" and tool.summary == "x"
     assert tool.status is ToolStatus.OK and tool.state_label == "done"
     assert tool.content.startswith("found it") and tool.duration_s is not None
     assert tool.notes == ["Permission: allowed"]  # read-only, allowed by policy
@@ -569,7 +569,7 @@ def test_relative_dates():
 def test_a_tool_call_with_a_description_shows_it_as_its_title():
     tool = ToolItem("c", "shell", '{"command": "ls -la", "description": "List the files"}')
     assert tool.summary == "List the files" and tool.detail == "ls -la"
-    plain = ToolItem("c", "read_file", '{"path": "a.txt"}')
-    assert plain.summary == '{"path": "a.txt"}' and plain.detail == '{"path": "a.txt"}'
+    plain = ToolItem("c", "remember", '{"text": "Studies CS at UCL"}')
+    assert plain.summary == "Studies CS at UCL" and plain.detail == "Studies CS at UCL"
     streaming = ToolItem("c", "shell", '{"command": "ls')
     assert streaming.summary == '{"command": "ls'

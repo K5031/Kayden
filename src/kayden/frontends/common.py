@@ -39,7 +39,8 @@ def request_note(request: PermissionRequest) -> str:
 
 def call_parts(arguments: Any) -> tuple[str | None, str]:
     """A tool call for display: the plain-language description it gives, if any, and the
-    rest of its arguments, a shell command as it is and anything else as JSON. Arguments
+    rest of its arguments: a shell command or a single text argument as it is, anything
+    else as JSON. Arguments
     still streaming (a string) are shown as they are."""
     if not isinstance(arguments, dict):
         return None, str(arguments)
@@ -49,6 +50,8 @@ def call_parts(arguments: Any) -> tuple[str | None, str]:
     command = rest.get("command")
     if isinstance(command, str) and set(rest) <= {"command", "unsandboxed"}:
         detail = command + (" (outside the sandbox)" if rest.get("unsandboxed") else "")
+    elif len(rest) == 1 and isinstance(only := next(iter(rest.values())), str):
+        detail = only  # a fact to remember, a search query, a path
     else:
         detail = json.dumps(rest, ensure_ascii=False)
     return headline or None, detail

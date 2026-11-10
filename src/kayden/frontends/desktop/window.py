@@ -447,6 +447,8 @@ class AssistantBubble(QWidget):
                   else "Interrupted before it finished." if item.interrupted else "")
         self.marker.setText(marker)
         self.marker.setVisible(bool(marker))
+        # A turn can carry thinking with no readable text and only call tools.
+        self.setVisible(bool(item.text or item.reasoning or marker))
 
 
 class ToolCard(QFrame):
