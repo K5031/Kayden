@@ -47,7 +47,7 @@ async def test_settings_screen_shows_the_current_settings():
     async with app.run_test(size=(100, 40)) as pilot:
         await open_settings(pilot, app, stub, how="command")
         assert field(app, "#module-core", Select).value == "claude"
-        assert field(app, "#module-memory", Select).value == "sqlite"
+        assert not app.screen.query("#module-memory")  # configured in config.toml only
         assert field(app, "#module-frontend", Select).value == "tui"
         assert field(app, "#api-key", Input).password
         assert field(app, "#api-key", Input).value == ""
@@ -148,19 +148,15 @@ async def test_saving_a_module_change_offers_restart_now():
         assert ("restart",) not in stub.calls
 
 
-async def test_a_memory_change_warns_first():
+async def test_saving_without_a_memory_choice_keeps_the_memory():
     stub = StubRuntime()
     app = make(stub)
     async with app.run_test(size=(100, 40)) as pilot:
         await open_settings(pilot, app, stub)
-        field(app, "#module-memory", Select).value = "notes"
+        field(app, "#module-frontend", Select).value = "desktop"
         await save(pilot, app)
-        await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
-        assert "your current ones won't appear" in str(
-            app.screen.query_one("#confirm-message").render())
-        app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: updates(stub))
-        assert updates(stub) == [SettingsUpdate(modules={"memory": "notes"})]
+        assert updates(stub) == [SettingsUpdate(modules={"frontend": "desktop"})]
 
 
 async def test_a_startup_error_opens_the_settings():

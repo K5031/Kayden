@@ -90,7 +90,6 @@ from kayden.api import (
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
     AT_RESTART,
-    MEMORY_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
     delete_details,
@@ -460,7 +459,7 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
             yield TextArea(s.system_prompt, id="instructions")
             yield Label("Work folder")
             yield Input(s.work_folder or "", disabled=s.work_folder is None, id="work-folder")
-            for kind in ("memory", "tools", "frontend"):
+            for kind in ("tools", "frontend"):
                 yield Label(MODULE_LABELS[kind])
                 yield self._module_select(kind)
             yield Label(AT_RESTART, classes="hint")
@@ -511,12 +510,10 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
         if update is None:
             return
         reasons = loosening(self.settings, update)
-        memory = bool(update.modules and "memory" in update.modules)
-        if not reasons and not memory:
+        if not reasons:
             self.dismiss((update, restart))
             return
-        message = ("This change " + " and ".join(reasons) + ". ") if reasons else ""
-        message += (MEMORY_WARNING + " ") if memory else ""
+        message = "This change " + " and ".join(reasons) + ". "
 
         def confirmed(yes: bool | None) -> None:
             if yes:
@@ -531,6 +528,8 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
         changes: dict[str, Any] = {}
         modules = {}
         for kind, choice in s.modules.items():
+            if kind not in MODULE_LABELS:
+                continue
             value = self.query_one(f"#module-{kind}", Select).value
             if value is not Select.NULL and value != choice.chosen:
                 modules[kind] = value

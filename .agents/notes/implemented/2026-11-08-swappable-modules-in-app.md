@@ -1,6 +1,6 @@
 # Agent Note: Swappable modules from within the app
 
-Status: implemented — every module (Core, Memory, Tools, Frontend) is chosen from the installed ones in the app, applied at the next start
+Status: implemented — the Core, Tools and Frontend are chosen from the installed ones in the app, applied at the next start; Memory only in config.toml
 
 ## Problem
 
@@ -109,11 +109,14 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
 - Frontends offer Restart now in their settings and after saving a module setting;
   `kayden.frontends.common.restart_notice` words what waits for it.
 
-### Memory changes
+### Memory is not offered in the app
 
 A different Memory module is a different archive: conversations and long-term memory of the
-old one are not shown after the restart, and come back when the user switches back. Both
-frontends ask before saving a Memory change.
+old one are not shown after the restart, and come back when the user switches back. That
+is a choice of storage, not of how Kayden works, so the settings screens of both frontends
+offer the Core, Tools and Frontend only (`kayden.frontends.common.MODULE_LABELS`). Memory
+stays a module: it is chosen with `[memory]` in `config.toml`, or by id through
+`SettingsUpdate.modules` from any frontend that wants to offer it.
 
 Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
 `RuntimeAPI.restart`, `FrontendInfo.kind`), `runtime/modules.py`, `runtime/setup.py`,
@@ -125,6 +128,9 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
 
 ## Alternatives considered
 
+- **Offering Memory in the app too**, with a warning before saving. Built and removed:
+  Kayden has one memory module, a switch only hides every conversation, and the warning
+  had to explain why. Users who want another archive edit `config.toml`.
 - **Swapping modules live, while running.** A frontend cannot replace itself, a different
   Memory under an open conversation has none of its messages, and the live Core swap needed
   quiescence checks and rollback. Restart-applied changes need none of that.
@@ -163,8 +169,8 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
   per process, PySide6 included where the desktop extra is installed.
 - Restarting in the same process keeps module code loaded at the first start; code
   changed on disk needs Kayden to be started again.
-- A Memory switch hides the old archive until switching back; the warning before saving
-  must be clear.
+- Choosing Memory takes editing `config.toml`; nobody hides their conversations by
+  picking from a list.
 - Choosing the desktop app means it opens however Kayden is started where a display is,
   and a saved frontend never blocks a launch: each launcher falls back to its own.
 - The [settings note](2026-11-07-settings-for-non-technical-users.md) describes the

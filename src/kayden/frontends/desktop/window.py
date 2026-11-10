@@ -74,7 +74,6 @@ from kayden.api import (
 )
 from kayden.frontends.common import (
     AT_RESTART,
-    MEMORY_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
     delete_details,
@@ -1220,7 +1219,8 @@ class SettingsDialog(QDialog):
         self.startup_error = _label(f"Kayden could not start: {settings.startup_error}")
         theme.mark(self.startup_error, "tone", "error")
         self.startup_error.setVisible(settings.startup_error is not None)
-        self.modules = {kind: self._module_box(kind) for kind in settings.modules}
+        self.modules = {kind: self._module_box(kind) for kind in MODULE_LABELS
+                        if kind in settings.modules}
         self.modules["core"].currentIndexChanged.connect(self._core_changed)
         self.modules["frontend"].currentIndexChanged.connect(
             lambda: self.restart_button.setVisible(True))
@@ -1287,7 +1287,7 @@ class SettingsDialog(QDialog):
         form.addRow("What the agent may do", self.permissions)
         form.addRow("Instructions", self.instructions)
         form.addRow("Work folder", folder_row)
-        for kind in ("memory", "tools", "frontend"):
+        for kind in ("tools", "frontend"):
             form.addRow(MODULE_LABELS[kind], self.modules[kind])
         form.addRow(_label(AT_RESTART, selectable=False, role="small"))
         form.addRow(self.notice)
@@ -1334,8 +1334,6 @@ class SettingsDialog(QDialog):
         text = ""
         if reasons := loosening(self.settings, update):
             text = "This change " + " and ".join(reasons) + ". "
-        if update.modules and "memory" in update.modules:
-            text += MEMORY_WARNING + " "
         if text:
             confirm(self, "Save these changes?", lambda: self._apply(update, restart),
                     yes="Save", details=text.strip())

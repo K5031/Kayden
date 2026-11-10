@@ -63,11 +63,9 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
     return reasons
 
 
-MODULE_LABELS = {"core": "AI provider", "memory": "Memory", "tools": "Tools",
-                 "frontend": "Interface"}
-MEMORY_WARNING = ("Each memory module keeps its own conversations and memories. After the "
-                  "restart, your current ones won't appear; they come back if you switch "
-                  "back.")
+# The modules settings offer. Memory is chosen in config.toml only: another Memory module
+# is another archive, so a choice in the app would hide every conversation.
+MODULE_LABELS = {"core": "AI provider", "tools": "Tools", "frontend": "Interface"}
 AT_RESTART = ("Changes to the AI provider, API key, modules and work folder take effect after "
               "a restart.")
 

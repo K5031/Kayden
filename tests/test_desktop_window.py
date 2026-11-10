@@ -217,6 +217,15 @@ async def test_a_startup_error_opens_the_settings(installed, qapp, tmp_path, mon
     assert dialog.restart_button.isVisibleTo(dialog)
 
 
+async def test_settings_offer_no_memory_choice(make, installed, qapp):
+    h = await setup(make)
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
+    assert set(dialog.modules) == {"core", "tools", "frontend"}
+    assert "memory" not in dialog.form().modules
+
+
 async def test_choosing_the_tui_says_when_it_is_used(make, installed, qapp):
     h = await setup(make)
     await h.start()

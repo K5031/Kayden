@@ -1197,8 +1197,9 @@ class RuntimeAPI(Protocol):
         keychain under key_name, never to a file.
 
         Frontends must ask the user to confirm before loosening permissions or raising a
-        budget limit, and warn before a Memory change that the conversations of the current
-        one are not shown after the restart. Every change is written to the event log,
+        budget limit. A Memory change makes another archive current, so the conversations
+        of the old one are not shown after the restart; frontends meant for non-technical
+        users do not offer it. Every change is written to the event log,
         without key values."""
 
     async def restart(self) -> None:

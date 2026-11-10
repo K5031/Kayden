@@ -500,9 +500,9 @@ def test_switching_provider_leaves_the_models_to_it():
 def test_only_changed_modules_are_sent():
     from dataclasses import replace
 
-    modules = {**form_from(SETTINGS).modules, "memory": "notes", "frontend": "desktop"}
+    modules = {**form_from(SETTINGS).modules, "tools": "other-tools", "frontend": "desktop"}
     assert settings_update(SETTINGS, replace(form_from(SETTINGS), modules=modules)) == (
-        SettingsUpdate(modules={"memory": "notes", "frontend": "desktop"}))
+        SettingsUpdate(modules={"tools": "other-tools", "frontend": "desktop"}))
 
 
 @pytest.mark.parametrize("field, value, message", [

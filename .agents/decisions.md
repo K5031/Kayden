@@ -495,4 +495,4 @@ Design: [Agent Note](notes/implemented/2026-11-08-swappable-modules-in-app.md).
 | Startup errors | An uninstalled Core, Memory or Tools id, or a `ModuleLoadError` from building them, runs the frontend on `SetupRuntime`. A frontend that fails to build is replaced by the launcher's own, which shows the error |
 | Setup runtime | Saves module settings, budget, permissions and system prompt; refuses model choices (`ValueError`) and every other command (`RuntimeStateError` naming the error). It takes no lock and writes no event log: nothing runs, and another instance may hold the directory |
 | Work folder | The Tools `root` option, settable when the configured Tools has one (the built-in shell-files Tools always does) |
-| Frontend texts | `kayden.frontends.common`: `restart_notice`, `module_options`, `needs_restart`, the Memory warning |
+| Frontend texts | `kayden.frontends.common`: `restart_notice`, `module_options`, `needs_restart`, `MODULE_LABELS` (the modules settings offer: no Memory) |

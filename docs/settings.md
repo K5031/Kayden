@@ -16,7 +16,6 @@ changed is saved.
 | What the agent may do | See [Permissions](#permissions). | At the next step |
 | Instructions | The system prompt: who the agent is and how it should behave. | At the next step |
 | Work folder | Where the agent's commands and file tools work. | At restart |
-| Memory | Where conversations and long-term memory are kept. | At restart |
 | Tools | What the agent can do on your computer. | At restart |
 | Interface | The terminal app or the [desktop app](desktop-app.md). | At restart |
 
@@ -25,7 +24,7 @@ first.
 
 ## Changes that apply at restart
 
-The AI provider, its key, the work folder, Memory, Tools and Interface are saved at once but
+The AI provider, its key, the work folder, Tools and Interface are saved at once but
 used from the next start of Kayden; until then you keep working as before. The settings
 screen says so and offers **Restart now**: Kayden stops what it is doing, as when you quit,
 and starts again with the new settings in the same conversation.
@@ -63,10 +62,14 @@ the first start looks like: enter your API key, then **Restart now**.
 
 ## Installed modules
 
-The provider, Memory, Tools and Interface lists show every module installed with Kayden:
-its own, and those of any package you install that provides one. A module is a program
-that runs with your permissions, so install only ones you trust; see
+The provider, Tools and Interface lists show every module installed with Kayden: its own,
+and those of any package you install that provides one. A module is a program that runs
+with your permissions, so install only ones you trust; see
 [Development](development.md#writing-a-module).
+
+The memory module, where conversations and long-term memory are kept, is not in the
+settings screen: another one would be another archive, without your conversations. It is
+set with `[memory]` in [config.toml](#configtoml).
 
 ## Permissions
 
