@@ -454,6 +454,10 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
   newest revision. `forgotten` holds SHA-256 fingerprints of
   forgotten texts (casefolded, whitespace collapsed); compaction drops a new entry whose
   fingerprint is there. A reworded fact is new to it.
+- `summaries`: one row per conversation, its current summary; writing a new one deletes
+  the old row in the same transaction (`_replace_summary`). Summaries are derived from
+  messages the archive keeps, so they are working state, not part of the append-only
+  archive.
 - Seeding: while `seed_from` is set and the conversation has no summary row, `maintain`
   first runs the compaction prompt (light model) on the source's current summary and as
   many of its newest exchanges as fit, and stores the result as a summary with

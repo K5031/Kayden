@@ -468,11 +468,7 @@ class SqliteMemory(Memory):
 
         def commit(conn: sqlite3.Connection) -> None:
             with _transaction(conn):
-                conn.execute(
-                    "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
-                    " VALUES (?, 0, ?, ?)",
-                    (state.info.id, summary, time.time()),
-                )
+                _replace_summary(conn, state.info.id, 0, summary, time.time())
 
         await self._run(commit)
         return True
@@ -508,11 +504,7 @@ class SqliteMemory(Memory):
         def commit(conn: sqlite3.Connection) -> None:
             now = time.time()
             with _transaction(conn):
-                conn.execute(
-                    "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
-                    " VALUES (?, ?, ?, ?)",
-                    (conversation_id, through_seq, summary, now),
-                )
+                _replace_summary(conn, conversation_id, through_seq, summary, now)
                 forgotten = {r[0] for r in conn.execute("SELECT hash FROM forgotten")}
                 for entry in new_entries:
                     if _fingerprint(entry) not in forgotten:
@@ -758,6 +750,18 @@ def _require_entry(conn: sqlite3.Connection, entry_id: str) -> MemoryEntry:
     if row is None:
         raise KeyError(f"unknown memory entry {entry_id}")
     return _entry(row)
+
+
+def _replace_summary(conn: sqlite3.Connection, conversation_id: ConversationId,
+                     through_seq: int, text: str, now: float) -> None:
+    """A conversation keeps only its newest summary: older ones are derived from messages
+    the archive still holds, and nothing reads them."""
+    conn.execute("DELETE FROM summaries WHERE conversation_id = ?", (conversation_id,))
+    conn.execute(
+        "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
+        " VALUES (?, ?, ?, ?)",
+        (conversation_id, through_seq, text, now),
+    )
 
 
 def _add_entry(conn: sqlite3.Connection, text: str, source: ConversationId | None,

@@ -518,3 +518,18 @@ async def test_an_empty_seed_is_retried_rather_than_lost(open_store):
     # keep=200: the compaction that follows the seed keeps the source's tokens
     assert await maintain(memory, seeded.id, FakeCompletion(keep=200, render=tagged))
     assert "tok0001" in await addendum(memory, seeded.id)
+
+
+async def test_only_the_newest_summary_is_kept(open_store, db: Path):
+    """Old summaries are derived state that nothing reads; the messages stay."""
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await fill(memory, conv.id, tokens(0, 40))
+    assert await maintain(memory, conv.id, FakeCompletion(render=tagged))
+    await fill(memory, conv.id, tokens(40, 40))
+    assert await maintain(memory, conv.id, FakeCompletion(render=tagged))
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("SELECT conversation_id, through_seq FROM summaries").fetchall()
+        assert len(rows) == 1 and rows[0][0] == conv.id
+        assert rows[0][1] > 40  # the second summary's
+        assert conn.execute("SELECT count(*) FROM messages").fetchone()[0] == 80
