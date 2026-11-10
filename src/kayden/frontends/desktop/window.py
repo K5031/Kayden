@@ -1448,6 +1448,7 @@ class McpDialog(QDialog):
         super().__init__(parent)
         self.runtime, self.controller = runtime, controller
         self.saved: list[McpServer] = []
+        self._changes = 0  # saves made here; a list read before the latest one is stale
         self.setWindowTitle("Tool servers")
         self.setMinimumSize(520, 400)
         layout = QVBoxLayout(self)
@@ -1461,6 +1462,7 @@ class McpDialog(QDialog):
         self.servers.currentItemChanged.connect(lambda *_: self._selection_changed())
         self.servers.itemActivated.connect(lambda _: self._edit())
         self.empty = _label("No servers yet.", selectable=False, tone="muted")
+        self.empty.hide()  # until the list has loaded
         layout.addWidget(self.servers, 1)
         layout.addWidget(self.empty)
         self.notice = _label("", selectable=False, tone="warning")
@@ -1488,7 +1490,9 @@ class McpDialog(QDialog):
         self._selection_changed()
 
     def refresh(self) -> None:
-        self.controller.command(self.runtime.settings(), done=self._show)
+        changes = self._changes
+        self.controller.command(self.runtime.settings(),
+                                done=lambda s: changes == self._changes and self._show(s))
 
     def _show(self, settings: Settings) -> None:
         self.saved = list(settings.mcp_servers)
@@ -1514,6 +1518,7 @@ class McpDialog(QDialog):
             button.setEnabled(self._selected() is not None)
 
     async def save(self, servers: list[McpServer]) -> Settings:
+        self._changes += 1
         return await self.runtime.update_settings(SettingsUpdate(mcp_servers=servers))
 
     def _add(self) -> None:

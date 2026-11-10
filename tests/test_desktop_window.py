@@ -726,8 +726,35 @@ async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
     await eventually(lambda: server.error.isVisible())
     assert "quotes" in server.error.text()
     server.reject()
+    assert dialog.servers.currentRow() == 0 and dialog.remove_button.isEnabled()
     dialog.remove_button.click()
     [remove] = [b for b in message_box(dialog).buttons() if b.text() == "Remove"]
     remove.click()
     await eventually(lambda: dialog.servers.count() == 0)
     assert ("kayden", "mcp/github/GITHUB_TOKEN") not in keychain.store
+
+
+async def test_a_server_list_read_before_a_save_does_not_replace_it(make, qapp, keychain):
+    from kayden.api import McpServer
+    from kayden.frontends.desktop.window import McpDialog
+
+    h: Harness = await make(modules=ModuleState(running=RUNNING, work_folder="/start"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    release = asyncio.Event()
+    settings = h.runtime.settings
+
+    async def slow_settings() -> Any:  # the window's first read answers late
+        current = await settings()
+        await release.wait()
+        return current
+
+    h.runtime.settings = slow_settings  # type: ignore[method-assign]
+    dialog = McpDialog(window, h.runtime, controller)
+    dialog.refresh()
+    h.runtime.settings = settings  # type: ignore[method-assign]
+    shown = await dialog.save([McpServer("docs", url="https://d.example/mcp")])
+    dialog._show(shown)
+    release.set()
+    await asyncio.sleep(0.05)
+    assert dialog.servers.count() == 1  # the late, older list was ignored
