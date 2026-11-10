@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from textual.widgets import Input
 
-from kayden.__main__ import build_config, main
+from kayden.__main__ import load_config, main, parse_args
 from kayden.api import (
     AgentState,
     Budget,
@@ -41,12 +41,17 @@ from kayden.core.anthropic import AnthropicCore
 from kayden.core.openai_compat import OpenAICompatCore
 from kayden.frontends.tui import AssistantEntry, KaydenApp, PermissionPrompt, TuiFrontend
 from kayden.memory.sqlite import SqliteMemory
-from kayden.runtime import ModuleSpec, Runtime, load_module, run_instance
+from kayden.runtime import InstanceConfig, ModuleSpec, Runtime, load_module, run_instance
 from kayden.runtime.config import DEFAULT_SYSTEM_PROMPT
 from kayden.tools.shell_files import ShellFilesTools
 from tests.fakes.core import ScriptedCore, Step, call
 
 COMMAND = "echo wired > out.txt && cat out.txt"
+
+
+def build_config(argv: list[str]) -> InstanceConfig:
+    """The configuration `kayden` builds from these command-line arguments."""
+    return load_config(parse_args(argv))
 
 
 @pytest.fixture

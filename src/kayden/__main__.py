@@ -216,10 +216,6 @@ def config_path(args: argparse.Namespace) -> Path:
     return args.data_dir.expanduser() / CONFIG_FILE
 
 
-def build_config(argv: Sequence[str] | None = None) -> InstanceConfig:
-    return load_config(parse_args(argv))
-
-
 def read_saved(path: Path) -> dict[str, Any]:
     """Settings saved by RuntimeAPI.update_settings, validated like [runtime]. A model of
     "" is the Core's first, a maintenance model of "" the main model."""

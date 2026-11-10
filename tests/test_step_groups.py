@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from kayden.api import ToolStatus
-from kayden.frontends.common import step_problems, steps_title
+from kayden.frontends.common import group_title, step_problems, steps_title
 from kayden.frontends.desktop.viewmodel import (
     AssistantItem,
     NoticeItem,
@@ -68,3 +68,11 @@ def test_heading_of_one_step_is_its_sentence():
     assert group_heading([step("Open it", ToolStatus.ERROR)]) == ("Open it", "failed", None)
     stopped = step("Write it", None, Phase.NOT_RUN)
     assert group_heading([stopped]) == ("Write it", "not run", None)
+
+
+def test_one_title_rule_for_both_apps():
+    assert group_title([("Search", "", None), ("Open", "", "running")]) == (
+        "Open", "running", 1)
+    assert group_title([("Searched", "", None)]) == ("Searched", "", None)
+    assert group_title([("Searched", "", None), ("Open", "failed", None)]) == (
+        "2 steps", "1 failed", None)

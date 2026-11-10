@@ -75,10 +75,9 @@ from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
     RESULT_LABELS,
     call_parts,
+    group_title,
     money,
     past_tense,
-    step_problems,
-    steps_title,
 )
 
 HISTORY_PAGE = 100
@@ -222,14 +221,12 @@ def step_segments(items: Sequence[Item]) -> list[Segment]:
 
 
 def group_heading(steps: Sequence[ToolItem]) -> tuple[str, str, ToolItem | None]:
-    """A group's title, its state, and the step still underway (None when all ended)."""
-    active = next((s for s in reversed(steps)
-                   if s.status is None and s.phase is not Phase.NOT_RUN), None)
-    if active is not None:
-        return active.summary, active.state_label, active
-    if len(steps) == 1:
-        return steps[0].summary, steps[0].problem, None
-    return steps_title(len(steps)), step_problems(s.problem for s in steps), None
+    """A group's title, its state, and the step still under way (None when all ended)."""
+    title, state, active = group_title([
+        (s.summary, s.problem,
+         s.state_label if s.status is None and s.phase is not Phase.NOT_RUN else None)
+        for s in steps])
+    return title, state, None if active is None else steps[active]
 
 
 # ── change notifications for the widget layer ─────────────────────────────

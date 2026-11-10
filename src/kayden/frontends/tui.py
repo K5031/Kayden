@@ -100,6 +100,7 @@ from kayden.frontends.common import (
     call_parts,
     delete_details,
     folder_path,
+    group_title,
     loosening,
     model_label,
     module_options,
@@ -107,8 +108,6 @@ from kayden.frontends.common import (
     past_tense,
     request_note,
     restart_notice,
-    step_problems,
-    steps_title,
 )
 
 STATE_LABELS = {
@@ -349,13 +348,8 @@ class StepGroup(Collapsible):
         steps = list(self.query(ToolEntry))
         if not steps:
             return
-        active = next((s for s in reversed(steps) if s.phase in UNDERWAY), None)
-        if active is not None:
-            title, state = active.headline, UNDERWAY[active.phase]
-        elif len(steps) == 1:
-            title, state = steps[0].headline, steps[0].problem
-        else:
-            title, state = steps_title(len(steps)), step_problems(s.problem for s in steps)
+        title, state, _ = group_title([(s.headline, s.problem, UNDERWAY.get(s.phase))
+                                       for s in steps])
         self.title = Content(f"{title} · {state}" if state else title)  # type: ignore[assignment]
 
 
