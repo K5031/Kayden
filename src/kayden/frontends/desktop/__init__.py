@@ -1,6 +1,6 @@
 """Desktop app frontend: PySide6 widgets on a qasync event loop.
 
-Run it with `kayden-desktop` (kayden.frontends.desktop.launcher), which creates the
+It runs through kayden.frontends.desktop.launcher, which creates the
 QApplication and runs the instance on qasync's loop; `run` needs both. PySide6 and qasync
 are imported here, so the entry point loads (and the app is offered in settings) only where
 the `desktop` extra is installed.
@@ -48,7 +48,7 @@ class DesktopFrontend(Frontend):
         from kayden.frontends.desktop.window import MainWindow
 
         if QApplication.instance() is None:
-            raise RuntimeError("the desktop frontend runs through kayden-desktop")
+            raise RuntimeError("the desktop frontend runs through kayden.frontends.desktop.launcher")
         controller = Controller(runtime, ConversationModel())
         window = MainWindow(runtime, controller)
         closed = asyncio.Event()

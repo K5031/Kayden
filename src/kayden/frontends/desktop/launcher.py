@@ -1,4 +1,4 @@
-"""kayden-desktop: the desktop app's entry point (also what the Briefcase bundle runs).
+"""The desktop app's launcher, which `kayden` hands over to and the Briefcase bundle runs.
 
 A GUI toolkit's loop must be the one that runs, so this creates the QApplication and runs
 the instance on qasync's QEventLoop. It reads config.toml and settings.toml like `kayden`,
@@ -24,7 +24,7 @@ DEFAULT_WORK_FOLDER = Path("~/Kayden")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="kayden-desktop", description=__doc__)
+    parser = argparse.ArgumentParser(prog="python -m kayden.frontends.desktop.launcher", description=__doc__)
     parser.add_argument("--data-dir", type=Path,
                         default=Path(os.environ.get("KAYDEN_DATA_DIR", DEFAULT_DATA_DIR)),
                         help="instance data directory (default: $KAYDEN_DATA_DIR or ~/.kayden)")

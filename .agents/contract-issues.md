@@ -693,8 +693,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Resolution:** The docstring says "Owns the UI; its launcher chooses the event loop".
   `FrontendInfo.kind` (and a frontend factory's `kind`) says which launcher runs it:
   `"terminal"` frontends run under `kayden` on asyncio's loop, `"window"` frontends under
-  `kayden-desktop` on qasync's. Each launcher starts the saved frontend of its kind, else its
-  own.
+  the desktop launcher on qasync's, which `kayden` hands over to.
 
 ## 12. Found while building autonomy into sessions (contract Draft 3)
 

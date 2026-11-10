@@ -21,7 +21,7 @@ to the runtime; `config.toml` can also name one by its import path,
 Runtime settings (model, budget, permissions, instructions, autonomy) are read by the
 runtime and apply live. Module settings (which module, the API key, the work folder, module
 options) are passed to factories, so they apply when Kayden restarts: `RuntimeAPI.restart()`
-shuts the instance down and the launcher (`kayden`, `kayden-desktop`) builds it again in
+shuts the instance down and the launcher (`kayden`, or the desktop launcher) builds it again in
 the same process. When Core, Memory or Tools cannot be built, the frontend runs on a setup
 runtime (`runtime/setup.py`) that only shows and saves settings.
 
@@ -39,7 +39,7 @@ my-ui = "my_package.ui:factory"
 Optional attributes on the factory: `display_name` (shown instead of the id), `key_name`
 for a Core (the environment variable and keychain entry of its API key, which the settings
 ask for), and `kind` for a frontend: `"terminal"` (started by `kayden`, the default) or
-`"window"` (started by `kayden-desktop`, inside its Qt event loop). An entry point whose
+`"window"` (run by `kayden.frontends.desktop.launcher`, inside its Qt event loop). An entry point whose
 package does not import is not listed. Launchers may pass a frontend the options `start`,
 `conversation_id`, `autonomous` and `model`.
 
@@ -64,7 +64,7 @@ SPEC.md                   product spec
 
 `uv tool install --editable` runs your checkout as it is, so code changes take effect the
 next time you start `kayden`. With `"Kayden[desktop]"` and `--python 3.13`, the same
-install also has `kayden-desktop` (see [Desktop app](desktop-app.md#install)). After a
+install also has the desktop app (see [Desktop app](desktop-app.md#install)). After a
 change to dependencies or entry points in `pyproject.toml`, reinstall:
 `uv tool install --editable --reinstall .`. Without installing, `uv run kayden` works from
 the checkout.

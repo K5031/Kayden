@@ -374,11 +374,11 @@ def test_the_terminal_hands_over_to_the_desktop_app(tmp_path, monkeypatch, capsy
 
 
 def test_the_handed_over_command_runs(tmp_path):
-    """The command the terminal launches is a working kayden-desktop."""
+    """The command the terminal launches is a working desktop launcher."""
     command = launcher.window_command(args(tmp_path), Restart("desktop", WINDOW, None))
     out = subprocess.run([*command[:3], "--help"], capture_output=True, text=True, check=True,
                          timeout=60)
-    assert out.stdout.startswith("usage: kayden-desktop ")
+    assert out.stdout.startswith("usage: python -m kayden.frontends.desktop.launcher ")
 
 
 async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, monkeypatch):

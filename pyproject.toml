@@ -19,7 +19,6 @@ dependencies = [
 
 [project.scripts]
 kayden = "kayden.__main__:main"
-kayden-desktop = "kayden.frontends.desktop.launcher:main"
 
 # Installed modules, listed in every frontend's settings. A user-made module registers the
 # same way in its own package (docs/development.md).

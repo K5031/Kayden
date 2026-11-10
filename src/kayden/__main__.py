@@ -8,7 +8,7 @@ is a default: SQLite Memory, the Anthropic Core, shell/file Tools rooted at the 
 directory, the Textual TUI and no budget. --show-config prints the result.
 
 The saved frontend runs here when it is a terminal frontend. A saved window frontend opens
-instead: kayden hands over to kayden-desktop as a detached process when a display is
+instead: kayden hands over to the desktop launcher as a detached process when a display is
 available, and runs the TUI (saying why) when there is none or the frontend is not
 installed. Restart now in a frontend starts the instance again in this process, or hands
 over the same way to a window frontend.
@@ -359,7 +359,7 @@ async def launch(args: argparse.Namespace, launcher: str, *, default_root: Path 
 
 
 def window_command(args: argparse.Namespace, restart: Restart) -> list[str]:
-    """kayden-desktop on the same data directory, config file and conversation."""
+    """The desktop launcher on the same data directory, config file and conversation."""
     command = [sys.executable, "-m", "kayden.frontends.desktop.launcher",
                "--data-dir", str(args.data_dir.expanduser())]
     if args.config:

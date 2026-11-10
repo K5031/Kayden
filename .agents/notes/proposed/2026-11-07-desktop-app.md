@@ -48,8 +48,8 @@ main thread.
 
 The `kayden` launcher calls `asyncio.run` and only then loads the frontend, so a frontend
 module cannot choose the event loop. That is wrong for any GUI toolkit, whose loop must be
-the one that runs. The desktop app therefore gets its own entry point, `kayden-desktop` (the
-command the bundle runs). It does the following:
+the one that runs. The desktop app therefore gets its own launcher,
+`kayden.frontends.desktop.launcher` (what the bundle runs; `kayden` hands over to it). It does the following:
 
 1. Reads `config.toml` and `settings.toml` with the same `load_config` as `kayden`.
 2. Uses the desktop frontend factory instead of the configured frontend.
@@ -325,7 +325,7 @@ know about the look.
   accent color, widget shapes and high-contrast themes are not.
 - **Web reuse is limited to the view model.** A web frontend will need its own rendering
   layer.
-- **Ignoring the configured frontend.** `kayden-desktop` ignores `[frontend]` in
+- **Ignoring the configured frontend.** The desktop launcher ignores `[frontend]` in
   `config.toml`, so the same data directory can be opened by either the TUI or the app. The
   instance lock refuses a second agent in the same mode. The app must show that refusal as
   "Kayden is already open" rather than a traceback.

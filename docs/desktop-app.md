@@ -20,13 +20,13 @@ published yet. Until then, install Kayden with its `desktop` extra from a checko
 uv tool install --python 3.13 --editable "Kayden[desktop]"
 ```
 
-This one install gives you both `kayden` (the terminal app) and `kayden-desktop` (this
-app), so you can switch between them in Settings. Once the desktop app is chosen there,
-`kayden` opens it too. To run the app without installing:
+Then run `kayden` and choose the desktop app as the interface in Settings. From then on,
+`kayden` opens the desktop app, and you can switch back to the terminal app in its
+Settings. To run it without installing, use this in place of `kayden`:
 
 ```bash
 cd Kayden
-uv run --python 3.13 --extra desktop kayden-desktop
+uv run --python 3.13 --extra desktop kayden
 ```
 
 The app is tested on Python 3.13. The Qt libraries it uses are not fully compatible with

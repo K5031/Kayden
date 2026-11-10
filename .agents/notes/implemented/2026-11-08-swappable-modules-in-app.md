@@ -91,14 +91,15 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
   `launch()` in `__main__.py` builds the next instance in the same process, with the
   frontend starting in that conversation.
 - `FrontendInfo.kind` says which launcher runs a frontend: `kayden` runs terminal
-  frontends on asyncio's loop, `kayden-desktop` window frontends on qasync's. A saved
-  frontend of the launcher's kind runs there. With a saved window frontend, `kayden` hands
-  over to `kayden-desktop` at launch (as for Restart now, below) when a display is
-  available, without starting the TUI; it runs the TUI, saying why in one line, only
-  without a display or when the window frontend is not installed. `kayden-desktop` with a
-  saved terminal frontend opens the desktop app, since a window cannot open a terminal.
+  frontends on asyncio's loop, the desktop launcher (`kayden.frontends.desktop.launcher`)
+  window frontends on qasync's. `kayden` is the only command: with a saved window
+  frontend it hands over to the desktop launcher at launch (as for Restart now, below)
+  when a display is available, without starting the TUI; it runs the TUI, saying why in
+  one line, only without a display or when the window frontend is not installed. The
+  desktop launcher, run directly or by a bundle, opens the desktop app even with a saved
+  terminal frontend, since a window cannot open a terminal.
 - From a terminal frontend to a window frontend, when a display is available, Restart now
-  ends the TUI and `kayden` starts `kayden-desktop` (`python -m
+  ends the TUI and `kayden` starts the desktop launcher (`python -m
   kayden.frontends.desktop.launcher`) as a detached process on the same data directory,
   config file and conversation. Without a display, `restart_frontend` stays the running
   one and the TUI says the desktop app will be used the next time Kayden is started from
