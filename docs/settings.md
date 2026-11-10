@@ -24,7 +24,7 @@ first.
 
 ## Changes that apply at restart
 
-The AI provider, its key, Tools and Interface are saved at once but
+The AI provider, its key, Tools, Interface and tool servers (MCP) are saved at once but
 used from the next start of Kayden; until then you keep working as before. The settings
 screen says so and offers **Restart now**: Kayden stops what it is doing, as when you quit,
 and starts again with the new settings in the same conversation.
@@ -137,7 +137,7 @@ Everything is in Kayden's data folder, `~/.kayden` (or `--data-dir`, or `$KAYDEN
 
 | File | Holds |
 |---|---|
-| `settings.toml` | What you changed in the settings screen, the chosen modules under `[modules]` |
+| `settings.toml` | What you changed in the settings screen, the chosen modules under `[modules]`, tool servers under `[[mcp_servers]]` (their variables by name only) |
 | `config.toml` | Optional hand-written configuration, for advanced use |
 | `memory.db` | Your conversations and long-term memory |
 | `usage.json` | What has been spent so far; delete it, while Kayden is closed, to start counting from zero |
@@ -184,4 +184,5 @@ module that rejects its options opens the settings with the message instead.
 
 Kayden looks for a key in the environment first (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`,
 `OPENAI_API_KEY`), then in the keychain where the settings screen stores it. Keys never go
-into Kayden's files or logs.
+into Kayden's files or logs. Variables of tool servers are kept in the keychain too, as
+`mcp/<server>/<NAME>`.

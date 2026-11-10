@@ -508,3 +508,19 @@ def test_kayden_says_why_it_opens_in_the_terminal(tmp_path, monkeypatch, capsys,
     launcher.main(["--data-dir", str(tmp_path)])
     assert not spawned and ran
     assert capsys.readouterr().out == notice + "\n"
+
+
+async def test_saved_mcp_servers_offer_their_tools_after_a_start(tmp_path, monkeypatch, keychain):
+    """End to end: a server saved in the settings is started and its tools are offered,
+    beside the Tools module's."""
+    monkeypatch.setenv("FIRST_API_KEY", "k")
+    settings_file(tmp_path, FAKE_MODULES + 'frontend = "scripted"\n\n[[mcp_servers]]\n'
+                  f'name = "notes"\ncommand = "{sys.executable} -m tests.fakes.mcp_server"\n')
+    seen = []
+
+    async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
+        seen.extend(spec.name for spec in await runtime.list_tools())
+
+    scripted(monkeypatch, script)
+    await asyncio.wait_for(launcher.launch(args(tmp_path), TERMINAL), 30)
+    assert "mcp__notes__add" in seen and "recall" in seen

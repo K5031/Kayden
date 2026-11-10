@@ -57,6 +57,7 @@ The permission level is set in [Settings](settings.md#permissions).
 | Ctrl+K | `/cancel [id]` | Cancel one running tool |
 | F3 | `/conversations` | Open, start, rename, archive or delete conversations |
 | F4 | `/memory` | See, add, edit or forget long-term memory |
+| | `/mcp` | Add, edit or remove tool servers (MCP) |
 | | `/folder [path]` | Show the work folder, or start a chat in another one |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
 | Ctrl+Q | `/quit` | Quit |
@@ -94,6 +95,27 @@ sure of. It links the pages its answer relies on. Searches go to DuckDuckGo and 
 search engines, and pages are fetched from the sites themselves. Anything the agent has
 read can end up in a search or an address, so keep secrets out of what you share with it.
 It reads public pages only, not pages on your computer or your local network.
+
+## More tools (MCP)
+
+Tool servers give Kayden more tools: GitHub, a database, your calendar, and many more.
+They use MCP, the Model Context Protocol, which most AI apps support; servers are listed on
+their makers' sites and at github.com/modelcontextprotocol/servers.
+
+To add one, open **Kayden → Tool servers (MCP)…** in the desktop app, or `/mcp` in the
+terminal, and give it:
+
+- a **name**, such as `github`; its tools appear as `mcp__github__…`;
+- a **command** to start it (`npx -y @modelcontextprotocol/server-github`) or its **URL**;
+- any **variables** it needs, one per line as `NAME=value`, such as an access token. Values
+  are kept in your system's keychain, never in a file; leave a value empty to keep it.
+
+Servers start with the next start of Kayden: press **Restart now**. A server that fails to
+start is left out; the others still work.
+
+A tool server is someone else's program running with your permissions, so add only ones
+you trust. Kayden treats each of its actions as reaching outside the work folder: it checks
+or asks before it runs (see [Permissions](settings.md#permissions)).
 
 ## Long-running tools
 

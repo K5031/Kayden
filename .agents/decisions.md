@@ -590,3 +590,20 @@ Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
 |---|---|
 | Desktop | A committed call is `Phase.WAITING` ("waiting", no Cancel) until `ToolStarted`: it may wait for a permission prompt, the automatic review, or earlier calls |
 | TUI | The group line shows "waiting" for a requested call, as the desktop app does |
+
+## MCP servers
+
+Design: [Agent Note](notes/implemented/2026-11-10-module-provided-tools.md).
+
+| Choice | Value |
+|---|---|
+| Library | The official `mcp` SDK (2.3), `mcp.Client`, one task per server holding its connection |
+| Tool names | `mcp__<server>__<tool>`, characters outside `[A-Za-z0-9_-]` replaced by `_`, cut at 64 |
+| read_only | The server's `read_only_hint`; absent counts as not read-only |
+| Confined | Never: AUTO reviews each call, stricter levels ask |
+| Environment | The SDK's safe default (HOME, LOGNAME, PATH, SHELL, USER), the server's own variables, and `PERMISSION_CEILING_ENV` |
+| Start | At the first `list_tools` (the first request), all servers at once, 30 s to start and list; one that fails is left out and logged |
+| Settings | `[[mcp_servers]]` in settings.toml: name, command or url, env as variable names; values in the keychain as `mcp/<server>/<NAME>`; removed variables are erased from it |
+| Apply | Like modules: at the next start (Restart now), as one more Tools module after the configured one |
+| Names | 1 to 32 of letters, digits, `-` and `_`, unique |
+| Results | Text content joined; other content shown as `[<type> content]`; structured content as JSON when there is no text |
