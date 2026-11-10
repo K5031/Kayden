@@ -188,29 +188,12 @@ async def test_seed_from_must_exist_and_start_a_new_conversation(make: Any) -> N
         await h.start(seed_from="missing")
     with pytest.raises(ValueError):
         await h.runtime.start(StartOptions(conv.id, seed_from=conv.id))
-    with pytest.raises(ValueError):
-        await h.runtime.start(StartOptions(conv.id, remember=False))
 
 
-# ── remember ──
+# ── long-term memory ──
 
 
-async def test_remember_off_neither_uses_nor_adds_long_term_memory(make: Any) -> None:
-    core = ScriptedCore(default=lambda r: Step(text="summary" if r.maintenance else "ok"))
-    h: Harness = await make(core=core, memory_kw={"compact_at": 0.002})
-    await h.runtime.add_memory("The user's cat is called Miso.")
-    h.memory.extract = ["The user likes tea."]
-    conv = await h.start(remember=False)
-    assert not conv.remember
-    for i in range(3):
-        await h.turn(f"message {i} " + "x" * 400)
-    assert h.store.conversations[conv.id].compactions >= 1
-    turns = [r for r in core.requests if not r.maintenance]
-    assert all("Miso" not in r.system for r in turns)
-    assert [e.text for e in await h.runtime.memories()] == ["The user's cat is called Miso."]
-
-
-async def test_remember_on_uses_and_adds_long_term_memory(make: Any) -> None:
+async def test_conversations_use_and_add_long_term_memory(make: Any) -> None:
     core = ScriptedCore(default=lambda r: Step(text="summary" if r.maintenance else "ok"))
     h: Harness = await make(core=core, memory_kw={"compact_at": 0.002})
     h.memory.extract = ["The user likes tea."]
@@ -224,16 +207,13 @@ async def test_remember_on_uses_and_adds_long_term_memory(make: Any) -> None:
     assert "The user likes tea." in core.requests[-1].system
 
 
-async def test_recall_all_searches_other_conversations_but_not_archived_or_private(
-        make: Any) -> None:
+async def test_recall_all_searches_other_conversations_but_not_archived(make: Any) -> None:
     h: Harness = await make(core=ScriptedCore(default=Step(text="ok")))
     shared = await h.start()
     await h.turn("the falcon launches at dawn")
     archived = await h.start()
     await h.turn("the falcon nests in spring")
     await h.runtime.archive_conversation(archived.id, True)
-    private = await h.start(remember=False)
-    await h.turn("the falcon is secret")
 
     h.core.add(*[
         Step(calls=[call("recall", {"query": "falcon"}, id="r1"),
@@ -246,17 +226,8 @@ async def test_recall_all_searches_other_conversations_but_not_archived_or_priva
     assert "dawn" not in results["r1"].content  # this conversation only
     assert results["r2"].status == ToolStatus.OK
     assert "dawn" in results["r2"].content
-    assert "spring" not in results["r2"].content and "secret" not in results["r2"].content
+    assert "spring" not in results["r2"].content
     assert shared.id in results["r2"].content
-
-    h.core.add(*[
-        Step(calls=[call("recall", {"query": "falcon", "scope": "all"}, id="r3")]),
-        Step(text="done"),
-    ])
-    await h.start(private.id)
-    await h.turn("look it up")
-    refused = (await h.results())["r3"]
-    assert refused.status == ToolStatus.ERROR and "remember" in refused.content.lower()
 
 
 # ── editable long-term memory ──

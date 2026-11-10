@@ -95,9 +95,7 @@ Memory's `system_addendum` follows, separated by a blank line.
 - REFUSED: names the reason (policy, denial, non-interactive frontend, or the exhausted
   budget dimension).
 - recall: one line per hit, `[conversation/message role ISO-time] text`, text capped at
-  1000 characters. Scope "all" in a conversation with Remember off: ERROR "recall with
-  scope "all" is not available here: the user turned off Remember for this conversation,
-  so it stays private."
+  1000 characters.
 - Unsupported optional Memory methods: NotImplementedError "this memory module cannot edit
   memories" / "this memory module cannot delete conversations".
 
@@ -186,9 +184,9 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   re-encodes unchanged. Appending a block class without a tag raises TypeError.
 - Stores use only the stable tags from the start; no code reads Python import-path tags.
   Version 1 stores written by the pre-migration module with import-path tags are refused
-  rather than read as opaque blocks. Schema versions: see "SqliteMemory schema 3" below.
+  rather than read as opaque blocks. Schema versions: see "SqliteMemory schema" below.
 - The archive is append-only: the source never runs UPDATE on `messages`, and DELETE
-  only inside `delete_conversation` (see schema 3 below); the no-update/no-delete
+  only inside `delete_conversation` (see "SqliteMemory schema" below); the no-update/no-delete
   triggers stay in place for the life of a store.
 - `append` compares a re-appended id with the stored message (decoded equality) and skips
   it when equal; a conflict raises ValueError and rolls back the batch.
@@ -409,25 +407,23 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 |---|---|
 | `activate()` in IDLE | Allowed for every conversation; in an autonomous one it also drops a pending wake-up (a new cycle clears the wake set) |
 | `start()` | Always leaves the agent IDLE. A resumed autonomous conversation has no wake set, so nothing runs before the user acts |
-| `StartOptions` validation | `remember=False` or `seed_from` with a `conversation_id`: ValueError, before anything is opened |
+| `StartOptions` validation | `seed_from` with a `conversation_id`: ValueError, before anything is opened |
 | `set_autonomous` | Changes the in-memory conversation first (so a wake-up check during the write sees it), then Memory; reverts if Memory fails |
 | Untitled display | `ConversationInfo.preview`: the Text of the first USER message, whitespace collapsed, 100 characters |
-| `Memory.search` scope | `conversation_ids` (None = all). `recall(scope="all")` passes the open conversation plus every listed (not archived) conversation with Remember on; `search_archive` without an id searches everything, archived included |
+| `Memory.search` scope | `conversation_ids` (None = all). `recall(scope="all")` passes the open conversation plus every listed (not archived) conversation; `search_archive` without an id searches everything, archived included |
 | Memory entry ids | Strings; SqliteMemory uses its integer row ids |
 
-### SqliteMemory schema 3
+### SqliteMemory schema
 
-- Version 3 (`PRAGMA user_version`). A store of any other version is refused; Kayden
+- Version 4 (`PRAGMA user_version`). A store of any other version is refused; Kayden
   carries no migration code. Erasing a row from `messages_fts` repeats the text it was
   indexed with, so `codec.searchable_text` must not change without a new schema version.
-- `conversations`: `autonomous`, `remember`, `archived`, `seed_from` columns.
+- `conversations`: `autonomous`, `archived`, `seed_from` columns.
 - Long-term memory: `memory_entries` (id, source conversation or NULL for the user's,
   created_at) and `memory_revisions` (entry, text, created_at); the current text is the
   newest revision. `forgotten` holds SHA-256 fingerprints of
   forgotten texts (casefolded, whitespace collapsed); compaction drops a new entry whose
   fingerprint is there. A reworded fact is new to it.
-- Remember off: `assemble` and `inspect` show no long-term entries and compaction adds
-  none; the summary is written as usual.
 - Seeding: while `seed_from` is set and the conversation has no summary row, `maintain`
   first runs the compaction prompt (light model) on the source's current summary and as
   many of its newest exchanges as fit, and stores the result as a summary with

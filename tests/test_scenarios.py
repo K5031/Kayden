@@ -354,7 +354,7 @@ async def test_h_historical_recall(make: Any) -> None:
     assert result.status == ToolStatus.OK and "4417" in result.content
 
 
-# ── I: recall across conversations, never in a temporary chat ──
+# ── I: recall across conversations ──
 
 
 async def test_i_recall_across_conversations(make: Any) -> None:
@@ -362,8 +362,6 @@ async def test_i_recall_across_conversations(make: Any) -> None:
         Step(text="noted"),
         Step(calls=[call("recall", {"query": "falcon launches", "scope": "all"}, id="p1")]),
         Step(text="tuesday it is"),
-        Step(calls=[call("recall", {"query": "falcon launches", "scope": "all"}, id="p2")]),
-        Step(text="I cannot look"),
     ])
     h: Harness = await make(core=core)
     first = await h.start()
@@ -375,11 +373,6 @@ async def test_i_recall_across_conversations(make: Any) -> None:
     result = (await h.results())["p1"]
     assert result.status == ToolStatus.OK and "tuesday" in result.content
     assert list(await h.runtime.history(first.id)) == first_history  # read, never changed
-
-    await h.start(remember=False)
-    await h.turn("when does falcon launch?")
-    refused = (await h.results())["p2"]
-    assert refused.status == ToolStatus.ERROR and "tuesday" not in refused.content
 
 
 # ── J: multi-instance workforce ──

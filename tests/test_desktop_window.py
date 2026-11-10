@@ -329,21 +329,14 @@ async def test_delete_asks_with_cancel_as_the_default(make, qapp):
         current.id]
 
 
-async def test_private_chat_and_continue(make, qapp):
+async def test_continue_in_a_new_conversation(make, qapp):
     h: Harness = await make()
     first = await h.start()
     window, controller, _ = await open_window(h)
-    assert not window.private_label.isVisibleTo(window)
-    window.private_action.trigger()
-    await eventually(lambda: controller.model.conversation.id != first.id)
-    await eventually(lambda: window.private_label.isVisibleTo(window))
-    assert "won't use or add to long-term memory" in window.private_label.text()
-    assert not h.runtime.snapshot().conversation.remember
     await window.fill_sidebar()
     action(window.conversation_menu(window.conversation_info(first.id)),
            "Continue in a new conversation").trigger()
     await eventually(lambda: controller.model.conversation.seed_from == first.id)
-    assert not window.private_label.isVisibleTo(window)
 
 
 async def test_autonomy_switch_with_spending_next_to_it(make, qapp):

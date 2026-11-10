@@ -169,11 +169,10 @@ async def test_summary_is_held_to_its_budget(open_store):
     assert view.long_term == []
 
 
-async def test_long_term_entries_are_shared_by_conversations_that_remember(open_store):
+async def test_long_term_entries_are_shared_by_conversations(open_store):
     memory = open_store()
     first = await memory.create_conversation(title="test")
     second = await memory.create_conversation(title="test")
-    private = await memory.create_conversation(title="test", remember=False)
     fact = Message("fact", Role.USER, (Text("remember: user prefers green tea."),), time.time())
     await memory.append(first.id, [fact])
     await fill(memory, first.id, tokens(0, 40))
@@ -182,7 +181,6 @@ async def test_long_term_entries_are_shared_by_conversations_that_remember(open_
 
     assert (await memory.inspect(first.id)).long_term == ["user prefers green tea"]
     assert "user prefers green tea" in await addendum(memory, second.id)
-    assert "green tea" not in await addendum(memory, private.id)
 
     # Re-extracting a known fact does not duplicate it; entries survive a reopen.
     fact2 = Message("fact2", Role.USER, fact.blocks, time.time())

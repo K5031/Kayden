@@ -126,7 +126,6 @@ KEY_PAGES = {
     "openai": "https://platform.openai.com/api-keys",
 }
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
-PRIVATE_NOTE = "This chat won't use or add to long-term memory. Its messages are still kept."
 AUTONOMY_LABEL = "Autonomous mode"
 AUTONOMY_HINT = ("Kayden may keep working without waiting for you, for example when a "
                  "background task finishes. It still asks before actions as set in Settings "
@@ -140,7 +139,7 @@ TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDON
 TITLE_ROLE = Qt.ItemDataRole.UserRole + 1
 PREVIEW_ROLE = Qt.ItemDataRole.UserRole + 2
 DATE_ROLE = Qt.ItemDataRole.UserRole + 3
-FLAGS_ROLE = Qt.ItemDataRole.UserRole + 4  # {"private", "archived"}
+FLAGS_ROLE = Qt.ItemDataRole.UserRole + 4  # {"archived"}
 
 
 def _spawn(coro: Any) -> asyncio.Task[Any]:
@@ -287,11 +286,6 @@ class RowDelegate(QStyledItemDelegate):
         small = self._small_font(option)
         small_metrics = QFontMetrics(small)
         left = inner.left()
-        if "private" in flags:
-            size = small_metrics.height()
-            lock = theme.icon("lock", colors.muted, size)
-            lock.paint(painter, left, inner.top() + 1, size, size)
-            left += size + 4
         right = inner.right()
         if date:
             painter.setFont(small)
@@ -638,23 +632,9 @@ class MainWindow(QMainWindow):
         side.setSpacing(8)
         self.new_action = QAction("&New chat", self, shortcut=QKeySequence.StandardKey.New)
         self.new_action.triggered.connect(lambda: self.open_conversation(None))
-        self.private_action = QAction("New &private chat", self,
-                                      shortcut=QKeySequence("Ctrl+Shift+N"))
-        self.private_action.setToolTip(PRIVATE_NOTE)
-        self.private_action.setStatusTip(PRIVATE_NOTE)
-        self.private_action.triggered.connect(lambda: self.open_conversation(None,
-                                                                             remember=False))
         self.new_button = _primary(QPushButton("New chat"))
         self.new_button.setToolTip("Start a new conversation (Ctrl+N)")
         self.new_button.clicked.connect(self.new_action.trigger)
-        self.private_button = QToolButton(objectName="private")
-        self.private_button.setToolTip(f"New private chat (Ctrl+Shift+N). {PRIVATE_NOTE}")
-        self.private_button.setAccessibleName("New private chat")
-        self.private_button.clicked.connect(self.private_action.trigger)
-        new_row = QHBoxLayout()
-        new_row.setSpacing(6)
-        new_row.addWidget(self.new_button, 1)
-        new_row.addWidget(self.private_button)
         self.conversation_list = ConversationList()
         self.conversation_list.setItemDelegate(RowDelegate(self.conversation_list))
         self.conversation_list.setMouseTracking(True)
@@ -675,7 +655,7 @@ class MainWindow(QMainWindow):
         self.show_archived = Switch("Show archived")
         self.show_archived.toggled.connect(lambda _: _spawn(self.fill_sidebar()))
         self.switch_reason = _label(selectable=False, role="small")
-        side.addLayout(new_row)
+        side.addWidget(self.new_button)
         side.addWidget(_label("Conversations", selectable=False, role="small"))
         side.addWidget(self.conversation_list, 1)
         side.addWidget(self.show_archived)
@@ -716,9 +696,6 @@ class MainWindow(QMainWindow):
             controls.addWidget(widget)
         head.addWidget(self.title_label, 1)
         head.addWidget(group)
-        self.private_label = _label("Private chat: " + PRIVATE_NOTE[0].lower() + PRIVATE_NOTE[1:],
-                                    selectable=False, role="small")
-        self.private_label.setContentsMargins(18, 6, 18, 0)
 
         self.scroll = QScrollArea(widgetResizable=True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -785,7 +762,6 @@ class MainWindow(QMainWindow):
         banner_row.setContentsMargins(20, 10, 20, 0)
         banner_row.addWidget(self.banner)
         column.addLayout(banner_row)
-        column.addWidget(self.private_label)
         column.addWidget(self.scroll, 1)
         column.addLayout(self.prompts)
         column.addLayout(bottom)
@@ -801,7 +777,6 @@ class MainWindow(QMainWindow):
 
     def _paint_icons(self) -> None:
         colors = theme.current()
-        self.private_button.setIcon(theme.icon("lock", colors.muted))
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.on_accent))
 
@@ -820,7 +795,7 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         self.memory_action = QAction("&Memory…", self)
         self.memory_action.triggered.connect(self.open_memory)
-        for action in (self.new_action, self.private_action, None, self.memory_action,
+        for action in (self.new_action, None, self.memory_action,
                        settings, None, stop, quit_action):
             if action is None:
                 file_menu.addSeparator()
@@ -854,14 +829,13 @@ class MainWindow(QMainWindow):
         """Hide Memory when the Memory module cannot show what it remembers."""
         self.memory_action.setVisible(await self.controller.memories() is not None)
 
-    def open_conversation(self, conversation_id: str | None, *, remember: bool = True,
+    def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
         if reason := self.controller.can_switch():
             self.model.notify(reason)
             _spawn(self.fill_sidebar())  # select the open conversation again
             return
-        task = self.controller.open_conversation(conversation_id, remember=remember,
-                                                 seed_from=seed_from)
+        task = self.controller.open_conversation(conversation_id, seed_from=seed_from)
         task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar())))
 
     # ── view model changes ────────────────────────────────────────────────
@@ -937,7 +911,6 @@ class MainWindow(QMainWindow):
         if conversation is not None:
             self.title_label.setText(conversation_label(
                 self._conversations.get(conversation.id, conversation)))
-        self.private_label.setVisible(model.private)
         self.autonomy.setEnabled(conversation is not None)
         self.autonomy.setChecked(model.autonomous)
         self.spending_label.setText(model.spending_text)
@@ -951,8 +924,7 @@ class MainWindow(QMainWindow):
         self.load_earlier.setVisible(model.has_earlier)
         self.load_earlier.setEnabled(True)
         reason = self.controller.can_switch()
-        for widget in (self.new_button, self.private_button, self.new_action,
-                       self.private_action):
+        for widget in (self.new_button, self.new_action):
             widget.setEnabled(reason is None)
         self.switch_reason.setText(reason or "")
         self.switch_reason.setVisible(reason is not None)
@@ -973,15 +945,13 @@ class MainWindow(QMainWindow):
         self._conversations = {info.id: info for info in conversations}
         self.conversation_list.clear()
         for info in conversations:
-            notes = [n for n, on in (("private", not info.remember),
-                                     ("archived", info.archived)) if on]
             title = conversation_label(info)
-            entry = QListWidgetItem(title + (f"  ({', '.join(notes)})" if notes else ""))
+            entry = QListWidgetItem(title + ("  (archived)" if info.archived else ""))
             entry.setData(Qt.ItemDataRole.UserRole, info.id)
             entry.setData(TITLE_ROLE, title)
             entry.setData(PREVIEW_ROLE, conversation_preview(info))
             entry.setData(DATE_ROLE, relative_date(info.updated_at))
-            entry.setData(FLAGS_ROLE, set(notes))
+            entry.setData(FLAGS_ROLE, {"archived"} if info.archived else set())
             self.conversation_list.addItem(entry)
             if info.id == current:
                 self.conversation_list.setCurrentItem(entry)
@@ -1114,8 +1084,8 @@ class MemoryDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 16)
         layout.addWidget(_label("Memory", selectable=False, role="heading"))
-        layout.addWidget(_label("Kayden remembers these things across conversations. "
-                                "Private chats don't use or add to them.", tone="muted"))
+        layout.addWidget(_label("Kayden remembers these things across conversations.",
+                                tone="muted"))
         self.entries = QListWidget()
         self.entries.setAccessibleName("Memories")
         self.entries.setItemDelegate(RowDelegate(self.entries, wrap=True))

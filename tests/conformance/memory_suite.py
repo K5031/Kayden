@@ -235,7 +235,7 @@ class MemoryConformance:
         first = await memory.create_conversation(title="first")
         second = await memory.create_conversation()
         assert first.title == "first" and second.title is None
-        assert not first.autonomous and first.remember and not first.archived
+        assert not first.autonomous and not first.archived
         assert first.seed_from is None
         await memory.append(first.id, [text_message("tok0001")])
         listed = await memory.list_conversations()
@@ -246,15 +246,13 @@ class MemoryConformance:
     async def test_conversation_options_are_stored(self, open_memory: MemoryFactory):
         memory = open_memory()
         source = await memory.create_conversation(title="source")
-        conv = await memory.create_conversation(autonomous=True, remember=False,
-                                                seed_from=source.id)
-        assert (conv.autonomous, conv.remember, conv.seed_from) == (True, False, source.id)
+        conv = await memory.create_conversation(autonomous=True, seed_from=source.id)
+        assert (conv.autonomous, conv.seed_from) == (True, source.id)
         with pytest.raises(KeyError):
             await memory.create_conversation(seed_from="missing")
         await memory.aclose()
         [reopened] = [c for c in await open_memory().list_conversations() if c.id == conv.id]
-        assert (reopened.autonomous, reopened.remember, reopened.seed_from) == (
-            True, False, source.id)
+        assert (reopened.autonomous, reopened.seed_from) == (True, source.id)
 
     async def test_update_conversation(self, memory: Memory):
         conv = await memory.create_conversation()
@@ -704,19 +702,6 @@ class MemoryConformance:
         for call in (memory.revise(entry.id, "x"), memory.forget(entry.id)):
             with pytest.raises(KeyError):
                 await call
-
-    async def test_remember_off_neither_uses_nor_adds_long_term_memory(
-        self, memory: Memory, completion: FakeCompletion
-    ):
-        await self.editable(memory)
-        await memory.remember("The user lives in Oslo.")
-        private = await memory.create_conversation(title="test", remember=False)
-        await self.fill(memory, private.id, tokens(0, 30))
-        assert "Oslo" not in await addendum(memory, private.id)
-        view = await memory.inspect(private.id)
-        assert view is None or list(view.long_term) == []
-        assert await self.maintain(memory, private.id, completion)
-        assert [e.text for e in await memory.memories()] == ["The user lives in Oslo."]
 
     # ── Continue from ─────────────────────────────────────────────────────
 

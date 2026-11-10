@@ -111,13 +111,12 @@ class InMemoryMemory(Memory):
         return self.store.conversations[conversation_id]  # KeyError for unknown ids
 
     async def create_conversation(self, *, title: str | None = None, autonomous: bool = False,
-                                  remember: bool = True, seed_from: ConversationId | None = None
-                                  ) -> ConversationInfo:
+                                  seed_from: ConversationId | None = None) -> ConversationInfo:
         if seed_from is not None:
             self._conv(seed_from)
         now = time.time()
         info = ConversationInfo(uuid.uuid4().hex, title, now, now, autonomous=autonomous,
-                                remember=remember, seed_from=seed_from)
+                                seed_from=seed_from)
         self.store.conversations[info.id] = Conversation(info)
         return info
 
@@ -216,7 +215,7 @@ class InMemoryMemory(Memory):
         parts = []
         if conv.summary:
             parts.append(f"Summary of earlier conversation:\n{conv.summary}")
-        if conv.info.remember and (lt := [e.text for e in self.store.entries()]):
+        if lt := [e.text for e in self.store.entries()]:
             parts.append("Long-term memory:\n" + "\n".join(lt))
         return "\n\n".join(parts)
 
@@ -313,11 +312,10 @@ class InMemoryMemory(Memory):
         # Atomic: summary and compaction point change together, after inference.
         conv.summary, conv.active_from = summary, conv.active_from + j
         conv.compactions += 1
-        if conv.info.remember:
-            known = {e.text for e in self.store.entries()} | self.store.forgotten
-            for fact in self.extract:
-                if fact not in known:
-                    self.store.add(fact, conv.info.id)
+        known = {e.text for e in self.store.entries()} | self.store.forgotten
+        for fact in self.extract:
+            if fact not in known:
+                self.store.add(fact, conv.info.id)
         return True
 
     async def search(self, query: str, *,
@@ -341,7 +339,7 @@ class InMemoryMemory(Memory):
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView | None:
         conv = self._conv(conversation_id)
-        long_term = [e.text for e in self.store.entries()] if conv.info.remember else []
+        long_term = [e.text for e in self.store.entries()]
         return MemoryView(conv.summary, long_term)
 
 

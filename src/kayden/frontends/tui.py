@@ -138,7 +138,6 @@ HELP = (
     "Messages can be sent while the agent runs; they are queued."
 )
 UNTITLED = "New chat"
-REMEMBER_HINT = "Off: this chat won't use or add to long-term memory."
 # States in which runtime.start() may switch conversations (given no outstanding call).
 SWITCHABLE = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 HISTORY_PAGE = 100  # messages loaded per history page
@@ -795,8 +794,7 @@ class MemoryScreen(ListScreen):
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Long-term memory", classes="title")
-            yield Label("Kayden remembers these things across conversations. Private chats "
-                        "don't use or add to them.", classes="hint")
+            yield Label("Kayden remembers these things across conversations.", classes="hint")
             yield OptionList(id="memories")
             with Horizontal(classes="buttons actions"):
                 yield Button("Add", variant="primary", id="add")
@@ -888,10 +886,6 @@ class StartScreen(ModalScreen[StartOptions | None]):
             yield Label("Continue from")
             yield Select([("Nothing, start fresh", FRESH)], value=FRESH, allow_blank=False,
                          id="seed-from")
-            with Horizontal(classes="switch-row"):
-                yield Switch(True, id="remember")
-                yield Label("Remember")
-            yield Label(REMEMBER_HINT, id="remember-hint", classes="hint")
             yield Button("Start", variant="primary", id="start")
 
     def on_mount(self) -> None:
@@ -923,8 +917,7 @@ class StartScreen(ModalScreen[StartOptions | None]):
     def _conversation_changed(self, event: Select.Changed) -> None:
         resumed = self.conversations.get(str(event.value))
         self.query_one("#autonomous", Switch).value = resumed is not None and resumed.autonomous
-        for selector in ("#seed-from", "#remember"):
-            self.query_one(selector).disabled = resumed is not None
+        self.query_one("#seed-from").disabled = resumed is not None
 
     @on(Button.Pressed, "#start")
     def _start(self) -> None:
@@ -940,7 +933,6 @@ class StartScreen(ModalScreen[StartOptions | None]):
         self.dismiss(StartOptions(
             model=model_id,
             autonomous=autonomous,
-            remember=self.query_one("#remember", Switch).value,
             seed_from=None if seed == FRESH else str(seed),
         ))
 

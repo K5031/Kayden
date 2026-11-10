@@ -300,18 +300,13 @@ def changes(model: ConversationModel) -> list[object]:
     return seen
 
 
-async def test_private_chat_and_continue_from(make):
+async def test_continue_from(make):
     h: Harness = await make()
     first = await h.start()
     await h.turn("plan a trip")
     model, controller, _ = await attach(h)
-    assert not model.private
-    await controller.open_conversation(None, remember=False)
-    await eventually(lambda: model.conversation.id != first.id)
-    assert model.private and not model.conversation.remember
     await controller.open_conversation(None, seed_from=first.id)
     await eventually(lambda: model.conversation.seed_from == first.id)
-    assert not model.private
     listed = await controller.conversations()
     assert listed[-1].id == first.id and listed[-1].preview == "plan a trip"
 

@@ -10,12 +10,7 @@ conversation after its first message; you can rename it.
   [long-term memory](#memory).
 - **Continue from**: a new conversation that knows where an earlier one left off. Kayden
   writes a short summary of the earlier one into the new one, then leaves the earlier one
-  as it was. Use it when a conversation has grown long or wandered off. Continuing from a
-  private chat carries what was said there into the new conversation; if the new one has
-  Remember on, the agent may then keep facts from it in long-term memory.
-- **Remember** (on by default): turned off when you start a conversation, it makes a
-  private chat: it does not use long-term memory, adds nothing to it, and the agent cannot
-  look into your other conversations from it. Its messages are still saved like any other.
+  as it was. Use it when a conversation has grown long or wandered off.
 - **Archive** hides a conversation from the list and from the agent's searches. You can
   bring it back.
 - **Delete** erases a conversation for good. See [Deleting](#deleting).
@@ -55,7 +50,7 @@ Kayden keeps every message of every conversation until you delete the conversati
 - When a conversation gets long, older messages are **summarized** so the recent part fits
   the model's context. The originals stay saved.
 - The agent can **search** a conversation's full history, including summarized parts, and
-  (unless Remember is off) your other conversations that are not archived.
+  your other conversations that are not archived.
 - **Long-term memory** is one list of lasting facts (about you, your setup) shared by all
   your conversations. Kayden adds to it as conversations get summarized. You can see the
   list and add, correct or **forget** entries. A forgotten fact is erased, and Kayden does

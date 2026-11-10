@@ -9,7 +9,6 @@ then press Enter. For a new conversation you can also set:
 |---|---|
 | Autonomous mode | The agent may wait for its background work and continue on its own (see [Autonomy](concepts.md#autonomy)) |
 | Continue from | Start from where an earlier conversation left off |
-| Remember | Off: this chat won't use or add to long-term memory |
 
 To skip the screen:
 

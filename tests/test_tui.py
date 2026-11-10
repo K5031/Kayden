@@ -224,7 +224,7 @@ class StubRuntime:
         if options.conversation_id is None:
             info = ConversationInfo("conv-new", None, 0.0, 0.0,
                                     autonomous=bool(options.autonomous),
-                                    remember=options.remember, seed_from=options.seed_from)
+                                    seed_from=options.seed_from)
             self.conversations.insert(0, info)
         else:
             info = next(c for c in self.conversations if c.id == options.conversation_id)
@@ -619,16 +619,13 @@ async def test_start_screen_starts_a_new_conversation():
         assert not screen.query("#mode") and not screen.query("#activation")
         await until(pilot, lambda: len(screen.query_one("#conversation", Select)._options) == 4)
         assert screen.query_one("#autonomous", Switch).value is False
-        assert screen.query_one("#remember", Switch).value is True
-        assert "won't use or add to long-term memory" in plain(screen.query_one("#remember-hint"))
         screen.query_one("#autonomous", Switch).value = True
-        screen.query_one("#remember", Switch).value = False
         screen.query_one("#seed-from", Select).value = "conv-2"
         await pilot.pause()
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
         [options] = [c[1] for c in stub.calls if c[0] == "start"]
-        assert options == StartOptions(autonomous=True, remember=False, seed_from="conv-2")
+        assert options == StartOptions(autonomous=True, seed_from="conv-2")
         await until(pilot, lambda: "autonomous" in status(app))
         await until(pilot, lambda: ("history", "conv-new") in stub.calls)
 
@@ -648,7 +645,6 @@ async def test_start_screen_lists_titles_and_resumes_a_conversation():
         select.value = "conv-3"
         await pilot.pause()
         assert screen.query_one("#autonomous", Switch).value is True  # its current value
-        assert screen.query_one("#remember", Switch).disabled
         assert screen.query_one("#seed-from", Select).disabled
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))

@@ -75,13 +75,10 @@ data folder: `instance.lock`, `usage.json` and `events.jsonl`.
   source's current summary and as much of its verbatim tail as the light model takes, and
   stores the result as the new conversation's first summary. This runs inside the first
   authorized cycle and is metered. The source is untouched.
-- **Remember** (`ConversationInfo.remember`, default on, fixed at creation). With it off,
-  long-term memory is neither assembled into the conversation nor extracted from it, and
-  `recall(scope="all")` is refused. The archive still keeps every message.
 
 ### Long-term memory the user can see and change
 
-One list per store, shared by every conversation with Remember on.
+One list per store, shared by every conversation.
 
 | RuntimeAPI | Memory | Effect |
 |---|---|---|
@@ -103,8 +100,7 @@ One list per store, shared by every conversation with Remember on.
 ### Searching other conversations
 
 `peek_other_mode` is removed. `recall` takes `scope: "conversation" | "all"`. `"all"`
-searches the open conversation and every conversation that is not archived and has
-Remember on, and is refused (ERROR) with Remember off. `Memory.search` takes
+searches the open conversation and every conversation that is not archived. `Memory.search` takes
 `conversation_ids` (None = all), so the runtime decides the scope and Memory stays free of
 that policy.
 
@@ -151,23 +147,26 @@ control what the agent sees; deletion controls what the disk keeps.
 
 ### Stored data
 
-`SqliteMemory` is at schema 3 and refuses a store of another version. Lock, usage and
+`SqliteMemory` refuses a store of another version. Lock, usage and
 event log are one each per data folder. Kayden carries no code for data folders or
 command-line flags of the per-mode versions.
 
 ### Frontends
 
-- **TUI.** The start screen has an Autonomous switch, Continue from and Remember instead of
-  the mode and activation pickers. A conversation list offers open, rename, archive and
+- **TUI.** The start screen has an Autonomous switch and Continue from instead of the mode
+  and activation pickers. A conversation list offers open, rename, archive and
   delete with confirmation; a memory screen lists, adds, edits and forgets entries; the
   status bar shows when the open conversation is autonomous.
 - **Desktop app.** The sidebar shows titles and offers rename, continue from, archive and
-  delete; a private chat can be started; the open conversation has an autonomy switch with
+  delete; the open conversation has an autonomy switch with
   the spending next to it; a Memory window lists, adds, edits and forgets entries. See
   [Desktop app](../proposed/2026-11-07-desktop-app.md).
 
 ## Alternatives considered
 
+- **A Remember switch per conversation** (off = a private chat that neither uses nor adds
+  to long-term memory and cannot search other conversations). The owner did not ask for
+  it; forgetting an entry and deleting a conversation already cover what the agent keeps.
 - **Keep Continuous Mode and add conversation management to sessions.** The smallest
   change. It leaves the unresettable conversation, the invisible long-term memory and the
   two-mode concepts in place, which are the problem.
@@ -208,8 +207,8 @@ command-line flags of the per-mode versions.
 - **One coordinated break.** Every module, the TUI, the desktop app, the launcher and most
   tests changed together, under contract Draft 3. Nothing outside this repository
   implemented the contracts, so nothing else broke.
-- **The user curates the context.** New, Continue from, Remember, archive, forget and
-  delete each change what the agent sees; long-term memory is visible and correctable.
+- **The user curates the context.** New, Continue from, archive, forget and delete
+  each change what the agent sees; long-term memory is visible and correctable.
 - **Deletion is real but bounded.** Content is overwritten in `memory.db` and the
   write-ahead log, and the event log never holds it, but backups and the provider are out
   of reach. The content-free log is less useful for debugging what the agent said or ran;

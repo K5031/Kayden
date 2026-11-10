@@ -142,7 +142,6 @@ QPushButton[danger="true"] {{ background: {c.error}; color: {c.bg}; border-color
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px;
     color: {c.muted}; }}
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
-QToolButton#private {{ border: 1px solid {c.line}; border-radius: 8px; padding: 6px; }}
 QToolButton#send {{ background: {c.accent}; border-radius: 16px; padding: 0; }}
 QToolButton#send:hover {{ background: {c.accent_hover}; }}
 
@@ -211,7 +210,7 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
-    """A line icon: "send" (an up arrow), "stop" (a square) or "lock"."""
+    """A line icon: "send" (an up arrow) or "stop" (a square)."""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.setDevicePixelRatio(scale)
@@ -233,12 +232,5 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
         case "stop":
             painter.setBrush(QColor(color))
             painter.drawRoundedRect(QRectF(s * 0.3, s * 0.3, s * 0.4, s * 0.4), 1.5, 1.5)
-        case "lock":
-            painter.drawRoundedRect(QRectF(s * 0.2, s * 0.45, s * 0.6, s * 0.42), 2, 2)
-            path = QPainterPath(QPointF(s * 0.33, s * 0.45))
-            path.lineTo(s * 0.33, s * 0.32)
-            path.arcTo(QRectF(s * 0.33, s * 0.12, s * 0.34, s * 0.34), 180, -180)
-            path.lineTo(s * 0.67, s * 0.45)
-            painter.drawPath(path)
     painter.end()
     return QIcon(pixmap)

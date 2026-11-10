@@ -357,9 +357,8 @@ class Runtime:
             raise RuntimeStateError(f"cannot start while {self._state()}")
         if self._ops:
             raise RuntimeStateError("operations are still outstanding")
-        if options.conversation_id is not None and (
-                options.seed_from is not None or not options.remember):
-            raise ValueError("remember and seed_from apply to a new conversation only")
+        if options.conversation_id is not None and options.seed_from is not None:
+            raise ValueError("seed_from applies to a new conversation only")
         self._hold_lock()
         await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
@@ -390,7 +389,7 @@ class Runtime:
         if resumed:
             await self._repair()
         self._log.decision("start", conversation=conversation.id, resumed=resumed,
-                           autonomous=conversation.autonomous, remember=conversation.remember,
+                           autonomous=conversation.autonomous,
                            seed_from=conversation.seed_from, model=model)
         self._set_base(AgentState.IDLE)
         return conversation
@@ -822,8 +821,7 @@ class Runtime:
     async def _open_conversation(self, options: StartOptions) -> tuple[ConversationInfo, bool]:
         if options.conversation_id is None:
             return await self._memory.create_conversation(
-                autonomous=bool(options.autonomous), remember=options.remember,
-                seed_from=options.seed_from), False
+                autonomous=bool(options.autonomous), seed_from=options.seed_from), False
         info = await self._find_conversation(options.conversation_id)
         if options.autonomous is not None and options.autonomous != info.autonomous:
             info = await self._memory.update_conversation(info.id,
@@ -1480,12 +1478,8 @@ class Runtime:
             case "recall":
                 scope = [self._conversation.id]
                 if args.get("scope", "conversation") == "all":
-                    if not self._conversation.remember:
-                        return ToolStatus.ERROR, (
-                            'recall with scope "all" is not available here: the user turned '
-                            "off Remember for this conversation, so it stays private.")
                     scope += [c.id for c in await self._memory.list_conversations()
-                              if c.remember and c.id != self._conversation.id]
+                              if c.id != self._conversation.id]
                 hits = await self._memory.search(args["query"], conversation_ids=scope,
                                                  limit=args.get("limit", 5))
                 return ToolStatus.OK, _format_hits(hits)

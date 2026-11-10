@@ -267,11 +267,6 @@ class ConversationModel:
         return self.conversation is not None and self.conversation.autonomous
 
     @property
-    def private(self) -> bool:
-        """The open conversation has Remember off."""
-        return self.conversation is not None and not self.conversation.remember
-
-    @property
     def status_text(self) -> str:
         parts = [STATE_LABELS[self.state]]
         if background := sum(1 for t in self._tools.values()
@@ -814,14 +809,13 @@ class Controller:
     def select_model(self, model_id: str) -> None:
         self.command(self.runtime.select_model(model_id))
 
-    def open_conversation(self, conversation_id: str | None, *, remember: bool = True,
+    def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> asyncio.Task[None]:
-        """Resume a conversation, or start a new one (None): private with remember=False,
-        continuing where `seed_from` left off when set."""
+        """Resume a conversation, or start a new one (None), continuing where `seed_from`
+        left off when set."""
 
         async def start() -> None:
-            await self.runtime.start(StartOptions(conversation_id, remember=remember,
-                                                  seed_from=seed_from))
+            await self.runtime.start(StartOptions(conversation_id, seed_from=seed_from))
             await self._inbox.put(self.recover)
 
         return self.command(start())

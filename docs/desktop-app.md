@@ -60,7 +60,6 @@ another reason, the Settings window opens with the message.
 | See what a tool did | Press the arrow on its card. |
 | See the model's reasoning | Open **Thinking** above a reply. |
 | Start over | **New chat** (**Ctrl+N**). |
-| Chat without long-term memory | The lock button next to **New chat** (**Ctrl+Shift+N**). Its messages are still kept, and it shows a lock in the list. |
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **Show archived** under the list to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |

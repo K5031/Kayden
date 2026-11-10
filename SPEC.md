@@ -84,7 +84,6 @@ The runtime manages conversation flow and tool calls.
 Conversation histories persist across application restarts.
 Inference does not autonomously restart between user-authorized turns.
 A new conversation is a fresh start: no messages and no summary, with long-term memory included. "Continue from" starts a new conversation that knows where an earlier one left off: on its first maintenance, Memory writes its initial rolling summary from the earlier conversation's summary and recent messages, and the earlier conversation is unchanged.
-Remember, set when a conversation starts and on by default, decides whether long-term memory is put into its context and extracted from it. With Remember off it is a temporary chat: its messages are still archived.
 Conversations get a title automatically from their first message unless the user sets one. The user can rename, archive (hide from the list and from cross-conversation recall) and delete conversations.
 4.2 Autonomy
 Autonomy is a per-conversation switch, off by default, that the user can flip at any time; it applies from the next turn.
@@ -195,7 +194,7 @@ Information removed from active inference context is not deleted from the archiv
 The archive is append-only. The one exception is deletion the user explicitly asks for: deleting a conversation erases its messages, summaries, search index entries, metadata and the long-term memory extracted from it, so that the erased content is not recoverable from Kayden's store. Deletion cannot reach copies outside Kayden's data directory, such as backups, nor what a model provider has already received.
 8.2 Shared Memory Foundation
 All conversations use the same memory architecture, with configurable compaction policies, following Codex-inspired conversation persistence and context compaction.
-Long-term memory is one list per instance, shared by every conversation with Remember on, while individual conversation histories remain distinct.
+Long-term memory is one list per instance, shared by every conversation, while individual conversation histories remain distinct.
 The user can see long-term memory and add, edit and forget entries. Edits keep earlier revisions; forgetting erases the entry with its revisions, and compaction must not re-extract the same fact from the summary it came from. Forgetting a fact does not delete the messages it came from.
 8.3 Compaction
 When active context reaches its configured threshold:
@@ -236,7 +235,7 @@ Avoid cyclic orchestration dependencies.
 Memory maintenance must never independently restart LLM inference after the agent has gone idle.
 Consolidation may occur during an authorized inference cycle or be deferred until the next one.
 8.8 Cross-Conversation Retrieval
-The built-in recall tool searches the current conversation's archive, or with scope "all" every conversation that is not archived and has Remember on. It is read-only and never merges conversation histories. In a conversation with Remember off, scope "all" is refused, so a temporary chat neither reads nor feeds the user's other work.
+The built-in recall tool searches the current conversation's archive, or with scope "all" every conversation that is not archived. It is read-only and never merges conversation histories.
 9. Budgets
 Budget management belongs to the runtime.
 Each Kayden instance has independent configuration and resource limits.
@@ -320,7 +319,7 @@ Kayden restarts and restores conversation history, memory, rolling summaries, an
 Scenario H — Historical Recall
 After repeated compactions, an agent can retrieve relevant original messages from its permanent archive.
 Scenario I — Recall Across Conversations
-An agent reads relevant information from the user's other conversations without changing them, and never from a conversation with Remember off.
+An agent reads relevant information from the user's other conversations without changing them.
 Scenario J — Multi-Instance Workforce
 Three independently running Kayden instances have separate memory, configuration, and budgets.
 They coordinate work through ordinary tools.
@@ -404,7 +403,7 @@ The archive is append-only, full-fidelity and schema-versioned. Blocks are persi
 history returns the full transcript from the archive regardless of compaction. The runtime uses it for reopening conversations and for resume repair.
 assemble is read-only, performs no inference, and always fits the token budget. Its messages are a suffix that starts at a user message, never splits a call from its result, and includes the newest message. A single oversized message is truncated in the assembled view only.
 maintain runs only inside an authorized inference cycle, so it can never restart the agent by itself. It also writes a seeded conversation's first summary and a title for an untitled conversation (light model; a failed title call changes nothing; a title that is set is never overwritten). It receives the current context window, a metered Completion, and returns whether it acted. The Completion raises BudgetExhausted or CoreError. A maintain failure becomes a failure event without changing the agent state. Archive writes and compaction state are atomic.
-search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one list per store, shared by every conversation with Remember on. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. update_conversation changes conversation metadata (title, archived, autonomous), which is not part of the append-only archive. Editing long-term memory (memories, remember, revise, forget) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
+search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one list per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. update_conversation changes conversation metadata (title, archived, autonomous), which is not part of the append-only archive. Editing long-term memory (memories, remember, revise, forget) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
 
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.

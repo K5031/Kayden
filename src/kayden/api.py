@@ -339,7 +339,6 @@ class ConversationInfo:
     created_at: float
     updated_at: float
     autonomous: bool = False  # the agent may idle() and wake itself (SPEC 4)
-    remember: bool = True  # uses and adds to long-term memory; fixed at creation
     archived: bool = False  # hidden from list_conversations() and recall(scope="all")
     seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
     preview: str | None = None  # start of the first user message, for display
@@ -426,8 +425,7 @@ class Memory(abc.ABC):
 
     Every method that takes a conversation id raises KeyError for an unknown one, and
     every method that takes a memory entry id raises KeyError for an unknown entry.
-    Long-term memory is one list per store, shared by every conversation with remember
-    on. A conversation with remember off neither gets it in its context nor adds to it.
+    Long-term memory is one list per store, shared by every conversation.
     The archive is append-only except for delete_conversation, which the user asks for.
     """
 
@@ -437,7 +435,6 @@ class Memory(abc.ABC):
         *,
         title: str | None = None,
         autonomous: bool = False,
-        remember: bool = True,
         seed_from: ConversationId | None = None,
     ) -> ConversationInfo:
         """seed_from (KeyError if unknown) starts a conversation that continues another:
@@ -584,8 +581,7 @@ _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 # reports the final status; the outcome still arrives as an OperationResult. recall
 # returns hits as text, each preview capped at 1000 characters (the "runtime does not
 # truncate" rule applies to module tools). recall with scope "all" searches every
-# conversation that is not archived and has remember on; it is refused (ERROR) in a
-# conversation with remember off.
+# conversation that is not archived.
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "idle": ToolSpec(
         "idle",
@@ -821,13 +817,12 @@ class OperationInfo:
 class StartOptions:
     """conversation_id None = a new conversation, else resume that one (KeyError if
     unknown). autonomous sets the new conversation's switch (None = off); for a resumed
-    one, None keeps its value. remember and seed_from apply to a new conversation only
-    (ValueError with conversation_id); seed_from must name an existing conversation."""
+    one, None keeps its value. seed_from applies to a new conversation only (ValueError
+    with conversation_id) and must name an existing conversation."""
 
     conversation_id: ConversationId | None = None
     model: str | None = None
     autonomous: bool | None = None
-    remember: bool = True
     seed_from: ConversationId | None = None
 
 
