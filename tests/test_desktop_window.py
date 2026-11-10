@@ -658,9 +658,9 @@ async def test_a_running_group_shows_its_current_step(make, qapp):
     window, controller, _ = await open_window(h)
     controller.send("go")
     await eventually(lambda: groups(window) and groups(window)[0].title.text()
-                     == "Wait for the build")
-    (group,) = groups(window)
-    assert group.state.text() == "running" and group.cancel.isVisibleTo(group)
+                     == "Wait for the build" and groups(window)[0].state.text() == "running")
+    (group,) = groups(window)  # "waiting" until the call starts, then "running"
+    assert group.cancel.isVisibleTo(group)
     group.cancel.click()
     await eventually(lambda: not controller.model.busy)
     await eventually(lambda: group.title.text() == "2 steps")
@@ -702,6 +702,7 @@ async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
     h: Harness = await make(modules=ModuleState(running=RUNNING, work_folder="/start"))
     await h.start()
     window, _controller, _ = await open_window(h)
+    window.show()  # dialogs and their confirmations need a visible parent
     window.open_tool_servers()
     dialog = window.mcp_dialog
     assert isinstance(dialog, McpDialog)
