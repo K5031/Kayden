@@ -262,7 +262,6 @@ class Runtime:
         self._frontend = frontend
         self._config = config
         config.data_dir.mkdir(parents=True, exist_ok=True)
-        self._scratch = config.data_dir / "scratch"
         # Read before exporting our own policy, which must not clamp later changes.
         self._ceiling = PermissionPolicy.inherited_ceiling()
         self._permissions = _effective_policy(config.permissions, self._ceiling)
@@ -400,7 +399,6 @@ class Runtime:
             self._budget.save()
             await self._budget.flush()
             self._log.open(data_dir / EVENT_LOG_FILE)
-            self._scratch.mkdir(exist_ok=True)
             self._loop_task = asyncio.create_task(self._run_loop())
 
         try:
@@ -1476,7 +1474,7 @@ class Runtime:
         self._known_ops[call.id] = op
         self._budget.begin_activity()
         self._watch_duration()
-        ctx = Context(op, self._scratch)
+        ctx = Context(op)
         self._emit(ToolStarted(call))
         op.supervisor = asyncio.create_task(self._supervise(op, ctx))
         self._update_state()

@@ -53,10 +53,10 @@ async def test_a_call_without_a_description_runs_as_before(make: Any) -> None:
 
 
 async def test_a_tool_with_its_own_description_argument_keeps_it(make: Any) -> None:
-    h = await harness(make, Step(calls=[call("own", {"description": "a ticket text"},
+    h = await harness(make, Step(calls=[call("own", {"step_summary": "a ticket text"},
                                              id="o")]))
-    own = {"type": "object", "properties": {"description": {"type": "string"}}}
+    own = {"type": "object", "properties": {"step_summary": {"type": "string"}}}
     h.tools.add(ToolSpec("own", "files a ticket", own), h.tools.fns["read"])
     await h.start()
     await h.turn("go")
-    assert h.tools.received[-1].arguments == {"description": "a ticket text"}
+    assert h.tools.received[-1].arguments == {"step_summary": "a ticket text"}

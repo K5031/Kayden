@@ -650,13 +650,13 @@ RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS)
 # words the model writes about what the call does, which frontends show in place of the
 # tool and its input. The runtime adds it to each offered schema and removes it from the
 # call before the Tools module sees it (confined, execute); events, snapshots and the
-# transcript keep it. A tool whose own schema declares the name gets it like any argument.
-DESCRIPTION_ARG = "description"
+# transcript keep it. The name is one no tool needs; a tool whose own schema declares it
+# anyway gets it like any argument, and frontends show it as the step's sentence.
+DESCRIPTION_ARG = "step_summary"
 
 
 class ToolContext(Protocol):
     call_id: CallId
-    data_dir: Path  # per-instance scratch space
 
     def progress(self, text: str) -> None:
         """Report progress. Also counts as liveness for stall detection. Safe to call
@@ -712,9 +712,13 @@ class Tools(abc.ABC):
 
     async def confined(self, call: ToolCall) -> bool:
         """True when this call can read and change nothing on this computer outside the
-        module's work folder (a web request reads nothing on it). Optional: False (the default) makes the runtime ask under
-        ALLOW_WORKSPACE. Called before the permission decision; an exception counts as
-        False."""
+        module's work folder (a web request reads nothing on it). Optional: False (the
+        default) makes the runtime ask under ALLOW_WORKSPACE and review the call under AUTO.
+        Called before the permission decision; an exception counts as False.
+
+        If the call then runs, execute() gets the same call (same id), so a module can
+        hold execution to what it judged here. The call may also never run (denied,
+        stopped, over budget)."""
         return False
 
     async def aclose(self) -> None:

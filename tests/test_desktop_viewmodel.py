@@ -566,7 +566,7 @@ def test_relative_dates():
 
 
 def test_a_tool_call_with_a_description_shows_it_as_its_title():
-    tool = ToolItem("c", "shell", '{"command": "ls -la", "description": "List the files"}')
+    tool = ToolItem("c", "shell", '{"command": "ls -la", "step_summary": "List the files"}')
     assert tool.summary == "List the files" and tool.detail == "ls -la"
     plain = ToolItem("c", "remember", '{"text": "Studies CS at UCL"}')
     assert plain.summary == "Studies CS at UCL" and plain.sentence is None

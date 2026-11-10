@@ -78,7 +78,7 @@ def tools(tmp_path: Path) -> ShellFilesTools:
 
 
 async def run(tools: ShellFilesTools, tmp_path: Path, name: str, **args):
-    return await tools.execute(ToolCall("c", name, args), RecordingContext("c", tmp_path))
+    return await tools.execute(ToolCall("c", name, args), RecordingContext("c"))
 
 
 async def test_web_tools_are_offered_read_only_and_confined(tools):

@@ -504,7 +504,7 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     h: Harness = await make(permissions=PermissionPolicy.ASK)
     h.tools.instant("shell", read_only=False)
     h.core.add(Step(calls=[call("shell", {"command": "rm -rf build",
-                                          "description": "Remove the old build"})]),
+                                          "step_summary": "Remove the old build"})]),
                Step(text="done"))
     await h.start()
     window, controller, _ = await open_window(h)
@@ -538,7 +538,7 @@ def test_a_reply_with_nothing_to_show_is_not_drawn(qapp):
 async def test_a_finished_step_is_in_the_past_tense_without_a_permission_line(make, qapp):
     h: Harness = await make()
     h.tools.instant("look")
-    h.core.add(Step(calls=[call("look", {"q": "x", "description": "Search the web for x"})]),
+    h.core.add(Step(calls=[call("look", {"q": "x", "step_summary": "Search the web for x"})]),
                Step(text="done"))
     await h.start()
     window, controller, _ = await open_window(h)
@@ -625,8 +625,8 @@ async def test_steps_fold_into_one_line_until_opened(make, qapp):
     h: Harness = await make()
     h.tools.instant("look", "found")
     h.tools.failing("open")
-    h.core.add(Step(calls=[call("look", {"q": 1, "description": "Search the web"}),
-                           call("open", {"url": "u", "description": "Open the page"})]),
+    h.core.add(Step(calls=[call("look", {"q": 1, "step_summary": "Search the web"}),
+                           call("open", {"url": "u", "step_summary": "Open the page"})]),
                Step(text="Here it is."))
     await h.start()
     window, controller, _ = await open_window(h)
@@ -651,8 +651,8 @@ async def test_a_running_group_shows_its_current_step(make, qapp):
     h: Harness = await make()
     h.tools.instant("look", "found")
     h.tools.hanging("wait")
-    h.core.add(Step(calls=[call("look", {"description": "Search the web"})]),
-               Step(calls=[call("wait", {"description": "Wait for the build"})]))
+    h.core.add(Step(calls=[call("look", {"step_summary": "Search the web"})]),
+               Step(calls=[call("wait", {"step_summary": "Wait for the build"})]))
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("go")

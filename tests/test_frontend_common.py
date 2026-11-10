@@ -110,13 +110,16 @@ def test_a_prompt_says_what_the_call_does_and_where():
 def test_a_call_shows_its_description_and_then_its_command():
     from kayden.frontends.common import call_parts
 
-    assert call_parts({"command": "ls -la", "description": "List the files"}) == (
+    assert call_parts({"command": "ls -la", "step_summary": "List the files"}) == (
         "List the files", "ls -la")
     assert call_parts({"command": "uv sync", "unsandboxed": True,
-                       "description": "Install the packages"}) == (
+                       "step_summary": "Install the packages"}) == (
         "Install the packages", "command: uv sync\nunsandboxed: true")
     assert call_parts({"path": "a.txt", "limit": 5}) == (None, "path: a.txt\nlimit: 5")
-    assert call_parts({"command": "true", "description": "  "}) == (None, "true")
+    assert call_parts({"command": "true", "step_summary": "  "}) == (None, "true")
+    # a tool's own "description" argument is input, not the step's sentence
+    assert call_parts({"description": "The body of the issue"}) == (
+        None, "The body of the issue")
     assert call_parts('{"command": "ls') == (None, '{"command": "ls')  # still streaming
 
 

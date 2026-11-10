@@ -276,7 +276,7 @@ async def test_tool_context(make: Any) -> None:
     tools = FakeTools()
 
     async def probe(c: Any, ctx: Any) -> ToolOutput:
-        seen["call_id"], seen["data_dir"] = ctx.call_id, ctx.data_dir
+        seen["call_id"] = ctx.call_id
         ctx.progress("")  # silent heartbeat
         return ToolOutput("ok")
 
@@ -285,7 +285,8 @@ async def test_tool_context(make: Any) -> None:
     h: Harness = await make(core=core, tools=tools, permissions=PermissionPolicy.ALLOW_READ_ONLY)
     await h.start()
     await h.turn("go")
-    assert seen["call_id"] == "p" and seen["data_dir"].is_dir()
+    assert seen["call_id"] == "p"
+    assert not (h.data_dir / "scratch").exists()  # no folder tools never asked for
     assert not any(e.call_id == "p" for e in h.rec.of(ToolProgress))
 
 

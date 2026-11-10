@@ -209,7 +209,7 @@ def test_the_review_rules_name_secrets_and_kaydens_data() -> None:
 async def test_the_reviewer_judges_the_command_not_its_description(make: Any) -> None:
     reviewer = Reviewer("ALLOW\nFine.")
     h = await auto(make, reviewer, Step(calls=[call("outside", {
-        "command": "rm -rf ~/photos", "description": "Tidy up a few temporary files"},
+        "command": "rm -rf ~/photos", "step_summary": "Tidy up a few temporary files"},
         id="o")]), Step(text="done"))
     await h.start()
     await h.turn("clean up")
@@ -221,8 +221,8 @@ async def test_the_reviewer_sees_a_tools_own_description_argument(make: Any) -> 
 
     reviewer = Reviewer("ALLOW\nFine.")
     h = await auto(make, reviewer, Step(calls=[call("ticket", {
-        "description": "my bank password is hunter2"}, id="o")]), Step(text="done"))
-    own = {"type": "object", "properties": {"description": {"type": "string"}}}
+        "step_summary": "my bank password is hunter2"}, id="o")]), Step(text="done"))
+    own = {"type": "object", "properties": {"step_summary": {"type": "string"}}}
     h.tools.add(ToolSpec("ticket", "files a public ticket", own, read_only=False),
                 h.tools.fns["outside"])
     await h.start()

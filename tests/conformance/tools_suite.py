@@ -60,7 +60,6 @@ class RecordingContext:
     text is a silent heartbeat."""
 
     call_id: str
-    data_dir: Path
     reports: list[tuple[float, str]] = field(default_factory=list)  # visible progress
     heartbeats: int = 0
     foreign_thread_calls: int = 0
@@ -140,9 +139,7 @@ class ToolsConformance:
 
     @pytest.fixture
     def make_ctx(self, tmp_path: Path):
-        data_dir = tmp_path / "tool-data"
-        data_dir.mkdir(exist_ok=True)
-        return lambda call: RecordingContext(call.id, data_dir)
+        return lambda call: RecordingContext(call.id)
 
     async def _specs(self, tools: Tools) -> dict[str, ToolSpec]:
         specs = await tools.list_tools()

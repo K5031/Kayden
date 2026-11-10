@@ -10,14 +10,16 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
 
 ## Decision
 
-- The runtime adds an optional argument, `api.DESCRIPTION_ARG` (`"description"`), to the
+- The runtime adds an optional argument, `api.DESCRIPTION_ARG` (`"step_summary"`), to the
   schema of every tool it offers, built-ins included: "What this step does, in a few plain
   words the user understands without knowing the tool". The module's own spec is not
   changed.
 - Before the Tools module sees a call (`confined`, `execute`) the runtime removes it
   (`Runtime._bare`). Events, snapshots and the transcript keep it, so frontends show it
-  live and in history. A tool whose own schema declares `description` keeps it as an
-  ordinary argument.
+  live and in history. The name is one no tool needs: frontends cannot tell an added
+  argument from a tool's own, so a common name such as `description` would show an issue
+  body or a commit message as the step's sentence. A tool whose own schema declares
+  `step_summary` anyway keeps it as an ordinary argument.
 - Frontends show the description as the step's title and a permission prompt's headline,
   with the exact input below it or in a tooltip (`frontends.common.call_parts`). Once a
   step succeeds its first word is put in the past tense ("Searched the web for …",

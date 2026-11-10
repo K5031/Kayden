@@ -19,7 +19,7 @@ from kayden.frontends.desktop.viewmodel import (
 
 def step(sentence: str | None = None, status: ToolStatus | None = ToolStatus.OK,
          phase: Phase = Phase.DONE) -> ToolItem:
-    arguments = {"q": "x"} | ({"description": sentence} if sentence else {})
+    arguments = {"q": "x"} | ({"step_summary": sentence} if sentence else {})
     return ToolItem("c", "look", json.dumps(arguments), phase=phase, status=status)
 
 

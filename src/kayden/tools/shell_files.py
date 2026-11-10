@@ -248,6 +248,7 @@ class ShellFilesTools(Tools):
         root = self._default if folder is None else Path(folder).expanduser().resolve()
         await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
         self._set_root(root)
+        self._confined_calls.clear()  # judged for the folder before; some never ran
 
     async def confined(self, call: ToolCall) -> bool:
         if call.name in web.NAMES:

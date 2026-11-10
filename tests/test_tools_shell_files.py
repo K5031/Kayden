@@ -44,7 +44,7 @@ class TestShellFilesConformance(ToolsConformance):
 
 
 def ctx(tmp_path: Path, call_id: str = "c") -> RecordingContext:
-    return RecordingContext(call_id, tmp_path)
+    return RecordingContext(call_id)
 
 
 async def run(tools: ShellFilesTools, tmp_path: Path, name: str, **args):
@@ -365,3 +365,10 @@ async def test_no_tool_declares_its_own_description(tools):
 
     for spec in await tools.list_tools():
         assert DESCRIPTION_ARG not in spec.parameters["properties"], spec.name
+
+
+async def test_a_new_folder_forgets_calls_judged_for_the_old_one(tools, workspace, tmp_path):
+    call = ToolCall("c", "read_file", {"path": "notes.txt"})
+    assert await tools.confined(call)  # judged, then never run (say, denied)
+    await tools.use_folder(tmp_path / "other")
+    assert not tools._confined_calls

@@ -1119,7 +1119,7 @@ async def test_a_command_shows_its_description_with_the_command_behind_it():
     stub = StubRuntime()
     app = make(stub)
     call = ToolCall("c1", "shell", {"command": "rm -rf build",
-                                    "description": "Remove the old build"})
+                                    "step_summary": "Remove the old build"})
     async with app.run_test(size=(120, 40)) as pilot:
         stub.emit(ToolStarted(call),
                   PermissionRequested(PermissionRequest("p1", call, read_only=False)))
@@ -1146,7 +1146,7 @@ async def test_a_reply_with_nothing_to_show_takes_no_space():
 
 
 def look(id: str, description: str) -> ToolCall:
-    return ToolCall(id, "look", {"q": "x", "description": description})
+    return ToolCall(id, "look", {"q": "x", "step_summary": description})
 
 
 async def test_steps_fold_into_one_group_with_the_thinking_before_them():

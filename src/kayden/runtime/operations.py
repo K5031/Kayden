@@ -7,7 +7,6 @@ import math
 import threading
 import time
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 
 from kayden.api import ToolCall, ToolOutput, ToolResult, ToolSpec, ToolStatus
 
@@ -15,9 +14,8 @@ from kayden.api import ToolCall, ToolOutput, ToolResult, ToolSpec, ToolStatus
 class Context:
     """ToolContext handed to Tools.execute. progress() is safe from any thread."""
 
-    def __init__(self, op: Operation, data_dir: Path):
+    def __init__(self, op: Operation):
         self.call_id = op.call.id
-        self.data_dir = data_dir
         self._op = op
         self._loop = asyncio.get_running_loop()
         self._thread = threading.get_ident()
