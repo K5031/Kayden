@@ -1002,7 +1002,8 @@ async def test_delete_a_conversation_after_confirmation():
         screen.query_one("#delete", Button).press()
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
         message = plain(app.screen.query_one("#confirm-message"))
-        assert "What is the weather" in message and "cannot be undone" in message
+        assert message == ('Delete "What is the weather"? This permanently deletes the '
+                           "conversation and what Kayden learned from it.")
         await pilot.press("escape")
         await until(pilot, lambda: app.screen is screen)
         assert not any(c[0] == "delete_conversation" for c in stub.calls)
@@ -1022,7 +1023,7 @@ async def test_deleting_the_open_conversation_opens_a_new_chat():
         highlight(screen, "conv-1")  # the open conversation
         screen.query_one("#delete", Button).press()
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
-        assert "A new chat opens" in plain(app.screen.query_one("#confirm-message"))
+        assert "A new chat will open." in plain(app.screen.query_one("#confirm-message"))
         app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: ("delete_conversation", "conv-1") in stub.calls)
         starts = [i for i, c in enumerate(stub.calls) if c[0] == "start"]

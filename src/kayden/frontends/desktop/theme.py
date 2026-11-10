@@ -135,6 +135,10 @@ QPushButton[primary="true"] {{ background: {c.accent}; color: {c.on_accent};
 QPushButton[primary="true"]:hover {{ background: {c.accent_hover}; }}
 QPushButton[primary="true"]:disabled {{ background: {c.accent_soft}; color: {c.accent_text};
     border-color: {c.accent_soft}; }}
+QMessageBox QLabel#qt_msgbox_label {{ font-weight: 600; }}
+QMessageBox QLabel#qt_msgbox_informativelabel {{ min-width: 320px; }}
+QPushButton[danger="true"] {{ background: {c.error}; color: {c.bg}; border-color: {c.error};
+    font-weight: 600; }}
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px;
     color: {c.muted}; }}
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}

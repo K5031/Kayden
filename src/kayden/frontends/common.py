@@ -69,6 +69,12 @@ def module_name(choice: ModuleChoice, module_id: str | None) -> str:
     return next((m.name for m in choice.installed if m.id == module_id), module_id or "custom")
 
 
+def delete_details(is_open: bool) -> str:
+    """What deleting a conversation does, for its confirmation."""
+    details = "This permanently deletes the conversation and what Kayden learned from it."
+    return details + (" A new chat will open." if is_open else "")
+
+
 def needs_restart(update: SettingsUpdate) -> bool:
     """Whether `update` holds module settings, which apply at the next start."""
     return bool(update.modules) or update.api_key is not None or update.work_folder is not None

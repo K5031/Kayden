@@ -77,6 +77,7 @@ from kayden.frontends.common import (
     MEMORY_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
+    delete_details,
     dollars,
     loosening,
     model_label,
@@ -1024,28 +1025,16 @@ class MainWindow(QMainWindow):
         dialog.open()
 
     def delete_conversation(self, info: ConversationInfo) -> None:
-        box = QMessageBox(QMessageBox.Icon.Warning, "Delete conversation",
-                          f"Delete “{conversation_label(info)}” for good?", parent=self)
-        details = ("Its messages, its summary and what Kayden learned from it are erased. "
-                   "This cannot be undone.")
-        if self.controller.is_open(info.id):
-            details += " A new chat opens in its place."
-        archive = None
-        if not info.archived:
-            details += "\n\nTo just hide it from the list, archive it instead."
-            archive = box.addButton("Archive instead", QMessageBox.ButtonRole.AcceptRole)
-        box.setInformativeText(details)
-        delete = box.addButton("Delete for good", QMessageBox.ButtonRole.DestructiveRole)
+        box = QMessageBox(QMessageBox.Icon.NoIcon, "Delete conversation",
+                          f"Delete “{conversation_label(info)}”?", parent=self)
+        box.setInformativeText(delete_details(self.controller.is_open(info.id)))
         cancel = box.addButton(QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(archive or cancel)
-
-        def answered(button: Any) -> None:
-            if button is archive:
-                self.controller.archive(info.id, True)
-            elif button is delete:
-                self.controller.delete(info.id)
-
-        box.buttonClicked.connect(answered)
+        delete = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        delete.setProperty("danger", True)
+        delete.style().polish(delete)
+        box.setDefaultButton(cancel)
+        box.buttonClicked.connect(lambda button: button is delete
+                                  and self.controller.delete(info.id))
         box.open()
 
     def open_memory(self) -> None:

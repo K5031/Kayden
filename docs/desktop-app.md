@@ -77,8 +77,8 @@ Messages you send while Kayden works are queued and shown greyed until Kayden re
 You can switch conversations only while Kayden is not working on anything; renaming,
 archiving and deleting work any time.
 
-**Delete…** asks first and offers **Archive instead**: deleting erases the conversation,
-its summary and what Kayden learned from it, and cannot be undone. Deleting the open
+**Delete…** asks first: deleting erases the conversation, its summary and what Kayden
+learned from it, and cannot be undone. To only hide a conversation, choose **Archive**. Deleting the open
 conversation opens a new chat in its place, once Kayden is not working. See [Deleting](concepts.md#deleting) for what
 deletion does not reach.
 

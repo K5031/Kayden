@@ -93,6 +93,7 @@ from kayden.frontends.common import (
     MEMORY_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
+    delete_details,
     loosening,
     model_label,
     module_options,
@@ -388,16 +389,18 @@ SAME_MODEL = "__same__"
 class ConfirmScreen(ModalScreen[bool]):
     BINDINGS: ClassVar = [Binding("escape", "dismiss(False)", "No")]
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, yes: str = "Yes", no: str = "No",
+                 danger: bool = False) -> None:
         super().__init__()
-        self.message = message
+        self.message, self.yes, self.no, self.danger = message, yes, no, danger
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label(self.message, id="confirm-message")
             with Horizontal(classes="buttons"):
-                yield Button("Yes", variant="warning", id="confirm-yes")
-                yield Button("No", id="confirm-no")
+                yield Button(self.no, id="confirm-no")
+                yield Button(self.yes, variant="error" if self.danger else "warning",
+                             id="confirm-yes")
 
     def on_mount(self) -> None:
         self.query_one("#confirm-no", Button).focus()
@@ -767,11 +770,10 @@ class ConversationsScreen(ListScreen):
             if yes:
                 self._run(self._erase(selected.id), unsupported="#delete")
 
-        replaced = " A new chat opens in its place." if selected.id == self.open_id else ""
         self.app.push_screen(ConfirmScreen(
-            f'Delete "{conversation_label(selected)}" for good? Its messages and the memories '
-            f"learned from it are erased. This cannot be undone.{replaced} To only hide it, "
-            "archive it instead."), confirmed)
+            f'Delete "{conversation_label(selected)}"? '
+            + delete_details(selected.id == self.open_id),
+            yes="Delete", no="Cancel", danger=True), confirmed)
 
     async def _erase(self, conversation_id: ConversationId) -> None:
         """The open conversation is first replaced by a new chat."""

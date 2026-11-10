@@ -301,7 +301,7 @@ async def test_an_empty_conversation_shows_the_empty_state(make, qapp):
     assert not window.empty_state.isVisibleTo(window)
 
 
-async def test_delete_asks_and_offers_archive_first(make, qapp):
+async def test_delete_asks_with_cancel_as_the_default(make, qapp):
     h: Harness = await make()
     other = await h.start()
     await h.runtime.rename_conversation(other.id, "Old notes")
@@ -310,21 +310,18 @@ async def test_delete_asks_and_offers_archive_first(make, qapp):
     await window.fill_sidebar()
     action(window.conversation_menu(window.conversation_info(current.id)), "Delete…").trigger()
     box = visible(window, QMessageBox)
-    assert "A new chat opens" in box.informativeText()
-    next(b for b in box.buttons() if b.text() == "Cancel").click()
+    assert box.informativeText().endswith("A new chat will open.")
+    box.defaultButton().click()
     await eventually(lambda: not box.isVisible())
     action(window.conversation_menu(window.conversation_info(other.id)), "Delete…").trigger()
     box = visible(window, QMessageBox)
-    assert "“Old notes”" in box.text() and "cannot be undone" in box.informativeText()
-    assert box.defaultButton().text() == "Archive instead"
-    box.defaultButton().click()
-    await eventually(lambda: "Old notes" not in entries(window))
-    assert other.id in [c.id for c in await h.runtime.list_conversations(include_archived=True)]
-    window.show_archived.setChecked(True)
-    await eventually(lambda: "Old notes  (archived)" in entries(window))
-    action(window.conversation_menu(window.conversation_info(other.id)), "Delete…").trigger()
-    box = visible(window, QMessageBox)
-    next(b for b in box.buttons() if b.text() == "Delete for good").click()
+    assert box.text() == "Delete “Old notes”?"
+    assert box.informativeText() == (
+        "This permanently deletes the conversation and what Kayden learned from it.")
+    assert box.icon() == QMessageBox.Icon.NoIcon
+    assert [b.text() for b in box.buttons()] == ["Cancel", "Delete"]
+    assert box.defaultButton().text() == "Cancel"
+    next(b for b in box.buttons() if b.text() == "Delete").click()
     await eventually(lambda: not any("Old notes" in e for e in entries(window)))
     assert [c.id for c in await h.runtime.list_conversations(include_archived=True)] == [
         current.id]
@@ -401,8 +398,7 @@ async def test_unsupported_memory_hides_memory_and_delete(make, qapp):
     assert not window.memory_action.isVisible()
     await window.fill_sidebar()
     action(window.conversation_menu(window.conversation_info(other.id)), "Delete…").trigger()
-    next(b for b in visible(window, QMessageBox).buttons()
-     if b.text() == "Delete for good").click()
+    next(b for b in visible(window, QMessageBox).buttons() if b.text() == "Delete").click()
     await eventually(lambda: not controller.can_delete)
     assert not [a for a in window.conversation_menu(window.conversation_info(other.id)).actions()
                 if a.text() == "Delete…" and a.isVisible()]
