@@ -17,6 +17,7 @@ from kayden.api import (
     Memory,
     Message,
     OperationResult,
+    ServerToolUse,
     Text,
     ToolCall,
     ToolContext,
@@ -125,4 +126,6 @@ def _render(message: Message) -> str:
                 parts.append(f"[call {n} {json.dumps(a)}]")
             case ToolResult(status=s, content=c) | OperationResult(status=s, content=c):
                 parts.append(f"[{s}] {c}")
+            case ServerToolUse(summary=summary, content=c):
+                parts.append(f"[{summary}] {c}")
     return " ".join(parts)

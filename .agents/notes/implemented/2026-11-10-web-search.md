@@ -53,6 +53,7 @@ Choices and limits are listed in `.agents/decisions.md` (Web tools).
   differently and DeepSeek has none, it needs new block types for server tool calls and
   citations in the archive, and it costs per search on top of tokens. The client-side
   tools work the same with every Core.
+  With Claude it is now used: [the provider's web search](2026-11-10-provider-web-search.md).
 - **A search API with its own key** (Brave, Tavily, Google). More reliable than a keyless
   backend, but a second account and key is exactly what non-technical users do not set
   up. A key option can be added if ddgs proves flaky.

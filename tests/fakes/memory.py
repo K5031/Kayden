@@ -27,6 +27,7 @@ from kayden.api import (
     Message,
     OperationResult,
     Role,
+    ServerToolUse,
     Text,
     ToolCall,
     ToolContext,
@@ -72,6 +73,8 @@ def render_block(block: Block) -> str:
             return f"[call {n} {json.dumps(a)}]"
         case ToolResult(status=s, content=c) | OperationResult(status=s, content=c):
             return f"[{s}] {c}"
+        case ServerToolUse(summary=summary, content=c):
+            return f"[{summary}] {c}"
     return ""
 
 

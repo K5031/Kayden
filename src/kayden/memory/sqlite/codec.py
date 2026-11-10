@@ -21,7 +21,8 @@ FORMAT_VERSION = 2  # per-row block encoding: stable BLOCK_TYPES tags
 _TAGS = {cls: tag for tag, cls in BLOCK_TYPES.items()}
 _HINTS = {tag: typing.get_type_hints(cls) for tag, cls in BLOCK_TYPES.items()}
 _SKIP_IN_SEARCH = {"reasoning": ("state", "model"), "tool_call": ("id", "raw_arguments"),
-                   "tool_result": ("call_id",), "operation_result": ("call_id",)}
+                   "tool_result": ("call_id",), "operation_result": ("call_id",),
+                   "server_tool_use": ("id", "state")}
 
 
 def encode_blocks(blocks: Sequence[Block]) -> str:

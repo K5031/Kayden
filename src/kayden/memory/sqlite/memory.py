@@ -48,6 +48,7 @@ from kayden.api import (
     OperationResult,
     Reasoning,
     Role,
+    ServerToolUse,
     Text,
     TokenCounter,
     ToolCall,
@@ -897,6 +898,8 @@ def _render_transcript(messages: Sequence[Message]) -> str:
                 case OperationResult(call_id, status, content):
                     lines.append(f"[{stamp} background operation {call_id}, {status}] "
                                  f"{_shortened(content)}")
+                case ServerToolUse(summary=summary, content=content):
+                    lines.append(f"[{stamp} {message.role}] {summary}: {_shortened(content)}")
                 case _:
                     lines.append(f"[{stamp} {message.role}] {block}")
     return "\n".join(lines)

@@ -22,11 +22,13 @@ from kayden.api import (
     Reasoning,
     ReasoningDelta,
     Role,
+    ServerToolUse,
     StopReason,
     Text,
     TextDelta,
     ToolCall,
     ToolCallDelta,
+    ToolSpec,
     Usage,
     UsageReport,
 )
@@ -58,6 +60,7 @@ class Step:
     text: str = ""
     reasoning: str = ""
     calls: Sequence[ToolCall] = ()
+    server: Sequence[ServerToolUse] = ()  # tools the provider ran, before the text
     usage: Usage | None = None  # default Usage(100, 10)
     stop: StopReason | None = None  # default: TOOL_USE if calls else END_TURN
     error: BaseException | None = None
@@ -94,6 +97,7 @@ class ScriptedCore(Core):
         self.options: dict[str, Any] = {}
         self.list_error: Exception | None = None
         self.closed = False
+        self.tools: list[ToolSpec] = []  # tools the provider runs itself (list_tools)
 
     def add(self, *steps: StepSource) -> None:
         self.steps.extend(steps)
@@ -105,6 +109,9 @@ class ScriptedCore(Core):
 
     async def aclose(self) -> None:
         self.closed = True
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        return self.tools
 
     async def count_tokens(self, request: InferenceRequest) -> int | None:
         return self.count_tokens_result
@@ -158,6 +165,7 @@ class ScriptedCore(Core):
         blocks: list[Any] = []
         if step.reasoning:
             blocks.append(Reasoning(step.reasoning, model=request.model))
+        blocks.extend(step.server)
         if step.text:
             blocks.append(Text(step.text))
         blocks.extend(step.calls)

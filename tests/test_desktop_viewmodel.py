@@ -575,3 +575,19 @@ def test_a_tool_call_with_a_description_shows_it_as_its_title():
     assert plain.summary == "Studies CS at UCL" and plain.sentence is None
     streaming = ToolItem("c", "shell", '{"command": "ls')
     assert streaming.summary == '{"command": "ls'
+
+
+async def test_a_tool_the_provider_ran_is_a_finished_step(make):
+    from kayden.api import ServerToolUse
+
+    use = ServerToolUse("srv_1", "web_search", {"query": "worlds"},
+                        "Searched the web for “worlds”", "Worlds 2026\nhttps://w.example")
+    h: Harness = await make()
+    h.core.add(Step(text="Found it.", server=[use]))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("search")
+    await eventually(lambda: of(model, ToolItem) and not model.busy)
+    (step,) = of(model, ToolItem)
+    assert step.summary == "Searched the web for “worlds”" and step.status is ToolStatus.OK
+    assert "w.example" in step.content

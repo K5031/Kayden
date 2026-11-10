@@ -5,7 +5,7 @@ orchestration and is the only component that talks to modules; modules never
 call each other. Everything async; cancellation is plain asyncio cancellation.
 
 Message conventions:
-- ASSISTANT messages hold Text, Reasoning and ToolCall blocks.
+- ASSISTANT messages hold Text, Reasoning, ToolCall and ServerToolUse blocks.
 - TOOL messages hold only ToolResult blocks. The runtime appends exactly one per turn,
   directly after the assistant message, with one result per call (placeholders and
   refusals included).
@@ -39,8 +39,8 @@ Runtime guarantees to modules:
 - Tool calls are validated (known name, arguments match the schema) before they
   start; violations are answered with ToolResult(ERROR) and the tool is not run. A
   known name is one offered in this turn's request: the runtime's built-ins, then Memory's
-  tools, then each Tools module's in configured order (several may run at once), each
-  listed once per request. A name already offered
+  tools, then the Core's (which its provider runs), then each Tools module's in configured
+  order (several may run at once), each listed once per request. A name already offered
   (a reserved one included) is dropped from the later module's offer and logged; each
   call goes to the module that offered its name. If a list_tools fails,
   Failure(INTERNAL) is emitted and the turn offers the others only.
@@ -153,6 +153,23 @@ class OperationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ServerToolUse:
+    """A tool the provider ran itself during the turn (Core.list_tools), call and outcome in
+    one block of the assistant message; no ToolResult follows. `summary` says in a line
+    what it did ("Searched the web for …") and `content` what it found, readable: both
+    are shown, searched and given as text to other providers. `state` is opaque provider
+    data its Core replays to that provider."""
+
+    id: str
+    name: str
+    input: JSON
+    summary: str
+    content: str = ""
+    is_error: bool = False
+    state: JSON | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class OpaqueBlock:
     """A persisted block whose type this version doesn't know (for example a removed
     plugin's). Memory returns it for unresolvable tags and re-encodes it unchanged;
@@ -162,7 +179,8 @@ class OpaqueBlock:
     data: JSON
 
 
-type Block = Text | Reasoning | ToolCall | ToolResult | OperationResult | OpaqueBlock
+type Block = (Text | Reasoning | ToolCall | ToolResult | OperationResult | ServerToolUse
+              | OpaqueBlock)
 
 # Stable on-disk tags. Memory persists blocks as {"type": tag, "data": {...}} with these
 # tags, never Python import paths, so renaming a class doesn't break an archive.
@@ -172,6 +190,7 @@ BLOCK_TYPES: Mapping[str, type] = {
     "tool_call": ToolCall,
     "tool_result": ToolResult,
     "operation_result": OperationResult,
+    "server_tool_use": ServerToolUse,
 }
 
 
@@ -191,6 +210,9 @@ class Usage:
     output_tokens: int = 0
     cached_tokens: int = 0
     cost_usd: float | None = None  # None when the provider doesn't report it
+    # What the provider charges beyond tokens (its own tools' uses), added to the cost
+    # whether or not cost_usd is reported.
+    extra_cost_usd: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +342,15 @@ class Core(abc.ABC):
         cancellation (Stop, duration budget) always is, since the provider may have
         started processing. The runtime iterates with contextlib.aclosing. An empty
         ToolCallDelta chunk is allowed, to announce a call before its arguments."""
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        """Optional: tools the provider runs during a request itself (its web search, for
+        example). The runtime offers them after its own and Memory's and before the Tools
+        modules', sends them in the request (the Core turns each into the provider's own
+        tool by name), and never runs, gates or counts them: they touch nothing on this
+        computer. Each use comes back in Completed as a ServerToolUse block; what the
+        provider charges for it, in Usage.extra_cost_usd."""
+        return ()
 
     async def count_tokens(self, request: InferenceRequest) -> int | None:
         """Optional exact count. The runtime only uses it to calibrate its own sync

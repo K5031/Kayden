@@ -1192,3 +1192,19 @@ async def test_a_lone_step_shows_its_sentence_and_text_starts_a_new_group():
         first, second = entries(app, StepGroup)
         assert first.title == "Searched the web"
         assert second.title == "Search again · waiting"
+
+
+async def test_a_tool_the_provider_ran_is_a_finished_step():
+    from kayden.api import ServerToolUse
+
+    stub = StubRuntime()
+    app = make(stub)
+    use = ServerToolUse("srv_1", "web_search", {"query": "worlds"},
+                        "Searched the web for “worlds”", "Worlds 2026\nhttps://w.example")
+    async with app.run_test() as pilot:
+        stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, use, Text("Found it."))))
+        await caught_up(pilot, app, stub)
+        [group] = entries(app, StepGroup)
+        assert group.title == "Searched the web for “worlds”"
+        [step] = entries(app, ToolEntry)
+        assert "w.example" in plain(step)

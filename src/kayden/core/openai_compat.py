@@ -29,6 +29,7 @@ from kayden.api import (
     Reasoning,
     ReasoningDelta,
     Role,
+    ServerToolUse,
     StopReason,
     Text,
     TextDelta,
@@ -51,6 +52,7 @@ from kayden.core._common import (
     request_options,
     result_text,
     retry_after,
+    server_tool_text,
     stored_key,
 )
 
@@ -356,6 +358,8 @@ def _text(block: Block) -> str | None:
             return text
         case OperationResult():
             return operation_text(block)
+        case ServerToolUse():
+            return server_tool_text(block)
     return None
 
 

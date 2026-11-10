@@ -613,3 +613,17 @@ Design: [Agent Note](notes/implemented/2026-11-10-module-provided-tools.md).
 | Apply | Like modules: at the next start (Restart now), as one more Tools module after the configured one |
 | Names | 1 to 32 of letters, digits, `-` and `_`, unique |
 | Results | Text content joined; other content shown as `[<type> content]`; structured content as JSON when there is no text |
+
+## The provider's web search
+
+Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
+
+| Choice | Value |
+|---|---|
+| Tool | `web_search_20260209` for models with dynamic filtering (Opus 5.5, 5, 4.8–4.6, Fable 5, Sonnet 5.5, 5, 4.6, by id prefix), else `web_search_20250305`; `max_uses` 5 per request |
+| Cost | $0.01 per search (`usage.server_tool_use.web_search_requests`) as `Usage.extra_cost_usd`; the results are read as input tokens on top |
+| Steps | One `ServerToolUse` per web search or web fetch, placed where its result came; the code dynamic filtering runs is not shown (unless a turn has nothing else) |
+| Replay | A turn's server blocks, all of them in the order they came (they refer to each other), ride on its first shown use and are sent back unchanged, to the same model, while web search is on, and only after the user's latest message; earlier turns' searches go as text (summary and found pages). Checked against Opus 5.5 (2026-11-10): a second turn replaying the whole set cost about three times the first |
+| Fallbacks | A 400 saying web search is not enabled switches it off for the instance (Kayden's own search is offered again); a 400 while replaying server blocks resends them as text |
+| Paused turns | `pause_turn` is continued in the same request, up to 5 times, the turn's blocks sent back as the assistant's |
+| Sources | The cited pages, deduplicated in citing order, as a final "Sources:" line of links |

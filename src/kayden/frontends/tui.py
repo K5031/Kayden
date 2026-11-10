@@ -73,6 +73,7 @@ from kayden.api import (
     Role,
     RuntimeAPI,
     RuntimeEvent,
+    ServerToolUse,
     Settings,
     SettingsUpdate,
     ShuttingDown,
@@ -112,6 +113,7 @@ from kayden.frontends.common import (
     module_options,
     needs_restart,
     past_tense,
+    provider_step,
     request_note,
     restart_notice,
 )
@@ -1540,6 +1542,11 @@ class KaydenApp(App[None]):
                     await self._mount_tool(call)
                     current = None
                 case ToolResult() as result:
+                    await self._finish_tool(result, None)
+                    current = None
+                case ServerToolUse() as use:  # the provider ran it: a finished step
+                    call, result = provider_step(use)
+                    await self._mount_tool(call)
                     await self._finish_tool(result, None)
                     current = None
         return last

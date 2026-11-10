@@ -18,8 +18,11 @@ from kayden.api import (
     ModuleChoice,
     PermissionPolicy,
     PermissionRequest,
+    ServerToolUse,
     Settings,
     SettingsUpdate,
+    ToolCall,
+    ToolResult,
     ToolStatus,
 )
 
@@ -276,3 +279,10 @@ def mcp_target(server: McpServer) -> str:
 def mcp_variables(server: McpServer) -> str:
     """The saved variables for editing: their names, values left empty (kept)."""
     return "\n".join(f"{name}=" for name in server.env)
+
+
+def provider_step(use: ServerToolUse) -> tuple[ToolCall, ToolResult]:
+    """A tool the provider ran, as a step: its summary is the step's sentence."""
+    call = ToolCall(use.id, use.name, {**use.input, DESCRIPTION_ARG: use.summary})
+    status = ToolStatus.ERROR if use.is_error else ToolStatus.OK
+    return call, ToolResult(use.id, status, use.content)

@@ -774,11 +774,12 @@ class Runtime:
     # ── Tools offered to the model ───────────────────────────────────────
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
-        """The runtime's built-ins, then Memory's tools, then each Tools module's; a name
-        offered already is dropped from the later module."""
+        """The runtime's built-ins, then Memory's tools, then the Core's (its provider runs
+        them), then each Tools module's; a name offered already is dropped from the later
+        module."""
         specs = dict(BUILTIN_TOOLS)
         self._memory_tools, self._tool_owner = set(), {}
-        for module in (self._memory, *self._tools):
+        for module in (self._memory, self._core, *self._tools):
             try:
                 offered = await module.list_tools()
             except Exception as e:  # noqa: BLE001 - module calls are wrapped
@@ -793,7 +794,7 @@ class Runtime:
                 specs[spec.name] = spec
                 if module is self._memory:
                     self._memory_tools.add(spec.name)
-                else:
+                elif module is not self._core:
                     self._tool_owner[spec.name] = module
         return {name: self._describable(spec) for name, spec in specs.items()}
 

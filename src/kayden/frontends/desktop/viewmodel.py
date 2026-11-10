@@ -51,6 +51,7 @@ from kayden.api import (
     RuntimeEvent,
     RuntimeSnapshot,
     RuntimeStateError,
+    ServerToolUse,
     Settings,
     SettingsChanged,
     SettingsUpdate,
@@ -78,6 +79,7 @@ from kayden.frontends.common import (
     group_title,
     money,
     past_tense,
+    provider_step,
 )
 
 HISTORY_PAGE = 100
@@ -580,6 +582,12 @@ class ConversationModel:
                         self._add_tool(call)
                     current = None
                 case ToolResult() as result:
+                    self._finish(result, None)
+                    current = None
+                case ServerToolUse() as use:  # the provider ran it: a finished step
+                    call, result = provider_step(use)
+                    if call.id not in self._tools:
+                        self._add_tool(call)
                     self._finish(result, None)
                     current = None
         return last

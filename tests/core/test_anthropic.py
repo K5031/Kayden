@@ -22,7 +22,7 @@ from kayden.api import (
     Usage,
 )
 from kayden.core._common import ModelConfig
-from kayden.core.anthropic import AnthropicCore, Prefix, factory, to_messages
+from kayden.core.anthropic import AnthropicCore, Prefix, factory, to_messages, to_tool
 from tests.conformance.core_suite import (
     WEATHER_TOOL,
     CoreDriver,
@@ -139,7 +139,8 @@ class AnthropicDriver(CoreDriver):
                   *finish("end_turn")]
         self.stub.queue(Reply(events=events))
         request = self.request([user("Think first")])
-        _, bound = to_messages(request.messages, MODEL, request.system, request.tools)
+        _, bound = to_messages(request.messages, MODEL, request.system,
+                               [to_tool(t) for t in request.tools])
         expected = Reasoning("Let me think.", {"provider": "anthropic", "signature": "sig-abc",
                                                "prefix": bound}, MODEL)
         return request, Expect(reasoning=expected)

@@ -19,6 +19,7 @@ from kayden.api import (
     OpaqueBlock,
     OperationResult,
     Reasoning,
+    ServerToolUse,
     Text,
     TokenCounter,
     ToolCall,
@@ -44,6 +45,8 @@ def _block_text(block: object) -> str:
             return n + (raw if raw is not None else json.dumps(a))
         case ToolResult(content=c) | OperationResult(content=c):
             return c
+        case ServerToolUse(summary=s, content=c, state=state):
+            return s + c + json.dumps(state)  # the provider's results are read as input
         case OpaqueBlock(data=d):
             return json.dumps(d, default=str)
     return ""
@@ -65,11 +68,12 @@ def calibrated(ratio: float) -> TokenCounter:
 
 
 def cost_of(usage: Usage, model: ModelInfo | None) -> float:
-    """Provider-reported cost when present, else computed from the model's prices."""
+    """Provider-reported cost when present, else computed from the model's prices; plus
+    what the provider charges beyond tokens."""
     if usage.cost_usd is not None:
-        return usage.cost_usd
+        return usage.cost_usd + usage.extra_cost_usd
     if model is None or model.input_usd_per_mtok is None or model.output_usd_per_mtok is None:
-        return 0.0
+        return usage.extra_cost_usd
     cached_price = model.cached_input_usd_per_mtok
     if cached_price is None:
         cached_price = model.input_usd_per_mtok
@@ -78,7 +82,7 @@ def cost_of(usage: Usage, model: ModelInfo | None) -> float:
         uncached * model.input_usd_per_mtok
         + usage.cached_tokens * cached_price
         + usage.output_tokens * model.output_usd_per_mtok
-    ) / 1_000_000
+    ) / 1_000_000 + usage.extra_cost_usd
 
 
 def has_prices(model: ModelInfo) -> bool:

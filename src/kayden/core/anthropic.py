@@ -8,7 +8,7 @@ import logging
 import os
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import anthropic
@@ -30,6 +30,7 @@ from kayden.api import (
     Reasoning,
     ReasoningDelta,
     Role,
+    ServerToolUse,
     StopReason,
     Text,
     TextDelta,
@@ -53,6 +54,7 @@ from kayden.core._common import (
     request_options,
     result_text,
     retry_after,
+    server_tool_text,
     stored_key,
 )
 
@@ -70,6 +72,23 @@ _STOP_REASONS = {
     "refusal": StopReason.REFUSAL,
 }
 _OVERFLOW_MESSAGES = ("prompt is too long", "exceed context limit", "context window")
+
+# Anthropic's own web search (Core.list_tools): run on Anthropic's side, $10 per 1 000
+# searches. Models with dynamic filtering take the newer version.
+WEB_SEARCH = ToolSpec(
+    "web_search",
+    "Search the web for anything recent or that you are not sure of. Anthropic runs the "
+    "search; link the pages your answer relies on.",
+    {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    read_only=True,
+)
+MAX_SEARCHES = 5  # per request
+SEARCH_USD = 0.01
+MAX_CONTINUATIONS = 5  # of a turn the API paused (pause_turn)
+_DYNAMIC_FILTERING = ("claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7",
+                      "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6")
+_SEARCH_OFF = ("web search is not enabled", "web search is disabled")
+_SHOWN = ("web_search", "web_fetch")  # server tools shown as steps; the filtering code is not
 
 
 # USD per million tokens, from Anthropic's price list of 2026-10-06; the API does not
@@ -130,6 +149,15 @@ class AnthropicCore(Core):
         self._options = dict(options or {})
         self._models = merged_configs(_PRICES, model_configs(models))
         self._default_max_tokens = default_max_tokens
+        self._search = True  # False once the account turned out to have it switched off
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        return [WEB_SEARCH] if self._search else []
+
+    def _tools(self, specs: Sequence[ToolSpec], model: str) -> list[JSON]:
+        """The request's tools, web_search as Anthropic's own while it is on."""
+        return [search_tool(model) if spec.name == WEB_SEARCH.name and self._search
+                else to_tool(spec) for spec in specs]
 
     async def list_models(self) -> Sequence[ModelInfo]:
         try:
@@ -147,12 +175,14 @@ class AnthropicCore(Core):
             raise _map_error(e) from e
 
     async def count_tokens(self, request: InferenceRequest) -> int:
-        turns, _ = to_messages(request.messages, request.model, request.system, request.tools)
+        tools = self._tools(request.tools, request.model)
+        turns, _ = to_messages(request.messages, request.model, request.system, tools,
+                               search=self._search)
         params: dict[str, Any] = {"model": request.model, "messages": turns}
         if request.system:
             params["system"] = request.system
-        if request.tools:
-            params["tools"] = [to_tool(t) for t in request.tools]
+        if tools:
+            params["tools"] = tools
         try:
             result = await self._client.messages.count_tokens(**params)
         except (anthropic.APIError, httpx2.TransportError) as e:
@@ -160,8 +190,9 @@ class AnthropicCore(Core):
         return result.input_tokens
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
-        turns, bound = to_messages(request.messages, request.model, request.system,
-                                   request.tools)
+        tools = self._tools(request.tools, request.model)
+        turns, bound = to_messages(request.messages, request.model, request.system, tools,
+                                   search=self._search)
         params: dict[str, Any] = {
             "model": request.model,
             "messages": turns,
@@ -170,30 +201,57 @@ class AnthropicCore(Core):
         }
         if request.system:
             params["system"] = request.system
-        if request.tools:
-            params["tools"] = [to_tool(t) for t in request.tools]
+        if tools:
+            params["tools"] = tools
 
         turn = _Turn(request.model, bound)
         try:
-            try:
-                response = await self._client.messages.create(**params, stream=True)
-            except anthropic.BadRequestError as e:
-                if _BINDING_ERROR not in str(e):
-                    raise
-                # The API saw a change that Prefix did not: answer without earlier reasoning.
-                logger.warning("thinking blocks rejected, sending the request without them: %s", e)
-                params["messages"], _ = to_messages(
-                    request.messages, request.model, request.system, request.tools, replay=False)
-                response = await self._client.messages.create(**params, stream=True)
-            async with response as events:
-                async for event in events:
-                    for out in turn.feed(event):
-                        yield out
+            for continuation in range(MAX_CONTINUATIONS + 1):
+                response = await self._open(params, request)
+                async with response as events:
+                    async for event in events:
+                        for out in turn.feed(event):
+                            yield out
+                if not turn.finished:
+                    raise TransientCoreError("stream ended before message_stop")
+                if turn.stop_reason != "pause_turn" or continuation == MAX_CONTINUATIONS:
+                    break
+                # The API paused a long server-side turn: send it back to be continued.
+                if continuation == 0:
+                    turns = params["messages"]
+                params["messages"] = [*turns, {"role": "assistant", "content": turn.content()}]
+                turn.next_response()
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
-        if not turn.finished:
-            raise TransientCoreError("stream ended before message_stop")
         yield turn.completed()
+
+    async def _open(self, params: dict[str, Any], request: InferenceRequest) -> Any:
+        """Start the stream; on a 400 the request can do without, again without it."""
+        try:
+            return await self._client.messages.create(**params, stream=True)
+        except anthropic.BadRequestError as e:
+            text = str(e)
+            if self._search and any(m in text.lower() for m in _SEARCH_OFF):
+                logger.warning("web search is switched off for this account; using Kayden's")
+                self._search = False
+            elif _BINDING_ERROR in text:
+                # The API saw a change that Prefix did not: answer without earlier reasoning.
+                logger.warning("thinking blocks rejected, sending the request without them: "
+                               "%s", e)
+            elif _replays_server_blocks(params["messages"]):
+                # Earlier searches the API will not take back: send them as text instead.
+                logger.warning("earlier server tool blocks rejected, replaying them as text: "
+                               "%s", e)
+            else:
+                raise
+            tools = self._tools(request.tools, request.model)
+            if tools:
+                params["tools"] = tools
+            params["messages"], _ = to_messages(
+                request.messages, request.model, request.system, tools,
+                replay=_BINDING_ERROR not in text,
+                search=self._search and not _replays_server_blocks(params["messages"]))
+            return await self._client.messages.create(**params, stream=True)
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -202,24 +260,32 @@ class AnthropicCore(Core):
 @dataclass
 class _Block:
     type: str
-    parts: list[str] = field(default_factory=list)
-    signature: str = ""
-    data: str = ""
+    raw: JSON  # the block as the API sent it, deltas applied: what a continuation resends
+    parts: list[str] = field(default_factory=list)  # tool input JSON as it streamed
     id: str = ""
     name: str = ""
 
 
 class _Turn:
-    """Accumulates raw stream events into Kayden events and the final message."""
+    """Accumulates raw stream events into Kayden events and the final message. A turn the
+    API paused goes on in further responses (next_response), whose blocks follow."""
 
     def __init__(self, model: str, bound: str) -> None:
         self.model = model
         self.bound = bound  # Prefix of the request: what this turn's reasoning is bound to
-        self.blocks: dict[int, _Block] = {}
-        self.counts = {"input_tokens": 0, "output_tokens": 0,
-                       "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+        self.blocks: list[_Block] = []
+        self._index: dict[int, _Block] = {}  # this response's block indices
+        self.counts = dict.fromkeys(("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                     "cache_creation_input_tokens", "web_search_requests"), 0)
+        self._earlier = dict(self.counts)  # what earlier responses of the turn reported
         self.stop_reason: str | None = None
         self.finished = False
+
+    def next_response(self) -> None:
+        self._earlier = {k: self._earlier[k] + v for k, v in self.counts.items()}
+        self.counts = dict.fromkeys(self.counts, 0)
+        self._index = {}
+        self.stop_reason, self.finished = None, False
 
     def feed(self, event: Any) -> list[CoreEvent]:
         match event.type:
@@ -228,7 +294,7 @@ class _Turn:
             case "content_block_start":
                 return self._start(event.index, event.content_block)
             case "content_block_delta":
-                return self._delta(self.blocks[event.index], event.delta)
+                return self._delta(self._index[event.index], event.delta)
             case "message_delta":
                 self.stop_reason = event.delta.stop_reason
                 return [self._usage(event.usage)]
@@ -237,32 +303,32 @@ class _Turn:
         return []
 
     def _start(self, index: int, cb: Any) -> list[CoreEvent]:
+        b = _Block(cb.type, cb.model_dump(exclude_none=True), id=getattr(cb, "id", "") or "",
+                   name=getattr(cb, "name", "") or "")
+        self._index[index] = b
+        self.blocks.append(b)
         match cb.type:
-            case "text":
-                self.blocks[index] = _Block("text", [cb.text])
-                return [TextDelta(cb.text)] if cb.text else []
-            case "thinking":
-                self.blocks[index] = _Block("thinking", [cb.thinking], signature=cb.signature)
-                return [ReasoningDelta(cb.thinking)] if cb.thinking else []
-            case "redacted_thinking":
-                self.blocks[index] = _Block("redacted_thinking", data=cb.data)
-            case "tool_use":
-                b = self.blocks[index] = _Block("tool_use", id=cb.id, name=cb.name)
+            case "text" if cb.text:
+                return [TextDelta(cb.text)]
+            case "thinking" if cb.thinking:
+                return [ReasoningDelta(cb.thinking)]
+            case "tool_use" | "server_tool_use":  # a server tool shows as a step at once
                 return [ToolCallDelta(b.id, b.name, "")]
-            case other:
-                self.blocks[index] = _Block(other)  # server-side blocks: not part of v1
         return []
 
     def _delta(self, b: _Block, delta: Any) -> list[CoreEvent]:
         match delta.type:
             case "text_delta":
-                b.parts.append(delta.text)
+                b.raw["text"] = b.raw.get("text", "") + delta.text
                 return [TextDelta(delta.text)]
             case "thinking_delta":
-                b.parts.append(delta.thinking)
+                b.raw["thinking"] = b.raw.get("thinking", "") + delta.thinking
                 return [ReasoningDelta(delta.thinking)]
             case "signature_delta":
-                b.signature = delta.signature
+                b.raw["signature"] = delta.signature
+            case "citations_delta":
+                b.raw.setdefault("citations", []).append(
+                    delta.citation.model_dump(exclude_none=True))
             case "input_json_delta" if delta.partial_json:
                 b.parts.append(delta.partial_json)
                 return [ToolCallDelta(b.id, b.name, delta.partial_json)]
@@ -272,35 +338,111 @@ class _Turn:
         for key in self.counts:
             if (value := getattr(usage, key, None)) is not None:
                 self.counts[key] = value
+        server = getattr(usage, "server_tool_use", None)
+        if server is not None and getattr(server, "web_search_requests", None) is not None:
+            self.counts["web_search_requests"] = server.web_search_requests
         return UsageReport(self.usage())
 
     def usage(self) -> Usage:
-        c = self.counts
+        c = {k: self._earlier[k] + v for k, v in self.counts.items()}
         return Usage(
             input_tokens=(c["input_tokens"] + c["cache_read_input_tokens"]
                           + c["cache_creation_input_tokens"]),
             output_tokens=c["output_tokens"],
             cached_tokens=c["cache_read_input_tokens"],
+            extra_cost_usd=c["web_search_requests"] * SEARCH_USD,
         )
+
+    def content(self) -> list[JSON]:
+        """The blocks so far as the API takes them back, tool inputs complete."""
+        for b in self.blocks:
+            if b.parts:
+                b.raw["input"], _ = parse_arguments("".join(b.parts))
+        return [b.raw for b in self.blocks]
 
     def completed(self) -> Completed:
         blocks: list[Block] = []
-        for _, b in sorted(self.blocks.items()):
-            match b.type:
+        uses: dict[str, JSON] = {}  # server tool uses waiting for their result
+        sources: dict[str, str] = {}  # cited page addresses -> titles, in citing order
+        # Every server-side block of the turn, in the order it came: they refer to each
+        # other (dynamic filtering runs code that calls the search), so they are replayed
+        # together, from the first use shown.
+        server = [b.raw for b in self.blocks
+                  if b.type == "server_tool_use" or b.type.endswith("_tool_result")
+                  and "tool_use_id" in b.raw and b.type != "tool_result"]
+        self.content()
+        for b in self.blocks:
+            raw = b.raw
+            match raw["type"]:
                 case "text":
-                    blocks.append(Text("".join(b.parts)))
+                    blocks.append(Text(raw["text"]))
+                    for citation in raw.get("citations", ()):
+                        if url := citation.get("url"):
+                            sources.setdefault(url, citation.get("title") or url)
                 case "thinking":
-                    state = {"provider": PROVIDER, "signature": b.signature,
+                    state = {"provider": PROVIDER, "signature": raw.get("signature", ""),
                              "prefix": self.bound}
-                    blocks.append(Reasoning("".join(b.parts), state, self.model))
+                    blocks.append(Reasoning(raw.get("thinking", ""), state, self.model))
                 case "redacted_thinking":
-                    state = {"provider": PROVIDER, "redacted": b.data, "prefix": self.bound}
+                    state = {"provider": PROVIDER, "redacted": raw["data"],
+                             "prefix": self.bound}
                     blocks.append(Reasoning("", state, self.model))
                 case "tool_use":
-                    arguments, raw = parse_arguments("".join(b.parts))
-                    blocks.append(ToolCall(b.id, b.name, arguments, raw))
+                    arguments, bad = (parse_arguments("".join(b.parts)) if b.parts
+                                      else (raw.get("input", {}), None))
+                    blocks.append(ToolCall(raw["id"], raw["name"], arguments, bad))
+                case "server_tool_use":
+                    uses[raw["id"]] = raw
+                case kind if kind.endswith("_tool_result") and raw.get("tool_use_id") in uses:
+                    use = uses.pop(raw["tool_use_id"])
+                    if use["name"] in _SHOWN or not any(isinstance(x, ServerToolUse)
+                                                        for x in blocks):
+                        blocks.append(_server_use(use, raw, self.model))
+        shown = [i for i, x in enumerate(blocks) if isinstance(x, ServerToolUse)]
+        for n, i in enumerate(shown):
+            state = {"provider": PROVIDER, "model": self.model, "blocks": server if n == 0 else []}
+            blocks[i] = replace(blocks[i], state=state)
+        if sources:
+            links = " · ".join(f"[{title}]({url})" for url, title in sources.items())
+            blocks.append(Text(f"\n\nSources: {links}"))
         stop = _STOP_REASONS.get(self.stop_reason or "", StopReason.END_TURN)
         return Completed(assistant_message(blocks), self.usage(), stop)
+
+
+def _server_use(use: JSON, result: JSON, model: str) -> ServerToolUse:
+    """A tool Anthropic ran, from its use and result blocks, which are kept for replay."""
+    name, query = use["name"], use.get("input", {})
+    content = result.get("content")
+    error = content.get("error_code") if isinstance(content, dict) else None
+    if name == "web_search":
+        summary = f"Searched the web for “{query.get('query', '')}”"
+    elif name == "web_fetch":
+        summary = f"Read {query.get('url', 'a page')}"
+    elif "code_execution" in name:
+        summary = "Ran code on Anthropic's side to sift the results"
+    else:
+        summary = f"Used {name} on Anthropic's side"
+    if error is not None:
+        readable = f"Failed: {error}"
+    elif isinstance(content, list):
+        readable = "\n".join(f"{item.get('title', '')}\n{item['url']}" for item in content
+                             if isinstance(item, dict) and item.get("url"))
+    elif isinstance(content, dict):
+        readable = "\n".join(str(content[k]) for k in ("stdout", "stderr") if content.get(k))
+    else:
+        readable = ""
+    return ServerToolUse(use["id"], name, query, summary, readable[:4000], error is not None)
+
+
+def _replays_server_blocks(turns: Sequence[JSON]) -> bool:
+    return any(c.get("type") == "server_tool_use" for t in turns for c in t["content"])
+
+
+def search_tool(model: str) -> JSON:
+    """Anthropic's web search for `model`, at most MAX_SEARCHES uses per request."""
+    version = ("web_search_20260209" if model.startswith(_DYNAMIC_FILTERING)
+               else "web_search_20250305")
+    return {"type": version, "name": WEB_SEARCH.name, "max_uses": MAX_SEARCHES}
 
 
 def to_tool(spec: ToolSpec) -> JSON:
@@ -327,19 +469,25 @@ class Prefix:
 
 
 def to_messages(messages: Sequence[Message], model: str, system: str = "",
-                tools: Sequence[ToolSpec] = (), *, replay: bool = True
+                tools: Sequence[JSON] = (), *, replay: bool = True, search: bool = True
                 ) -> tuple[list[JSON], str]:
     """Kayden messages to Anthropic turns, and the Prefix the answer's reasoning is bound
     to. Tool results ride in user turns, and adjacent same-role turns are merged with tool
     results first, as the API requires. Reasoning is replayed only to the model that
-    produced it and while its Prefix is unchanged; never with `replay` off."""
+    produced it and while its Prefix is unchanged; never with `replay` off. A tool Anthropic
+    ran is replayed as it came, to the model that ran it while `search` is on, only after
+    the user's latest message: its results hold the pages' text, which every later request
+    would pay for again. Earlier ones, and the rest, go as text. `tools` are the request's
+    tool definitions."""
     out: list[JSON] = []
-    prefix = Prefix(system, [to_tool(t) for t in tools])
-    for message in messages:
+    prefix = Prefix(system, tools)
+    latest = max((i for i, m in enumerate(messages) if m.role is Role.USER
+                  and any(isinstance(b, Text) for b in m.blocks)), default=-1)
+    for i, message in enumerate(messages):
         role = "assistant" if message.role is Role.ASSISTANT else "user"
         bound = prefix.of(out) if replay and role == "assistant" else None
         content = [c for b in message.blocks
-                   if (c := _to_content(b, model, bound)) is not None]
+                   for c in _to_content(b, model, bound, search and i > latest)]
         if not content:
             continue
         if out and out[-1]["role"] == role:
@@ -351,29 +499,35 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
     return out, prefix.of(out)
 
 
-def _to_content(block: Block, model: str, bound: str | None) -> JSON | None:
+def _to_content(block: Block, model: str, bound: str | None, search: bool) -> list[JSON]:
     match block:
         case Text(text=text):
-            return {"type": "text", "text": text} if text else None
+            return [{"type": "text", "text": text}] if text else []
         case Reasoning(model=produced_by) if produced_by != model:
-            return None  # another model's signature would be rejected
+            return []  # another model's signature would be rejected
         case Reasoning(state=state) if bound is None or (state or {}).get("prefix") != bound:
-            return None  # so would one bound to a different system prompt, tools or history
+            return []  # so would one bound to a different system prompt, tools or history
         case Reasoning(text=text, state={"provider": "anthropic", "signature": signature}):
-            return {"type": "thinking", "thinking": text, "signature": signature}
+            return [{"type": "thinking", "thinking": text, "signature": signature}]
         case Reasoning(state={"provider": "anthropic", "redacted": data}):
-            return {"type": "redacted_thinking", "data": data}
+            return [{"type": "redacted_thinking", "data": data}]
         case Reasoning():
-            return None  # unsigned reasoning cannot be replayed
+            return []  # unsigned reasoning cannot be replayed
+        case ServerToolUse(state={"provider": "anthropic", "model": ran_on, "blocks": raw}) \
+                if search and ran_on == model:
+            return list(raw)  # the turn's server blocks ride on its first shown use
+        case ServerToolUse():
+            return [{"type": "text", "text": server_tool_text(block)}]
         case ToolCall(id=id, name=name, arguments=arguments):
-            return {"type": "tool_use", "id": _INVALID_ID_CHARS.sub("_", id), "name": name,
-                    "input": arguments}
+            return [{"type": "tool_use", "id": _INVALID_ID_CHARS.sub("_", id), "name": name,
+                     "input": arguments}]
         case ToolResult(call_id=call_id, status=status):
-            return {"type": "tool_result", "tool_use_id": _INVALID_ID_CHARS.sub("_", call_id),
-                    "content": result_text(block), "is_error": status in ERROR_STATUSES}
+            return [{"type": "tool_result",
+                     "tool_use_id": _INVALID_ID_CHARS.sub("_", call_id),
+                     "content": result_text(block), "is_error": status in ERROR_STATUSES}]
         case OperationResult():
-            return {"type": "text", "text": operation_text(block)}
-    return None  # OpaqueBlock
+            return [{"type": "text", "text": operation_text(block)}]
+    return []  # OpaqueBlock
 
 
 def _map_error(error: Exception) -> CoreError:

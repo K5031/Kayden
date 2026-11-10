@@ -21,6 +21,7 @@ from kayden.api import (
     ModelInfo,
     OperationResult,
     Role,
+    ServerToolUse,
     ToolResult,
     ToolStatus,
 )
@@ -134,3 +135,8 @@ def parse_arguments(raw: str) -> tuple[JSON, str | None]:
 
 def assistant_message(blocks: list[Block]) -> Message:
     return Message(uuid.uuid4().hex, Role.ASSISTANT, tuple(blocks), time.time())
+
+
+def server_tool_text(use: ServerToolUse) -> str:
+    """A tool another provider ran, as text: what it did and found."""
+    return f"[{use.summary}]\n{use.content}".rstrip()
