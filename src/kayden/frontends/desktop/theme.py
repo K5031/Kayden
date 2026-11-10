@@ -1,0 +1,240 @@
+"""The desktop app's look: one palette per system color scheme, a Qt style sheet built
+from it, and the few icons the app draws itself.
+
+Widgets pick their styling with object names and dynamic properties (`primary`, `tone`,
+`role`); custom-painted widgets read `current()` when they paint, so a change of the
+system's light or dark setting restyles everything.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import (
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+    QPixmap,
+)
+from PySide6.QtWidgets import QApplication, QStyleFactory, QWidget
+
+
+@dataclass(frozen=True)
+class Palette:
+    dark: bool
+    bg: str  # the conversation and dialogs
+    side: str  # the sidebar
+    card: str  # tool cards and the header group
+    field: str  # text fields and the message box
+    line: str  # hairlines and outlines
+    track: str  # an off switch
+    text: str
+    muted: str  # secondary text
+    accent: str
+    accent_hover: str
+    accent_soft: str  # selection and the avatar
+    accent_text: str  # text on accent_soft
+    on_accent: str  # text on accent
+    ok: str
+    warning: str
+    error: str
+    error_bg: str
+    error_text: str
+
+
+LIGHT = Palette(
+    dark=False, bg="#FFFFFF", side="#F5F5F7", card="#F5F5F7", field="#FFFFFF",
+    line="#E3E3E8", track="#C9C9D2", text="#1B1B1F", muted="#6C6C78", accent="#5B5BD6",
+    accent_hover="#4C4CC4", accent_soft="#EDEDFC", accent_text="#3E3EA8", on_accent="#FFFFFF",
+    ok="#1F8A5B", warning="#9A5B00", error="#C62828", error_bg="#FDECEC",
+    error_text="#8E1B1B")
+DARK = Palette(
+    dark=True, bg="#1A1A1E", side="#131316", card="#232328", field="#202025",
+    line="#2F2F36", track="#4A4A55", text="#ECECF0", muted="#9A9AA6", accent="#8C8CF5",
+    accent_hover="#A3A3F8", accent_soft="#2A2A48", accent_text="#C9C9FF", on_accent="#14142B",
+    ok="#4CC38A", warning="#F3C773", error="#F28B82", error_bg="#3B1F22",
+    error_text="#F7B4AE")
+
+ICONS = Path(__file__).parent / "icons"
+
+_current = LIGHT
+
+
+def current() -> Palette:
+    return _current
+
+
+def system_is_dark() -> bool:
+    return QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+
+def apply(app: QApplication, dark: bool | None = None) -> None:
+    """Style the app for `dark`, or for the system's color scheme when None."""
+    global _current
+    _current = DARK if (system_is_dark() if dark is None else dark) else LIGHT
+    app.setStyle(QStyleFactory.create("Fusion"))
+    app.setPalette(qt_palette(_current))
+    app.setStyleSheet(style_sheet(_current, app.font().pointSizeF()))
+
+
+def follow_system(app: QApplication) -> None:
+    """Restyle whenever the system switches between light and dark."""
+    app.styleHints().colorSchemeChanged.connect(lambda _: apply(app))
+
+
+def qt_palette(c: Palette) -> QPalette:
+    palette = QPalette()
+    roles = QPalette.ColorRole
+    for role, color in ((roles.Window, c.bg), (roles.WindowText, c.text), (roles.Base, c.field),
+                        (roles.AlternateBase, c.card), (roles.Text, c.text),
+                        (roles.Button, c.bg), (roles.ButtonText, c.text),
+                        (roles.Highlight, c.accent), (roles.HighlightedText, c.on_accent),
+                        (roles.ToolTipBase, c.bg), (roles.ToolTipText, c.text),
+                        (roles.PlaceholderText, c.muted), (roles.Link, c.accent),
+                        (roles.Mid, c.line), (roles.Midlight, c.card), (roles.Light, c.bg),
+                        (roles.Dark, c.track), (roles.Shadow, c.track)):
+        palette.setColor(role, QColor(color))
+    for role in (roles.WindowText, roles.Text, roles.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(c.muted))
+    return palette
+
+
+def style_sheet(c: Palette, base_pt: float) -> str:
+    small, title, heading = (f"{base_pt * f:.1f}pt" for f in (0.85, 1.15, 1.45))
+    chevron = (ICONS / f"chevron-{'dark' if c.dark else 'light'}.svg").as_posix()
+    return f"""
+QMainWindow, QDialog {{ background: {c.bg}; }}
+QWidget#sidebar {{ background: {c.side}; }}
+QSplitter::handle {{ background: {c.line}; }}
+QScrollArea, QWidget#transcript {{ background: {c.bg}; border: none; }}
+QToolTip {{ background: {c.bg}; color: {c.text}; border: 1px solid {c.line}; padding: 4px; }}
+
+QLabel[tone="muted"], QLabel:disabled {{ color: {c.muted}; }}
+QLabel[tone="ok"] {{ color: {c.ok}; }}
+QLabel[tone="warning"] {{ color: {c.warning}; }}
+QLabel[tone="error"] {{ color: {c.error}; }}
+QLabel[role="strong"] {{ font-weight: 600; }}
+QLabel[role="small"] {{ color: {c.muted}; font-size: {small}; }}
+QLabel[role="title"] {{ font-size: {title}; font-weight: 600; }}
+QLabel[role="heading"] {{ font-size: {heading}; font-weight: 600; }}
+
+QPushButton {{ background: {c.bg}; border: 1px solid {c.line}; border-radius: 8px;
+    padding: 6px 12px; }}
+QPushButton:hover {{ background: {c.card}; }}
+QPushButton:pressed {{ background: {c.line}; }}
+QPushButton:focus {{ border-color: {c.accent}; }}
+QPushButton:disabled {{ color: {c.muted}; }}
+QPushButton[primary="true"] {{ background: {c.accent}; color: {c.on_accent};
+    border-color: {c.accent}; font-weight: 600; }}
+QPushButton[primary="true"]:hover {{ background: {c.accent_hover}; }}
+QPushButton[primary="true"]:disabled {{ background: {c.accent_soft}; color: {c.accent_text};
+    border-color: {c.accent_soft}; }}
+QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px;
+    color: {c.muted}; }}
+QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
+QToolButton#private {{ border: 1px solid {c.line}; border-radius: 8px; padding: 6px; }}
+QToolButton#send {{ background: {c.accent}; border-radius: 16px; padding: 0; }}
+QToolButton#send:hover {{ background: {c.accent_hover}; }}
+
+QLineEdit, QComboBox, QPlainTextEdit, QTextEdit {{ background: {c.field}; color: {c.text};
+    border: 1px solid {c.line}; border-radius: 8px; padding: 5px 8px;
+    selection-background-color: {c.accent}; selection-color: {c.on_accent}; }}
+QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus {{
+    border-color: {c.accent}; }}
+QLineEdit:disabled, QComboBox:disabled {{ color: {c.muted}; background: {c.card}; }}
+QComboBox::drop-down {{ border: none; width: 24px; }}
+QComboBox::down-arrow {{ image: url({chevron}); width: 12px; height: 12px; }}
+QComboBox QAbstractItemView {{ background: {c.bg}; border: 1px solid {c.line};
+    selection-background-color: {c.accent_soft}; selection-color: {c.accent_text}; }}
+
+QListWidget {{ background: transparent; border: none; outline: none; }}
+QListWidget#choices::item {{ border: 1px solid {c.line}; border-radius: 8px;
+    padding: 8px 10px; margin: 2px 0; }}
+QListWidget#choices::item:selected {{ border-color: {c.accent}; background: {c.accent_soft};
+    color: {c.accent_text}; }}
+
+QMenuBar {{ background: {c.bg}; }}
+QMenuBar::item {{ padding: 4px 10px; border-radius: 6px; }}
+QMenuBar::item:selected {{ background: {c.card}; }}
+QMenu {{ background: {c.bg}; border: 1px solid {c.line}; border-radius: 8px; padding: 4px; }}
+QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 6px; }}
+QMenu::item:selected {{ background: {c.accent_soft}; color: {c.accent_text}; }}
+QMenu::item:disabled {{ color: {c.muted}; }}
+QMenu::separator {{ height: 1px; background: {c.line}; margin: 4px 8px; }}
+
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {c.track}; border-radius: 3px; min-height: 32px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
+
+QFrame#header {{ border-bottom: 1px solid {c.line}; }}
+QFrame#headerGroup {{ background: {c.card}; border-radius: 8px; }}
+QFrame#divider {{ background: {c.line}; }}
+QFrame#banner {{ background: {c.error_bg}; border-radius: 8px; }}
+QFrame#banner QLabel {{ color: {c.error_text}; }}
+QFrame#composer {{ background: {c.field}; border: 1px solid {c.line}; border-radius: 21px; }}
+QFrame#composer[focused="true"] {{ border-color: {c.accent}; }}
+QFrame#composer QPlainTextEdit {{ background: transparent; border: none; padding: 0; }}
+QFrame#user {{ background: {c.accent}; border-radius: 14px;
+    border-bottom-right-radius: 4px; }}
+QFrame#user QLabel {{ color: {c.on_accent}; }}
+QFrame#user:disabled {{ background: {c.accent_soft}; }}
+QFrame#user QLabel:disabled {{ color: {c.accent_text}; }}
+QLabel#avatar {{ background: {c.accent_soft}; color: {c.accent_text}; border-radius: 12px;
+    font-weight: 600; }}
+QLabel#bigAvatar {{ background: {c.accent_soft}; color: {c.accent_text}; border-radius: 24px;
+    font-size: {heading}; font-weight: 600; }}
+QFrame#tool {{ background: {c.card}; border: 1px solid {c.line}; border-radius: 10px; }}
+QFrame#tool QPlainTextEdit {{ background: {c.bg}; }}
+QFrame#prompt {{ background: {c.bg}; border: 1px solid {c.line};
+    border-left: 3px solid {c.accent}; }}
+QTextBrowser#reply {{ background: transparent; border: none; padding: 0; }}
+"""
+
+
+def mark(widget: QWidget, name: str, value: object) -> None:
+    """Set a styling property and restyle the widget for it."""
+    if widget.property(name) != value:
+        widget.setProperty(name, value)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+
+
+def icon(kind: str, color: str, size: int = 16) -> QIcon:
+    """A line icon: "send" (an up arrow), "stop" (a square) or "lock"."""
+    scale = 2
+    pixmap = QPixmap(size * scale, size * scale)
+    pixmap.setDevicePixelRatio(scale)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color), size / 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+               Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    s = size
+    match kind:
+        case "send":
+            path = QPainterPath(QPointF(s * 0.5, s * 0.82))
+            path.lineTo(s * 0.5, s * 0.18)
+            path.moveTo(s * 0.22, s * 0.45)
+            path.lineTo(s * 0.5, s * 0.18)
+            path.lineTo(s * 0.78, s * 0.45)
+            painter.drawPath(path)
+        case "stop":
+            painter.setBrush(QColor(color))
+            painter.drawRoundedRect(QRectF(s * 0.3, s * 0.3, s * 0.4, s * 0.4), 1.5, 1.5)
+        case "lock":
+            painter.drawRoundedRect(QRectF(s * 0.2, s * 0.45, s * 0.6, s * 0.42), 2, 2)
+            path = QPainterPath(QPointF(s * 0.33, s * 0.45))
+            path.lineTo(s * 0.33, s * 0.32)
+            path.arcTo(QRectF(s * 0.33, s * 0.12, s * 0.34, s * 0.34), 180, -180)
+            path.lineTo(s * 0.67, s * 0.45)
+            painter.drawPath(path)
+    painter.end()
+    return QIcon(pixmap)

@@ -12,17 +12,23 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
+    QColor,
     QContextMenuEvent,
     QDesktopServices,
+    QFont,
+    QFontMetrics,
     QKeyEvent,
     QKeySequence,
+    QPainter,
+    QPen,
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -45,6 +51,9 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTextBrowser,
     QToolButton,
     QVBoxLayout,
@@ -61,6 +70,7 @@ from kayden.api import (
     RuntimeAPI,
     Settings,
     SettingsUpdate,
+    ToolStatus,
 )
 from kayden.frontends.common import (
     AT_RESTART,
@@ -74,6 +84,7 @@ from kayden.frontends.common import (
     needs_restart,
     restart_notice,
 )
+from kayden.frontends.desktop import theme
 from kayden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     AssistantItem,
@@ -96,9 +107,11 @@ from kayden.frontends.desktop.viewmodel import (
     UserItem,
     clip,
     conversation_label,
+    conversation_preview,
     limit_update,
     memory_source,
     needs_welcome,
+    relative_date,
     settings_update,
     summarize_arguments,
     user_message,
@@ -112,12 +125,21 @@ KEY_PAGES = {
     "openai": "https://platform.openai.com/api-keys",
 }
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
-SEVERITY_COLORS = {"info": "palette(mid)", "warning": "#b26a00", "error": "#c62828"}
 PRIVATE_NOTE = "This chat won't use or add to long-term memory. Its messages are still kept."
 AUTONOMY_LABEL = "Let Kayden continue on its own"
 AUTONOMY_HINT = ("Kayden may keep working without waiting for you, for example when a "
                  "background task finishes. It still asks before actions as set in Settings "
                  "and stops at the spending limit.")
+EMPTY_TITLE = "Start a conversation"
+EMPTY_HINT = "Ask a question or describe a task."
+BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
+TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
+              ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
+# Item data the sidebar and memory rows are drawn from.
+TITLE_ROLE = Qt.ItemDataRole.UserRole + 1
+PREVIEW_ROLE = Qt.ItemDataRole.UserRole + 2
+DATE_ROLE = Qt.ItemDataRole.UserRole + 3
+FLAGS_ROLE = Qt.ItemDataRole.UserRole + 4  # {"private", "archived"}
 
 
 def _spawn(coro: Any) -> asyncio.Task[Any]:
@@ -132,13 +154,174 @@ def _right(*widgets: QWidget) -> QHBoxLayout:
     return row
 
 
-def _label(text: str = "", *, wrap: bool = True, selectable: bool = True) -> QLabel:
+def _label(text: str = "", *, wrap: bool = True, selectable: bool = True,
+           tone: str | None = None, role: str | None = None) -> QLabel:
     label = QLabel(text)
     label.setWordWrap(wrap)
     label.setTextFormat(Qt.TextFormat.PlainText)
     if selectable:
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    label.setProperty("tone", tone)
+    label.setProperty("role", role)
     return label
+
+
+def _primary(button: QPushButton) -> QPushButton:
+    button.setProperty("primary", True)
+    return button
+
+
+class ElidedLabel(QLabel):
+    """One line that ends in "…" instead of widening its window."""
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight,
+                                             self.contentsRect().width())
+        painter.drawText(self.contentsRect(), Qt.AlignmentFlag.AlignVCenter, text)
+
+
+class Switch(QCheckBox):
+    """A check box drawn as a sliding switch."""
+
+    TRACK = QSize(30, 18)
+    GAP = 8
+
+    def sizeHint(self) -> QSize:
+        metrics = self.fontMetrics()
+        return QSize(self.TRACK.width() + self.GAP + metrics.horizontalAdvance(self.text()) + 2,
+                     max(self.TRACK.height(), metrics.height()) + 4)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def hitButton(self, pos: QPoint) -> bool:
+        return self.rect().contains(pos)
+
+    def paintEvent(self, event: Any) -> None:
+        colors = theme.current()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        width, height = self.TRACK.width(), self.TRACK.height()
+        track = QRectF(0.5, (self.height() - height) / 2, width, height)
+        fill = QColor(colors.accent if self.isChecked() else colors.track)
+        if not self.isEnabled():
+            fill.setAlphaF(0.45)
+        painter.setPen(QPen(QColor(colors.accent), 2) if self.hasFocus()
+                       and self.focusPolicy() != Qt.FocusPolicy.NoFocus
+                       and self.testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange)
+                       else Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(track, height / 2, height / 2)
+        knob = height - 4
+        x = track.x() + (width - knob - 2 if self.isChecked() else 2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawEllipse(QRectF(x, track.y() + 2, knob, knob))
+        painter.setPen(QColor(colors.text if self.isEnabled() else colors.muted))
+        painter.drawText(QRectF(width + self.GAP, 0, self.width() - width - self.GAP,
+                                self.height()), Qt.AlignmentFlag.AlignVCenter, self.text())
+
+
+class RowDelegate(QStyledItemDelegate):
+    """Draws a list row as a title, an optional muted second line and a date on the right.
+    With `wrap`, the title wraps instead of ending in "…"."""
+
+    PAD = QSize(10, 7)
+
+    def __init__(self, view: QListWidget, *, wrap: bool = False) -> None:
+        super().__init__(view)
+        self.view, self.wrap = view, wrap
+
+    def _texts(self, index: Any) -> tuple[str, str, str, set[str]]:
+        title = index.data(TITLE_ROLE) or index.data(Qt.ItemDataRole.DisplayRole) or ""
+        return (title, index.data(PREVIEW_ROLE) or "", index.data(DATE_ROLE) or "",
+                index.data(FLAGS_ROLE) or set())
+
+    def _title_font(self, option: QStyleOptionViewItem) -> QFont:
+        font = QFont(option.font)
+        font.setWeight(QFont.Weight.DemiBold if not self.wrap else QFont.Weight.Normal)
+        return font
+
+    def _small_font(self, option: QStyleOptionViewItem) -> QFont:
+        font = QFont(option.font)
+        font.setPointSizeF(font.pointSizeF() * 0.9)
+        return font
+
+    def _title_height(self, option: QStyleOptionViewItem, title: str, width: int) -> int:
+        metrics = QFontMetrics(self._title_font(option))
+        if not self.wrap:
+            return metrics.height()
+        flags = Qt.TextFlag.TextWordWrap
+        return metrics.boundingRect(0, 0, max(width, 40), 10_000, flags, title).height()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: Any) -> QSize:
+        title, preview, _, _ = self._texts(index)
+        width = self.view.viewport().width() - 2 * self.PAD.width()
+        height = self._title_height(option, title, width)
+        if preview:
+            height += 2 + QFontMetrics(self._small_font(option)).height()
+        return QSize(width, height + 2 * self.PAD.height() + 2)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: Any) -> None:
+        colors = theme.current()
+        title, preview, date, flags = self._texts(index)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        box = QRectF(option.rect).adjusted(0, 1, 0, -1)
+        if selected or hovered:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors.accent_soft if selected else colors.card))
+            painter.drawRoundedRect(box, 8, 8)
+        inner = option.rect.adjusted(self.PAD.width(), self.PAD.height() + 1,
+                                     -self.PAD.width(), -self.PAD.height() - 1)
+        small = self._small_font(option)
+        small_metrics = QFontMetrics(small)
+        left = inner.left()
+        if "private" in flags:
+            size = small_metrics.height()
+            lock = theme.icon("lock", colors.muted, size)
+            lock.paint(painter, left, inner.top() + 1, size, size)
+            left += size + 4
+        right = inner.right()
+        if date:
+            painter.setFont(small)
+            painter.setPen(QColor(colors.muted))
+            date_width = small_metrics.horizontalAdvance(date)
+            painter.drawText(right - date_width, inner.top(), date_width + 1,
+                             QFontMetrics(self._title_font(option)).height(),
+                             Qt.AlignmentFlag.AlignVCenter, date)
+            right -= date_width + 8
+        title_font = self._title_font(option)
+        painter.setFont(title_font)
+        muted = "archived" in flags
+        painter.setPen(QColor(colors.accent_text if selected else
+                              colors.muted if muted else colors.text))
+        title_height = self._title_height(option, title, right - left)
+        if self.wrap:
+            painter.drawText(left, inner.top(), right - left, title_height,
+                             Qt.TextFlag.TextWordWrap, title)
+        else:
+            painter.drawText(left, inner.top(), right - left, title_height,
+                             Qt.AlignmentFlag.AlignVCenter,
+                             QFontMetrics(title_font).elidedText(
+                                 title, Qt.TextElideMode.ElideRight, right - left))
+        if preview:
+            painter.setFont(small)
+            painter.setPen(QColor(colors.muted))
+            painter.drawText(inner.left(), inner.top() + title_height + 2, inner.width(),
+                             small_metrics.height(), Qt.AlignmentFlag.AlignVCenter,
+                             small_metrics.elidedText(preview, Qt.TextElideMode.ElideRight,
+                                                      inner.width()))
+        painter.restore()
 
 
 # ── transcript widgets ────────────────────────────────────────────────────
@@ -149,12 +332,15 @@ class MarkdownView(QTextBrowser):
 
     def __init__(self) -> None:
         super().__init__()
+        self.setObjectName("reply")
         self.setOpenExternalLinks(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.viewport().setAutoFillBackground(False)
+        self.document().setDocumentMargin(0)
+        self.document().setIndentWidth(20)
         self.document().documentLayout().documentSizeChanged.connect(self._fit)
 
     def _fit(self, *_: object) -> None:
@@ -166,40 +352,75 @@ class MarkdownView(QTextBrowser):
         self._fit()
 
 
-class UserBubble(QFrame):
+def _avatar(size: int = 24, name: str = "avatar") -> QLabel:
+    avatar = QLabel("K", objectName=name)
+    avatar.setFixedSize(size, size)
+    avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    avatar.setAccessibleName("Kayden")
+    return avatar
+
+
+class UserBubble(QWidget):
+    """Your message: an accent bubble on the right."""
+
     def __init__(self, item: UserItem) -> None:
         super().__init__()
         self.item = item
-        self.setObjectName("user")
-        layout = QVBoxLayout(self)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch(1)
+        self.bubble = QFrame(objectName="user")
+        layout = QVBoxLayout(self.bubble)
+        layout.setContentsMargins(12, 8, 12, 8)
         self.text = _label()
         layout.addWidget(self.text)
+        row.addWidget(self.bubble)
         self.refresh()
 
     def refresh(self) -> None:
         self.text.setText(self.item.text + ("\n(queued)" if self.item.queued else ""))
         self.setEnabled(not self.item.queued)
         self.setAccessibleName("You" + (", queued" if self.item.queued else ""))
+        self._fit()
+
+    def _fit(self) -> None:
+        """As wide as its longest line, up to BUBBLE_SHARE of the transcript."""
+        widest = int(self.width() * BUBBLE_SHARE)
+        margins = self.bubble.contentsMargins()
+        natural = max(self.text.fontMetrics().horizontalAdvance(line)
+                      for line in self.text.text().split("\n")) + 2
+        self.text.setMinimumWidth(min(natural, widest - margins.left() - margins.right()))
+        self.bubble.setMaximumWidth(widest)
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        self._fit()
 
 
-class AssistantBubble(QFrame):
+class AssistantBubble(QWidget):
+    """Kayden's reply: an avatar, then the text with no bubble, easy to read when long."""
+
     def __init__(self, item: AssistantItem) -> None:
         super().__init__()
         self.item = item
-        self.setObjectName("assistant")
-        layout = QVBoxLayout(self)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        row.addWidget(_avatar(), 0, Qt.AlignmentFlag.AlignTop)
+        layout = QVBoxLayout()
+        layout.setSpacing(4)
+        row.addLayout(layout, 1)
         self.thinking = QToolButton(text="Thinking", checkable=True)
         self.thinking.setArrowType(Qt.ArrowType.RightArrow)
         self.thinking.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.thinking.toggled.connect(self._toggle_thinking)
-        self.reasoning = _label()
-        self.reasoning.setEnabled(False)
+        self.reasoning = _label(tone="muted")
         self.reasoning.hide()
         self.body = MarkdownView()
         self.body.setAccessibleName("Kayden")
-        self.marker = _label(selectable=False)
-        self.marker.setEnabled(False)
-        for widget in (self.thinking, self.reasoning, self.body, self.marker):
+        self.marker = _label(selectable=False, tone="muted")
+        layout.addWidget(self.thinking, 0, Qt.AlignmentFlag.AlignLeft)
+        for widget in (self.reasoning, self.body, self.marker):
             layout.addWidget(widget)
         self._timer = QTimer(self, singleShot=True, interval=RENDER_INTERVAL_MS)
         self._timer.timeout.connect(self._render)
@@ -230,29 +451,37 @@ class AssistantBubble(QFrame):
 
 
 class ToolCard(QFrame):
+    """One row: the tool, what it works on, its state; details unfold below."""
+
     def __init__(self, item: ToolItem, cancel: Callable[[str], None]) -> None:
         super().__init__()
         self.item = item
         self.setObjectName("tool")
-        self.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 6, 6, 6)
+        layout.setSpacing(4)
         head = QHBoxLayout()
-        self.title = _label(wrap=False)
+        head.setSpacing(8)
+        self.name = _label(wrap=False, selectable=False, role="strong")
+        self.title = ElidedLabel()
+        self.title.setProperty("tone", "muted")
         self.state = _label(wrap=False, selectable=False)
         self.cancel = QPushButton("Cancel")
         self.cancel.setAccessibleName("Cancel this task")
         self.cancel.clicked.connect(lambda: cancel(self.item.call_id))
-        self.toggle = QToolButton(text="Details", checkable=True)
+        self.toggle = QToolButton(checkable=True)
+        self.toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self.toggle.setToolTip("Details")
+        self.toggle.setAccessibleName("Details")
         self.toggle.toggled.connect(self._toggle)
+        head.addWidget(self.name)
         head.addWidget(self.title, 1)
         head.addWidget(self.state)
         head.addWidget(self.cancel)
         head.addWidget(self.toggle)
         layout.addLayout(head)
-        self.progress = _label()
-        self.progress.setEnabled(False)
-        self.notes = _label()
-        self.notes.setEnabled(False)
+        self.progress = _label(tone="muted")
+        self.notes = _label(tone="muted")
         self.details = QPlainTextEdit(readOnly=True)
         self.details.setMaximumHeight(200)
         self.details.hide()
@@ -262,9 +491,13 @@ class ToolCard(QFrame):
 
     def refresh(self) -> None:
         item = self.item
-        self.title.setText(f"{item.name}  {item.summary}")
+        self.name.setText(item.name)
+        self.title.setText(item.summary)
+        self.title.setToolTip(item.summary)
         duration = f" in {item.duration_s:.1f} s" if item.duration_s is not None else ""
         self.state.setText(item.state_label + duration)
+        theme.mark(self.state, "tone", TOOL_TONES.get(item.status, "muted")
+                   if item.status is not None else "muted")
         self.cancel.setVisible(item.cancellable)
         self.progress.setText(item.progress)
         self.progress.setVisible(bool(item.progress) and item.status is None)
@@ -274,6 +507,7 @@ class ToolCard(QFrame):
         self.setAccessibleName(f"Tool {item.name}, {item.state_label}")
 
     def _toggle(self, shown: bool) -> None:
+        self.toggle.setArrowType(Qt.ArrowType.UpArrow if shown else Qt.ArrowType.DownArrow)
         self.details.setVisible(shown)
 
 
@@ -283,7 +517,8 @@ class NoticeLine(QLabel):
         self.item = item
         self.setWordWrap(True)
         self.setTextFormat(Qt.TextFormat.PlainText)
-        self.setStyleSheet(f"color: {SEVERITY_COLORS.get(item.severity, 'palette(text)')};")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setProperty("tone", "muted" if item.severity == "info" else item.severity)
 
     def refresh(self) -> None:
         self.setText(self.item.text)
@@ -294,18 +529,19 @@ class PermissionCard(QFrame):
                  resolve: Callable[[str, Decision], None]) -> None:
         super().__init__()
         self.setObjectName("prompt")
-        self.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 12, 10)
         call = request.call
         kind = "It only reads." if request.read_only else "It may change things."
-        text = _label(f"Kayden wants to use {call.name}. {kind}\n"
-                      f"{summarize_arguments(call.arguments)}")
-        layout.addWidget(text)
+        layout.addWidget(_label(f"Kayden wants to use {call.name}", role="strong"))
+        layout.addWidget(_label(f"{kind} {summarize_arguments(call.arguments)}", tone="muted"))
         buttons = QHBoxLayout()
         for decision, label in ((Decision.ALLOW_ONCE, "Allow once"),
                                 (Decision.ALLOW_CONVERSATION, "Allow for this conversation"),
                                 (Decision.DENY, "Deny")):
             button = QPushButton(label)
+            if decision is Decision.ALLOW_ONCE:
+                _primary(button)
             button.clicked.connect(lambda _=False, d=decision: self._answer(request.id, d))
             buttons.addWidget(button)
         buttons.addStretch()
@@ -335,9 +571,24 @@ class ConversationList(QListWidget):
 
 
 class MessageBox(QPlainTextEdit):
-    """Enter sends; Shift+Enter starts a new line."""
+    """Enter sends; Shift+Enter starts a new line. Grows with its text up to a few lines."""
 
     submitted = Signal()
+    focus_changed = Signal(bool)
+    MAX_LINES = 6
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.document().documentLayout().documentSizeChanged.connect(self._fit)
+        self._fit()
+
+    def _fit(self, *_: object) -> None:
+        lines = min(max(1, int(self.document().size().height())), self.MAX_LINES)
+        margins = self.contentsMargins()
+        height = (lines * self.fontMetrics().lineSpacing() + 2 * self.document().documentMargin()
+                  + margins.top() + margins.bottom() + 2)
+        self.setFixedHeight(int(height))
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         enter = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
@@ -345,6 +596,14 @@ class MessageBox(QPlainTextEdit):
             self.submitted.emit()
             return
         super().keyPressEvent(event)
+
+    def focusInEvent(self, event: Any) -> None:
+        super().focusInEvent(event)
+        self.focus_changed.emit(True)
+
+    def focusOutEvent(self, event: Any) -> None:
+        super().focusOutEvent(event)
+        self.focus_changed.emit(False)
 
 
 # ── main window ───────────────────────────────────────────────────────────
@@ -372,9 +631,11 @@ class MainWindow(QMainWindow):
     # ── layout ────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        sidebar = QWidget()
+        sidebar = QWidget(objectName="sidebar")
         side = QVBoxLayout(sidebar)
-        self.new_action = QAction("&New conversation", self, shortcut=QKeySequence.StandardKey.New)
+        side.setContentsMargins(10, 12, 10, 10)
+        side.setSpacing(8)
+        self.new_action = QAction("&New chat", self, shortcut=QKeySequence.StandardKey.New)
         self.new_action.triggered.connect(lambda: self.open_conversation(None))
         self.private_action = QAction("New &private chat", self,
                                       shortcut=QKeySequence("Ctrl+Shift+N"))
@@ -382,15 +643,22 @@ class MainWindow(QMainWindow):
         self.private_action.setStatusTip(PRIVATE_NOTE)
         self.private_action.triggered.connect(lambda: self.open_conversation(None,
                                                                              remember=False))
-        self.new_button = QToolButton(text="New conversation")
-        self.new_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self.new_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.new_button = _primary(QPushButton("New chat"))
+        self.new_button.setToolTip("Start a new conversation (Ctrl+N)")
         self.new_button.clicked.connect(self.new_action.trigger)
-        new_menu = QMenu(self.new_button)
-        new_menu.setToolTipsVisible(True)
-        new_menu.addAction(self.private_action)
-        self.new_button.setMenu(new_menu)
+        self.private_button = QToolButton(objectName="private")
+        self.private_button.setToolTip(f"New private chat (Ctrl+Shift+N). {PRIVATE_NOTE}")
+        self.private_button.setAccessibleName("New private chat")
+        self.private_button.clicked.connect(self.private_action.trigger)
+        new_row = QHBoxLayout()
+        new_row.setSpacing(6)
+        new_row.addWidget(self.new_button, 1)
+        new_row.addWidget(self.private_button)
         self.conversation_list = ConversationList()
+        self.conversation_list.setItemDelegate(RowDelegate(self.conversation_list))
+        self.conversation_list.setMouseTracking(True)
+        self.conversation_list.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.conversation_list.setAccessibleName("Conversations")
         self.conversation_list.setToolTip("Right-click a conversation, or press the Menu key, "
                                           "to rename, archive or delete it.")
@@ -403,19 +671,22 @@ class MainWindow(QMainWindow):
             shortcut = QShortcut(keys, self.conversation_list,
                                  context=Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(lambda c=command: self._on_current(c))
-        self.show_archived = QCheckBox("Show archived")
+        self.show_archived = Switch("Show archived")
         self.show_archived.toggled.connect(lambda _: _spawn(self.fill_sidebar()))
-        self.switch_reason = _label(selectable=False)
-        self.switch_reason.setEnabled(False)
-        side.addWidget(self.new_button)
+        self.switch_reason = _label(selectable=False, role="small")
+        side.addLayout(new_row)
+        side.addWidget(_label("Conversations", selectable=False, role="small"))
         side.addWidget(self.conversation_list, 1)
         side.addWidget(self.show_archived)
         side.addWidget(self.switch_reason)
 
         main = QWidget()
         column = QVBoxLayout(main)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
         self.banner = QFrame(objectName="banner")
         banner = QHBoxLayout(self.banner)
+        banner.setContentsMargins(12, 8, 8, 8)
         self.banner_text = _label()
         self.banner_settings = QPushButton("Open Settings")
         self.banner_settings.clicked.connect(self.open_settings)
@@ -423,32 +694,53 @@ class MainWindow(QMainWindow):
         banner.addWidget(self.banner_settings)
         self.banner.hide()
 
-        header = QHBoxLayout()
-        self.title_label = _label(wrap=False)
-        self.title_label.setStyleSheet("font-weight: bold;")
-        self.private_label = _label("Private chat: " + PRIVATE_NOTE[0].lower() + PRIVATE_NOTE[1:],
-                                    selectable=False)
-        self.private_label.setEnabled(False)
-        self.autonomy = QCheckBox(AUTONOMY_LABEL)
+        header = QFrame(objectName="header")
+        head = QHBoxLayout(header)
+        head.setContentsMargins(18, 10, 14, 10)
+        head.setSpacing(10)
+        self.title_label = ElidedLabel()
+        self.title_label.setProperty("role", "title")
+        group = QFrame(objectName="headerGroup")
+        controls = QHBoxLayout(group)
+        controls.setContentsMargins(10, 4, 10, 4)
+        controls.setSpacing(10)
+        self.autonomy = Switch(AUTONOMY_LABEL)
         self.autonomy.setToolTip(AUTONOMY_HINT)
         self.autonomy.clicked.connect(self._set_autonomous)
-        self.spending_label = _label(wrap=False, selectable=False)
+        self.spending_divider = QFrame(objectName="divider")
+        self.spending_divider.setFixedSize(1, 14)
+        self.spending_label = _label(wrap=False, selectable=False, tone="muted")
         self.spending_label.setToolTip("What Kayden has spent so far, across all conversations.")
-        header.addWidget(self.title_label, 1)
-        header.addWidget(self.autonomy)
-        header.addWidget(self.spending_label)
+        for widget in (self.autonomy, self.spending_divider, self.spending_label):
+            controls.addWidget(widget)
+        head.addWidget(self.title_label, 1)
+        head.addWidget(group)
+        self.private_label = _label("Private chat: " + PRIVATE_NOTE[0].lower() + PRIVATE_NOTE[1:],
+                                    selectable=False, role="small")
+        self.private_label.setContentsMargins(18, 6, 18, 0)
 
         self.scroll = QScrollArea(widgetResizable=True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget()
+        content = QWidget(objectName="transcript")
         outer = QVBoxLayout(content)
+        outer.setContentsMargins(20, 16, 20, 16)
         self.load_earlier = QPushButton("Load earlier messages")
         self.load_earlier.clicked.connect(self._load_earlier)
         self.load_earlier.hide()
         self.items_layout = QVBoxLayout()
-        self.items_layout.setSpacing(10)
-        outer.addWidget(self.load_earlier)
+        self.items_layout.setSpacing(12)
+        self.empty_state = QWidget()
+        empty = QVBoxLayout(self.empty_state)
+        empty.addStretch(2)
+        empty.addWidget(_avatar(48, "bigAvatar"), 0, Qt.AlignmentFlag.AlignHCenter)
+        for line in (_label(EMPTY_TITLE, selectable=False, role="title"),
+                     _label(EMPTY_HINT, selectable=False, tone="muted")):
+            line.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            empty.addWidget(line)
+        empty.addStretch(3)
+        outer.addWidget(self.load_earlier, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addLayout(self.items_layout)
+        outer.addWidget(self.empty_state, 1)
         outer.addStretch()
         self.scroll.setWidget(content)
         self._at_end = True
@@ -457,39 +749,65 @@ class MainWindow(QMainWindow):
         bar.rangeChanged.connect(lambda _lo, hi: self._at_end and bar.setValue(hi))
 
         self.prompts = QVBoxLayout()
-        composer = QHBoxLayout()
+        self.prompts.setContentsMargins(20, 0, 20, 8)
+        self.composer = QFrame(objectName="composer")
+        composer = QHBoxLayout(self.composer)
+        composer.setContentsMargins(14, 5, 5, 5)
+        composer.setSpacing(8)
         self.input = MessageBox()
-        self.input.setPlaceholderText("Message Kayden (Enter to send, Shift+Enter for a new line)")
+        self.input.setPlaceholderText("Message Kayden")
+        self.input.setToolTip("Enter sends. Shift+Enter starts a new line.")
         self.input.setAccessibleName("Message")
-        self.input.setMaximumHeight(110)
         self.input.submitted.connect(self._send)
-        self.send_button = QPushButton("Send")
+        self.input.focus_changed.connect(lambda on: theme.mark(self.composer, "focused", on))
+        self.send_button = QToolButton(objectName="send", text="Send")
+        self.send_button.setFixedSize(32, 32)
+        self.send_button.setIconSize(QSize(16, 16))
+        self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_button.clicked.connect(self._send_or_stop)
-        composer.addWidget(self.input, 1)
+        composer.addWidget(self.input, 1, Qt.AlignmentFlag.AlignVCenter)
         composer.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
+        self.status_label = _label(wrap=False, selectable=False, role="small")
+        self.usage_label = _label(wrap=False, selectable=False, role="small")
+        footer = QHBoxLayout()
+        footer.setContentsMargins(10, 4, 10, 0)
+        footer.addWidget(self.status_label, 1)
+        footer.addWidget(self.usage_label)
+        bottom = QVBoxLayout()
+        bottom.setContentsMargins(20, 0, 20, 8)
+        bottom.setSpacing(0)
+        bottom.addWidget(self.composer)
+        bottom.addLayout(footer)
 
-        column.addWidget(self.banner)
-        column.addLayout(header)
+        column.addWidget(header)
+        banner_row = QVBoxLayout()
+        banner_row.setContentsMargins(20, 10, 20, 0)
+        banner_row.addWidget(self.banner)
+        column.addLayout(banner_row)
         column.addWidget(self.private_label)
         column.addWidget(self.scroll, 1)
         column.addLayout(self.prompts)
-        column.addLayout(composer)
+        column.addLayout(bottom)
 
         splitter = QSplitter()
+        splitter.setHandleWidth(1)
         splitter.addWidget(sidebar)
         splitter.addWidget(main)
-        splitter.setSizes([240, 760])
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([250, 750])
         self.setCentralWidget(splitter)
+        self._paint_icons()
 
-        self.status_label = _label(wrap=False, selectable=False)
-        self.usage_label = _label(wrap=False, selectable=False)
-        self.statusBar().addWidget(self.status_label, 1)
-        self.statusBar().addPermanentWidget(self.usage_label)
-        self.setStyleSheet("""
-            QFrame#user { background: palette(alternate-base); border-radius: 8px; }
-            QFrame#banner { background: #fdecea; border-radius: 6px; }
-            QFrame#banner QLabel { color: #8e1b1b; }
-        """)
+    def _paint_icons(self) -> None:
+        colors = theme.current()
+        self.private_button.setIcon(theme.icon("lock", colors.muted))
+        self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
+                                            colors.on_accent))
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:  # the system switched light or dark
+            self._paint_icons()
 
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("&Kayden")
@@ -561,12 +879,14 @@ class MainWindow(QMainWindow):
                 widget = self._widget_for(item)
                 self._widgets[id(item)] = widget
                 self.items_layout.insertWidget(index, widget)
+                self._show_empty_state()
             case Updated(item=item):
                 if (widget := self._widgets.get(id(item))) is not None:
                     widget.refresh()  # type: ignore[attr-defined]
             case Removed(item=item):
                 if (widget := self._widgets.pop(id(item), None)) is not None:
                     widget.deleteLater()
+                self._show_empty_state()
             case PromptsChanged():
                 self._rebuild_prompts()
             case StatusChanged():
@@ -604,6 +924,10 @@ class MainWindow(QMainWindow):
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
 
+    def _show_empty_state(self) -> None:
+        self.empty_state.setVisible(self.model.conversation is not None and not self.model.items
+                                    and not self.model.has_earlier)
+
     def _refresh_status(self) -> None:
         model = self.model
         self.status_label.setText(model.status_text)
@@ -616,12 +940,18 @@ class MainWindow(QMainWindow):
         self.autonomy.setEnabled(conversation is not None)
         self.autonomy.setChecked(model.autonomous)
         self.spending_label.setText(model.spending_text)
+        self.spending_divider.setVisible(bool(model.spending_text))
+        self.spending_label.setVisible(bool(model.spending_text))
         self.send_button.setText("Stop" if model.busy else "Send")
+        self.send_button.setToolTip("Stop (Esc)" if model.busy else "Send (Enter)")
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")
+        self._paint_icons()
+        self._show_empty_state()
         self.load_earlier.setVisible(model.has_earlier)
         self.load_earlier.setEnabled(True)
         reason = self.controller.can_switch()
-        for widget in (self.new_button, self.new_action, self.private_action):
+        for widget in (self.new_button, self.private_button, self.new_action,
+                       self.private_action):
             widget.setEnabled(reason is None)
         self.switch_reason.setText(reason or "")
         self.switch_reason.setVisible(reason is not None)
@@ -644,9 +974,13 @@ class MainWindow(QMainWindow):
         for info in conversations:
             notes = [n for n, on in (("private", not info.remember),
                                      ("archived", info.archived)) if on]
-            label = conversation_label(info) + (f"  ({', '.join(notes)})" if notes else "")
-            entry = QListWidgetItem(label)
+            title = conversation_label(info)
+            entry = QListWidgetItem(title + (f"  ({', '.join(notes)})" if notes else ""))
             entry.setData(Qt.ItemDataRole.UserRole, info.id)
+            entry.setData(TITLE_ROLE, title)
+            entry.setData(PREVIEW_ROLE, conversation_preview(info))
+            entry.setData(DATE_ROLE, relative_date(info.updated_at))
+            entry.setData(FLAGS_ROLE, set(notes))
             self.conversation_list.addItem(entry)
             if info.id == current:
                 self.conversation_list.setCurrentItem(entry)
@@ -789,21 +1123,25 @@ class MemoryDialog(QDialog):
         super().__init__(parent)
         self.controller = controller
         self.setWindowTitle("Memory")
-        self.setMinimumSize(520, 420)
+        self.setMinimumSize(520, 440)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.addWidget(_label("Memory", selectable=False, role="heading"))
         layout.addWidget(_label("Kayden remembers these things across conversations. "
-                                "Private chats don't use or add to them."))
+                                "Private chats don't use or add to them.", tone="muted"))
         self.entries = QListWidget()
         self.entries.setAccessibleName("Memories")
-        self.entries.setWordWrap(True)
+        self.entries.setItemDelegate(RowDelegate(self.entries, wrap=True))
+        self.entries.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.entries.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.entries.setMouseTracking(True)
         self.entries.currentItemChanged.connect(lambda *_: self._selection_changed())
         self.entries.itemActivated.connect(lambda _: self._edit())
         self.empty = _label("Nothing yet. Kayden adds things here as it learns them, and you "
-                            "can add your own.", selectable=False)
-        self.empty.setEnabled(False)
+                            "can add your own.", selectable=False, tone="muted")
         layout.addWidget(self.entries, 1)
         layout.addWidget(self.empty)
-        self.add_button = QPushButton("Add…")
+        self.add_button = _primary(QPushButton("Add…"))
         self.add_button.clicked.connect(self._add)
         self.edit_button = QPushButton("Edit…")
         self.edit_button.clicked.connect(self._edit)
@@ -827,6 +1165,7 @@ class MemoryDialog(QDialog):
             for entry in entries or ():
                 item = QListWidgetItem(entry.text)
                 item.setData(Qt.ItemDataRole.UserRole, entry)
+                item.setData(PREVIEW_ROLE, memory_source(entry))
                 item.setToolTip(memory_source(entry))
                 self.entries.addItem(item)
                 if selected is not None and entry.id == selected.id:
@@ -900,9 +1239,13 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(560)
         form = QFormLayout(self)
+        form.setContentsMargins(20, 18, 20, 16)
+        form.setVerticalSpacing(10)
+        form.setHorizontalSpacing(14)
+        form.addRow(_label("Settings", selectable=False, role="heading"))
 
         self.startup_error = _label(f"Kayden could not start: {settings.startup_error}")
-        self.startup_error.setStyleSheet(f"color: {SEVERITY_COLORS['error']};")
+        theme.mark(self.startup_error, "tone", "error")
         self.startup_error.setVisible(settings.startup_error is not None)
         self.modules = {kind: self._module_box(kind) for kind in settings.modules}
         self.modules["core"].currentIndexChanged.connect(self._core_changed)
@@ -924,7 +1267,7 @@ class SettingsDialog(QDialog):
         for box in (self.model, self.light):
             box.setEnabled(self.has_models)
         self.model_note = _label("After the restart, the new provider starts with its first "
-                                 "model.", selectable=False)
+                                 "model.", selectable=False, role="small")
         self.model_note.hide()
         self.limit = QLineEdit("" if settings.budget.max_cost_usd is None
                                else f"{settings.budget.max_cost_usd:g}")
@@ -944,16 +1287,16 @@ class SettingsDialog(QDialog):
         folder_row.addWidget(browse)
         for widget in (self.folder, browse):
             widget.setEnabled(settings.work_folder is not None)
-        self.notice = _label(restart_notice(settings) or "", selectable=False)
+        self.notice = _label(restart_notice(settings) or "", selectable=False, tone="warning")
         self.notice.setVisible(restart_notice(settings) is not None)
         self.error = _label()
-        self.error.setStyleSheet(f"color: {SEVERITY_COLORS['error']};")
+        theme.mark(self.error, "tone", "error")
         self.error.hide()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                    | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.save_button = _primary(buttons.button(QDialogButtonBox.StandardButton.Save))
         self.restart_button = buttons.addButton("Restart now",
                                                 QDialogButtonBox.ButtonRole.ActionRole)
         self.restart_button.clicked.connect(lambda: self._save(restart=True))
@@ -967,13 +1310,13 @@ class SettingsDialog(QDialog):
         form.addRow("Model for memory upkeep", self.light)
         form.addRow("", self.model_note)
         form.addRow("Spending limit (US$)", self.limit)
-        form.addRow("", _label(f"{dollars(spent)} spent so far", selectable=False))
+        form.addRow("", _label(f"{dollars(spent)} spent so far", selectable=False, role="small"))
         form.addRow("What the agent may do", self.permissions)
         form.addRow("Instructions", self.instructions)
         form.addRow("Work folder", folder_row)
         for kind in ("memory", "tools", "frontend"):
             form.addRow(MODULE_LABELS[kind], self.modules[kind])
-        form.addRow(_label(AT_RESTART, selectable=False))
+        form.addRow(_label(AT_RESTART, selectable=False, role="small"))
         form.addRow(self.notice)
         form.addRow(self.error)
         form.addRow(buttons)
@@ -1067,17 +1410,20 @@ class WelcomeDialog(QDialog):
         super().__init__(parent)
         self.runtime, self.controller, self.settings = runtime, controller, settings
         self.setWindowTitle("Welcome to Kayden")
-        self.setMinimumWidth(520)
+        self.setMinimumSize(520, 400)
         self.pages = QStackedWidget()
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 18)
+        layout.addWidget(_label("Welcome to Kayden", selectable=False, role="heading"))
         layout.addWidget(self.pages)
 
         # 1. provider
         page = QWidget()
         column = QVBoxLayout(page)
+        column.setContentsMargins(0, 8, 0, 0)
         column.addWidget(_label("Choose your AI provider. Kayden uses its models and you pay "
                                 "it directly for what you use."))
-        self.provider = QListWidget()
+        self.provider = QListWidget(objectName="choices")
         self.provider.setAccessibleName("AI provider")
         self.cores = [m for m in settings.modules["core"].installed if m.key_name is not None]
         for core in self.cores:
@@ -1088,7 +1434,7 @@ class WelcomeDialog(QDialog):
         self.provider.setCurrentRow(max(0, next(
             (i for i, core in enumerate(self.cores) if core.id == chosen), 0)))
         column.addWidget(self.provider)
-        next_button = QPushButton("Continue")
+        next_button = _primary(QPushButton("Continue"))
         next_button.setDefault(True)
         next_button.clicked.connect(lambda: self.pages.setCurrentIndex(1))
         column.addLayout(_right(next_button))
@@ -1097,6 +1443,7 @@ class WelcomeDialog(QDialog):
         # 2. key
         page = QWidget()
         column = QVBoxLayout(page)
+        column.setContentsMargins(0, 8, 0, 0)
         self.key_intro = _label()
         get_key = QPushButton("Get a key")
         get_key.clicked.connect(self._open_key_page)
@@ -1104,14 +1451,14 @@ class WelcomeDialog(QDialog):
         self.key.setPlaceholderText("Paste your API key")
         self.key.setAccessibleName("API key")
         self.key_error = _label()
-        self.key_error.setStyleSheet(f"color: {SEVERITY_COLORS['error']};")
+        theme.mark(self.key_error, "tone", "error")
         self.key_error.hide()
         column.addWidget(self.key_intro)
         column.addWidget(get_key, 0, Qt.AlignmentFlag.AlignLeft)
         column.addWidget(self.key)
         column.addWidget(self.key_error)
         column.addStretch()
-        self.key_continue = QPushButton("Save the key")
+        self.key_continue = _primary(QPushButton("Save the key"))
         self.key_continue.clicked.connect(self._save_key)
         back = QPushButton("Back")
         back.clicked.connect(lambda: self.pages.setCurrentIndex(0))
@@ -1126,6 +1473,7 @@ class WelcomeDialog(QDialog):
         # 3. folder and limit
         page = QWidget()
         column = QVBoxLayout(page)
+        column.setContentsMargins(0, 8, 0, 0)
         column.addWidget(_label("Kayden reads and writes files only inside its work folder."))
         folder_row = QHBoxLayout()
         self.folder = QLineEdit(settings.work_folder or str(DEFAULT_WORK_FOLDER.expanduser()))
@@ -1145,11 +1493,11 @@ class WelcomeDialog(QDialog):
         column.addWidget(_label("Kayden asks before every action. You can change that, and "
                                 "everything here, in Settings."))
         self.finish_error = _label()
-        self.finish_error.setStyleSheet(f"color: {SEVERITY_COLORS['error']};")
+        theme.mark(self.finish_error, "tone", "error")
         self.finish_error.hide()
         column.addWidget(self.finish_error)
         column.addStretch()
-        self.finish_button = QPushButton("Start using Kayden")
+        self.finish_button = _primary(QPushButton("Start using Kayden"))
         self.finish_button.clicked.connect(self._finish)
         column.addLayout(_right(self.finish_button))
         self.pages.addWidget(page)

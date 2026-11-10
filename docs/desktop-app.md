@@ -4,6 +4,12 @@ The desktop app is a window for Kayden: a conversation list on the left, the con
 in the middle, and a message box at the bottom. It does what the terminal app does, without
 a terminal.
 
+![The desktop app, light](images/main-light.png)
+
+It follows your computer's light or dark setting, and switches when you change it.
+
+![The desktop app, dark](images/main-dark.png)
+
 ## Install
 
 Ready-made downloads (a `.dmg` for macOS, a Flatpak and an AppImage for Linux) are not
@@ -48,20 +54,24 @@ another reason, the Settings window opens with the message.
 | To | Do this |
 |---|---|
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
-| Stop Kayden | Press **Stop** (the Send button while Kayden works) or **Esc**. |
+| Stop Kayden | Press the round button in the message box (it shows a square while Kayden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |
 | Cancel one task | Press **Cancel** on its card. |
-| See what a tool did | Press **Details** on its card. |
+| See what a tool did | Press the arrow on its card. |
 | See the model's reasoning | Open **Thinking** above a reply. |
-| Start over | **New conversation** (**Ctrl+N**). |
-| Chat without long-term memory | **New private chat** (**Ctrl+Shift+N**), in the menu next to New conversation. Its messages are still kept. |
+| Start over | **New chat** (**Ctrl+N**). |
+| Chat without long-term memory | The lock button next to **New chat** (**Ctrl+Shift+N**). Its messages are still kept, and it shows a lock in the list. |
 | Go back to a conversation | Click it in the list. |
-| Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). **Show archived** under the list shows hidden ones. |
+| Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **Show archived** under the list to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
-| Let Kayden keep working on its own | Tick **Let Kayden continue on its own** above the conversation. See [Autonomy](concepts.md#autonomy). |
+| Let Kayden keep working on its own | Turn on **Let Kayden continue on its own** above the conversation. See [Autonomy](concepts.md#autonomy). |
 | See what Kayden remembers | **Kayden → Memory…**: add, edit or forget what it keeps across conversations. |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |
+
+Each conversation in the list shows its name, when it was last used, and the start of its
+first message. Until Kayden names a conversation, the start of its first message is its
+name; a conversation with no messages yet is called "New chat".
 
 Messages you send while Kayden works are queued and shown greyed until Kayden reads them.
 You can switch conversations only while Kayden is not working on anything; renaming,
@@ -73,7 +83,8 @@ cannot be deleted; open another one first. See [Deleting](concepts.md#deleting) 
 deletion does not reach.
 
 Next to the autonomy switch is what Kayden has spent so far, across all conversations. The
-status bar shows what Kayden is doing, how many tasks run in the background and the model.
+line under the message box shows what Kayden is doing, how many tasks run in the background
+and the model.
 
 At start the app reopens your most recent conversation, or the one you were in when you
 switched from the terminal app.

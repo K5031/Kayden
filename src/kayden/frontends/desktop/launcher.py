@@ -42,11 +42,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     import qasync
     from PySide6.QtWidgets import QApplication, QMessageBox
 
+    from kayden.frontends.desktop import theme
+
     args = parse_args(argv)
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Kayden")
     app.setDesktopFileName("io.github.k5031.kayden")
     app.setQuitOnLastWindowClosed(False)  # the runtime shuts down first, then asyncio.run ends
+    theme.apply(app)
+    theme.follow_system(app)
     root = DEFAULT_WORK_FOLDER.expanduser()
     try:
         config = load_config(args, default_root=root, launcher=WINDOW)
