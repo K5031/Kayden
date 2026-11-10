@@ -375,6 +375,33 @@ def test_the_desktop_app_starts_after_the_terminal_let_go_of_the_data(tmp_path, 
     assert free == [True]
 
 
+async def test_a_restart_in_the_same_frontend_waits_for_the_data(tmp_path, monkeypatch):
+    """Any module change: the TUI exits on ShuttingDown, and the next instance in the same
+    process still gets the data directory."""
+    monkeypatch.setenv("FIRST_API_KEY", "k")
+    settings_file(tmp_path, FAKE_MODULES + 'frontend = "scripted"\n')
+
+    async def slow_close(self: Any) -> None:
+        await asyncio.sleep(0.2)
+
+    monkeypatch.setattr(InMemoryMemory, "aclose", slow_close, raising=False)
+    seen = []
+
+    async def first_run(runtime: Any, frontend: ScriptedFrontend) -> None:
+        recorder = Recorder(runtime)
+        await runtime.start(StartOptions())
+        await runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
+        asyncio.get_running_loop().create_task(runtime.restart())
+        await recorder.wait_for(lambda r: r.of(ShuttingDown))
+
+    async def second_run(runtime: Any, frontend: ScriptedFrontend) -> None:
+        seen.append((await runtime.settings()).startup_error)
+
+    scripted(monkeypatch, first_run, second_run)
+    await asyncio.wait_for(launcher.launch(args(tmp_path), TERMINAL), 10)
+    assert seen == [None]
+
+
 def test_the_terminal_hands_over_to_the_desktop_app(tmp_path, monkeypatch, capsys):
     """Choosing a window frontend in a terminal frontend and pressing Restart now quits
     and opens the desktop app on the same data and conversation."""
