@@ -77,7 +77,6 @@ from kayden.frontends.common import (
     MODULE_LABELS,
     PERMISSION_LABELS,
     call_parts,
-    call_title,
     delete_details,
     dollars,
     folder_path,
@@ -537,7 +536,6 @@ class PermissionCard(QFrame):
         layout.setContentsMargins(14, 10, 12, 10)
         call = request.call
         headline, detail = call_parts(call.arguments)
-        headline = call_title(call.name, call.arguments) or headline
         layout.addWidget(_label(f"Kayden wants to: {headline}" if headline
                                 else f"Kayden wants to use {call.name}", role="strong"))
         layout.addWidget(_label(request_note(request), tone="muted"))

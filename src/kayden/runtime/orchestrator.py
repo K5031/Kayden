@@ -20,6 +20,7 @@ import jsonschema
 
 from kayden.api import (
     BUILTIN_TOOLS,
+    DESCRIPTION_ARG,
     PERMISSION_CEILING_ENV,
     RESERVED_TOOL_NAMES,
     AgentConfig,
@@ -117,6 +118,13 @@ logger = logging.getLogger(__name__)
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
 _HIT_PREVIEW_CHARS = 1000
 _OP_STATUS_MAX_WAIT_S = 60
+# The description every offered tool takes (api.DESCRIPTION_ARG).
+_DESCRIPTION_SCHEMA = {
+    "type": "string",
+    "description": "What this step does, in a few plain words the user understands without "
+                   "knowing the tool, e.g. \"Search the web for flights to Oslo\". The user "
+                   "sees this instead of the tool and its input.",
+}
 REVIEW_HISTORY = 200  # newest messages searched for the user's words in a permission review
 USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
@@ -297,6 +305,7 @@ class Runtime:
         # folder: one given for a confined call covers confined calls only.
         self._grants: dict[str, bool] = {}
         self._can_edit_memories = True  # False once Memory says it cannot (start())
+        self._own_description: set[str] = set()  # tools whose schema declares DESCRIPTION_ARG
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
         self._unseen = False
@@ -797,13 +806,30 @@ class Runtime:
             module_specs = await self._tools.list_tools()
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
             self._failure(FailureKind.INTERNAL, f"Tools.list_tools failed: {e}")
-            return specs
+            module_specs = []
         for spec in module_specs:
             if spec.name in RESERVED_TOOL_NAMES:
                 self._log.decision("reserved_tool_dropped", name=spec.name)
                 continue
             specs[spec.name] = spec
-        return specs
+        return {name: self._describable(spec) for name, spec in specs.items()}
+
+    def _describable(self, spec: ToolSpec) -> ToolSpec:
+        """The spec with the optional description (api.DESCRIPTION_ARG) added."""
+        properties = spec.parameters.get("properties", {})
+        if DESCRIPTION_ARG in properties:
+            self._own_description.add(spec.name)
+            return spec
+        self._own_description.discard(spec.name)
+        return replace(spec, parameters={
+            **spec.parameters, "properties": {**properties, DESCRIPTION_ARG: _DESCRIPTION_SCHEMA}})
+
+    def _bare(self, call: ToolCall) -> ToolCall:
+        """The call as the Tools module gets it: without the description the runtime added."""
+        if call.name in self._own_description or DESCRIPTION_ARG not in call.arguments:
+            return call
+        return replace(call, arguments={k: v for k, v in call.arguments.items()
+                                        if k != DESCRIPTION_ARG})
 
     # ── Conversations and resume repair ──────────────────────────────────
 
@@ -1371,7 +1397,7 @@ class Runtime:
             auto(Decision.DENY, "policy")
             return "Refused: the permission policy denies tool calls."
         try:
-            confined = await self._tools.confined(call)
+            confined = await self._tools.confined(self._bare(call))
         except Exception:  # module calls are wrapped; not knowing means asking
             logger.exception("Tools.confined failed for %s", call.name)
             confined = False
@@ -1456,7 +1482,7 @@ class Runtime:
 
     async def _supervise(self, op: Operation, ctx: Context) -> ToolResult:
         try:
-            result = await op.run(lambda: self._tools.execute(op.call, ctx))
+            result = await op.run(lambda: self._tools.execute(self._bare(op.call), ctx))
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
             result = ToolResult(op.call.id, ToolStatus.ERROR, f"Runtime error: {e}")
         op.result = result

@@ -67,18 +67,9 @@ SHELL = ToolSpec(
     description=(
         "Run a shell command (sh) in the workspace and return its combined stdout and "
         "stderr plus the exit code. Output is truncated to the first and last part when "
-        "long. Non-zero exit codes are reported as errors. Always give a `description`."
+        "long. Non-zero exit codes are reported as errors."
     ),
-    parameters=_object({
-        "command": _STRING,
-        "description": {
-            "type": "string",
-            "description": "What the command does, in a few plain words the user understands "
-                           "without knowing shell commands, e.g. \"List the files in the "
-                           "project\". Shown to the user in place of the command.",
-        },
-        "unsandboxed": {"type": "boolean"},
-    }, ["command"]),
+    parameters=_object({"command": _STRING, "unsandboxed": {"type": "boolean"}}, ["command"]),
     stall_timeout=SHELL_STALL_TIMEOUT,
 )
 SANDBOX_NOTE = (

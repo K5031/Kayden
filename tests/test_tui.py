@@ -1139,4 +1139,4 @@ async def test_a_reply_with_nothing_to_show_takes_no_space():
         await until(pilot, lambda: entries(app, ToolEntry))
         assert [e.display for e in entries(app, AssistantEntry)] in ([], [False])
         [tool] = entries(app, ToolEntry)
-        assert plain(tool).startswith("⚙ Remember “Studies CS”\n  Studies CS")
+        assert plain(tool).startswith("⚙ remember Studies CS")  # no description given

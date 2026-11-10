@@ -35,6 +35,7 @@ class FakeTools(Tools):
         self.confined_names: set[str] = set()  # tools whose calls stay in the work folder
         self.folders: list[Path | None] | None = None  # use_folder calls; None = fixed folder
         self.folder_error: OSError | None = None
+        self.received: list[ToolCall] = []  # calls as execute and confined got them
 
     def add(self, spec: ToolSpec, fn: ToolFn) -> ToolSpec:
         self.specs[spec.name] = spec
@@ -135,6 +136,7 @@ class FakeTools(Tools):
         return list(self.specs.values())
 
     async def confined(self, call: ToolCall) -> bool:
+        self.received.append(call)
         return call.name in self.confined_names
 
     async def use_folder(self, folder: Path | None) -> None:
@@ -145,6 +147,7 @@ class FakeTools(Tools):
         self.folders.append(folder)
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
+        self.received.append(call)
         self.started.append(call.id)
         self.trace.append(("tool_start", call.id))
         self.running += 1

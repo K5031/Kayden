@@ -646,6 +646,13 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
 # Tools modules must not declare these names.
 RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS)
 
+# Every tool the runtime offers takes an optional argument under this name: a few plain
+# words the model writes about what the call does, which frontends show in place of the
+# tool and its input. The runtime adds it to each offered schema and removes it from the
+# call before the Tools module sees it (confined, execute); events, snapshots and the
+# transcript keep it. A tool whose own schema declares the name gets it like any argument.
+DESCRIPTION_ARG = "description"
+
 
 class ToolContext(Protocol):
     call_id: CallId

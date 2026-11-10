@@ -265,7 +265,8 @@ async def test_reserved_names_dropped(make: Any) -> None:
     await h.start()
     await h.turn("go")
     specs = {t.name: t for t in await h.runtime.list_tools()}
-    assert specs["recall"] == BUILTIN_TOOLS["recall"] and "fine" in specs
+    assert specs["recall"].description == BUILTIN_TOOLS["recall"].description
+    assert "fine" in specs
     assert tools.started == []
     assert (await h.results())["r"].content != "module recall"
 

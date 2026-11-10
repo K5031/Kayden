@@ -24,15 +24,15 @@ kayden --conversation ID       # continue a conversation
 
 Type a message and press Enter. While the agent works you can keep typing; your messages
 are queued and delivered when it is ready. Its reasoning, replies and tool calls appear in
-the conversation as they happen. Each step reads as a short sentence ("Read notes.md", or
-what a command does), with the exact input below it.
+the conversation as they happen. Each step reads as a short sentence the agent writes
+("Read your notes"), with the exact input below it.
 
 ## Approving actions
 
 When the agent wants to use a tool that the permission level does not allow on its own,
-Kayden asks. For a command, the question starts with what the agent says it does ("Remove
-the old build folder"), followed by the exact command. The description is the agent's own
-words: if they don't match the command, trust the command.
+Kayden asks. The question starts with what the agent says the step does ("Remove the old
+build folder"), followed by its exact input. That sentence is the agent's own words: if it
+doesn't match the input, trust the input.
 
 | Answer | Effect |
 |---|---|

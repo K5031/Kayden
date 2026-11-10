@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import (
+    DESCRIPTION_ARG,
     ModelInfo,
     ModuleChoice,
     PermissionPolicy,
@@ -37,70 +38,21 @@ def request_note(request: PermissionRequest) -> str:
     return f"{note} Why it asks: {request.reason}" if request.reason else note
 
 
-def call_title(name: str, arguments: Any) -> str | None:
-    """A tool call as a short sentence for the user ("Search the web for “x”"), or None for a
-    tool Kayden does not know or arguments still streaming. A shell command uses the
-    description the model gave it."""
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments)
-        except ValueError:
-            return None
-    if not isinstance(arguments, dict):
-        return None
-
-    def text(key: str) -> str:
-        value = arguments.get(key)
-        return value.strip() if isinstance(value, str) else ""
-
-    match name:
-        case "shell":
-            return text("description") or "Run a command"
-        case "remember":
-            return f"Remember “{text('text')}”"
-        case "forget":
-            return f"Forget “{text('text')}”"
-        case "recall":
-            return f"Search past conversations for “{text('query')}”"
-        case "web_search":
-            return f"Search the web for “{text('query')}”"
-        case "web_fetch":
-            url = text("url")
-            return f"Read {url.split('://', 1)[-1] if '://' in url else url}"
-        case "read_file":
-            return f"Read {text('path')}"
-        case "write_file":
-            return f"Write {text('path')}"
-        case "edit_file":
-            return f"Edit {text('path')}"
-        case "list_files":
-            return f"List the files in {text('path')}" if text("path") else "List the files"
-        case "search_files":
-            return f"Search the files for “{text('pattern')}”"
-        case "op_status":
-            return "Check on a background task"
-        case "op_cancel":
-            return "Cancel a background task"
-    return None
-
-
 def call_parts(arguments: Any) -> tuple[str | None, str]:
-    """A tool call for display: the plain-language description it gives, if any, and the
-    rest of its arguments: a shell command or a single text argument as it is, anything
-    else as JSON. Arguments
-    still streaming (a string) are shown as they are."""
+    """A tool call for display: the plain-language description the model gave it
+    (api.DESCRIPTION_ARG), if any, and the rest of its arguments: a single text argument as
+    it is, several as "name: value" lines. Arguments still streaming (a string) are shown
+    as they are."""
     if not isinstance(arguments, dict):
         return None, str(arguments)
-    rest = {k: v for k, v in arguments.items() if k != "description"}
-    description = arguments.get("description")
+    rest = {k: v for k, v in arguments.items() if k != DESCRIPTION_ARG}
+    description = arguments.get(DESCRIPTION_ARG)
     headline = description.strip() if isinstance(description, str) else ""
-    command = rest.get("command")
-    if isinstance(command, str) and set(rest) <= {"command", "unsandboxed"}:
-        detail = command + (" (outside the sandbox)" if rest.get("unsandboxed") else "")
-    elif len(rest) == 1 and isinstance(only := next(iter(rest.values())), str):
-        detail = only  # a fact to remember, a search query, a path
+    if len(rest) == 1 and isinstance(only := next(iter(rest.values())), str):
+        detail = only  # a command, a fact to remember, a search query, a path
     else:
-        detail = json.dumps(rest, ensure_ascii=False)
+        detail = "\n".join(f"{k}: {v if isinstance(v, str) else json.dumps(v)}"
+                            for k, v in rest.items())
     return headline or None, detail
 
 
