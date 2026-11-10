@@ -285,7 +285,8 @@ async def test_delete_conversation(make: Any) -> None:
     seeded = await h.start(seed_from=doomed.id)
     await h.runtime.delete_conversation(doomed.id)
     assert doomed.id not in h.store.conversations
-    assert entry.id not in h.store.long_term
+    [kept] = await h.runtime.memories()  # facts stay; Memory is where they are forgotten
+    assert kept.id == entry.id and kept.source_conversation_id is None
     assert h.store.conversations[seeded.id].info.seed_from is None
     await settled(h)
     assert h.rec.of(ConversationDeleted) == [ConversationDeleted(doomed.id)]

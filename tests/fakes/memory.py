@@ -148,9 +148,10 @@ class InMemoryMemory(Memory):
             raise NotImplementedError
         self._conv(conversation_id)
         del self.store.conversations[conversation_id]
-        for entry_id, revisions in list(self.store.long_term.items()):
+        for entry_id, revisions in self.store.long_term.items():
             if revisions[0].source_conversation_id == conversation_id:
-                del self.store.long_term[entry_id]
+                self.store.long_term[entry_id] = [
+                    replace(r, source_conversation_id=None) for r in revisions]
         for conv in self.store.conversations.values():
             if conv.info.seed_from == conversation_id:
                 conv.info = replace(conv.info, seed_from=None)

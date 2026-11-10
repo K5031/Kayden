@@ -117,7 +117,8 @@ def module_name(choice: ModuleChoice, module_id: str | None) -> str:
 
 def delete_details(is_open: bool) -> str:
     """What deleting a conversation does, for its confirmation."""
-    details = "This permanently deletes the conversation and what Kayden learned from it."
+    details = ("This permanently deletes the conversation. What Kayden remembered from it "
+               "stays in Memory.")
     return details + (" A new chat will open." if is_open else "")
 
 

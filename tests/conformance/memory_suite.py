@@ -787,7 +787,7 @@ class MemoryConformance:
         await memory.aclose()
         assert (await open_memory().list_conversations())[-1].id == kept.id
 
-    async def test_a_memory_the_agent_kept_goes_with_its_conversation(self, memory: Memory):
+    async def test_memories_outlive_the_conversation_they_came_from(self, memory: Memory):
         doomed = await memory.create_conversation()
         try:
             await memory.remember("Is vegetarian", conversation_id=doomed.id)
@@ -795,7 +795,9 @@ class MemoryConformance:
             await memory.delete_conversation(doomed.id)
         except NotImplementedError:
             pytest.skip("editing memories and deleting conversations are optional")
-        assert [e.text for e in await memory.memories()] == ["Lives in Oslo"]
+        kept = await memory.memories()
+        assert [e.text for e in kept] == ["Is vegetarian", "Lives in Oslo"]
+        assert [e.source_conversation_id for e in kept] == [None, None]
         assert mine.source_conversation_id is None
         with pytest.raises(KeyError):
             await memory.remember("x", conversation_id="missing")

@@ -387,7 +387,7 @@ async def test_delete_asks_with_cancel_as_the_default(make, qapp):
     box = visible(window, QMessageBox)
     assert box.text() == "Delete “Old notes”?"
     assert box.informativeText() == (
-        "This permanently deletes the conversation and what Kayden learned from it.")
+        "This permanently deletes the conversation. What Kayden remembered from it stays in Memory.")
     assert box.icon() == QMessageBox.Icon.NoIcon
     assert [b.text() for b in box.buttons()] == ["Cancel", "Delete"]
     assert box.defaultButton().text() == "Cancel"

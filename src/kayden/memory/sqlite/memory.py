@@ -317,13 +317,8 @@ class SqliteMemory(Memory):
                 conn.execute("DELETE FROM erasing WHERE conversation_id = ?", (conversation_id,))
                 conn.execute("DELETE FROM summaries WHERE conversation_id = ?",
                              (conversation_id,))
-                conn.execute(
-                    "DELETE FROM memory_revisions WHERE entry_id IN"
-                    " (SELECT id FROM memory_entries WHERE source_conversation_id = ?)",
-                    (conversation_id,),
-                )
-                conn.execute("DELETE FROM memory_entries WHERE source_conversation_id = ?",
-                             (conversation_id,))
+                conn.execute("UPDATE memory_entries SET source_conversation_id = NULL"
+                             " WHERE source_conversation_id = ?", (conversation_id,))
                 conn.execute("UPDATE conversations SET seed_from = NULL WHERE seed_from = ?",
                              (conversation_id,))
                 conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))

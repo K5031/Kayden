@@ -188,11 +188,11 @@ Recent conversation messages and tool interactions preserved in their original f
 A compact representation of older conversation history.
 The summary has a fixed token budget and is automatically carried into subsequent inference requests.
 3. Long-Term Memory
-Important durable information maintained by the Memory module. The agent adds and removes entries itself with the built-in remember and forget tools, and the user can edit them; an entry the agent kept is erased with the conversation it came from.
+Important durable information maintained by the Memory module. The agent adds and removes entries itself with the built-in remember and forget tools, and the user can edit them. Entries outlive the conversation they came from.
 4. Permanent Verbatim Archive
 Original conversation messages and tool interactions are retained for historical retrieval until the user deletes their conversation.
 Information removed from active inference context is not deleted from the archive.
-The archive is append-only. The one exception is deletion the user explicitly asks for: deleting a conversation erases its messages, summaries, search index entries, metadata and the long-term memory extracted from it, so that the erased content is not recoverable from Kayden's store. Deletion cannot reach copies outside Kayden's data directory, such as backups, nor what a model provider has already received.
+The archive is append-only. The one exception is deletion the user explicitly asks for: deleting a conversation erases its messages, summaries, search index entries and metadata, so that the erased content is not recoverable from Kayden's store. Long-term memory entries that came from it stay until the user forgets them, like any long-term memory entry. Deletion cannot reach copies outside Kayden's data directory, such as backups, nor what a model provider has already received.
 8.2 Shared Memory Foundation
 All conversations use the same memory architecture, with configurable compaction policies, following Codex-inspired conversation persistence and context compaction.
 Long-term memory is one list per instance, shared by every conversation, while individual conversation histories remain distinct.

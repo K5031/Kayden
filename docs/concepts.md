@@ -44,16 +44,17 @@ Kayden keeps every message of every conversation until you delete the conversati
   it something lasting about yourself, and drops one when you say it is no longer true;
   each time, it shows in the conversation like any other action. Kayden also adds facts as
   long conversations get summarized. It never keeps passwords or keys on purpose. You can
-  see the list and add, correct or **forget** entries. Deleting a conversation also erases
-  the facts the agent kept in it. A forgotten fact is erased, and Kayden does
+  see the list and add, correct or **forget** entries. Facts stay when the conversation they
+  came from is deleted: they are kept and removed in Memory. A forgotten fact is erased, and Kayden does
   not pick the same fact up again from the summary it came from; it may learn it again
   from new messages, in which case forget it again or tell the agent not to remember it.
   Forgetting a fact does not delete the messages it came from.
 
 ## Deleting
 
-Deleting a conversation erases its messages, its summaries, its search entries and the
-long-term memory facts that came from it. Forgetting a long-term memory fact erases it with
+Deleting a conversation erases its messages, its summary and its search entries. Long-term
+memory facts that came from it stay, so Kayden still knows what you asked it to remember;
+to remove one too, forget it in Memory. Forgetting a long-term memory fact erases it with
 its earlier versions. Kayden overwrites the erased content in its database file, so it
 cannot be recovered from there. It cannot be undone.
 

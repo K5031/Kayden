@@ -455,10 +455,10 @@ async def test_deleted_conversation_leaves_nothing_on_disk(open_store, db: Path)
         assert word in on_disk(db)
 
     await memory.delete_conversation(doomed.id)
-    for word in (b"zanzibarquux", b"wombatblob", b"summarysecretword", b"quokkatitle",
-                 doomed.id.encode()):
+    for word in (b"wombatblob", b"summarysecretword", b"quokkatitle", doomed.id.encode()):
         assert word not in on_disk(db), word
-    assert await memory.memories() == []
+    [fact] = await memory.memories()  # long-term facts stay until forgotten
+    assert fact.text == "password is zanzibarquux" and fact.source_conversation_id is None
     assert len(await memory.history(kept.id)) == 3
     with sqlite3.connect(db) as conn, pytest.raises(sqlite3.IntegrityError,
                                                     match="append-only"):

@@ -999,7 +999,7 @@ async def test_delete_a_conversation_after_confirmation():
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
         message = plain(app.screen.query_one("#confirm-message"))
         assert message == ('Delete "What is the weather"? This permanently deletes the '
-                           "conversation and what Kayden learned from it.")
+                           "conversation. What Kayden remembered from it stays in Memory.")
         await pilot.press("escape")
         await until(pilot, lambda: app.screen is screen)
         assert not any(c[0] == "delete_conversation" for c in stub.calls)

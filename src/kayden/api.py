@@ -374,7 +374,8 @@ class MemoryEntry:
 
     id: str
     text: str
-    source_conversation_id: ConversationId | None  # None = added by the user
+    # None = added by the user, or its conversation was deleted
+    source_conversation_id: ConversationId | None
     created_at: float  # when the entry was first written
 
 
@@ -548,7 +549,7 @@ class Memory(abc.ABC):
     async def remember(self, text: str, *,
                        conversation_id: ConversationId | None = None) -> MemoryEntry:
         """Add an entry: written by the user (None), or by the agent in that conversation
-        (the remember tool), so deleting the conversation erases it."""
+        (the remember tool)."""
         raise NotImplementedError
 
     async def revise(self, entry_id: str, text: str) -> MemoryEntry:
@@ -562,7 +563,8 @@ class Memory(abc.ABC):
 
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
         """Optional. Erase a conversation: messages, summaries, search index entries,
-        metadata, and the long-term entries extracted from it with their revisions.
+        and metadata. Long-term entries from it stay, with no source conversation: they are
+        managed in long-term memory (forget).
         Conversations seeded from it keep their own summaries; their seed_from becomes
         None. The runtime never calls it for the open conversation."""
         raise NotImplementedError

@@ -85,8 +85,7 @@ One list per store, shared by every conversation.
 - Allowed in any state, applied from the next assemble. Each emits `MemoriesChanged` and is
   logged by entry id, without text.
 - The agent edits the same list with two built-in tools: `remember(text)` adds an entry
-  from the open conversation (`Memory.remember(text, conversation_id=)`), so deleting
-  that conversation erases it; `forget(text)` erases the entries whose text matches, case
+  from the open conversation (`Memory.remember(text, conversation_id=)`); `forget(text)` erases the entries whose text matches, case
   and whitespace ignored, since the prompt shows entries without ids. Both are never gated,
   appear in the conversation as tool calls, and are offered only when the Memory module
   can edit memories. Their descriptions carry the guidance (lasting facts about the user,
@@ -127,7 +126,10 @@ The archive is append-only except for deletion the user asks for. Archive and fo
 control what the agent sees; deletion controls what the disk keeps.
 
 - `delete_conversation(id)` erases the conversation's messages, summaries, search index
-  entries and metadata, and the long-term entries extracted from it with their revisions.
+  entries and metadata. Long-term entries that came from it stay, their source set to
+  None: a fact the user asked Kayden to remember outlives the chat it was said in, as
+  saved memories do in other assistants, and the Memory screen is where facts are
+  removed. The delete confirmation says so.
   It is refused for the open conversation, which is also the only one that can have
   outstanding operations. Frontends let the user delete the open conversation anyway: they
   start a new chat first (refused while the agent works, like any switch), then delete the
@@ -215,6 +217,10 @@ command-line flags of the per-mode versions.
   the `remember` tool costs nothing extra and the user sees each fact as it is kept.
 - **Editing long-term memory rows in place.** Simpler, but an edit would silently replace
   what the agent had learned. Revisions keep each change visible and allow an undo later.
+- **Erasing a conversation's long-term facts with it.** Built first: deleting would leave
+  nothing of the chat behind. In use it erased the user's name, which they had asked Kayden
+  to remember, and that surprised the owner; a saved fact is a standing instruction, not
+  part of the chat. Erasing both stays two visible steps (delete, then forget).
 - **Archive and forget only, no deletion.** Keeps the archive strictly append-only, so
   nothing is ever lost by accident. But anything sensitive pasted into a chat would stay on
   disk forever, and the user would control what the agent sees but not what Kayden keeps.
