@@ -4,6 +4,7 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 from __future__ import annotations
 
 from kayden.api import ModelInfo, ModuleChoice, PermissionPolicy, Settings, SettingsUpdate
+from kayden.runtime.instance import ALREADY_OPEN
 
 PERMISSION_LABELS = {
     PermissionPolicy.ASK: "Ask me before every action",
@@ -76,6 +77,8 @@ def needs_restart(update: SettingsUpdate) -> bool:
 def restart_notice(settings: Settings) -> str | None:
     """What waits for a restart, for a line next to Restart now; None when nothing does."""
     if settings.startup_error is not None:
+        if settings.startup_error.startswith(ALREADY_OPEN):
+            return "Close the other Kayden window, then press Restart now."
         return "Fix the settings above, then restart Kayden."
     if not settings.restart_needed:
         return None

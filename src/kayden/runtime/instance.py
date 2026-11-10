@@ -15,6 +15,8 @@ from kayden.runtime.config import InstanceConfig, ModuleSpec, Restart
 from kayden.runtime.modules import targets
 
 LOCK_FILE = "instance.lock"
+# Starts startup_error and refusals when another process holds the data directory.
+ALREADY_OPEN = "Kayden is already open in another window"
 # Locks of the Kayden versions that ran one store per mode. While an older Kayden holds
 # one, this data directory is in use.
 LEGACY_LOCK_FILES = ("session.lock", "continuous.lock")
@@ -122,7 +124,7 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
                                (config.tools, Tools)):
                 built.append(await asyncio.to_thread(load_module, spec, kind, paths))
         except (InstanceLockedError, ModuleLoadError) as e:
-            error = (f"Kayden is already open in another window ({e})"
+            error = (f"{ALREADY_OPEN} ({e})"
                      if isinstance(e, InstanceLockedError) else str(e))
             for module in built:
                 await module.aclose()

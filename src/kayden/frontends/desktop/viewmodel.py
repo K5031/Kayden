@@ -72,6 +72,7 @@ from kayden.api import (
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import money
 from kayden.runtime import InstanceLockedError
+from kayden.runtime.instance import ALREADY_OPEN
 
 HISTORY_PAGE = 100
 MAX_ARGS_CHARS = 120
@@ -700,7 +701,7 @@ def user_message(error: Exception) -> str:
     """A refused command as the user should read it."""
     text = str(error) or type(error).__name__
     if isinstance(error, InstanceLockedError):
-        return f"Kayden is already open in another window ({text})."
+        return f"{ALREADY_OPEN} ({text})."
     if isinstance(error, RuntimeStateError):
         if text.startswith("budget exhausted"):
             return BUDGET_MESSAGE

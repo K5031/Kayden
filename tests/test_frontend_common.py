@@ -9,6 +9,7 @@ from kayden.frontends.common import (
     needs_restart,
     restart_notice,
 )
+from kayden.runtime.instance import ALREADY_OPEN
 from tests.fakes.settings import chosen, settings
 
 
@@ -80,3 +81,5 @@ def test_restart_notices_say_where_the_chosen_frontend_will_be_used():
         "Terminal (TUI) will be used the next time you run kayden in a terminal.")
     assert restart_notice(settings(startup_error="no key")) == (
         "Fix the settings above, then restart Kayden.")
+    assert restart_notice(settings(startup_error=f"{ALREADY_OPEN} (/d is in use)")) == (
+        "Close the other Kayden window, then press Restart now.")
