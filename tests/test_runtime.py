@@ -351,17 +351,15 @@ async def test_select_model(make: Any) -> None:
     assert h.rec.of(ModelSelected) == [ModelSelected("fake-2")]
 
 
-async def test_model_without_context_window_requires_config(make: Any) -> None:
+async def test_model_without_context_window_is_refused(make: Any) -> None:
+    """A window the provider does not report is configured on the Core (its `models`
+    option), not in the runtime."""
     from kayden.api import ModelInfo
 
     models = [ModelInfo("mystery", "Mystery", context_window=None)]
     h: Harness = await make(core=ScriptedCore(models=models))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Core's models option"):
         await h.start(model="mystery")
-    h2: Harness = await make(core=ScriptedCore(models=models),
-                             context_windows={"mystery": 8000})
-    await h2.start(model="mystery")
-    await h2.turn("hi")
 
 
 # ── Stop ──

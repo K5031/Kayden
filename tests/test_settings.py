@@ -1,4 +1,5 @@
-"""User settings: settings() and update_settings() (api.py RuntimeAPI)."""
+"""User settings: settings() and update_settings() (api.py RuntimeAPI). Runtime settings
+apply live; module settings are saved for the next start (see also test_modules.py)."""
 
 from __future__ import annotations
 
@@ -20,25 +21,24 @@ from kayden.api import (
     SettingsUpdate,
     ToolStatus,
 )
-from kayden.runtime import ModuleSpec, Provider
+from kayden.runtime import ModuleState
 from kayden.runtime.config import DEFAULT_SYSTEM_PROMPT
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
-FAKE_CORE = "tests.fakes.core:factory"
-PROVIDERS = (
-    Provider("first", "First AI", ModuleSpec(FAKE_CORE), key_name="FIRST_API_KEY"),
-    Provider("second", "Second AI", ModuleSpec(FAKE_CORE, {"models": ["s-1", "s-2"]}),
-             key_name="SECOND_API_KEY"),
-    Provider("broken", "Broken AI", ModuleSpec(FAKE_CORE, {"list_error": "invalid key"})),
-)
-TOOLS = ModuleSpec("tests.fakes.tools:factory", {"root": "/start"})
+RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
+           "frontend": "scripted"}
+
+
+@pytest.fixture(autouse=True)
+def _modules(installed):
+    """The fake modules are installed for every test here."""
 
 
 async def setup(make: Any, **config: Any) -> Harness:
-    config = {"providers": PROVIDERS, "provider": "first", "tools_module": TOOLS, **config}
-    return await make(**config)
+    state = ModuleState(running=RUNNING, work_folder="/start")
+    return await make(**{"modules": state, **config})
 
 
 def saved(h: Harness) -> dict[str, Any]:
@@ -57,21 +57,27 @@ async def test_settings_reflect_the_configuration(make, monkeypatch):
     monkeypatch.setenv("FIRST_API_KEY", "from-env")
     h = await setup(make)
     s = await h.runtime.settings()
-    assert s.provider == "first"
-    assert [(p.id, p.name, p.has_key) for p in s.providers] == [
-        ("first", "First AI", True), ("second", "Second AI", False),
-        ("broken", "Broken AI", False)]
+    core = s.modules["core"]
+    assert (core.running, core.chosen) == ("first", "first")
+    infos = {m.id: m for m in core.installed}
+    assert (infos["first"].name, infos["first"].key_name, infos["first"].has_key) == (
+        "First AI", "FIRST_API_KEY", True)
+    assert not infos["second"].has_key and "broken" not in infos  # its package is missing
+    assert {"anthropic", "deepseek", "openai"} <= set(infos)
     assert s.model is None and s.maintenance_model is None
     assert s.permissions is PermissionPolicy.ALLOW_READ_ONLY
     assert s.system_prompt == DEFAULT_SYSTEM_PROMPT
     assert s.budget == Budget()
     assert s.work_folder == "/start"
+    assert not s.restart_needed and s.startup_error is None
+    assert s.restart_frontend == "scripted"
 
 
-async def test_settings_without_a_provider_list(make):
+async def test_settings_without_module_ids(make):
     h = await make()
     s = await h.runtime.settings()
-    assert s.provider is None and s.providers == [] and s.work_folder is None
+    assert s.modules["core"].running is None and s.work_folder is None
+    assert not s.restart_needed
 
 
 # ── Live changes ──
@@ -138,11 +144,14 @@ async def test_raising_a_spent_budget_lets_the_agent_continue(make):
     SettingsUpdate(model="nope"),
     SettingsUpdate(maintenance_model="nope"),
     SettingsUpdate(system_prompt="   "),
-    SettingsUpdate(provider="unknown"),
+    SettingsUpdate(modules={"core": "unknown"}),
+    SettingsUpdate(modules={"core": "broken"}),
+    SettingsUpdate(modules={"engine": "first"}),
     SettingsUpdate(budget=Budget(max_cost_usd=1.0), model="fake-2"),  # fake-2 has no prices
     SettingsUpdate(work_folder="/does/not/exist"),
+    SettingsUpdate(api_key="   "),
 ])
-async def test_an_invalid_update_changes_nothing(make, update):
+async def test_an_invalid_update_changes_nothing(make, update, keychain):
     h = await setup(make)
     await h.start()
     before = await h.runtime.settings()
@@ -150,97 +159,117 @@ async def test_an_invalid_update_changes_nothing(make, update):
         await h.runtime.update_settings(update)
     assert await h.runtime.settings() == before
     assert not (h.data_dir / "settings.toml").exists()
+    assert not keychain.store
     assert not h.rec.of(SettingsChanged)
 
 
-# ── Provider and work folder ──
+# ── Module settings: saved for the next start ──
 
 
-async def test_switching_provider_rebuilds_the_core(make):
-    h = await setup(make, maintenance_model="fake-2")
+async def test_choosing_a_module_saves_it_and_builds_nothing(make):
+    h = await setup(make)
     await h.start()
     await h.turn("hello")
-    old = h.core
-    s = await h.runtime.update_settings(SettingsUpdate(provider="second"))
-    assert (s.provider, s.model, s.maintenance_model) == ("second", "s-1", None)
-    assert old.closed
-    assert [m.id for m in await h.runtime.list_models()] == ["s-1", "s-2"]
+    s = await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
+    assert (s.modules["core"].running, s.modules["core"].chosen) == ("first", "second")
+    assert s.restart_needed
+    assert saved(h) == {"modules": {"core": "second"}, "model": "", "maintenance_model": ""}
+    assert [m.id for m in await h.runtime.list_models()] == ["fake-1", "fake-2"]
     await h.turn("again")
-    assert len(old.requests) == 1  # the next turn went to the new Core
-    assert h.runtime.snapshot().state == AgentState.IDLE
+    assert len(h.core.requests) == 2 and not h.core.closed  # still the running Core
+    [changed] = await h.rec.wait_for(lambda r: r.of(SettingsChanged))
+    assert changed.settings == s
 
 
-async def test_switching_provider_can_pick_the_model(make):
+async def test_a_model_chosen_while_another_core_waits_is_not_saved(make):
     h = await setup(make)
     await h.start()
-    s = await h.runtime.update_settings(SettingsUpdate(provider="second", model="s-2"))
-    assert s.model == "s-2"
+    s = await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"},
+                                                       model="fake-2"))
+    assert s.model == "fake-2"  # the running Core's, from the next request
+    await h.runtime.update_settings(SettingsUpdate(maintenance_model="fake-1"))
+    assert saved(h) == {"modules": {"core": "second"}, "model": "", "maintenance_model": ""}
 
 
-async def test_a_provider_that_cannot_list_models_is_not_switched_to(make):
+async def test_choosing_the_running_module_again_needs_no_restart(make):
+    h = await setup(make)
+    await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
+    s = await h.runtime.update_settings(SettingsUpdate(modules={"core": "first"}))
+    assert not s.restart_needed
+    assert saved(h)["modules"] == {"core": "first"}
+
+
+async def test_api_key_and_work_folder_apply_at_the_next_start(make, tmp_path, keychain):
     h = await setup(make)
     await h.start()
-    with pytest.raises(ValueError, match="invalid key"):
-        await h.runtime.update_settings(SettingsUpdate(provider="broken"))
-    assert (await h.runtime.settings()).provider == "first"
-    assert not h.core.closed
+    s = await h.runtime.update_settings(SettingsUpdate(api_key="sk-1",
+                                                       work_folder=str(tmp_path)))
+    assert keychain.store[("kayden", "FIRST_API_KEY")] == "sk-1"
+    assert s.work_folder == str(tmp_path) and s.restart_needed
+    assert h.runtime._tools is h.tools and not h.tools.closed  # nothing was rebuilt
+    assert h.runtime._core is h.core and not h.core.closed
+    assert saved(h) == {"work_folder": str(tmp_path)}
 
 
-async def test_provider_and_work_folder_wait_until_nothing_runs(make):
+async def test_module_settings_save_while_the_agent_works(make, tmp_path):
     tools = FakeTools()
     tools.hanging("bg")
     core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="started")])
     h = await setup(make, core=core, tools=tools)
     await h.start()
     await h.turn("go")  # bg is backgrounded and still running
-    for update in (SettingsUpdate(provider="second"), SettingsUpdate(work_folder="/tmp"),
-                   SettingsUpdate(api_key="k")):
-        with pytest.raises(RuntimeStateError):
-            await h.runtime.update_settings(update)
-    await h.runtime.update_settings(SettingsUpdate(model="fake-2"))  # live settings still apply
+    s = await h.runtime.update_settings(SettingsUpdate(
+        modules={"core": "second"}, work_folder=str(tmp_path), api_key="k"))
+    assert s.restart_needed
+    assert h.runtime.snapshot().operations  # still running
 
 
-async def test_work_folder_rebuilds_the_tools(make, tmp_path):
+async def test_module_settings_before_start(make):
     h = await setup(make)
+    s = await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
+    assert s.modules["core"].chosen == "second"
     await h.start()
-    s = await h.runtime.update_settings(SettingsUpdate(work_folder=str(tmp_path)))
-    assert s.work_folder == str(tmp_path)
-    assert h.tools.closed
-    tools = h.runtime._tools  # the runtime's current Tools module
-    assert isinstance(tools, FakeTools) and tools.options == {"root": str(tmp_path)}
-
-
-async def test_settings_before_start(make):
-    h = await setup(make)
-    s = await h.runtime.update_settings(SettingsUpdate(provider="second"))
-    assert s.provider == "second"
-    info = await h.start()
-    assert info and h.runtime.snapshot().model == "s-1"
-
-
-# ── Keys ──
+    assert h.runtime.snapshot().model == "fake-1"  # the running Core's
 
 
 async def test_api_key_goes_to_the_keychain_only(make, keychain):
     h = await setup(make)
     await h.start()
-    s = await h.runtime.update_settings(SettingsUpdate(provider="second", api_key="sk-2"))
+    s = await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"},
+                                                       api_key="sk-2"))
     assert keychain.store[("kayden", "SECOND_API_KEY")] == "sk-2"
-    assert [p.has_key for p in s.providers if p.id == "second"] == [True]
+    assert [m.has_key for m in s.modules["core"].installed if m.id == "second"] == [True]
     assert "sk-2" not in (h.data_dir / "settings.toml").read_text()
     assert "sk-2" not in (h.data_dir / "events.jsonl").read_text()
 
 
-async def test_api_key_without_provider_is_for_the_current_one(make, keychain):
+async def test_api_key_is_for_the_chosen_core(make, keychain):
     h = await setup(make)
-    await h.runtime.update_settings(SettingsUpdate(api_key="sk-1"))
-    assert keychain.store[("kayden", "FIRST_API_KEY")] == "sk-1"
+    await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
+    await h.runtime.update_settings(SettingsUpdate(api_key="sk-2"))
+    assert keychain.store == {("kayden", "SECOND_API_KEY"): "sk-2"}
 
 
-async def test_api_key_for_a_provider_without_keys_is_refused(make):
+async def test_api_key_for_a_core_without_keys_is_refused(make):
     h = await setup(make)
-    with pytest.raises(ValueError):
-        await h.runtime.update_settings(SettingsUpdate(provider="broken", api_key="x"))
+    with pytest.raises(ValueError, match="takes no API key"):
+        await h.runtime.update_settings(SettingsUpdate(modules={"core": "keyless"},
+                                                       api_key="x"))
+
+
+async def test_a_failed_save_restores_the_keychain(make, keychain, monkeypatch):
+    keychain.store[("kayden", "FIRST_API_KEY")] = "old"
+    h = await setup(make)
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("kayden.runtime.modules.save_settings", fail)
+    with pytest.raises(OSError):
+        await h.runtime.update_settings(SettingsUpdate(api_key="new", system_prompt="Hi."))
+    assert keychain.store[("kayden", "FIRST_API_KEY")] == "old"
+    s = await h.runtime.settings()
+    assert not s.restart_needed and s.system_prompt == DEFAULT_SYSTEM_PROMPT
 
 
 # ── Saving and logging ──
@@ -252,19 +281,29 @@ async def test_only_changed_settings_are_saved(make, tmp_path):
     await h.runtime.update_settings(SettingsUpdate(system_prompt="Be brief."))
     assert saved(h) == {"system_prompt": "Be brief."}
     await h.runtime.update_settings(SettingsUpdate(
-        provider="second", budget=Budget(max_cost_usd=5.0),
+        modules={"frontend": "scripted-window"}, budget=Budget(max_cost_usd=5.0),
         permissions=PermissionPolicy.ASK, work_folder=str(tmp_path)))
-    assert saved(h) == {"system_prompt": "Be brief.", "provider": "second", "model": "s-1",
-                        "permissions": "ask", "work_folder": str(tmp_path),
-                        "budget": {"max_cost_usd": 5.0}}
+    await h.runtime.update_settings(SettingsUpdate(modules={"memory": "sqlite"}))
+    assert saved(h) == {"system_prompt": "Be brief.", "permissions": "ask",
+                        "work_folder": str(tmp_path), "budget": {"max_cost_usd": 5.0},
+                        "modules": {"frontend": "scripted-window", "memory": "sqlite"}}
+
+
+async def test_a_core_change_replaces_a_saved_provider(make):
+    h = await setup(make)
+    (h.data_dir / "settings.toml").write_text('provider = "first"\n')
+    await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
+    assert "provider" not in saved(h)
 
 
 async def test_settings_changes_are_logged_without_values_that_are_secret(make):
     h = await setup(make)
     await h.start()
-    await h.runtime.update_settings(SettingsUpdate(api_key="sk-1", model="fake-2"))
+    await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}, api_key="sk-2",
+                                                   permissions=PermissionPolicy.DENY))
     [record] = logged_settings(h)
-    assert record["changed"] == ["api_key", "model"] and record["model"] == "fake-2"
+    assert record["changed"] == ["modules", "api_key", "permissions"]
+    assert record["modules"] == {"core": "second"} and record["permissions"] == "deny"
     assert "api_key" not in {k for k in record if k != "changed"}
 
 

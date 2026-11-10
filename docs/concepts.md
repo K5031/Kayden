@@ -10,7 +10,9 @@ conversation after its first message; you can rename it.
   [long-term memory](#memory).
 - **Continue from**: a new conversation that knows where an earlier one left off. Kayden
   writes a short summary of the earlier one into the new one, then leaves the earlier one
-  as it was. Use it when a conversation has grown long or wandered off.
+  as it was. Use it when a conversation has grown long or wandered off. Continuing from a
+  private chat carries what was said there into the new conversation; if the new one has
+  Remember on, the agent may then keep facts from it in long-term memory.
 - **Remember** (on by default): turned off when you start a conversation, it makes a
   private chat: it does not use long-term memory, adds nothing to it, and the agent cannot
   look into your other conversations from it. Its messages are still saved like any other.
@@ -29,7 +31,8 @@ the change applies from the agent's next step.
 | Results of background tasks | Wait for you | Wake the agent |
 
 An autonomous agent can say it is done for now ("idle"); it then waits until the tasks it
-started finish, or until you write. Turning autonomy off stops any such wake-up; tasks
+started finish, or until you write. Turning autonomy on while the agent waits with tasks
+running makes it continue when they finish. Turning autonomy off stops any such wake-up; tasks
 keep running and their results wait for you. After Kayden restarts, an autonomous
 conversation waits for you before doing anything. Spending limits apply as always, so
 watch the costs of a conversation left to work on its own.

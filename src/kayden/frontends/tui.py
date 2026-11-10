@@ -88,7 +88,17 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.api import Text as TextBlock
-from kayden.frontends.common import PERMISSION_LABELS, loosening, model_label
+from kayden.frontends.common import (
+    AT_RESTART,
+    MEMORY_WARNING,
+    MODULE_LABELS,
+    PERMISSION_LABELS,
+    loosening,
+    model_label,
+    module_options,
+    needs_restart,
+    restart_notice,
+)
 
 STATE_LABELS = {
     AgentState.NOT_STARTED: "Not started",
@@ -401,9 +411,10 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class SettingsScreen(ModalScreen[SettingsUpdate | None]):
-    """Edits the user settings; returns only what changed. Loosening permissions or
-    raising the spending limit is confirmed first (api.py update_settings)."""
+class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
+    """Edits the user settings; returns only what changed, and whether to restart now.
+    Loosening permissions or raising the spending limit is confirmed first (api.py
+    update_settings), and so is a different Memory."""
 
     BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Cancel")]
 
@@ -418,27 +429,24 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
         models = [(model_label(m), m.id) for m in self.models]
         with VerticalScroll(classes="dialog"):
             yield Label("Settings", classes="title")
+            if s.startup_error is not None:
+                yield Label(f"Kayden could not start: {s.startup_error}", id="startup-error",
+                            classes="error", markup=False)
             yield Label("AI provider")
-            yield Select(
-                [(p.name + ("" if p.key_name is None else
-                            "  (key saved)" if p.has_key else "  (no key yet)"), p.id)
-                 for p in s.providers],
-                value=s.provider if s.provider is not None else Select.BLANK,
-                allow_blank=s.provider is None, prompt="Custom (from config.toml)",
-                id="provider")
+            yield self._module_select("core")
             yield Label("API key for this provider")
             yield Input(password=True, placeholder="Leave empty to keep the current key",
                         id="api-key")
             yield Label("Model")
             yield Select(models, value=s.model if s.model in dict(map(reversed, models))
-                         else Select.BLANK, allow_blank=True, prompt="Provider's default",
-                         id="model")
-            yield Label("A new provider starts with its first model; change it after saving.",
+                         else Select.NULL, allow_blank=True, prompt="Provider's default",
+                         id="model", disabled=not models)
+            yield Label("After the restart, the new provider starts with its first model.",
                         id="model-note")
             yield Label("Model for memory upkeep")
             yield Select([("Same as the main model", SAME_MODEL), *models],
                          value=s.maintenance_model or SAME_MODEL, allow_blank=False,
-                         id="maintenance-model")
+                         id="maintenance-model", disabled=not models)
             yield Label("Spending limit in US dollars (empty = no limit)")
             limit = s.budget.max_cost_usd
             yield Input("" if limit is None else f"{limit:g}", id="spending-limit")
@@ -450,19 +458,39 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
             yield TextArea(s.system_prompt, id="instructions")
             yield Label("Work folder")
             yield Input(s.work_folder or "", disabled=s.work_folder is None, id="work-folder")
+            for kind in ("memory", "tools", "frontend"):
+                yield Label(MODULE_LABELS[kind])
+                yield self._module_select(kind)
+            yield Label(AT_RESTART, classes="hint")
+            yield Label(restart_notice(s) or "", id="restart-notice", classes="hint")
             with Horizontal(classes="buttons"):
                 yield Button("Save", variant="primary", id="save")
+                yield Button("Restart now", id="restart")
                 yield Button("Cancel", id="cancel")
+
+    def _module_select(self, kind: str) -> Select[str]:
+        choice = self.settings.modules[kind]
+        return Select(module_options(choice),
+                      value=choice.chosen if choice.chosen is not None else Select.NULL,
+                      allow_blank=choice.chosen is None, prompt="Custom (from config.toml)",
+                      id=f"module-{kind}")
 
     def on_mount(self) -> None:
         self.query_one("#model-note").display = False
+        s = self.settings
+        self.query_one("#restart-notice").display = restart_notice(s) is not None
+        self.query_one("#restart").display = s.restart_needed or s.startup_error is not None
 
-    @on(Select.Changed, "#provider")
-    def _provider_changed(self, event: Select.Changed) -> None:
-        switching = event.value != self.settings.provider
+    @on(Select.Changed, "#module-core")
+    def _core_changed(self, event: Select.Changed) -> None:
+        switching = event.value != self.settings.modules["core"].running
         for selector in ("#model", "#maintenance-model"):
-            self.query_one(selector, Select).disabled = switching
+            self.query_one(selector, Select).disabled = switching or not self.models
         self.query_one("#model-note").display = switching
+
+    @on(Select.Changed, "#module-frontend")
+    def _frontend_changed(self, event: Select.Changed) -> None:
+        self.query_one("#restart").display = True
 
     @on(Button.Pressed, "#cancel")
     def _cancel(self) -> None:
@@ -470,34 +498,46 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
 
     @on(Button.Pressed, "#save")
     def _save(self) -> None:
+        self._finish(restart=False)
+
+    @on(Button.Pressed, "#restart")
+    def _restart(self) -> None:
+        self._finish(restart=True)
+
+    def _finish(self, *, restart: bool) -> None:
         update = self._update()
         if update is None:
             return
         reasons = loosening(self.settings, update)
-        if not reasons:
-            self.dismiss(update)
+        memory = bool(update.modules and "memory" in update.modules)
+        if not reasons and not memory:
+            self.dismiss((update, restart))
             return
+        message = ("This change " + " and ".join(reasons) + ". ") if reasons else ""
+        message += (MEMORY_WARNING + " ") if memory else ""
 
         def confirmed(yes: bool | None) -> None:
             if yes:
-                self.dismiss(update)
+                self.dismiss((update, restart))
 
-        self.app.push_screen(ConfirmScreen("This change " + " and ".join(reasons)
-                                           + ". Continue?"), confirmed)
+        self.app.push_screen(ConfirmScreen(message + "Continue?"), confirmed)
 
     def _update(self) -> SettingsUpdate | None:
         """The changed fields, or None (with a message) if a value is invalid."""
         s = self.settings
         changes: dict[str, Any] = {}
-        provider = self.query_one("#provider", Select).value
-        switching = provider is not Select.BLANK and provider != s.provider
-        if switching:
-            changes["provider"] = provider
+        modules = {}
+        for kind, choice in s.modules.items():
+            value = self.query_one(f"#module-{kind}", Select).value
+            if value is not Select.NULL and value != choice.chosen:
+                modules[kind] = value
+        if modules:
+            changes["modules"] = modules
         if key := self.query_one("#api-key", Input).value.strip():
             changes["api_key"] = key
-        if not switching:
+        if not self.query_one("#model", Select).disabled:
             model = self.query_one("#model", Select).value
-            if model is not Select.BLANK and model != s.model:
+            if model is not Select.NULL and model != s.model:
                 changes["model"] = model
             light = self.query_one("#maintenance-model", Select).value
             light = None if light == SAME_MODEL else light
@@ -527,6 +567,34 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
         if not folder.disabled and folder.value.strip() != (s.work_folder or ""):
             changes["work_folder"] = folder.value.strip()
         return SettingsUpdate(**changes)
+
+
+class RestartScreen(ModalScreen[bool]):
+    """Offers Restart now after module settings were saved."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(False)", "Later")]
+
+    def __init__(self, notice: str) -> None:
+        super().__init__()
+        self.notice = notice
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(self.notice, id="restart-message")
+            with Horizontal(classes="buttons"):
+                yield Button("Restart now", variant="primary", id="restart-now")
+                yield Button("Later", id="restart-later")
+
+    def on_mount(self) -> None:
+        self.query_one("#restart-now", Button).focus()
+
+    @on(Button.Pressed, "#restart-now")
+    def _now(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#restart-later")
+    def _later(self) -> None:
+        self.dismiss(False)
 
 
 class TextPromptScreen(ModalScreen[str | None]):
@@ -914,6 +982,7 @@ class KaydenApp(App[None]):
     .dialog .actions Button { min-width: 0; width: auto; margin-right: 1; }
     .dialog OptionList { height: auto; max-height: 20; margin-bottom: 1; }
     .dialog .hint { color: $text-muted; margin-bottom: 1; }
+    .dialog .error { color: $error; margin-bottom: 1; }
     .switch-row { height: auto; }
     .switch-row Label { padding: 1 0 0 1; }
     """
@@ -963,11 +1032,21 @@ class KaydenApp(App[None]):
         self.run_worker(self._pump(), name="pump", exit_on_error=False)
         self.query_one("#prompt", Input).focus()
         if self.runtime.snapshot().conversation is None:
-            if self.start_options is not None:
-                self._call(self._start(self.start_options))
-            else:
-                self.push_screen(StartScreen(self.runtime), self._on_start_chosen)
+            self._call(self._begin())
         self._render_status()
+
+    async def _begin(self) -> None:
+        """Settings with the error when Kayden could not start (first run: no key yet);
+        otherwise the start options or the start screen."""
+        settings = await self.runtime.settings()
+        if settings.startup_error is not None:
+            self.notice = "Kayden could not start: fix it in Settings (F2)"
+            self._render_status()
+            self.action_settings()
+        elif self.start_options is not None:
+            await self._start(self.start_options)
+        else:
+            self.push_screen(StartScreen(self.runtime), self._on_start_chosen)
 
     # ── event plumbing ───────────────────────────────────────────────────
 
@@ -1431,15 +1510,26 @@ class KaydenApp(App[None]):
 
         self._call(open_screen())
 
-    def _on_settings_chosen(self, update: SettingsUpdate | None) -> None:
-        if update is None or update == SettingsUpdate():
+    def _on_settings_chosen(self, result: tuple[SettingsUpdate, bool] | None) -> None:
+        if result is None:
             return
+        update, restart = result
 
         async def apply() -> None:
-            await self.runtime.update_settings(update)
-            self.notify("Settings saved")
+            settings = await self.runtime.settings()
+            if update != SettingsUpdate():
+                settings = await self.runtime.update_settings(update)
+                self.notify("Settings saved")
+            if restart:
+                await self.runtime.restart()
+            elif needs_restart(update) and (notice := restart_notice(settings)):
+                self.push_screen(RestartScreen(notice), self._on_restart_chosen)
 
         self._call(apply())
+
+    def _on_restart_chosen(self, now: bool | None) -> None:
+        if now:
+            self._call(self.runtime.restart())
 
     def _on_model_chosen(self, model_id: str | None) -> None:
         if model_id is not None:
@@ -1471,6 +1561,10 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> TuiFrontend:
         model=options.get("model"),
         autonomous=options.get("autonomous"),
     ))
+
+
+factory.display_name = "Terminal (TUI)"  # type: ignore[attr-defined]
+factory.kind = "terminal"  # type: ignore[attr-defined]
 
 
 class TuiFrontend(Frontend):

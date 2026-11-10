@@ -37,7 +37,6 @@ from kayden.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
-    ProviderInfo,
     ReasoningDelta,
     Role,
     RuntimeEvent,
@@ -80,6 +79,7 @@ from kayden.frontends.tui import (
     TuiFrontend,
     UserEntry,
 )
+from tests.fakes.settings import settings as fake_settings
 
 CONVERSATION = ConversationInfo("conv-1", "Test", 0.0, 0.0)
 OTHERS = [
@@ -121,13 +121,7 @@ class StubRuntime:
         self.command_delay = 0.0
         self.fail_with: dict[str, Exception] = {}
         self.spent = 1.25
-        self.current_settings = Settings(
-            provider="claude",
-            providers=[ProviderInfo("claude", "Claude", "ANTHROPIC_API_KEY", True),
-                       ProviderInfo("local", "Local AI", None, False)],
-            model="m1", maintenance_model=None, budget=Budget(max_cost_usd=10.0),
-            permissions=PermissionPolicy.ALLOW_READ_ONLY, system_prompt="Be helpful.",
-            work_folder="/work")
+        self.current_settings = fake_settings()
         self._subscribers: list[asyncio.Queue[EventEnvelope | None]] = []
 
     # scripting
@@ -194,6 +188,8 @@ class StubRuntime:
         )
 
     async def list_models(self) -> Sequence[ModelInfo]:
+        if "list_models" in self.fail_with:
+            raise self.fail_with["list_models"]
         return MODELS
 
     async def list_tools(self):
@@ -305,6 +301,11 @@ class StubRuntime:
     async def update_settings(self, update: SettingsUpdate) -> Settings:
         await self._record("update_settings", update)
         return self.current_settings
+
+    async def restart(self) -> None:
+        await self._record("restart")
+        for queue in self._subscribers:
+            queue.put_nowait(None)
 
 
 def msg(id: str, role: Role, *blocks) -> Message:

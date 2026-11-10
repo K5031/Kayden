@@ -3,7 +3,7 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 
 from __future__ import annotations
 
-from kayden.api import ModelInfo, PermissionPolicy, Settings, SettingsUpdate
+from kayden.api import ModelInfo, ModuleChoice, PermissionPolicy, Settings, SettingsUpdate
 
 PERMISSION_LABELS = {
     PermissionPolicy.ASK: "Ask me before every action",
@@ -43,3 +43,50 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
             reasons.append("lets the agent do more without asking: "
                            + PERMISSION_LABELS[update.permissions].lower())
     return reasons
+
+
+MODULE_LABELS = {"core": "AI provider", "memory": "Memory", "tools": "Tools",
+                 "frontend": "Interface"}
+MEMORY_WARNING = ("A different memory keeps its own conversations and memories: the ones "
+                  "you have now are not shown after the restart, and come back when you "
+                  "switch back.")
+AT_RESTART = "The AI provider, key, modules and work folder apply when Kayden restarts."
+
+
+def module_options(choice: ModuleChoice) -> list[tuple[str, str]]:
+    """(label, id) for a module list; a Core says whether its key is saved."""
+    options = []
+    for m in choice.installed:
+        key = "" if m.key_name is None else "  (key saved)" if m.has_key else "  (no key yet)"
+        options.append((m.name + key, m.id))
+    if choice.chosen is not None and choice.chosen not in {m.id for m in choice.installed}:
+        options.append((f"{choice.chosen}  (not installed)", choice.chosen))
+    return options
+
+
+def module_name(choice: ModuleChoice, module_id: str | None) -> str:
+    return next((m.name for m in choice.installed if m.id == module_id), module_id or "custom")
+
+
+def needs_restart(update: SettingsUpdate) -> bool:
+    """Whether `update` holds module settings, which apply at the next start."""
+    return bool(update.modules) or update.api_key is not None or update.work_folder is not None
+
+
+def restart_notice(settings: Settings) -> str | None:
+    """What waits for a restart, for a line next to Restart now; None when nothing does."""
+    if settings.startup_error is not None:
+        return "Fix the settings above, then restart Kayden."
+    if not settings.restart_needed:
+        return None
+    frontend = settings.modules["frontend"]
+    notice = "Saved changes apply when Kayden restarts."
+    if frontend.chosen is not None and frontend.chosen != settings.restart_frontend:
+        kind = next((m.kind for m in frontend.installed if m.id == frontend.chosen), None)
+        where = ("the next time Kayden is started from the app menu" if kind == "window"
+                 else "the next time you run kayden in a terminal")
+        notice = f"{module_name(frontend, frontend.chosen)} will be used {where}. " + notice
+    elif settings.restart_frontend != frontend.running:
+        notice += (f" Restart now continues in "
+                   f"{module_name(frontend, settings.restart_frontend)}.")
+    return notice

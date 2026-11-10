@@ -137,7 +137,7 @@ class InMemoryMemory(Memory):
         conv = self._conv(conversation_id)
         changes: dict[str, Any] = {}
         if title is not None:
-            changes["title"] = title or None
+            changes["title"] = title.strip() or None
         if archived is not None:
             changes["archived"] = archived
         if autonomous is not None:

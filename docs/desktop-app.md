@@ -7,8 +7,16 @@ a terminal.
 ## Install
 
 Ready-made downloads (a `.dmg` for macOS, a Flatpak and an AppImage for Linux) are not
-published yet. Until then, run the app from a checkout (see
+published yet. Until then, install Kayden with its `desktop` extra from a checkout (see
 [Getting started](getting-started.md) for cloning):
+
+```bash
+uv tool install --python 3.13 --editable "Kayden[desktop]"
+```
+
+This one install gives you both `kayden` (the terminal app) and `kayden-desktop` (this
+app), so you can switch between them in Settings. Once the desktop app is chosen there,
+`kayden` opens it too. To run the app without installing:
 
 ```bash
 cd Kayden
@@ -16,7 +24,7 @@ uv run --python 3.13 --extra desktop kayden-desktop
 ```
 
 The app is tested on Python 3.13. The Qt libraries it uses are not fully compatible with
-Python 3.15 yet.
+Python 3.15 yet. Without the `desktop` extra, the desktop app is not offered in Settings.
 
 ## First start
 
@@ -24,13 +32,16 @@ When no API key is saved, a welcome window asks for three things:
 
 1. **Your AI provider**: Claude, DeepSeek or OpenAI. **Get a key** opens the provider's
    website.
-2. **Your API key.** Kayden checks it with the provider and keeps it in your computer's
-   keychain. If the key is refused, nothing changes and you can try again. If your computer
-   has no keychain, set the environment variable named in the message instead
+2. **Your API key.** Kayden keeps it in your computer's keychain. If your computer has no
+   keychain, set the environment variable named in the message instead
    (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`).
 3. **A work folder and a spending limit.** The work folder is where Kayden runs commands
    and reads and writes files; it is `~/Kayden` unless you choose another. The spending
    limit is optional.
+
+Kayden then restarts with your provider. If the provider refuses the key, the message says
+so; enter another one in Settings and choose **Restart now**. If Kayden cannot start for
+another reason, the Settings window opens with the message.
 
 ## Using it
 
@@ -64,13 +75,22 @@ deletion does not reach.
 Next to the autonomy switch is what Kayden has spent so far, across all conversations. The
 status bar shows what Kayden is doing, how many tasks run in the background and the model.
 
-At start the app reopens your most recent conversation.
+At start the app reopens your most recent conversation, or the one you were in when you
+switched from the terminal app.
 
 ## Settings
 
 The Settings window has the same settings as the terminal app; see [Settings](settings.md).
 Raising or removing the spending limit, or letting Kayden do more without asking, asks you
-to confirm first.
+to confirm first. The provider, key, work folder and modules apply when Kayden restarts:
+**Restart now** in the Settings window does that.
+
+## Switching to the terminal app
+
+Choose **Terminal (TUI)** as the interface in Settings and save. The app cannot open a
+terminal itself: the terminal app is used the next time you run `kayden` in a terminal.
+From the terminal app, choosing the desktop app and **Restart now** opens this app in the
+same conversation.
 
 ## Good to know
 

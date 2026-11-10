@@ -107,15 +107,15 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 
 | Behavior | Test |
 |----------|------|
-| settings() reflects the configuration and the provider list | `test_settings_reflect_the_configuration`, `test_settings_without_a_provider_list` |
+| settings() reflects the configuration and the installed modules | `test_settings_reflect_the_configuration`, `test_settings_without_module_ids` |
 | Model, maintenance model, prompt, budget, permissions apply from the next request | `test_live_settings_apply_from_the_next_request`, `test_maintenance_model_empty_string_clears_it` |
 | Permissions stay clamped to the inherited ceiling | `test_permissions_stay_clamped_to_the_inherited_ceiling` |
 | Raising a spent budget lets the agent continue | `test_raising_a_spent_budget_lets_the_agent_continue` |
 | An invalid update changes nothing | `test_an_invalid_update_changes_nothing` |
-| Provider switch rebuilds the Core; a provider that cannot list models is refused | `test_switching_provider_*`, `test_a_provider_that_cannot_list_models_is_not_switched_to` |
-| Provider, key and work folder wait until nothing runs; work folder rebuilds Tools | `test_provider_and_work_folder_wait_until_nothing_runs`, `test_work_folder_rebuilds_the_tools` |
-| Settings before start; the Core is asked for models only when needed | `test_settings_before_start`, `test_settings_before_start_need_the_provider_only_for_models` |
-| Keys go to the keychain only | `test_api_key_*` |
+| Module choices, key and work folder are saved, build nothing and save in any state | `test_choosing_a_module_saves_it_and_builds_nothing`, `test_api_key_and_work_folder_apply_at_the_next_start`, `test_module_settings_save_while_the_agent_works`, `test_module_settings_before_start`, `test_choosing_the_running_module_again_needs_no_restart` |
+| A Core change clears the saved models; models chosen meanwhile are not saved | `test_choosing_a_module_saves_it_and_builds_nothing`, `test_a_model_chosen_while_another_core_waits_is_not_saved`, `test_a_core_change_replaces_a_saved_provider` |
+| The Core is asked for models only when needed | `test_settings_before_start_need_the_provider_only_for_models` |
+| Keys go to the keychain only, for the chosen Core; a failed save restores it | `test_api_key_*`, `test_a_failed_save_restores_the_keychain` |
 | Only changed settings are saved; changes are logged without secrets, loosening flagged | `test_only_changed_settings_are_saved`, `test_settings_changes_are_logged_without_values_that_are_secret`, `test_raising_a_limit_and_loosening_permissions_are_flagged` |
 
 ## Launcher (`kayden`) — `tests/test_e2e.py`
@@ -124,10 +124,22 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 |----------|------|
 | Config file selects modules and runtime settings; flags override; invalid files refused | `test_config_file_in_the_data_dir_selects_the_core`, `test_runtime_settings_come_from_the_config_file`, `test_invalid_config_files_are_refused` |
 | System prompt inline or from a file | `test_system_prompt_replaces_the_default`, `test_system_prompt_file_is_relative_to_the_config_file` |
-| Provider list and the current provider | `test_providers_and_the_current_one` |
+| Module ids of the configured modules | `test_module_ids_of_the_configured_modules` |
 | Saved settings override the config file; invalid ones refused | `test_saved_settings_override_the_config_file`, `test_invalid_saved_settings_are_refused` |
 | `--show-config` prints the effective config, which loads back unchanged | `test_show_config_prints_the_effective_config_without_building_modules`, `test_shown_config_loads_back_to_the_same_instance` |
-| Module startup errors are one line; the `kayden` command runs main | `test_module_startup_errors_are_one_line`, `test_kayden_command_runs_main` |
+| The `kayden` command runs main | `test_kayden_command_runs_main` |
+
+## Swappable modules — `tests/test_modules.py`
+
+| Behavior | Test |
+|----------|------|
+| Installed entry points that load are listed, in every frontend's settings | `test_installed_modules_are_the_entry_points_that_load`, `test_an_installed_package_appears_in_settings` |
+| Saved ids pick factories; legacy provider; config options stay with their module; import paths have no id | `test_saved_module_ids_pick_their_factories`, `test_a_saved_provider_picks_the_core`, `test_config_options_stay_with_their_module`, `test_import_paths_in_config_have_no_id` |
+| Each launcher runs the saved frontend of its kind, else its own | `test_each_launcher_runs_the_saved_frontend_of_its_kind` |
+| `kayden` opens a saved window frontend at launch, or says why it runs the TUI | `test_kayden_opens_the_saved_window_frontend`, `test_kayden_says_why_it_opens_in_the_terminal` |
+| restart() shuts down, names the conversation (none after a Memory change) and the frontend it can bring up | `test_restart_shuts_down_and_names_the_open_conversation`, `test_a_memory_change_restarts_without_the_conversation`, `test_restart_brings_up_the_chosen_frontend_where_it_can` |
+| Startup failures open the frontend on the setup runtime with a one-line error; first-run key before the Core | `test_a_missing_key_opens_the_frontend_and_is_entered_before_the_core_is_built`, `test_the_setup_runtime_saves_what_needs_no_core`, `test_bad_module_options_open_the_frontend_with_the_error`, `test_a_frontend_that_cannot_be_built_falls_back_to_the_launchers` |
+| Restart now reopens the conversation with the new modules; the terminal hands over to the desktop app | `test_restart_reopens_the_conversation_with_the_new_modules`, `test_the_terminal_hands_over_to_the_desktop_app`, `test_the_handed_over_command_runs`, `test_the_desktop_launcher_opens_the_conversation_it_is_given` |
 
 ## Settings screen (TUI) — `tests/test_tui_settings.py`
 
@@ -135,4 +147,5 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 |----------|------|
 | F2 or /settings shows the current settings; saving sends only what changed | `test_settings_screen_shows_the_current_settings`, `test_saving_sends_only_what_changed` |
 | Loosening permissions or raising or removing the limit asks first; tightening does not | `test_raising_the_spending_limit_asks_first`, `test_removing_the_limit_and_loosening_permissions_ask_first`, `test_tightening_does_not_ask` |
+| Module choices; Restart now to the desktop app; Memory warning; startup error opens settings | `test_choosing_the_desktop_app_and_restarting_now`, `test_saving_a_module_change_offers_restart_now`, `test_a_memory_change_warns_first`, `test_a_startup_error_opens_the_settings` |
 | Fits an 80×24 terminal | `test_settings_screen_fits_a_small_terminal` |

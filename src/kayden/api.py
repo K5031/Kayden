@@ -79,7 +79,7 @@ type TokenCounter = Callable[[str | Sequence[Message]], int]  # fast local estim
 
 PERMISSION_CEILING_ENV = "KAYDEN_PERMISSION_CEILING"
 # OS keychain service under which API keys are stored, one entry per key name
-# (ProviderInfo.key_name). Cores read their key from the environment first, then from here.
+# (ModuleInfo.key_name). Cores read their key from the environment first, then from here.
 KEYCHAIN_SERVICE = "kayden"
 
 
@@ -459,8 +459,9 @@ class Memory(abc.ABC):
         archived: bool | None = None,
         autonomous: bool | None = None,
     ) -> ConversationInfo:
-        """Change metadata; None leaves a field as it is. An empty title clears it, so an
-        automatic title follows. Returns the updated info."""
+        """Change metadata; None leaves a field as it is. A title is stripped of surrounding
+        whitespace; an empty one clears it, so an automatic title follows. Returns the
+        updated info."""
 
     @abc.abstractmethod
     async def append(
@@ -830,38 +831,69 @@ class StartOptions:
     seed_from: ConversationId | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class ProviderInfo:
-    """A model provider the user can switch to (a Core with its options)."""
+MODULE_KINDS = ("core", "memory", "tools", "frontend")
 
-    id: str  # stable, e.g. "anthropic"
-    name: str  # for display, e.g. "Claude"
-    key_name: str | None  # the key's environment variable and keychain entry; None = no key
-    has_key: bool  # a key is available from the environment or the keychain
+
+@dataclass(frozen=True, slots=True)
+class ModuleInfo:
+    """An installed module: an entry point in the group kayden.cores, kayden.memories,
+    kayden.tools or kayden.frontends whose package imports cleanly. The entry point's name
+    is the id, its target the factory. A factory may carry display_name; a Core factory
+    key_name, a Frontend factory kind."""
+
+    id: str  # e.g. "anthropic"
+    name: str  # for display, e.g. "Claude"; the id without display_name
+    key_name: str | None = None  # Cores: the key's environment variable and keychain entry
+    has_key: bool = False  # a key is available from the environment or the keychain
+    kind: str | None = None  # Frontends: "terminal" or "window" (FrontendInfo.kind)
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleChoice:
+    """One kind of module. running and chosen are None for a module given in config.toml
+    by import path, which has no id."""
+
+    running: str | None  # the module running now
+    chosen: str | None  # the module used from the next start
+    installed: Sequence[ModuleInfo]
 
 
 @dataclass(frozen=True, slots=True)
 class Settings:
     """The user settings, in the terms a settings screen shows. Models come from
-    list_models(), spending so far from snapshot().usage."""
+    list_models(), spending so far from snapshot().usage.
 
-    provider: str | None  # ProviderInfo.id of the current Core; None if not from the list
-    providers: Sequence[ProviderInfo]
+    Runtime settings (model, maintenance model, budget, permissions, system prompt) apply
+    live. Module settings (modules, the API key, the work folder) are what module factories
+    receive: they are saved at once and apply at the next start (restart())."""
+
+    modules: Mapping[str, ModuleChoice]  # keyed by MODULE_KINDS
     model: str | None  # None before start() = the first model the Core lists
     maintenance_model: str | None  # None = the main model
     budget: Budget
     permissions: PermissionPolicy  # effective: clamped to any inherited ceiling
     system_prompt: str
-    work_folder: str | None  # the Tools' working directory; None = not settable
+    work_folder: str | None  # the Tools' working directory as saved; None = not settable
+    restart_needed: bool  # saved module settings differ from the running instance
+    # The frontend restart() brings up: the chosen one, unless it cannot be shown from the
+    # running one (a terminal frontend from a window frontend, a window frontend without a
+    # display); then the running one, and the chosen one is used at the next launch of its
+    # kind. None for a frontend from config.toml.
+    restart_frontend: str | None
+    # Set when the modules could not be built (no key yet, a module that is not installed,
+    # bad options). Only settings and restart() work then; the frontend shows the settings
+    # with this message so the user can fix it.
+    startup_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class SettingsUpdate:
     """A partial change: None leaves a setting as it is. maintenance_model "" clears it.
-    budget replaces the whole budget. api_key is stored for `provider` (or the current
-    one) and never returned."""
+    budget replaces the whole budget. modules maps kinds to installed ids. api_key is stored
+    for the chosen Core (modules["core"] in this update, else the saved choice) and never
+    returned."""
 
-    provider: str | None = None
+    modules: Mapping[str, str] | None = None
     api_key: str | None = None
     model: str | None = None
     maintenance_model: str | None = None
@@ -1116,7 +1148,9 @@ class RuntimeAPI(Protocol):
 
     start() leaves the agent IDLE. A resumed autonomous conversation has no pending
     wake-up, so it never runs before the user sends a message or activates it. The first
-    start() takes the data dir lock, held until shutdown. send() in IDLE authorizes a
+    command that reads or changes stored data (start(), list_conversations(), history(),
+    deleting, ...) takes the data dir lock, held until shutdown; InstanceLockedError when
+    another process holds it. send() in IDLE authorizes a
     cycle and returns at once (the state is THINKING on return, so a second send
     queues); the message is appended at the start of that cycle, so it never lands
     between an assistant message and its TOOL message. Background results that arrive
@@ -1173,15 +1207,21 @@ class RuntimeAPI(Protocol):
         if any part is invalid (ValueError).
 
         Model, maintenance model, budget, permissions and system prompt apply in any state,
-        from the next inference. Permissions are clamped to any inherited ceiling. A
-        provider, key or work-folder change rebuilds the Core or Tools and is allowed only
-        while no cycle runs and no operation is outstanding (RuntimeStateError otherwise).
-        A new provider must list its models before it replaces the current one; the model
-        becomes `model` or the provider's first, and the maintenance model is cleared
-        unless set. Keys go to the OS keychain under key_name, never to a file.
+        from the next inference. Permissions are clamped to any inherited ceiling. Module
+        settings (modules, api_key, work_folder) are saved in any state and build nothing:
+        they apply at the next start. A Core change also clears the saved model and
+        maintenance model, so the new Core starts on its first model. Keys go to the OS
+        keychain under key_name, never to a file.
 
         Frontends must ask the user to confirm before loosening permissions or raising a
-        budget limit. Every change is written to the event log, without key values."""
+        budget limit, and warn before a Memory change that the conversations of the current
+        one are not shown after the restart. Every change is written to the event log,
+        without key values."""
+
+    async def restart(self) -> None:
+        """Shut down as on quit, then start again with the saved settings and the frontend
+        Settings.restart_frontend names, reopening the open conversation unless the Memory
+        module changes. The event stream ends, so the frontend's run() returns."""
 
     async def send(self, text: str) -> None:
         """Submit a user message and authorize a cycle. While a cycle runs or the agent
@@ -1205,11 +1245,13 @@ class RuntimeAPI(Protocol):
 
     async def set_autonomous(self, autonomous: bool) -> None:
         """Flip the open conversation's switch, in any state, from the next turn. Turning
-        it off drops any pending wake-up: background operations keep running and their
-        results wait for the user. RuntimeStateError before start()."""
+        it on while IDLE with operations running makes the agent wake when they finish, as
+        if it had idled waiting for them. Turning it off drops any pending wake-up:
+        background operations keep running and their results wait for the user.
+        RuntimeStateError before start()."""
 
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
-        """An empty title clears it, so an automatic title follows."""
+        """An empty (or whitespace-only) title clears it, so an automatic title follows."""
 
     async def archive_conversation(
         self, conversation_id: ConversationId, archived: bool
@@ -1238,10 +1280,15 @@ class FrontendInfo:
     # False -> the runtime never sends PermissionRequested; calls that would prompt
     # are refused (see PermissionPolicy) instead of blocking on an absent user.
     interactive_permissions: bool = True
+    # "terminal" (started by kayden in a terminal) or "window" (started by kayden-desktop,
+    # inside its Qt event loop).
+    kind: str = "terminal"
 
 
 class Frontend(abc.ABC):
-    """Owns the UI and the process's main loop."""
+    """Owns the UI; its launcher chooses the event loop (kayden: asyncio's, kayden-desktop:
+    qasync's). Launchers may pass these factory options: start (true: start right away),
+    conversation_id, autonomous, model; a frontend ignores the ones it does not use."""
 
     @property
     @abc.abstractmethod

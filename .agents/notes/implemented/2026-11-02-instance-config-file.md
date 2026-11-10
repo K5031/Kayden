@@ -31,7 +31,8 @@ max_cost_usd = 5.0
 
 - **Modules.** Each section takes `factory` and `options`, which map onto `ModuleSpec`. A
   section left out gets its default factory (`DEFAULT_FACTORIES`: Anthropic Core, SQLite
-  Memory, shell/file Tools, TUI).
+  Memory, shell/file Tools, TUI). A module chosen in the app by id replaces the one named
+  here (see [swappable modules](2026-11-08-swappable-modules-in-app.md)).
 - **Runtime.** Only per-instance settings: `model`, `maintenance_model`, `permissions`,
   `budget`, and the system prompt. Tuning fields (retries, timeouts) stay at their code
   defaults.
@@ -45,13 +46,14 @@ max_cost_usd = 5.0
   secret or password redacted. Unset settings that only the Core resolves (the model) are
   listed as comments.
 - **Precedence.** Settings saved through `RuntimeAPI.update_settings`
-  (`<data dir>/settings.toml`, see [settings](2026-11-07-settings-for-non-technical-users.md))
-  override the file; `--model`, `--maintenance-model` and `--permissions` override both;
+  (`<data dir>/settings.toml`, see [settings](2026-11-07-settings-for-non-technical-users.md)),
+  module choices among them, override the file; `--model`, `--maintenance-model` and `--permissions` override both;
   `--mode`, `--activation` and `--conversation` are merged over the frontend options.
 - **Strict.** Unknown sections or keys, wrong types and negative budgets stop startup with
   a one-line message naming the file.
 - **Keys.** Not in the file: each Core reads its own environment variable, then the OS
-  keychain, and refuses a missing key at construction; `kayden` reports that as one line.
+  keychain, and refuses a missing key at construction. That one-line message, like any
+  module that rejects its options, opens the frontend's settings with it.
 
 Reference: `.agents/decisions.md`, "Running Kayden"; user docs: `docs/settings.md`.
 

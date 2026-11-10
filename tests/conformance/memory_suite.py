@@ -262,6 +262,8 @@ class MemoryConformance:
         assert renamed.title == "Trip" and renamed.id == conv.id
         assert (await memory.update_conversation(conv.id, autonomous=True)).autonomous
         assert (await memory.update_conversation(conv.id, title="")).title is None
+        await memory.update_conversation(conv.id, title="Trip")
+        assert (await memory.update_conversation(conv.id, title="  \n")).title is None
         [listed] = await memory.list_conversations()
         assert listed.autonomous and listed.title is None
         with pytest.raises(KeyError):

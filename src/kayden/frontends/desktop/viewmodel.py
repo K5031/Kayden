@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
@@ -584,11 +584,12 @@ def newest_first(conversations: Sequence[ConversationInfo]) -> list[Conversation
 
 
 def needs_welcome(settings: Settings) -> bool:
-    """First run: no provider has a key yet. Never for a Core from config.toml or one
-    that needs no key."""
-    current = next((p for p in settings.providers if p.id == settings.provider), None)
-    return (current is not None and current.key_name is not None
-            and not any(p.has_key for p in settings.providers))
+    """First run: Kayden could not start and no AI provider has a key yet. Never for a
+    Core from config.toml or one that needs no key."""
+    cores = settings.modules["core"]
+    current = next((m for m in cores.installed if m.id == cores.chosen), None)
+    return (settings.startup_error is not None and current is not None
+            and current.key_name is not None and not any(m.has_key for m in cores.installed))
 
 
 # ── settings form ─────────────────────────────────────────────────────────
@@ -598,7 +599,7 @@ def needs_welcome(settings: Settings) -> bool:
 class SettingsForm:
     """What the settings window's fields hold, as plain values."""
 
-    provider: str | None
+    modules: Mapping[str, str | None]  # the chosen id per kind
     api_key: str
     model: str | None
     maintenance_model: str | None  # None = same as the main model
@@ -610,7 +611,8 @@ class SettingsForm:
 
 def form_from(settings: Settings) -> SettingsForm:
     limit = settings.budget.max_cost_usd
-    return SettingsForm(settings.provider, "", settings.model, settings.maintenance_model,
+    modules = {kind: choice.chosen for kind, choice in settings.modules.items()}
+    return SettingsForm(modules, "", settings.model, settings.maintenance_model,
                         "" if limit is None else f"{limit:g}", settings.permissions,
                         settings.system_prompt, settings.work_folder)
 
@@ -619,9 +621,11 @@ def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
     """Only the fields that changed. ValueError with a message for the user when a value
     is invalid. A provider switch leaves the models alone: the new provider picks its own."""
     changes: dict[str, Any] = {}
-    switching = form.provider is not None and form.provider != current.provider
-    if switching:
-        changes["provider"] = form.provider
+    modules = {kind: module_id for kind, module_id in form.modules.items()
+               if module_id is not None and module_id != current.modules[kind].chosen}
+    if modules:
+        changes["modules"] = modules
+    switching = "core" in modules
     if key := form.api_key.strip():
         changes["api_key"] = key
     if not switching:

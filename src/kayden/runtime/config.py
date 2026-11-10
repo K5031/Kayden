@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,13 +39,22 @@ class ModuleSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class Provider:
-    """A model provider the user can switch to: a Core and the key it reads."""
+class ModuleState:
+    """The module settings of an instance, by kind (api.MODULE_KINDS). An id is an entry
+    point name; None is a module given by import path in config.toml."""
 
-    id: str
-    name: str
-    core: ModuleSpec
-    key_name: str | None = None  # environment variable and keychain entry of its key
+    running: Mapping[str, str | None] = field(default_factory=dict)  # built for this run
+    chosen: Mapping[str, str | None] = field(default_factory=dict)  # saved for the next start
+    work_folder: str | None = None  # the Tools root this run; None = not settable
+
+
+@dataclass(frozen=True, slots=True)
+class Restart:
+    """What RuntimeAPI.restart() asked the launcher for."""
+
+    frontend: str | None  # id of the frontend to bring up; None = the configured one
+    frontend_kind: str  # FrontendInfo.kind of that frontend
+    conversation_id: str | None  # the conversation to reopen; None = let the frontend ask
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +68,6 @@ class RuntimeConfig:
     model: str | None = None  # default model; None = first model Core lists
     maintenance_model: str | None = None  # Completion(light=True); None = main model
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    context_windows: Mapping[str, int] = field(default_factory=dict)  # for unknown windows
     default_max_output_tokens: int = 4096
     max_retries: int = 3
     retry_base_delay_s: float = 1.0
@@ -68,9 +76,7 @@ class RuntimeConfig:
     default_tool_timeout_s: float = 3600.0
     cancel_grace_s: float = 5.0
     subscriber_queue_size: int = 1000
-    providers: Sequence[Provider] = ()  # what the user can switch to
-    provider: str | None = None  # Provider.id of the Core the instance was built with
-    tools_module: ModuleSpec | None = None  # rebuilt with options["root"] = work folder
+    modules: ModuleState = field(default_factory=ModuleState)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,3 +86,6 @@ class InstanceConfig:
     memory: ModuleSpec
     tools: ModuleSpec
     frontend: ModuleSpec
+    # Why the modules cannot be built (a saved module that is not installed); the frontend
+    # then opens on a setup runtime that shows it.
+    startup_error: str | None = None

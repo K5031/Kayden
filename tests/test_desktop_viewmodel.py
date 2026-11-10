@@ -17,9 +17,10 @@ from kayden.api import (
     FailureKind,
     MemoryEntry,
     Message,
+    ModuleChoice,
+    ModuleInfo,
     PermissionPolicy,
     PermissionRequested,
-    ProviderInfo,
     Role,
     RuntimeSnapshot,
     RuntimeStateError,
@@ -61,6 +62,7 @@ from kayden.frontends.desktop.viewmodel import (
 from kayden.runtime import InstanceLockedError
 from tests.conftest import Harness, eventually
 from tests.fakes.core import Step, call
+from tests.fakes.settings import settings as fake_settings
 
 
 async def attach(h: Harness) -> tuple[ConversationModel, Controller, asyncio.Task[None]]:
@@ -474,13 +476,7 @@ async def test_seq_gap_triggers_recovery():
 
 # ── settings form ─────────────────────────────────────────────────────────
 
-SETTINGS = Settings(
-    provider="anthropic",
-    providers=(ProviderInfo("anthropic", "Claude", "ANTHROPIC_API_KEY", True),
-               ProviderInfo("openai", "OpenAI", "OPENAI_API_KEY", False)),
-    model="m1", maintenance_model=None, budget=Budget(max_cost_usd=10.0),
-    permissions=PermissionPolicy.ASK, system_prompt="Be helpful.", work_folder="/home/u/Kayden",
-)
+SETTINGS = fake_settings(work_folder="/home/u/Kayden", permissions=PermissionPolicy.ASK)
 
 
 def test_an_untouched_form_changes_nothing():
@@ -505,8 +501,18 @@ def test_only_changed_fields_are_sent():
 def test_switching_provider_leaves_the_models_to_it():
     from dataclasses import replace
 
-    form = replace(form_from(SETTINGS), provider="openai", model="m2", api_key="sk")
-    assert settings_update(SETTINGS, form) == SettingsUpdate(provider="openai", api_key="sk")
+    form = replace(form_from(SETTINGS), modules={**form_from(SETTINGS).modules, "core": "local"},
+                   model="m2", api_key="sk")
+    assert settings_update(SETTINGS, form) == SettingsUpdate(modules={"core": "local"},
+                                                             api_key="sk")
+
+
+def test_only_changed_modules_are_sent():
+    from dataclasses import replace
+
+    modules = {**form_from(SETTINGS).modules, "memory": "notes", "frontend": "desktop"}
+    assert settings_update(SETTINGS, replace(form_from(SETTINGS), modules=modules)) == (
+        SettingsUpdate(modules={"memory": "notes", "frontend": "desktop"}))
 
 
 @pytest.mark.parametrize("field, value, message", [
@@ -525,12 +531,16 @@ def test_invalid_values_are_explained(field, value, message):
 def test_welcome_conversation_labels_and_refusals():
     from dataclasses import replace
 
+    def cores(chosen: str | None, *installed: ModuleInfo) -> Settings:
+        return replace(SETTINGS, startup_error="no key", modules={
+            **SETTINGS.modules, "core": ModuleChoice(chosen, chosen, installed)})
+
     assert not needs_welcome(SETTINGS)
-    assert needs_welcome(replace(SETTINGS, providers=(
-        ProviderInfo("anthropic", "Claude", "ANTHROPIC_API_KEY", False),)))
-    assert not needs_welcome(replace(SETTINGS, provider=None, providers=()))  # custom Core
-    assert not needs_welcome(replace(SETTINGS, providers=(
-        ProviderInfo("anthropic", "Local", None, False),)))
+    no_key = cores("anthropic", ModuleInfo("anthropic", "Claude", "ANTHROPIC_API_KEY"))
+    assert needs_welcome(no_key)
+    assert not needs_welcome(replace(no_key, startup_error=None))  # it started
+    assert not needs_welcome(cores(None))  # custom Core
+    assert not needs_welcome(cores("local", ModuleInfo("local", "Local")))
     old = ConversationInfo("a", "Trip plans", 0.0, 1.0)
     new = ConversationInfo("b", None, 0.0, 2.0)
     assert newest_first([old, new]) == [new, old]

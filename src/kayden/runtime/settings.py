@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tomllib
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -52,14 +53,19 @@ async def store_key(name: str, value: str | None) -> None:
         raise ValueError(f"no keychain available ({e}); set {name} in the environment") from e
 
 
-def save_settings(data_dir: Path, changes: dict[str, Any]) -> None:
-    """Merge `changes` into the settings file and replace it atomically."""
+def save_settings(data_dir: Path, changes: dict[str, Any], *, tables: Collection[str] = (),
+                  remove: Collection[str] = ()) -> None:
+    """Merge `changes` into the settings file and replace it atomically. A change to one
+    of `tables` merges into that table; `remove` drops keys."""
     path = data_dir / SETTINGS_FILE
     try:
         saved = tomllib.loads(path.read_text())
     except FileNotFoundError:
         saved = {}
-    saved.update(changes)
+    for key in remove:
+        saved.pop(key, None)
+    for key, value in changes.items():
+        saved[key] = {**saved.get(key, {}), **value} if key in tables else value
     tmp = path.with_suffix(".tmp")
     tmp.write_text(tomli_w.dumps(saved, multiline_strings=True))
     os.replace(tmp, path)

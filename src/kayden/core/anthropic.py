@@ -95,6 +95,10 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> AnthropicCore:
     return AnthropicCore(**options)
 
 
+factory.display_name = "Claude"  # type: ignore[attr-defined]
+factory.key_name = "ANTHROPIC_API_KEY"  # type: ignore[attr-defined]
+
+
 class AnthropicCore(Core):
     """`options` are merged verbatim into every request body (thinking, temperature,
     tool_choice, ...); `models` adds per-model options, context windows and prices."""

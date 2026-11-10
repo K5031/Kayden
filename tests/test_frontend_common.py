@@ -1,14 +1,20 @@
 """Settings texts and the loosening check shared by the TUI and the desktop app."""
 
-from kayden.api import Budget, ModelInfo, PermissionPolicy, Settings, SettingsUpdate
-from kayden.frontends.common import dollars, loosening, model_label
+from kayden.api import Budget, ModelInfo, ModuleChoice, PermissionPolicy, Settings, SettingsUpdate
+from kayden.frontends.common import (
+    dollars,
+    loosening,
+    model_label,
+    module_options,
+    needs_restart,
+    restart_notice,
+)
+from tests.fakes.settings import chosen, settings
 
 
 def _settings(limit: float | None = 10.0,
               permissions: PermissionPolicy = PermissionPolicy.ASK) -> Settings:
-    return Settings(provider="anthropic", providers=(), model="m", maintenance_model=None,
-                    budget=Budget(max_cost_usd=limit), permissions=permissions,
-                    system_prompt="p", work_folder="/w")
+    return settings(budget=Budget(max_cost_usd=limit), permissions=permissions)
 
 
 def test_tightening_and_unrelated_changes_need_no_confirmation():
@@ -38,3 +44,39 @@ def test_amounts_read_like_money():
                                  output_usd_per_mtok=2.5)) == (
         "Haiku  ($0.50 in / $2.50 out per million tokens)")
     assert model_label(ModelInfo("x", "Plain", 1_000)) == "Plain"
+
+
+def test_module_lists_say_whether_a_key_is_saved():
+    s = settings()
+    assert module_options(s.modules["core"]) == [("Claude  (key saved)", "claude"),
+                                                 ("Local AI", "local")]
+    gone = ModuleChoice("sqlite", "gone", s.modules["memory"].installed)
+    assert module_options(gone)[-1] == ("gone  (not installed)", "gone")
+
+
+def test_module_settings_need_a_restart():
+    assert needs_restart(SettingsUpdate(modules={"core": "local"}))
+    assert needs_restart(SettingsUpdate(api_key="k")) and needs_restart(
+        SettingsUpdate(work_folder="/x"))
+    assert not needs_restart(SettingsUpdate(model="m2", budget=Budget()))
+
+
+def test_restart_notices_say_where_the_chosen_frontend_will_be_used():
+    base = settings()
+    assert restart_notice(base) is None
+    assert restart_notice(settings(restart_needed=True)) == (
+        "Saved changes apply when Kayden restarts.")
+    to_desktop = chosen(base, "frontend", "desktop")
+    assert restart_notice(settings(modules=to_desktop, restart_needed=True,
+                                   restart_frontend="desktop")) == (
+        "Saved changes apply when Kayden restarts. Restart now continues in Desktop app.")
+    assert restart_notice(settings(modules=to_desktop, restart_needed=True)) == (
+        "Desktop app will be used the next time Kayden is started from the app menu. "
+        "Saved changes apply when Kayden restarts.")
+    window = {**base.modules, "frontend": ModuleChoice(
+        "desktop", "tui", base.modules["frontend"].installed)}
+    assert restart_notice(settings(modules=window, restart_needed=True,
+                                   restart_frontend="desktop")).startswith(
+        "Terminal (TUI) will be used the next time you run kayden in a terminal.")
+    assert restart_notice(settings(startup_error="no key")) == (
+        "Fix the settings above, then restart Kayden.")

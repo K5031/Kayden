@@ -21,6 +21,23 @@ dependencies = [
 kayden = "kayden.__main__:main"
 kayden-desktop = "kayden.frontends.desktop.launcher:main"
 
+# Installed modules, listed in every frontend's settings. A user-made module registers the
+# same way in its own package (docs/development.md).
+[project.entry-points."kayden.cores"]
+anthropic = "kayden.core.anthropic:factory"
+deepseek = "kayden.core.openai_compat:deepseek_factory"
+openai = "kayden.core.openai_compat:openai_factory"
+
+[project.entry-points."kayden.memories"]
+sqlite = "kayden.memory.sqlite:factory"
+
+[project.entry-points."kayden.tools"]
+shell-files = "kayden.tools.shell_files:factory"
+
+[project.entry-points."kayden.frontends"]
+tui = "kayden.frontends.tui:factory"
+desktop = "kayden.frontends.desktop:factory"
+
 [project.optional-dependencies]
 desktop = [
     "pyside6-essentials>=6.12.0",

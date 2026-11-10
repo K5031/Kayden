@@ -345,8 +345,12 @@ in section 9.
 ### 5.4 (S) When the lock is taken
 - **Status:** **Resolved** (2026-11-07). Stated in SPEC 10.4 and `RuntimeAPI` docstring.
 - **Where:** SPEC 10.4 lock per (directory, mode); the mode is known only at `start()`.
-- **Assumed:** Acquired at the first start(), released at shutdown. `fcntl.flock` (POSIX
-  only); the holder is named by the pid written into `<mode>.lock`.
+- **Assumed:** Acquired before the first Memory call (`run_instance` takes it before
+  building the modules; a `Runtime` built otherwise takes it at its first command that
+  reads or changes stored data), released at shutdown. `fcntl.flock` (POSIX only); the
+  holder is named by the pid written into `instance.lock`. A review of #1 found that reads
+  and writes before start() ran unlocked: a second process could delete a conversation
+  the first had open, and migrate the store under an older Kayden.
 
 ### 5.5 (S) When the ceiling is exported
 - **Status:** **Resolved** (2026-11-07). Stated in `PermissionPolicy.inherited_ceiling`.
@@ -682,14 +686,15 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 ## 11. Found while building the desktop app
 
 ### M16 (S) The Frontend does not own the main loop
-- **Status:** Open.
+- **Status:** Resolved (swappable modules).
 - **Where:** `api.Frontend` docstring: "Owns the UI and the process's main loop."
 - **Problem:** The launcher creates the event loop (`asyncio.run`) before any module is
   loaded, so a frontend cannot choose it. A GUI toolkit's loop must be the one that runs.
-- **Assumed:** The desktop app has its own entry point, `kayden-desktop`, which runs
-  `run_instance` on qasync's `QEventLoop`; `Frontend.run` only runs inside that loop.
-- **Fix:** Say "Owns the UI; its launcher chooses the event loop", or let a frontend
-  factory name a loop factory that `kayden` uses.
+- **Resolution:** The docstring says "Owns the UI; its launcher chooses the event loop".
+  `FrontendInfo.kind` (and a frontend factory's `kind`) says which launcher runs it:
+  `"terminal"` frontends run under `kayden` on asyncio's loop, `"window"` frontends under
+  `kayden-desktop` on qasync's. Each launcher starts the saved frontend of its kind, else its
+  own.
 
 ## 12. Found while building autonomy into sessions (contract Draft 3)
 
@@ -780,3 +785,31 @@ the sibling repositories `kayden-memory`, `kayden-core` and `kayden-tools`. Thei
 `src/` and `tests/` were copied in (read-only use of those folders); their `api.py` copies
 were not, so this repository's contract stays the only one. Nothing else in those folders
 was used.
+
+## 13. Found while building swappable modules
+
+### S1 (A) "Settings of the running modules apply live"
+- **Status:** Resolved by the owner.
+- **Where:** The swappable modules note (proposed) kept the API key and work folder live;
+  `RuntimeAPI.update_settings` rebuilt the Core or Tools for them.
+- **Problem:** Two rules for module settings, and the live rebuild with its quiescence
+  checks stayed for those two.
+- **Resolution:** One criterion: what the runtime reads while running applies live; what is
+  only passed to a factory applies at the next start. The key and work folder are saved at
+  once and apply at restart; nothing rebuilds a module while Kayden runs.
+
+### S2 (A) `[runtime].context_windows` duplicates the Core's `context_window`
+- **Status:** Resolved.
+- **Where:** `RuntimeConfig.context_windows`, the Cores' `models` option.
+- **Problem:** Two places configure a model's window; by the criterion above it is a module
+  option.
+- **Resolution:** `RuntimeConfig.context_windows` is removed. A model without a reported
+  window is refused with a message pointing at the Core's `models` option.
+
+### S3 (S) Frontend options passed by launchers
+- **Status:** Resolved.
+- **Where:** `Frontend` contract, launchers.
+- **Problem:** Launchers pass start options (`start`, `conversation_id`, ...) to the TUI
+  through its factory options; with frontends chosen by id, any frontend receives them.
+- **Resolution:** The `Frontend` docstring lists the options launchers may pass; a frontend
+  ignores the ones it does not use.
