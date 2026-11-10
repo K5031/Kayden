@@ -91,8 +91,12 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
   `launch()` in `__main__.py` builds the next instance in the same process, with the
   frontend starting in that conversation.
 - `FrontendInfo.kind` says which launcher runs a frontend: `kayden` runs terminal
-  frontends on asyncio's loop, `kayden-desktop` window frontends on qasync's. Each starts
-  the saved frontend of its kind, else its own (`tui`, `desktop`).
+  frontends on asyncio's loop, `kayden-desktop` window frontends on qasync's. A saved
+  frontend of the launcher's kind runs there. With a saved window frontend, `kayden` hands
+  over to `kayden-desktop` at launch (as for Restart now, below) when a display is
+  available, without starting the TUI; it runs the TUI, saying why in one line, only
+  without a display or when the window frontend is not installed. `kayden-desktop` with a
+  saved terminal frontend opens the desktop app, since a window cannot open a terminal.
 - From a terminal frontend to a window frontend, when a display is available, Restart now
   ends the TUI and `kayden` starts `kayden-desktop` (`python -m
   kayden.frontends.desktop.launcher`) as a detached process on the same data directory,
@@ -160,7 +164,7 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
   changed on disk needs Kayden to be started again.
 - A Memory switch hides the old archive until switching back; the warning before saving
   must be clear.
-- `kayden` and `kayden-desktop` each fall back to their own frontend, so a saved frontend
-  of the other kind never blocks a launch.
+- Choosing the desktop app means it opens however Kayden is started where a display is,
+  and a saved frontend never blocks a launch: each launcher falls back to its own.
 - The [settings note](2026-11-07-settings-for-non-technical-users.md) describes the
   settings in these terms.

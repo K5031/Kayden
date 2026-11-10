@@ -44,9 +44,11 @@ after the restart.
   the next time you run `kayden` in a terminal; **Restart now** restarts the desktop app for
   any other change.
 
-`kayden` always starts a terminal interface and the desktop app always a window, so each
-starts its own kind when the other kind is chosen. Both need to be installed; see
-[Desktop app](desktop-app.md#install).
+With the desktop app chosen, running `kayden` opens the desktop app instead of the terminal
+app, and says so. It opens the terminal app, saying why, only when there is no screen to
+show a window on or the desktop app is not installed. The desktop app, started from the app
+menu, always opens a window, even with the terminal app chosen. Both need to be installed;
+see [Desktop app](desktop-app.md#install).
 
 **A different Memory is a different archive.** Your conversations and long-term memory stay
 where they are, but are not shown while another Memory is used; they come back when you

@@ -53,7 +53,9 @@ mkdir ~/kayden-work && cd ~/kayden-work
 kayden
 ```
 
-The start screen opens with a new conversation selected; press Enter to start it. Type a
+The start screen opens with a new conversation selected; press Enter to start it. (If you
+chose the [desktop app](desktop-app.md) as the interface in Settings, `kayden` opens that
+instead.) Type a
 message and press Enter. Before the agent uses a tool (running a command, reading or
 changing a file), it asks you first.
 

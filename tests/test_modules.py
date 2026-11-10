@@ -402,3 +402,54 @@ async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, 
     finally:
         held.release()
     assert seen[0].startswith("Kayden is already open in another window")
+
+
+# ── Launching kayden with a window frontend saved ──
+
+
+def test_kayden_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
+    """Choosing the desktop app means `kayden` opens it, without starting the TUI."""
+    with_display(monkeypatch, True)
+    settings_file(tmp_path, FAKE_MODULES + 'frontend = "desktop"\n')
+    spawned = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kw: spawned.append(command))
+    monkeypatch.setenv("FIRST_API_KEY", "k")
+    monkeypatch.setattr(launcher, "LAUNCHER_FRONTENDS", {**launcher.LAUNCHER_FRONTENDS,
+                                                         TERMINAL: "scripted"})
+    ran = []
+
+    async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
+        ran.append(True)
+
+    scripted(monkeypatch, script)
+    launcher.main(["--data-dir", str(tmp_path), "--conversation", "c1"])
+    assert not ran
+    assert spawned == [[sys.executable, "-m", "kayden.frontends.desktop.launcher",
+                        "--data-dir", str(tmp_path), "--conversation", "c1"]]
+    assert capsys.readouterr().out == "Kayden opens in the desktop app.\n"
+
+
+@pytest.mark.parametrize(("saved", "display", "notice"), [
+    ("desktop", False, ("No display here, so Kayden opens in the terminal; Desktop app "
+                       "opens when you start Kayden from the app menu.")),
+    ("gone", True, ("The interface 'gone' is not installed, so Kayden opens in the "
+                   "terminal.")),
+])
+def test_kayden_says_why_it_opens_in_the_terminal(tmp_path, monkeypatch, capsys, saved,
+                                                  display, notice):
+    with_display(monkeypatch, display)
+    monkeypatch.setenv("FIRST_API_KEY", "k")
+    settings_file(tmp_path, FAKE_MODULES + f'frontend = "{saved}"\n')
+    spawned = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kw: spawned.append(command))
+    ran = []
+
+    async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
+        ran.append(True)
+
+    monkeypatch.setattr(launcher, "LAUNCHER_FRONTENDS", {**launcher.LAUNCHER_FRONTENDS,
+                                                         TERMINAL: "scripted"})
+    scripted(monkeypatch, script)
+    launcher.main(["--data-dir", str(tmp_path)])
+    assert not spawned and ran
+    assert capsys.readouterr().out == notice + "\n"

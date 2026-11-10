@@ -7,9 +7,11 @@ maintenance model, permissions, budget, system prompt); the settings saved from 
 is a default: SQLite Memory, the Anthropic Core, shell/file Tools rooted at the current
 directory, the Textual TUI and no budget. --show-config prints the result.
 
-The saved frontend is used when it is a terminal frontend, the TUI otherwise. Restart now
-in a frontend starts the instance again in this process; to a window frontend, it hands
-over to kayden-desktop as a detached process when a display is available.
+The saved frontend runs here when it is a terminal frontend. A saved window frontend opens
+instead: kayden hands over to kayden-desktop as a detached process when a display is
+available, and runs the TUI (saying why) when there is none or the frontend is not
+installed. Restart now in a frontend starts the instance again in this process, or hands
+over the same way to a window frontend.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from kayden.runtime import (
     RuntimeConfig,
     run_instance,
 )
-from kayden.runtime.modules import LABELS, TERMINAL, WINDOW, find, targets
+from kayden.runtime.modules import LABELS, TERMINAL, WINDOW, find, has_display, targets
 from kayden.runtime.settings import SETTINGS_FILE
 
 DEFAULT_DATA_DIR = Path("~/.kayden")
@@ -367,12 +369,30 @@ def window_command(args: argparse.Namespace, restart: Restart) -> list[str]:
     return command
 
 
-def hand_over(args: argparse.Namespace, restart: Restart) -> None:
+def hand_over(args: argparse.Namespace, restart: Restart, *,
+              message: str = "Kayden continues in the desktop app.") -> None:
     """Start the desktop app detached from this terminal."""
     subprocess.Popen(window_command(args, restart), start_new_session=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL)
-    print("Kayden continues in the desktop app.")
+    print(message)
+
+
+def saved_window(config: InstanceConfig) -> tuple[str | None, str | None]:
+    """The saved frontend `kayden` hands over to at launch (a window frontend, with a
+    display), or the line saying why it runs in the terminal instead; (None, None) when the
+    saved frontend runs here."""
+    state = config.runtime.modules
+    chosen = state.chosen.get("frontend")
+    if chosen is None or chosen == state.running.get("frontend"):
+        return None, None
+    info = find("frontend", chosen)
+    if info is None:
+        return None, f"The interface {chosen!r} is not installed, so Kayden opens in the terminal."
+    if not has_display():
+        return None, (f"No display here, so Kayden opens in the terminal; {info.name} opens "
+                      "when you start Kayden from the app menu.")
+    return info.id, None
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -381,6 +401,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.show_config:
         print(show_config(config, config_path(args)), end="")
         return
+    window, notice = saved_window(config)
+    if window is not None:
+        hand_over(args, Restart(window, WINDOW, args.conversation),
+                  message="Kayden opens in the desktop app.")
+        return
+    if notice is not None:
+        print(notice)
     try:
         restart = asyncio.run(launch(args, TERMINAL))
     except ModuleLoadError as e:

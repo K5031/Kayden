@@ -15,7 +15,8 @@ uv tool install --python 3.13 --editable "Kayden[desktop]"
 ```
 
 This one install gives you both `kayden` (the terminal app) and `kayden-desktop` (this
-app), so you can switch between them in Settings. To run the app without installing:
+app), so you can switch between them in Settings. Once the desktop app is chosen there,
+`kayden` opens it too. To run the app without installing:
 
 ```bash
 cd Kayden
