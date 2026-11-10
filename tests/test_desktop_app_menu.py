@@ -52,3 +52,10 @@ def test_an_entry_for_another_install_is_not_current(data_home: Path,
 def test_only_linux_has_an_app_menu_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     assert not app_menu.supported()
+
+
+def test_an_older_icon_is_not_current(data_home: Path) -> None:
+    app_menu.install()
+    icon = data_home / "icons/hicolor/scalable/apps/io.github.k5031.kayden.svg"
+    icon.write_text("<svg>old</svg>")
+    assert not app_menu.is_current()  # Add to App Menu shows again, to update it

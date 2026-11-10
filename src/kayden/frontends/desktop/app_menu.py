@@ -59,7 +59,8 @@ def _entry() -> str:
 def is_current() -> bool:
     """Whether the app menu already starts this install."""
     try:
-        return _entry_path().read_text() == _entry() and _icon_path().exists()
+        return (_entry_path().read_text() == _entry()
+                and _icon_path().read_bytes() == ICON.read_bytes())
     except OSError:
         return False
 
