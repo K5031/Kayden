@@ -40,6 +40,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kayden.api import (
+    PROFILE,
     AgentConfig,
     AgentState,
     ConversationDeleted,
@@ -56,7 +57,7 @@ from kayden.api import (
     MaintenanceStarted,
     McpServer,
     MemoriesChanged,
-    MemoryEntry,
+    MemoryNote,
     Message,
     MessageCommitted,
     MessageQueued,
@@ -854,43 +855,44 @@ class ConversationsScreen(ListScreen):
 
 
 class MemoryScreen(ListScreen):
-    """Lists long-term memory entries; adds, edits and forgets them."""
+    """Lists long-term memory notes, the profile first; adds, edits and deletes them."""
 
     def __init__(self, runtime: RuntimeAPI) -> None:
         super().__init__(runtime)
-        self.entries: dict[str, MemoryEntry] = {}
+        self.entries: dict[str, MemoryNote] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Long-term memory", classes="title")
-            yield Label("Kayden remembers these things across conversations.", classes="hint")
+            yield Label(f'Every conversation sees "{PROFILE}" and the list of notes; Kayden '
+                        "opens a note when it is relevant.", classes="hint")
             yield OptionList(id="memories")
             with Horizontal(classes="buttons actions"):
                 yield Button("Add", variant="primary", id="add")
                 yield Button("Edit", id="edit")
-                yield Button("Forget", variant="error", id="forget")
+                yield Button("Delete", variant="error", id="forget")
 
     async def _load(self) -> None:
         try:
-            entries = await self.runtime.memories()
+            notes = await self.runtime.notes()
         except Exception as e:  # noqa: BLE001
             self.notify(str(e) or type(e).__name__, severity="error", markup=False)
             return
-        self.entries = {e.id: e for e in entries}
-        self._show([Option(e.text + ("  · added by you" if e.source_conversation_id is None
-                                     else ""), id=e.id) for e in entries])
+        self.entries = {n.id: n for n in notes}
+        self._show([Option(f"{n.title}  · {n.description}" if n.description else n.title,
+                           id=n.id) for n in notes])
 
-    def _selected(self) -> MemoryEntry | None:
-        entry_id = self._selected_id()
-        return None if entry_id is None else self.entries.get(entry_id)
+    def _selected(self) -> MemoryNote | None:
+        note_id = self._selected_id()
+        return None if note_id is None else self.entries.get(note_id)
 
     @on(Button.Pressed, "#add")
     def _add(self) -> None:
-        def added(text: str | None) -> None:
-            if text:
-                self._run(self.runtime.add_memory(text))
+        def added(note: tuple[str, str, str] | None) -> None:
+            if note is not None:
+                self._run(self.runtime.save_note(*note))
 
-        self.app.push_screen(TextPromptScreen("Add to memory"), added)
+        self.app.push_screen(NoteScreen(None), added)
 
     @on(OptionList.OptionSelected)
     @on(Button.Pressed, "#edit")
@@ -898,25 +900,64 @@ class MemoryScreen(ListScreen):
         if (selected := self._selected()) is None:
             return
 
-        def edited(text: str | None) -> None:
-            if text and text != selected.text:
-                self._run(self.runtime.edit_memory(selected.id, text))
+        def edited(note: tuple[str, str, str] | None) -> None:
+            if note is not None:
+                self._run(self.runtime.save_note(*note, note_id=selected.id))
 
-        self.app.push_screen(TextPromptScreen("Edit memory", selected.text), edited)
+        self.app.push_screen(NoteScreen(selected), edited)
 
     @on(Button.Pressed, "#forget")
     def _forget(self) -> None:
         if (selected := self._selected()) is None:
             return
+        if selected.title == PROFILE:
+            self.notify(f'"{PROFILE}" can be emptied but not deleted.', markup=False)
+            return
 
         def confirmed(yes: bool | None) -> None:
             if yes:
-                self._run(self.runtime.forget_memory(selected.id))
+                self._run(self.runtime.delete_note(selected.id))
 
         self.app.push_screen(ConfirmScreen(
-            f'Forget "{_clip(selected.text, 200)}"? Kayden won\'t use it again. The messages it '
-            "came from stay until you delete their conversation.",
-            yes="Forget", no="Cancel", danger=True), confirmed)
+            f'Delete the note "{_clip(selected.title, 200)}"? Kayden won\'t use it again. The '
+            "messages it came from stay until you delete their conversation.",
+            yes="Delete", no="Cancel", danger=True), confirmed)
+
+
+class NoteScreen(ModalScreen[tuple[str, str, str] | None]):
+    """Add or edit one note: (title, description, text); the profile keeps its title."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, note: MemoryNote | None) -> None:
+        super().__init__()
+        self.note = note
+
+    def compose(self) -> ComposeResult:
+        note = self.note
+        with Vertical(classes="dialog"):
+            yield Label("Edit note" if note else "Add a note", classes="title")
+            yield Label("Title")
+            yield Input(note.title if note else "", placeholder="A project, person or topic",
+                        id="note-title", disabled=note is not None and note.title == PROFILE)
+            yield Label("About")
+            yield Input(note.description if note else "",
+                        placeholder="One line: what the note is about", id="note-description")
+            yield Label("Note")
+            yield TextArea(note.text if note else "", id="note-text")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    @on(Button.Pressed, "#save")
+    def _save(self) -> None:
+        self.dismiss((self.query_one("#note-title", Input).value,
+                      self.query_one("#note-description", Input).value,
+                      self.query_one("#note-text", TextArea).text))
+
+    @on(Button.Pressed, "#cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
 
 
 class McpScreen(ListScreen):
@@ -1729,7 +1770,7 @@ class KaydenApp(App[None]):
     def action_memory(self) -> None:
         async def open_screen() -> None:
             try:
-                await self.runtime.memories()
+                await self.runtime.notes()
             except NotImplementedError:
                 self.notify("This memory module cannot edit memories.", severity="warning")
                 return

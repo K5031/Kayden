@@ -11,9 +11,10 @@ from dataclasses import replace
 import pytest
 from rich.text import Text as RichText
 from textual.pilot import Pilot
-from textual.widgets import Button, Input, Label, OptionList, Select, Static, Switch
+from textual.widgets import Button, Input, Label, OptionList, Select, Static, Switch, TextArea
 
 from kayden.api import (
+    PROFILE,
     AgentConfig,
     AgentState,
     Budget,
@@ -25,7 +26,7 @@ from kayden.api import (
     Failure,
     FailureKind,
     MemoriesChanged,
-    MemoryEntry,
+    MemoryNote,
     Message,
     MessageCommitted,
     MessageQueued,
@@ -72,6 +73,7 @@ from kayden.frontends.tui import (
     KaydenApp,
     MemoryScreen,
     ModelScreen,
+    NoteScreen,
     OperationsScreen,
     PermissionPrompt,
     SettingsScreen,
@@ -92,8 +94,8 @@ OTHERS = [
     ConversationInfo("conv-4", "Old plans", 0.0, 0.0, archived=True),
 ]
 MODELS = [ModelInfo("m1", "Model One", 100_000), ModelInfo("m2", "Model Two", 200_000)]
-MEMORIES = [MemoryEntry("e1", "Likes tea", "conv-1", 0.0),
-            MemoryEntry("e2", "Lives in Oslo", None, 0.0)]
+MEMORIES = [MemoryNote("1", PROFILE, "Who the user is", "Likes tea", "conv-1", 0.0),
+            MemoryNote("2", "Trip", "The Oslo trip", "Leaves Friday", None, 0.0)]
 
 
 class StubRuntime:
@@ -160,7 +162,7 @@ class StubRuntime:
             self.conversation = info
         self.emit(ConversationUpdated(info))
 
-    def _memories(self) -> list[MemoryEntry]:
+    def _memories(self) -> list[MemoryNote]:
         if self.entries is None:
             raise NotImplementedError("this memory module cannot edit memories")
         return self.entries
@@ -219,7 +221,7 @@ class StubRuntime:
     async def inspect_memory(self, conversation_id):
         return None
 
-    async def memories(self) -> Sequence[MemoryEntry]:
+    async def notes(self) -> Sequence[MemoryNote]:
         return list(self._memories())
 
     async def start(self, options: StartOptions) -> ConversationInfo:
@@ -250,24 +252,23 @@ class StubRuntime:
         self.conversations = [c for c in self.conversations if c.id != conversation_id]
         self.emit(ConversationDeleted(conversation_id))
 
-    async def add_memory(self, text: str) -> MemoryEntry:
-        await self._record("add_memory", text)
-        entry = MemoryEntry(f"e{len(self._memories()) + 1}", text, None, 0.0)
-        self._memories().append(entry)
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None) -> MemoryNote:
+        await self._record("save_note", title, description, text, note_id)
+        notes = self._memories()
+        if note_id is None:
+            note = MemoryNote(str(len(notes) + 1), title, description, text, None, 0.0)
+            notes.append(note)
+        else:
+            index = [n.id for n in notes].index(note_id)
+            note = notes[index] = replace(notes[index], title=title, description=description,
+                                          text=text)
         self.emit(MemoriesChanged())
-        return entry
+        return note
 
-    async def edit_memory(self, entry_id: str, text: str) -> MemoryEntry:
-        await self._record("edit_memory", entry_id, text)
-        entries = self._memories()
-        index = [e.id for e in entries].index(entry_id)
-        entries[index] = replace(entries[index], text=text)
-        self.emit(MemoriesChanged())
-        return entries[index]
-
-    async def forget_memory(self, entry_id: str) -> None:
-        await self._record("forget_memory", entry_id)
-        self.entries = [e for e in self._memories() if e.id != entry_id]
+    async def delete_note(self, note_id: str) -> None:
+        await self._record("delete_note", note_id)
+        self.entries = [n for n in self._memories() if n.id != note_id]
         self.emit(MemoriesChanged())
 
     async def select_model(self, model_id: str) -> None:
@@ -1065,37 +1066,45 @@ def memory_rows(screen: MemoryScreen) -> list[str]:
     return [str(options.get_option_at_index(i).prompt) for i in range(options.option_count)]
 
 
-async def test_memory_screen_adds_edits_and_forgets():
+async def test_memory_screen_adds_edits_and_deletes_notes():
     stub = StubRuntime()
     app = make(stub)
     async with app.run_test(size=(120, 50), notifications=True) as pilot:
         screen = await open_memory(pilot, app, stub)
-        assert memory_rows(screen) == ["Likes tea", "Lives in Oslo  · added by you"]
+        assert memory_rows(screen) == [f"{PROFILE}  · Who the user is",
+                                       "Trip  · The Oslo trip"]
 
         screen.query_one("#add", Button).press()
-        await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
-        app.screen.query_one(Input).value = "Prefers metric units"
-        await pilot.press("enter")
-        await until(pilot, lambda: ("add_memory", "Prefers metric units") in stub.calls)
+        await until(pilot, lambda: isinstance(app.screen, NoteScreen))
+        app.screen.query_one("#note-title", Input).value = "Units"
+        app.screen.query_one("#note-description", Input).value = "Measurements"
+        app.screen.query_one("#note-text", TextArea).text = "Prefers metric units"
+        app.screen.query_one("#save", Button).press()
+        await until(pilot, lambda: ("save_note", "Units", "Measurements",
+                                    "Prefers metric units", None) in stub.calls)
         await until(pilot, lambda: len(memory_rows(screen)) == 3)
 
-        highlight(screen, "e1")
+        highlight(screen, "1")
         screen.query_one("#edit", Button).press()
-        await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
-        assert app.screen.query_one(Input).value == "Likes tea"
-        app.screen.query_one(Input).value = "Likes green tea"
-        await pilot.press("enter")
-        await until(pilot, lambda: ("edit_memory", "e1", "Likes green tea") in stub.calls)
-        await until(pilot, lambda: memory_rows(screen)[0] == "Likes green tea")
+        await until(pilot, lambda: isinstance(app.screen, NoteScreen))
+        assert app.screen.query_one("#note-text", TextArea).text == "Likes tea"
+        assert app.screen.query_one("#note-title", Input).disabled  # the profile's title stays
+        app.screen.query_one("#note-text", TextArea).text = "Likes green tea"
+        app.screen.query_one("#save", Button).press()
+        await until(pilot, lambda: ("save_note", PROFILE, "Who the user is", "Likes green tea",
+                                    "1") in stub.calls)
 
-        highlight(screen, "e2")
+        highlight(screen, "1")
+        screen.query_one("#forget", Button).press()  # the profile cannot be deleted
+        await until(pilot, lambda: any("can be emptied" in n.message
+                                       for n in app._notifications))
+        highlight(screen, "2")
         screen.query_one("#forget", Button).press()
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
         message = plain(app.screen.query_one("#confirm-message"))
-        assert "Lives in Oslo" in message
-        assert "stay until you delete their conversation" in message
+        assert "Trip" in message and "stay until you delete their conversation" in message
         app.screen.query_one("#confirm-yes", Button).press()
-        await until(pilot, lambda: ("forget_memory", "e2") in stub.calls)
+        await until(pilot, lambda: ("delete_note", "2") in stub.calls)
         await until(pilot, lambda: len(memory_rows(screen)) == 2)
 
         await pilot.press("escape")

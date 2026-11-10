@@ -68,7 +68,7 @@ another reason, the Settings window opens with the message.
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **Show archived** under the list to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
-| See what Kayden remembers | **Kayden → Memory…**: add, edit or forget what it keeps across conversations. |
+| See what Kayden remembers | **Kayden → Memory…**: About you and the notes it keeps across conversations; add, edit or delete them. |
 | Give Kayden more tools | **Kayden → Tool servers (MCP)…**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |

@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from kayden.api import (
+    PROFILE,
     AssembledContext,
     BudgetExhausted,
     ContextRequest,
@@ -463,8 +464,7 @@ class MemoryConformance:
         conv = await memory.create_conversation(title="test")
         messages = await self.fill(memory, conv.id, tokens(0, 2))
         assert await self.maintain(memory, conv.id, completion) is False
-        assert completion.calls == []
-        assert await active(memory, conv.id) == messages
+        assert await active(memory, conv.id) == messages  # nothing compacted
 
     async def test_maintain_threshold_follows_the_window(
         self, memory: Memory, completion: FakeCompletion
@@ -674,34 +674,42 @@ class MemoryConformance:
 
     async def editable(self, memory: Memory) -> None:
         try:
-            await memory.memories()
+            await memory.notes()
         except NotImplementedError:
             pytest.skip("editing long-term memory is optional and not implemented")
 
-    async def test_remember_revise_forget(self, open_memory: MemoryFactory):
+    async def test_the_profile_is_seen_in_full_other_notes_by_title(
+            self, open_memory: MemoryFactory):
         memory = open_memory()
         await self.editable(memory)
+        [profile] = await memory.notes()
+        assert profile.title == PROFILE and profile.text == ""
         conv = await memory.create_conversation(title="test")
         await memory.append(conv.id, [text_message("tok0001")])
-        entry = await memory.remember("The user lives in Oslo.")
-        assert entry.text == "The user lives in Oslo." and entry.source_conversation_id is None
-        assert "Oslo" in await addendum(memory, conv.id)
-
-        revised = await memory.revise(entry.id, "The user lives in Bergen.")
-        assert (revised.id, revised.text) == (entry.id, "The user lives in Bergen.")
-        assert revised.created_at == entry.created_at
+        await memory.save_note(PROFILE, "", "Lives in Oslo.")
+        note = await memory.save_note("Kayden", "The user's AI agent project",
+                                      "Written in Python; the owner pushes to main.")
+        assert note.source_conversation_id is None
         text = await addendum(memory, conv.id)
-        assert "Bergen" in text and "Oslo" not in text
+        assert "Lives in Oslo." in text and "Kayden" in text
+        assert "The user's AI agent project" in text and "pushes to main" not in text
         await memory.aclose()
 
         memory = open_memory()
-        assert await memory.memories() == [revised]
-        await memory.forget(entry.id)
-        assert await memory.memories() == []
-        assert "Bergen" not in await addendum(memory, conv.id)
-        for call in (memory.revise(entry.id, "x"), memory.forget(entry.id)):
-            with pytest.raises(KeyError):
-                await call
+        renamed = await memory.save_note("Kayden app", "", "Python.", note_id=note.id)
+        assert (renamed.id, renamed.description) == (note.id, "The user's AI agent project")
+        same = await memory.save_note("kayden APP", "", "Python 3.13.")  # case ignored
+        assert same.id == note.id and same.text == "Python 3.13."
+        assert [n.title for n in await memory.notes()] == [PROFILE, "Kayden app"]
+        with pytest.raises(ValueError):
+            await memory.save_note("Other", "", "x", note_id=profile.id)  # keeps its title
+        with pytest.raises(ValueError):
+            await memory.delete_note(profile.id)
+        await memory.delete_note(note.id)
+        assert [n.title for n in await memory.notes()] == [PROFILE]
+        assert "Kayden" not in await addendum(memory, conv.id)
+        with pytest.raises(KeyError):
+            await memory.delete_note(note.id)
 
     # ── Continue from ─────────────────────────────────────────────────────
 
@@ -790,14 +798,12 @@ class MemoryConformance:
     async def test_memories_outlive_the_conversation_they_came_from(self, memory: Memory):
         doomed = await memory.create_conversation()
         try:
-            await memory.remember("Is vegetarian", conversation_id=doomed.id)
-            mine = await memory.remember("Lives in Oslo")
+            await memory.save_note("Diet", "What the user eats", "Is vegetarian",
+                                   conversation_id=doomed.id)
             await memory.delete_conversation(doomed.id)
         except NotImplementedError:
             pytest.skip("editing memories and deleting conversations are optional")
-        kept = await memory.memories()
-        assert [e.text for e in kept] == ["Is vegetarian", "Lives in Oslo"]
-        assert [e.source_conversation_id for e in kept] == [None, None]
-        assert mine.source_conversation_id is None
+        kept = [n for n in await memory.notes() if n.title == "Diet"]
+        assert [(n.text, n.source_conversation_id) for n in kept] == [("Is vegetarian", None)]
         with pytest.raises(KeyError):
-            await memory.remember("x", conversation_id="missing")
+            await memory.save_note("x", "", "y", conversation_id="missing")

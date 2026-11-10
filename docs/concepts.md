@@ -40,23 +40,22 @@ Kayden keeps every message of every conversation until you delete the conversati
   summary, so summaries stay cheap. The originals stay saved, in full.
 - The agent can **search** a conversation's full history, including summarized parts, and
   your other conversations that are not archived.
-- **Long-term memory** is one list of lasting facts (about you, your setup) shared by all
-  your conversations. The agent keeps a fact when you ask it to ("remember that…") or tell
-  it something lasting about yourself, and drops one when you say it is no longer true;
-  each time, it shows in the conversation like any other action. Kayden also adds facts as
-  long conversations get summarized. It never keeps passwords or keys on purpose. You can
-  see the list and add, correct or **forget** entries. Facts stay when the conversation they
-  came from is deleted: they are kept and removed in Memory. A forgotten fact is erased, and Kayden does
-  not pick the same fact up again from the summary it came from; it may learn it again
-  from new messages, in which case forget it again or tell the agent not to remember it.
-  Forgetting a fact does not delete the messages it came from.
+- **Long-term memory** is a set of notes shared by all your conversations: **About you**
+  (who you are, how you like answers) and one note per project, person or topic, each with
+  a one-line description. Every conversation sees About you and the list of notes; the
+  agent opens a note when it is relevant, so memory stays cheap as it grows.
+- After each answer, Kayden's cheaper upkeep model reads the exchange and saves what will
+  matter later (decisions, plans, lasting facts) into the notes; small talk is skipped.
+  The agent also saves when you ask it to remember something, and deletes a note when you
+  say it is no longer true. It never keeps passwords or keys on purpose. You can read, add,
+  edit and **delete** notes in Memory. Notes stay when the conversation that wrote them is
+  deleted. Deleting a note does not delete the messages it came from.
 
 ## Deleting
 
-Deleting a conversation erases its messages, its summary and its search entries. Long-term
-memory facts that came from it stay, so Kayden still knows what you asked it to remember;
-to remove one too, forget it in Memory. Forgetting a long-term memory fact erases it with
-its earlier versions. Kayden overwrites the erased content in its database file, so it
+Deleting a conversation erases its messages, its summary and its search entries. Memory
+notes it wrote stay, so Kayden still knows what it learned; to remove one too, delete it in
+Memory. Deleting a note erases it with its earlier versions. Kayden overwrites the erased content in its database file, so it
 cannot be recovered from there. It cannot be undone.
 
 Deletion only reaches Kayden's database. It does not reach:

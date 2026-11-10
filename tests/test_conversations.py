@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from kayden.api import (
+    PROFILE,
     AgentState,
     ConversationDeleted,
     ConversationUpdated,
@@ -116,9 +117,8 @@ async def test_conversations_use_and_add_long_term_memory(make: Any) -> None:
     conv = await h.start()
     for i in range(3):
         await h.turn(f"message {i} " + "x" * 400)
-    entries = await h.runtime.memories()
-    assert [(e.text, e.source_conversation_id) for e in entries] == [
-        ("The user likes tea.", conv.id)]
+    [profile] = await h.runtime.notes()
+    assert ("The user likes tea." in profile.text) and profile.source_conversation_id == conv.id
     await h.turn("again")
     assert "The user likes tea." in core.requests[-1].system
 
@@ -149,52 +149,42 @@ async def test_recall_all_searches_other_conversations_but_not_archived(make: An
 # ── editable long-term memory ──
 
 
-async def test_add_edit_forget_change_the_next_context(make: Any) -> None:
+async def test_notes_the_user_writes_change_the_next_context(make: Any) -> None:
     core = ScriptedCore(default=Step(text="ok"))
     h: Harness = await make(core=core)
     await h.start()
-    entry = await h.runtime.add_memory("The user lives in Oslo.")
+    await h.runtime.save_note(PROFILE, "", "Lives in Oslo.")
+    note = await h.runtime.save_note("Trip", "The spring trip", "Flights booked for May.")
     await h.turn("hi")
-    assert "Oslo" in core.requests[-1].system
+    system = core.requests[-1].system
+    assert "Lives in Oslo." in system and "Trip: The spring trip" in system
+    assert "Flights booked" not in system  # a note's text is read on demand
 
-    edited = await h.runtime.edit_memory(entry.id, "The user lives in Bergen.")
-    assert edited.id == entry.id and edited.text == "The user lives in Bergen."
-    assert [e.text for e in h.store.long_term[entry.id]] == [
-        "The user lives in Oslo.", "The user lives in Bergen."]
+    edited = await h.runtime.save_note("Trip", "The summer trip", "Moved to July.",
+                                       note_id=note.id)
+    assert edited.id == note.id
+    assert [r.text for r in h.store.long_term[note.id]] == [
+        "Flights booked for May.", "Moved to July."]
     await h.turn("hi again")
-    assert "Bergen" in core.requests[-1].system and "Oslo" not in core.requests[-1].system
+    assert "The summer trip" in core.requests[-1].system
 
-    await h.runtime.forget_memory(entry.id)
-    assert await h.runtime.memories() == []
+    await h.runtime.delete_note(note.id)
+    assert [n.title for n in await h.runtime.notes()] == [PROFILE]
     await h.turn("and again")
-    assert "Bergen" not in core.requests[-1].system
+    assert "Trip" not in core.requests[-1].system
     await settled(h)
-    assert len(h.rec.of(MemoriesChanged)) == 3
-    logged = [d for d in await decisions(h) if d.get("decision", "").startswith("memory_")]
-    assert [d["decision"] for d in logged] == ["memory_added", "memory_edited", "memory_forgotten"]
-    assert "Oslo" not in json.dumps(logged) and "Bergen" not in json.dumps(logged)
-
-
-async def test_forgotten_fact_is_not_re_extracted(make: Any) -> None:
-    core = ScriptedCore(default=lambda r: Step(text="summary" if r.maintenance else "ok"))
-    h: Harness = await make(core=core, memory_kw={"compact_at": 0.002})
-    h.memory.extract = ["The user likes tea."]
-    await h.start()
-    for i in range(3):
-        await h.turn(f"message {i} " + "x" * 400)
-    [entry] = await h.runtime.memories()
-    await h.runtime.forget_memory(entry.id)
-    for i in range(3):
-        await h.turn(f"more {i} " + "y" * 400)
-    assert await h.runtime.memories() == []
+    assert len(h.rec.of(MemoriesChanged)) >= 4
+    logged = [d for d in await decisions(h) if d.get("decision", "").startswith("note_")]
+    assert [d["decision"] for d in logged] == ["note_saved"] * 3 + ["note_deleted"]
+    assert "Oslo" not in json.dumps(logged) and "July" not in json.dumps(logged)
 
 
 async def test_memory_commands_report_an_unsupported_module(make: Any) -> None:
     h: Harness = await make(memory_kw={"editable": False})
     with pytest.raises(NotImplementedError, match="cannot edit memories"):
-        await h.runtime.memories()
+        await h.runtime.notes()
     with pytest.raises(NotImplementedError, match="cannot edit memories"):
-        await h.runtime.add_memory("x")
+        await h.runtime.save_note("x", "", "y")
     conv = await h.start()
     await h.start()
     with pytest.raises(NotImplementedError, match="cannot delete conversations"):
@@ -281,12 +271,12 @@ async def test_delete_conversation(make: Any) -> None:
     h: Harness = await make(core=ScriptedCore(default=Step(text="ok")))
     doomed = await h.start()
     await h.turn("my password is hunter2")
-    entry = h.store.add("The user's password is hunter2.", doomed.id)
+    note = h.store.save("Account", "", "The password is hunter2.", None, doomed.id)
     seeded = await h.start(seed_from=doomed.id)
     await h.runtime.delete_conversation(doomed.id)
     assert doomed.id not in h.store.conversations
-    [kept] = await h.runtime.memories()  # facts stay; Memory is where they are forgotten
-    assert kept.id == entry.id and kept.source_conversation_id is None
+    kept = [n for n in await h.runtime.notes() if n.id == note.id]  # notes stay until deleted
+    assert [n.source_conversation_id for n in kept] == [None]
     assert h.store.conversations[seeded.id].info.seed_from is None
     await settled(h)
     assert h.rec.of(ConversationDeleted) == [ConversationDeleted(doomed.id)]

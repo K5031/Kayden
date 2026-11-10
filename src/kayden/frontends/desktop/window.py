@@ -65,10 +65,11 @@ from PySide6.QtWidgets import (
 )
 
 from kayden.api import (
+    PROFILE,
     ConversationInfo,
     Decision,
     McpServer,
-    MemoryEntry,
+    MemoryNote,
     ModelInfo,
     PermissionPolicy,
     PermissionRequest,
@@ -1039,7 +1040,7 @@ class MainWindow(QMainWindow):
 
     async def check_memory(self) -> None:
         """Hide Memory when the Memory module cannot show what it remembers."""
-        self.memory_action.setVisible(await self.controller.memories() is not None)
+        self.memory_action.setVisible(await self.controller.notes() is not None)
 
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
@@ -1355,35 +1356,35 @@ class MainWindow(QMainWindow):
 
 
 class MemoryDialog(QDialog):
-    """What Kayden remembers across conversations; the user adds, edits and forgets."""
+    """What Kayden remembers across conversations: the profile and notes, which the user
+    adds, edits and deletes."""
 
     def __init__(self, parent: QWidget, controller: Controller) -> None:
         super().__init__(parent)
         self.controller = controller
         self.setWindowTitle("Memory")
-        self.setMinimumSize(520, 440)
+        self.setMinimumSize(560, 460)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 16)
         layout.addWidget(_label("Memory", selectable=False, role="heading"))
-        layout.addWidget(_label("Kayden remembers these things across conversations.",
-                                tone="muted"))
+        layout.addWidget(_label(
+            f"Every conversation sees “{PROFILE}” and the list of notes; Kayden opens a note "
+            "when it is relevant. Kayden writes them as you talk, and you can too.",
+            tone="muted"))
         self.entries = QListWidget()
-        self.entries.setAccessibleName("Memories")
+        self.entries.setAccessibleName("Memory notes")
         self.entries.setItemDelegate(RowDelegate(self.entries, wrap=True))
         self.entries.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.entries.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.entries.setMouseTracking(True)
         self.entries.currentItemChanged.connect(lambda *_: self._selection_changed())
         self.entries.itemActivated.connect(lambda _: self._edit())
-        self.empty = _label("Nothing yet. Kayden adds things here as it learns them, and you "
-                            "can add your own.", selectable=False, tone="muted")
         layout.addWidget(self.entries, 1)
-        layout.addWidget(self.empty)
         self.add_button = _primary(QPushButton("Add…"))
-        self.add_button.clicked.connect(self._add)
+        self.add_button.clicked.connect(lambda: NoteDialog(self, None).open())
         self.edit_button = QPushButton("Edit…")
         self.edit_button.clicked.connect(self._edit)
-        self.forget_button = QPushButton("Forget…")
+        self.forget_button = QPushButton("Delete…")
         self.forget_button.clicked.connect(self._forget)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
@@ -1397,53 +1398,84 @@ class MemoryDialog(QDialog):
 
     def refresh(self) -> None:
         async def load() -> None:
-            entries = await self.controller.memories()
+            notes = await self.controller.notes()
             selected = self._selected()
             self.entries.clear()
-            for entry in entries or ():
-                item = QListWidgetItem(entry.text)
-                item.setData(Qt.ItemDataRole.UserRole, entry)
-                item.setData(PREVIEW_ROLE, memory_source(entry))
-                item.setToolTip(memory_source(entry))
+            for note in notes or ():
+                item = QListWidgetItem(note.title)
+                item.setData(Qt.ItemDataRole.UserRole, note)
+                item.setData(PREVIEW_ROLE, note.description)
+                item.setToolTip(memory_source(note))
                 self.entries.addItem(item)
-                if selected is not None and entry.id == selected.id:
+                if selected is not None and note.id == selected.id:
                     self.entries.setCurrentItem(item)
-            self.empty.setVisible(not entries)
             self._selection_changed()
 
         self.controller.command(load())
 
-    def _selected(self) -> MemoryEntry | None:
+    def _selected(self) -> MemoryNote | None:
         item = self.entries.currentItem()
         return None if item is None else item.data(Qt.ItemDataRole.UserRole)
 
     def _selection_changed(self) -> None:
-        for button in (self.edit_button, self.forget_button):
-            button.setEnabled(self._selected() is not None)
-
-    def _ask(self, title: str, text: str, then: Callable[[str], None]) -> None:
-        dialog = QInputDialog(self)
-        dialog.setWindowTitle(title)
-        dialog.setLabelText("What should Kayden remember?")
-        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
-        dialog.setTextValue(text)
-        dialog.textValueSelected.connect(then)
-        dialog.open()
-
-    def _add(self) -> None:
-        self._ask("Add to memory", "", self.controller.add_memory)
+        note = self._selected()
+        self.edit_button.setEnabled(note is not None)
+        self.forget_button.setEnabled(note is not None and note.title != PROFILE)
 
     def _edit(self) -> None:
-        if (entry := self._selected()) is not None:
-            self._ask("Edit memory", entry.text,
-                      lambda text: self.controller.edit_memory(entry.id, text))
+        if (note := self._selected()) is not None:
+            NoteDialog(self, note).open()
 
     def _forget(self) -> None:
-        if (entry := self._selected()) is not None:
-            confirm(self, f"Forget “{clip(entry.text, 80)}”?",
-                    lambda: self.controller.forget_memory(entry.id), yes="Forget", danger=True,
+        if (note := self._selected()) is not None:
+            confirm(self, f"Delete the note “{clip(note.title, 80)}”?",
+                    lambda: self.controller.delete_note(note.id), yes="Delete", danger=True,
                     details="Kayden won't use it again. The messages it came from stay until "
                             "you delete their conversation.")
+
+
+class NoteDialog(QDialog):
+    """Add or edit one memory note; the profile keeps its title."""
+
+    def __init__(self, parent: MemoryDialog, note: MemoryNote | None) -> None:
+        super().__init__(parent)
+        self.memory, self.note = parent, note
+        self.setWindowTitle("Edit note" if note else "Add a note")
+        self.setMinimumSize(560, 420)
+        form = QFormLayout(self)
+        form.setContentsMargins(20, 18, 20, 16)
+        self.title = QLineEdit(note.title if note else "")
+        self.title.setPlaceholderText("A project, person or topic")
+        self.title.setReadOnly(note is not None and note.title == PROFILE)
+        self.description = QLineEdit(note.description if note else "")
+        self.description.setPlaceholderText("One line: what the note is about")
+        self.text = QPlainTextEdit(note.text if note else "")
+        self.error = _label()
+        theme.mark(self.error, "tone", "error")
+        self.error.hide()
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        self.save_button = _primary(buttons.button(QDialogButtonBox.StandardButton.Save))
+        form.addRow("Title", self.title)
+        form.addRow("About", self.description)
+        form.addRow("Note", self.text)
+        form.addRow(self.error)
+        form.addRow(buttons)
+
+    def _save(self) -> None:
+        self.save_button.setEnabled(False)
+
+        def failed(error: Exception) -> None:
+            self.save_button.setEnabled(True)
+            self.error.setText(user_message(error))
+            self.error.show()
+
+        self.memory.controller.save_note(
+            self.title.text(), self.description.text(), self.text.toPlainText(),
+            self.note.id if self.note else None, failed=failed,
+            done=lambda _: self.accept())
 
 
 class McpDialog(QDialog):

@@ -586,11 +586,12 @@ async def test_maintenance_model(make: Any) -> None:
     h.memory.maintain_override = maintain
     await h.start()
     await h.turn("go")
-    assert windows == [50_000]
-    assert [r.model for r in h.core.requests] == ["fake-2", "fake-1"]
+    # maintain runs before the answer and once after it
+    assert windows == [50_000, 50_000]
+    assert [r.model for r in h.core.requests] == ["fake-2", "fake-1", "fake-2"]
     from kayden.api import MaintenanceFinished, MaintenanceStarted
 
-    assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 1
+    assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 2
 
 
 async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
@@ -608,7 +609,7 @@ async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
     await h.start()
     await h.turn("go")
     asked = [r.max_output_tokens for r in h.core.requests if r.maintenance]
-    assert asked == [1_000, 300]
+    assert asked == [1_000, 300] * 2  # before the answer and after it
 
 
 async def test_only_completion_requests_are_maintenance(make: Any) -> None:
@@ -705,3 +706,21 @@ async def test_message_committed_carries_stop_reason(make: Any) -> None:
     stops = [(e.message.role, e.stop) for e in h.rec.of(MessageCommitted)]
     assert stops == [(Role.USER, None), (Role.ASSISTANT, StopReason.TOOL_USE),
                      (Role.TOOL, None), (Role.ASSISTANT, StopReason.END_TURN)]
+
+
+async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> None:
+    from kayden.api import Completion, MemoriesChanged
+
+    h: Harness = await make()
+    seen: list[str] = []
+
+    async def maintain(complete: Completion) -> bool:
+        transcript = await h.memory.history(h.runtime.snapshot().conversation.id)
+        seen.append(transcript[-1].role.value)
+        return transcript[-1].role is Role.ASSISTANT  # the save pass wrote something
+
+    h.memory.maintain_override = maintain
+    await h.start()
+    await h.turn("go")
+    assert seen == ["user", "assistant"]  # before the answer, then once after it
+    assert len(h.rec.of(MemoriesChanged)) == 1

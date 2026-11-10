@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from kayden.api import (
+    PROFILE,
     AgentState,
     Budget,
     ConversationInfo,
@@ -16,7 +17,7 @@ from kayden.api import (
     Failure,
     FailureKind,
     InstanceLockedError,
-    MemoryEntry,
+    MemoryNote,
     Message,
     ModuleChoice,
     ModuleInfo,
@@ -364,34 +365,35 @@ async def test_unsupported_memory_hides_its_controls(make):
     other = await h.start()
     await h.start()
     model, controller, _ = await attach(h)
-    assert await controller.memories() is None
+    assert await controller.notes() is None
     assert controller.can_delete
     await controller.delete(other.id)
     assert not controller.can_delete
     assert of(model, NoticeItem)[-1].text == NO_DELETE_MESSAGE
 
 
-async def test_long_term_memory_add_edit_forget(make):
+async def test_memory_notes_add_edit_delete(make):
     h: Harness = await make()
     await h.start()
     model, controller, _ = await attach(h)
-    assert await controller.memories() == []
+    assert [n.title for n in await controller.notes()] == [PROFILE]
     seen = changes(model)
-    await controller.add_memory("  Likes tea ")
+    await controller.save_note("Trip", "The Oslo trip", "  Leaves Friday ")
     await eventually(lambda: any(isinstance(c, MemoryListChanged) for c in seen))
-    (entry,) = await controller.memories()
-    assert entry.text == "Likes tea" and memory_source(entry).startswith("Added by you")
-    await controller.edit_memory(entry.id, "Likes green tea")
-    assert [e.text for e in await controller.memories()] == ["Likes green tea"]
-    await controller.forget_memory(entry.id)
-    assert await controller.memories() == []
-    await controller.add_memory(" ")
-    assert of(model, NoticeItem)[-1].text == "Write something to remember first."
+    _profile, note = await controller.notes()
+    assert note.text == "Leaves Friday" and memory_source(note).startswith("Last written by you")
+    await controller.save_note("Trip", "The Oslo trip", "Leaves Saturday", note.id)
+    assert (await controller.notes())[1].text == "Leaves Saturday"
+    await controller.delete_note(note.id)
+    assert [n.title for n in await controller.notes()] == [PROFILE]
+    failed = []
+    await controller.save_note(" ", "", "x", failed=failed.append)
+    assert failed and "title" in str(failed[0])
 
 
 def test_memory_source_label():
-    learned = MemoryEntry("1", "x", "c1", 0.0)
-    assert memory_source(learned).startswith("Learned in a conversation")
+    learned = MemoryNote("2", "Trip", "", "x", "c1", 0.0)
+    assert memory_source(learned).startswith("Last written in a conversation")
 
 
 # ── pure model ────────────────────────────────────────────────────────────

@@ -167,8 +167,8 @@ async def test_budget_rechecked_after_maintain(make: Any) -> None:
 
 
 async def test_completion_budget_exhausted(make: Any) -> None:
-    core = ScriptedCore(default=Step(text="ok", usage=Usage(1000, 100)))
-    h: Harness = await make(core=core, budget=Budget(max_tokens=1000))
+    core = ScriptedCore(default=Step(text="ok", usage=Usage(5000, 100)))
+    h: Harness = await make(core=core, budget=Budget(max_tokens=4000))
     caught: list[BaseException] = []
 
     async def maintain(complete: Completion) -> bool:
@@ -183,10 +183,11 @@ async def test_completion_budget_exhausted(make: Any) -> None:
 
     h.memory.maintain_override = maintain
     await h.start()
-    await h.turn("first")  # spends 1100 tokens
+    await h.turn("first")  # spends 5100 tokens
     await h.runtime.send("second")
     await h.rec.wait_state(AgentState.FAILED)
-    assert len(caught) == 1 and len(core.requests) == 1
+    # Raised after the first answer (its upkeep) and before the second inference.
+    assert len(caught) == 2 and len(core.requests) == 1
     assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
 
 

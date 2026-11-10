@@ -418,35 +418,46 @@ async def test_spending_is_shown_above_the_conversation(make, qapp):
     assert window.spending_label.isVisibleTo(window)
 
 
-async def test_memory_dialog_add_edit_forget(make, qapp):
+async def test_memory_dialog_add_edit_delete_notes(make, qapp):
+    from kayden.api import PROFILE
+    from kayden.frontends.desktop.window import NoteDialog
+
     h: Harness = await make()
     await h.start()
     window, _controller, _ = await open_window(h)
+    window.show()
     await window.check_memory()
     assert window.memory_action.isVisible()
-    await h.runtime.add_memory("Likes tea")
+    await h.runtime.save_note(PROFILE, "", "Likes tea")
     window.open_memory()
     dialog = await eventually(lambda: window.memory_dialog)
     await eventually(lambda: dialog.entries.count() == 1)
-    assert dialog.entries.item(0).text() == "Likes tea"
+    assert dialog.entries.item(0).text() == PROFILE
+    dialog.entries.setCurrentRow(0)
+    assert not dialog.forget_button.isEnabled()  # the profile stays
     dialog.add_button.click()
-    editor = visible(dialog, QInputDialog)
-    editor.setTextValue("Lives in Oslo")
-    editor.accept()
+    editor = visible(dialog, NoteDialog)
+    editor.title.setText("Trip")
+    editor.description.setText("The Oslo trip")
+    editor.text.setPlainText("Leaves Friday")
+    editor.save_button.click()
     await eventually(lambda: dialog.entries.count() == 2)
-    dialog.entries.setCurrentRow(0)
+    dialog.entries.setCurrentRow(1)
     dialog.edit_button.click()
-    editor = visible(dialog, QInputDialog)
-    editor.setTextValue("Likes green tea")
-    editor.accept()
-    await eventually(lambda: dialog.entries.item(0).text() == "Likes green tea")
-    dialog.entries.setCurrentRow(0)
+    editor = visible(dialog, NoteDialog)
+    assert editor.text.toPlainText() == "Leaves Friday"
+    editor.text.setPlainText("Leaves Saturday")
+    editor.save_button.click()
+    await eventually(lambda: (h.store.notes()[1].text == "Leaves Saturday"))
+    await eventually(lambda: dialog.entries.count() == 2)
+    dialog.entries.setCurrentRow(1)
     dialog.forget_button.click()
     box = visible(dialog, QMessageBox)
     assert "stay until you delete their conversation" in box.informativeText()
-    next(b for b in box.buttons() if b.text() == "Forget").click()
+    next(b for b in box.buttons() if b.text() == "Delete").click()
     await eventually(lambda: dialog.entries.count() == 1)
-    assert [e.text for e in await h.runtime.memories()] == ["Lives in Oslo"]
+    assert [n.title for n in await h.runtime.notes()] == [PROFILE]
+    window.close()
 
 
 async def test_unsupported_memory_hides_memory_and_delete(make, qapp):

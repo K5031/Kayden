@@ -33,7 +33,7 @@ from kayden.api import (
     MaintenanceFinished,
     MaintenanceStarted,
     MemoriesChanged,
-    MemoryEntry,
+    MemoryNote,
     Message,
     MessageCommitted,
     MessageQueued,
@@ -643,11 +643,11 @@ def relative_date(timestamp: float, now: float | None = None) -> str:
     return date if when.tm_year == today.tm_year else f"{date} {when.tm_year}"
 
 
-def memory_source(entry: MemoryEntry) -> str:
-    when = time.strftime("%d %b %Y", time.localtime(entry.created_at))
-    if entry.source_conversation_id is None:
-        return f"Added by you on {when}"
-    return f"Learned in a conversation on {when}"
+def memory_source(note: MemoryNote) -> str:
+    when = time.strftime("%d %b %Y", time.localtime(note.updated_at))
+    if note.source_conversation_id is None:
+        return f"Last written by you on {when}"
+    return f"Last written in a conversation on {when}"
 
 
 def newest_first(conversations: Sequence[ConversationInfo]) -> list[ConversationInfo]:
@@ -737,7 +737,6 @@ def limit_update(current: Settings, text: str) -> Budget:
 # ── controller ────────────────────────────────────────────────────────────
 
 BUSY_MESSAGE = "Finish or stop the current task first."
-EMPTY_MEMORY_MESSAGE = "Write something to remember first."
 NO_DELETE_MESSAGE = "Deleting conversations is not available with this memory setup."
 BUDGET_MESSAGE = "The spending limit is reached. Raise it in Settings to continue."
 _BUSY_REFUSALS = ("cannot start while", "outstanding", "idle")
@@ -920,28 +919,23 @@ class Controller:
 
         return self.command(erase(), failed=failed)
 
-    async def memories(self) -> list[MemoryEntry] | None:
-        """Long-term memory entries, oldest first; None when the Memory module cannot show
-        them, so their controls are hidden."""
+    async def notes(self) -> list[MemoryNote] | None:
+        """Long-term memory notes, the profile first; None when the Memory module cannot
+        show them, so their controls are hidden."""
         try:
-            return list(await self.runtime.memories())
+            return list(await self.runtime.notes())
         except NotImplementedError:
             return None
 
-    def add_memory(self, text: str) -> asyncio.Task[None]:
-        if not text.strip():
-            self.model.notify(EMPTY_MEMORY_MESSAGE)
-            return self.command(asyncio.sleep(0))
-        return self.command(self.runtime.add_memory(text.strip()))
+    def save_note(self, title: str, description: str, text: str,
+                  note_id: str | None = None,
+                  failed: Callable[[Exception], None] | None = None,
+                  done: Callable[[Any], None] | None = None) -> asyncio.Task[None]:
+        return self.command(self.runtime.save_note(title, description, text, note_id=note_id),
+                            done=done, failed=failed)
 
-    def edit_memory(self, entry_id: str, text: str) -> asyncio.Task[None]:
-        if not text.strip():
-            self.model.notify(EMPTY_MEMORY_MESSAGE)
-            return self.command(asyncio.sleep(0))
-        return self.command(self.runtime.edit_memory(entry_id, text.strip()))
-
-    def forget_memory(self, entry_id: str) -> asyncio.Task[None]:
-        return self.command(self.runtime.forget_memory(entry_id))
+    def delete_note(self, note_id: str) -> asyncio.Task[None]:
+        return self.command(self.runtime.delete_note(note_id))
 
     def can_switch(self) -> str | None:
         """Why the conversation cannot change right now, or None."""

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from kayden.api import (
+    PROFILE,
     ArchiveHit,
     AssembledContext,
     Block,
@@ -22,7 +23,7 @@ from kayden.api import (
     ConversationInfo,
     CoreError,
     Memory,
-    MemoryEntry,
+    MemoryNote,
     MemoryView,
     Message,
     OperationResult,
@@ -50,19 +51,41 @@ class Conversation:
 @dataclass
 class MemoryStore:
     conversations: dict[ConversationId, Conversation] = field(default_factory=dict)
-    # entry id -> revisions, oldest first; the last one is current
-    long_term: dict[str, list[MemoryEntry]] = field(default_factory=dict)
-    forgotten: set[str] = field(default_factory=set)
-    next_id: int = 0
+    # note id -> revisions, oldest first; the last one is current; "1" is the profile
+    long_term: dict[str, list[MemoryNote]] = field(default_factory=lambda: {
+        "1": [MemoryNote("1", PROFILE, "Who the user is", "", None, 0.0)]})
+    next_id: int = 1
 
-    def add(self, text: str, source: ConversationId | None) -> MemoryEntry:
-        self.next_id += 1
-        entry = MemoryEntry(str(self.next_id), text, source, time.time())
-        self.long_term[entry.id] = [entry]
-        return entry
+    def save(self, title: str, description: str, text: str, note_id: str | None,
+             source: ConversationId | None) -> MemoryNote:
+        title = title.strip()
+        if not title:
+            raise ValueError("a note needs a title")
+        same = next((n for n in self.notes() if n.title.casefold() == title.casefold()), None)
+        if note_id is not None:
+            if note_id not in self.long_term:
+                raise KeyError(note_id)
+            if same is not None and same.id != note_id:
+                raise ValueError(f"another note is titled {same.title!r}")
+        else:
+            note_id = same.id if same is not None else None
+            title = same.title if same is not None else title
+        if note_id == "1" and title.casefold() != PROFILE.casefold():
+            raise ValueError("the profile keeps its title")
+        if note_id is None:
+            self.next_id += 1
+            note_id = str(self.next_id)
+            self.long_term[note_id] = []
+        previous = self.long_term[note_id][-1] if self.long_term[note_id] else None
+        note = MemoryNote(note_id, PROFILE if note_id == "1" else title,
+                          description or (previous.description if previous else ""),
+                          text.strip(), source, time.time())
+        self.long_term[note_id].append(note)
+        return note
 
-    def entries(self) -> list[MemoryEntry]:
-        return [revisions[-1] for revisions in self.long_term.values()]
+    def notes(self) -> list[MemoryNote]:
+        current = [revisions[-1] for revisions in self.long_term.values()]
+        return sorted(current, key=lambda n: (n.id != "1", -n.updated_at))
 
 
 def render_block(block: Block) -> str:
@@ -112,7 +135,7 @@ class InMemoryMemory(Memory):
         self.maintain_override: Callable[[Completion], Awaitable[bool]] | None = None
         self.auto_title = auto_title  # write titles during maintain with a light call
         self.editable = editable  # False: the optional memory methods are unsupported
-        self.extract: list[str] = []  # facts the next compaction extracts
+        self.extract: list[str] = []  # facts the next compaction adds to the profile
 
     async def list_tools(self) -> Sequence[ToolSpec]:
         return memory_tools(editable=self.editable)
@@ -161,37 +184,32 @@ class InMemoryMemory(Memory):
             raise NotImplementedError
         self._conv(conversation_id)
         del self.store.conversations[conversation_id]
-        for entry_id, revisions in self.store.long_term.items():
-            if revisions[0].source_conversation_id == conversation_id:
-                self.store.long_term[entry_id] = [
-                    replace(r, source_conversation_id=None) for r in revisions]
+        for note_id, revisions in self.store.long_term.items():
+            self.store.long_term[note_id] = [
+                replace(r, source_conversation_id=None)
+                if r.source_conversation_id == conversation_id else r for r in revisions]
         for conv in self.store.conversations.values():
             if conv.info.seed_from == conversation_id:
                 conv.info = replace(conv.info, seed_from=None)
 
-    async def memories(self) -> Sequence[MemoryEntry]:
+    async def notes(self) -> Sequence[MemoryNote]:
         if not self.editable:
             raise NotImplementedError
-        return self.store.entries()
+        return self.store.notes()
 
-    async def remember(self, text: str, *,
-                       conversation_id: ConversationId | None = None) -> MemoryEntry:
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None,
+                        conversation_id: ConversationId | None = None) -> MemoryNote:
         if not self.editable:
             raise NotImplementedError
-        return self.store.add(text, conversation_id)
+        return self.store.save(title, description, text, note_id, conversation_id)
 
-    async def revise(self, entry_id: str, text: str) -> MemoryEntry:
+    async def delete_note(self, note_id: str) -> None:
         if not self.editable:
             raise NotImplementedError
-        revisions = self.store.long_term[entry_id]
-        revisions.append(replace(revisions[-1], text=text))
-        return revisions[-1]
-
-    async def forget(self, entry_id: str) -> None:
-        if not self.editable:
-            raise NotImplementedError
-        for entry in self.store.long_term.pop(entry_id):
-            self.store.forgotten.add(entry.text)
+        if note_id == "1":
+            raise ValueError("the profile can be emptied but not deleted")
+        del self.store.long_term[note_id]
 
     async def append(self, conversation_id: ConversationId, messages: Sequence[Message]) -> None:
         conv = self._conv(conversation_id)
@@ -229,8 +247,12 @@ class InMemoryMemory(Memory):
         parts = []
         if conv.summary:
             parts.append(f"Summary of earlier conversation:\n{conv.summary}")
-        if lt := [e.text for e in self.store.entries()]:
-            parts.append("Long-term memory:\n" + "\n".join(lt))
+        profile, *others = self.store.notes()
+        if profile.text:
+            parts.append(f"{PROFILE}:\n{profile.text}")
+        if others:
+            parts.append("Memory notes:\n" + "\n".join(f"- {n.title}: {n.description}"
+                                                      for n in others))
         return "\n\n".join(parts)
 
     async def assemble(self, request: ContextRequest) -> AssembledContext:
@@ -326,10 +348,10 @@ class InMemoryMemory(Memory):
         # Atomic: summary and compaction point change together, after inference.
         conv.summary, conv.active_from = summary, conv.active_from + j
         conv.compactions += 1
-        known = {e.text for e in self.store.entries()} | self.store.forgotten
-        for fact in self.extract:
-            if fact not in known:
-                self.store.add(fact, conv.info.id)
+        profile = self.store.notes()[0]
+        added = [fact for fact in self.extract if fact not in profile.text]
+        if added:  # stands in for what the pass after an answer saves
+            self.store.save(PROFILE, "", "\n".join([profile.text, *added]), "1", conv.info.id)
         return True
 
     async def search(self, query: str, *,
@@ -353,8 +375,9 @@ class InMemoryMemory(Memory):
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView | None:
         conv = self._conv(conversation_id)
-        long_term = [e.text for e in self.store.entries()]
-        return MemoryView(conv.summary, long_term)
+        profile, *others = self.store.notes()
+        return MemoryView(conv.summary, [profile.text, *(f"{n.title}: {n.description}"
+                                                         for n in others)])
 
 
 def factory(options: dict[str, Any], paths: Any) -> InMemoryMemory:

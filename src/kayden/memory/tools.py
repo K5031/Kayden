@@ -1,9 +1,9 @@
-"""recall, remember and forget: the tools a Memory module offers the model (Memory.list_tools,
-Memory.execute), built only on the Memory contract, so any module can use them as they are
-or offer its own.
+"""recall, read_note, save_note and forget_note: the tools a Memory module offers the model
+(Memory.list_tools, Memory.execute), built only on the Memory contract, so any module can use
+them as they are or offer its own.
 
-Facts compare with case and whitespace ignored: remember keeps no second copy of a fact,
-and forget erases every entry whose text matches.
+Notes are found by title, case ignored. Every request already shows the profile and each
+other note's title and description; read_note fetches a note's text.
 """
 
 from __future__ import annotations
@@ -13,8 +13,10 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from kayden.api import (
+    PROFILE,
     ArchiveHit,
     Memory,
+    MemoryNote,
     Message,
     OperationResult,
     ServerToolUse,
@@ -27,6 +29,7 @@ from kayden.api import (
 )
 
 HIT_PREVIEW_CHARS = 1000
+_TITLE = {"type": "string", "minLength": 1}
 
 RECALL = ToolSpec(
     "recall",
@@ -44,28 +47,37 @@ RECALL = ToolSpec(
     },
     read_only=True,
 )
-REMEMBER = ToolSpec(
-    "remember",
-    "Keep a fact in long-term memory, which every conversation with the user sees. Use it "
-    "when the user asks you to remember something, or tells you something lasting about "
-    "themselves, their work or their preferences that will matter later. One short fact "
-    "per call, written about the user (\"Is vegetarian\"). Never keep passwords, keys or "
-    "other secrets. Say in your reply what you remembered.",
-    {"type": "object", "properties": {"text": {"type": "string", "minLength": 1}},
-     "required": ["text"]},
+READ_NOTE = ToolSpec(
+    "read_note",
+    "Read one of your memory notes, listed under Memory notes, when it is relevant to what "
+    "the user asks.",
+    {"type": "object", "properties": {"title": _TITLE}, "required": ["title"]},
+    read_only=True,
 )
-FORGET = ToolSpec(
-    "forget",
-    "Remove a fact from long-term memory, when the user asks or it is no longer true. "
-    "`text` is the fact as it appears in your long-term memory.",
-    {"type": "object", "properties": {"text": {"type": "string", "minLength": 1}},
-     "required": ["text"]},
+SAVE_NOTE = ToolSpec(
+    "save_note",
+    f"Write a memory note that every later conversation can use: \"{PROFILE}\" for who the "
+    "user is and how they want answers, or one note per project, person or topic. A note "
+    "with this title is replaced, so read it first and write its whole new text. Save when "
+    "the user asks you to remember something, or tells you something lasting; Kayden also "
+    "saves on its own after each answer. Never save passwords, keys or other secrets.",
+    {"type": "object", "properties": {
+        "title": _TITLE,
+        "description": {"type": "string", "description": "One line: what the note is about."},
+        "text": {"type": "string"}},
+     "required": ["title", "description", "text"]},
+)
+FORGET_NOTE = ToolSpec(
+    "forget_note",
+    "Delete a memory note, when the user asks or it is no longer true. To drop one fact, "
+    "save the note without it instead.",
+    {"type": "object", "properties": {"title": _TITLE}, "required": ["title"]},
 )
 
 
 def memory_tools(*, editable: bool) -> tuple[ToolSpec, ...]:
-    """recall, plus remember and forget when the module can edit long-term memory."""
-    return (RECALL, REMEMBER, FORGET) if editable else (RECALL,)
+    """recall, plus the note tools when the module keeps notes."""
+    return (RECALL, READ_NOTE, SAVE_NOTE, FORGET_NOTE) if editable else (RECALL,)
 
 
 async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> ToolOutput:
@@ -79,29 +91,38 @@ async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> T
             hits = await memory.search(args["query"], conversation_ids=scope,
                                        limit=args.get("limit", 5))
             return ToolOutput(_format_hits(hits))
-        case "remember":
-            text = " ".join(args["text"].split())
-            if not text:
-                return ToolOutput("The memory is empty.", is_error=True)
-            if any(_same(e.text, text) for e in await memory.memories()):
-                return ToolOutput("Already remembered.")
-            await memory.remember(text, conversation_id=ctx.conversation_id)
-            return ToolOutput(f"Remembered: {text}")
-        case "forget":
-            entries = await memory.memories()
-            matches = [e for e in entries if _same(e.text, args["text"])]
-            if not matches:
-                listed = "\n".join(f"- {e.text}" for e in entries) or "(none)"
-                return ToolOutput(f"No memory says that. Long-term memory:\n{listed}",
-                                  is_error=True)
-            for entry in matches:
-                await memory.forget(entry.id)
-            return ToolOutput(f"Forgotten: {matches[0].text}")
+        case "read_note":
+            note = await _titled(memory, args["title"])
+            if note is None:
+                return await _missing(memory, args["title"])
+            return ToolOutput(f"# {note.title}\n{note.description}\n\n{note.text or '(empty)'}")
+        case "save_note":
+            try:
+                note = await memory.save_note(args["title"], args["description"], args["text"],
+                                              conversation_id=ctx.conversation_id)
+            except ValueError as e:
+                return ToolOutput(str(e), is_error=True)
+            return ToolOutput(f"Saved {note.title!r}.")
+        case "forget_note":
+            note = await _titled(memory, args["title"])
+            if note is None:
+                return await _missing(memory, args["title"])
+            try:
+                await memory.delete_note(note.id)
+            except ValueError as e:
+                return ToolOutput(str(e), is_error=True)
+            return ToolOutput(f"Forgotten: {note.title}")
     return ToolOutput(f"Unknown tool {call.name!r}.", is_error=True)
 
 
-def _same(a: str, b: str) -> bool:
-    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+async def _titled(memory: Memory, title: str) -> MemoryNote | None:
+    key = " ".join(title.split()).casefold()
+    return next((n for n in await memory.notes() if n.title.casefold() == key), None)
+
+
+async def _missing(memory: Memory, title: str) -> ToolOutput:
+    listed = "\n".join(f"- {n.title}" for n in await memory.notes())
+    return ToolOutput(f"No note is titled {title!r}. Notes:\n{listed}", is_error=True)
 
 
 def _format_hits(hits: Sequence[ArchiveHit]) -> str:

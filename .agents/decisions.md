@@ -556,17 +556,20 @@ Design: [Agent Note](notes/implemented/2026-11-10-auto-permissions.md).
 | Stop | The review is raced against Stop with the grace period; the call is then not started |
 | Log | `permission_review` with call id and `allow`; the permission record says `by: "review"`. The reason is not logged |
 
-## remember and forget
+## Memory notes
 
-Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md) (long-term memory). Offered by the Memory module through `kayden.memory.tools` (with recall), not by the runtime.
+Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offered by the Memory module through `kayden.memory.tools` (with recall), not by the runtime.
 
 | Choice | Value |
 |---|---|
-| Matching | Whitespace collapsed and casefolded; `remember` of a matching entry answers "Already remembered." and adds nothing; `forget` erases every matching entry |
-| Stored text | Whitespace collapsed; empty is an ERROR result |
-| Not found | `forget` answers ERROR with the current entries listed, so the model can retry with the exact text |
-| Offer | `memory_tools(editable=...)`: the SQLite Memory offers all three; a module that cannot edit long-term memory offers recall only |
-| Events | The runtime emits `MemoriesChanged` after any Memory tool that is not read-only; the event log has the call like any tool's, not the entry ids |
+| Store | Schema 7: `notes` (note 1 is the profile, "About you", created with the store), `note_revisions` (title, description, text, writing conversation, time; the latest is current), `saved_exchanges` (per conversation, the last message the save pass read). `memory_entries`, `memory_revisions` and `forgotten` are gone |
+| Titles | Unique with case ignored; saving by a title that exists writes that note and keeps its own title; leading `#` stripped from a title the save pass writes; the profile keeps its title and cannot be deleted |
+| Prompt | Profile in full, then "title: description" of the other notes, most recently written first, within `long_term_fraction` (5 %) of the context budget |
+| Tools | `read_note(title)`, `save_note(title, description, text)` (replaces the whole text; an empty description keeps the old one), `forget_note(title)`; a missing title answers ERROR listing the notes |
+| Save pass | In `maintain` when the newest message is an answer calling no tool and comes after the last saved one; reads the messages since (the newest part when long), the profile, notes' texts within 5 % of the light model's window (most recently written first, stopping at the first that does not fit) and the rest as an index; writes `<save>` (whole text) and `<append>` changes; up to 1 024 output tokens; a CoreError is logged and the exchange is read again after the next answer |
+| Runtime | `maintain` is called once more after a cycle's last answer, before IDLE; when it acted, `MemoriesChanged` is emitted |
+| Compaction | Writes the summary only; facts are the save pass's |
+| Checked | Against Claude Haiku 5.5 (2026-11-10): a self-introduction made a profile and a project note, small talk saved nothing, a later plan was appended to the project note; about one cent for three turns |
 
 ## Desktop zoom
 

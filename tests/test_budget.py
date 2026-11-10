@@ -119,8 +119,9 @@ async def test_builtins_not_counted(make: Any) -> None:
 async def test_tool_refused_when_exhausted(make: Any) -> None:
     tools = FakeTools()
     tools.instant("t")
-    core = ScriptedCore([Step(calls=[call("t", id="t1")], usage=Usage(1000, 200))])
-    h: Harness = await make(core=core, tools=tools, budget=Budget(max_tokens=1000))
+    core = ScriptedCore([Step(calls=[call("t", id="t1")], usage=Usage(5000, 200))])
+    # Well above the request's own estimated size, below what the answer reports.
+    h: Harness = await make(core=core, tools=tools, budget=Budget(max_tokens=4000))
     await h.start()
     await h.runtime.send("go")
     await h.rec.wait_state(AgentState.FAILED)

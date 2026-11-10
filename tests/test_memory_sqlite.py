@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from kayden.api import (
+    PROFILE,
     ContextRequest,
     InstancePaths,
     Message,
@@ -34,6 +35,7 @@ from tests.conformance.memory_suite import (
     count_tokens,
     text_message,
     tokens,
+    tool_exchange,
 )
 
 CONFIG = CompactionConfig(trigger_fraction=0.75, remove_fraction=0.5, summary_fraction=0.05,
@@ -43,8 +45,18 @@ _FACT_RE = re.compile(r"remember: ([a-z ]+)")
 
 
 def tagged(kept: list[str], text: str) -> str:
-    facts = "".join(f"- {f}\n" for f in dict.fromkeys(_FACT_RE.findall(text)))
-    return f"<summary>\nSummary: {' '.join(kept)}\n</summary>\n<long_term>\n{facts}</long_term>"
+    """A summary for compaction; for the pass after an answer, each "remember: …" fact not
+    yet in the profile, appended to it."""
+    if not text.startswith("You keep the long-term memory"):
+        return f"<summary>\nSummary: {' '.join(kept)}\n</summary>"
+    profile = text.split("The profile:")[1].split("Notes shown in full:")[0]
+    exchange = text.split("Other notes (title: description):")[1]
+    facts = [f for f in dict.fromkeys(_FACT_RE.findall(exchange)) if f not in profile]
+    return "".join(f'<append title="{PROFILE}">{f}</append>' for f in facts)
+
+
+def answer(token: str = "done") -> Message:
+    return text_message(token, Role.ASSISTANT)
 
 
 class TestSqliteMemory(MemoryConformance):
@@ -166,30 +178,80 @@ async def test_summary_is_held_to_its_budget(open_store):
     await maintain(memory, conv.id, FakeCompletion(render=lambda k, t: "word " * 10_000))
     view = await memory.inspect(conv.id)
     assert 0 < count_tokens(view.summary) <= SUMMARY_TOKENS
-    assert view.long_term == []
+    assert view.long_term == [""]  # an empty profile, no notes
 
 
-async def test_long_term_entries_are_shared_by_conversations(open_store):
+async def test_what_an_exchange_teaches_is_saved_for_every_conversation(open_store):
     memory = open_store()
     first = await memory.create_conversation(title="test")
     second = await memory.create_conversation(title="test")
     fact = Message("fact", Role.USER, (Text("remember: user prefers green tea."),), time.time())
-    await memory.append(first.id, [fact])
-    await fill(memory, first.id, tokens(0, 40))
+    await memory.append(first.id, [fact, answer()])
     completion = FakeCompletion(render=tagged)
-    await maintain(memory, first.id, completion)
+    assert await maintain(memory, first.id, completion)  # after the answer
 
-    assert (await memory.inspect(first.id)).long_term == ["user prefers green tea"]
+    [profile] = await memory.notes()
+    assert profile.text == "user prefers green tea" and profile.source_conversation_id == first.id
     assert "user prefers green tea" in await addendum(memory, second.id)
 
-    # Re-extracting a known fact does not duplicate it; entries survive a reopen.
-    fact2 = Message("fact2", Role.USER, fact.blocks, time.time())
-    await memory.append(second.id, [fact2])
-    await fill(memory, second.id, tokens(100, 40))
-    await maintain(memory, second.id, completion)
+    # Said again elsewhere, it is not saved twice; the profile survives a reopen.
+    again = Message("fact2", Role.USER, fact.blocks, time.time())
+    await memory.append(second.id, [again, answer()])
+    assert not await maintain(memory, second.id, completion)
     await memory.aclose()
     reopened = open_store()
     assert (await reopened.inspect(second.id)).long_term == ["user prefers green tea"]
+
+
+async def test_the_pass_reads_each_exchange_once_and_never_mid_turn(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    completion = FakeCompletion(render=tagged)
+    await memory.append(conv.id, [text_message("remember: likes jazz")])
+    await maintain(memory, conv.id, completion)  # the user's message: no answer yet
+    await memory.append(conv.id, tool_exchange("tok0001")[:1])  # an answer that calls a tool
+    await maintain(memory, conv.id, completion)
+    assert completion.calls == []
+    await memory.append(conv.id, [*tool_exchange("tok0001")[1:], answer()])
+    assert await maintain(memory, conv.id, completion)
+    assert len(completion.calls) == 1 and "likes jazz" in repr(completion.calls[0]["messages"])
+    assert not await maintain(memory, conv.id, completion)  # nothing new since
+    assert len(completion.calls) == 1
+
+
+async def test_the_pass_appends_to_notes_it_is_shown_by_title_only(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.save_note("Big", "A long note", "y " * 20_000)  # past what the pass is shown
+    await memory.save_note("Small", "A short note", "fits")
+    completion = FakeCompletion(input_tokens=100_000, render=lambda kept, text: (
+        '<append title="Big">one more line</append>'
+        '<save title="Trip" description="The Oslo trip">Leaves on Friday.</save>'))
+    await memory.append(conv.id, [text_message("tok0001"), answer()])
+    assert await maintain(memory, conv.id, completion)
+    shown = completion.calls[0]["system"]
+    assert "fits" in shown and "y y y" not in shown and "- Big: A long note" in shown
+    notes = {n.title: n for n in await memory.notes()}
+    assert notes["Big"].text.endswith("y\none more line")
+    assert notes["Big"].description == "A long note"  # appending keeps it
+    assert (notes["Trip"].description, notes["Trip"].text) == ("The Oslo trip", "Leaves on Friday.")
+
+
+async def test_a_failed_pass_reads_the_exchange_after_the_next_answer(open_store):
+    from kayden.api import CoreError
+
+    class Failing(FakeCompletion):
+        async def __call__(self, system, messages, *, max_tokens, light=False):
+            raise CoreError("overloaded")
+
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.append(conv.id, [text_message("remember: likes jazz"), answer()])
+    assert not await maintain(memory, conv.id, Failing())
+    await memory.append(conv.id, [text_message("remember: lives in oslo"), answer()])
+    completion = FakeCompletion(render=tagged)
+    assert await maintain(memory, conv.id, completion)
+    assert (await memory.notes())[0].text == "likes jazz\nlives in oslo"
 
 
 async def test_long_term_rendering_is_a_fraction_of_the_budget(open_store, db: Path):
@@ -197,12 +259,13 @@ async def test_long_term_rendering_is_a_fraction_of_the_budget(open_store, db: P
     conv = await memory.create_conversation(title="test")
     await memory.append(conv.id, [text_message("tok0001")])
     for i in range(100):
-        await memory.remember(f"fact number {i} " + "x" * 100)
+        await memory.save_note(f"note number {i}", "x" * 100, "the text is never shown")
     budget = 4_000
     rendered = (await memory.assemble(context(conv.id, budget))).system_addendum
-    assert "fact number 99" in rendered and "fact number 0 " not in rendered
+    assert "note number 99" in rendered and "note number 0:" not in rendered  # newest first
+    assert "the text is never shown" not in rendered
     assert count_tokens(rendered) <= CONFIG.long_term_fraction * budget + 10
-    assert len((await memory.inspect(conv.id)).long_term) == 100
+    assert len((await memory.inspect(conv.id)).long_term) == 101  # the profile and 100
 
 
 async def test_untagged_output_becomes_the_summary(open_store):
@@ -337,7 +400,7 @@ class Complete:
             # Die as the compaction transaction starts to commit, after its writes ran.
             conn.set_trace_callback(lambda sql: sql == "COMMIT" and os._exit(17))
         await self.memory._run(arm)
-        return "<summary>never committed</summary><long_term>\\n- lost fact\\n</long_term>"
+        return "<summary>never committed</summary>"
 
 async def main(path, conversation_id):
     memory = SqliteMemory(path)
@@ -362,7 +425,7 @@ async def test_process_crash_inside_compaction_transaction(open_store, db: Path)
 
     reopened = open_store()
     view = await reopened.inspect(conv.id)
-    assert view.summary == "" and view.long_term == []
+    assert view.summary == "" and view.long_term == [""]
     assert await active(reopened, conv.id) == messages
     await assert_archived(reopened, conv.id, messages)
 
@@ -392,15 +455,14 @@ async def test_repeated_consolidation(open_store, capsys):
         m for m in messages[: len(messages) - len(tail)]
         if not set(TOKEN_RE.findall(repr(m.blocks))) & in_summary
     ]
-    assert len(completion.calls) == 50
+    assert len(completion.calls) == 50  # compactions only: no answer, so no saving
     assert max(summary_tokens) <= SUMMARY_TOKENS
-    assert view.long_term == ["deploy target is staging"]
     assert await memory.history(conv.id) == messages
     await assert_archived(memory, conv.id, archive_only)
     with capsys.disabled():
         print(
             f"\n[repeated consolidation] cycles=50 messages={len(messages)} tail={len(tail)}"
-            f" summary_tokens={sorted(in_summary)} long_term={view.long_term}"
+            f" summary_tokens={sorted(in_summary)}"
             f" archive_only={len(archive_only)} max_summary_tokens={max(summary_tokens)}"
         )
 
@@ -448,57 +510,36 @@ async def test_deleted_conversation_leaves_nothing_on_disk(open_store, db: Path)
                   time.time())
     await memory.append(doomed.id, [secret, big])
     await fill(memory, doomed.id, tokens(100, 40))
+    await memory.append(doomed.id, [answer()])
     await maintain(memory, doomed.id, FakeCompletion(render=lambda kept_, text: tagged(
         [*kept_, "summarysecretword"], text)))
-    assert (await memory.memories())[0].text == "password is zanzibarquux"
+    assert (await memory.notes())[0].text == "password is zanzibarquux"
     for word in (b"zanzibarquux", b"wombatblob", b"summarysecretword", b"quokkatitle"):
         assert word in on_disk(db)
 
     await memory.delete_conversation(doomed.id)
     for word in (b"wombatblob", b"summarysecretword", b"quokkatitle", doomed.id.encode()):
         assert word not in on_disk(db), word
-    [fact] = await memory.memories()  # long-term facts stay until forgotten
-    assert fact.text == "password is zanzibarquux" and fact.source_conversation_id is None
+    [profile] = await memory.notes()  # notes stay until deleted
+    assert profile.text == "password is zanzibarquux"
+    assert profile.source_conversation_id is None
     assert len(await memory.history(kept.id)) == 3
     with sqlite3.connect(db) as conn, pytest.raises(sqlite3.IntegrityError,
                                                     match="append-only"):
         conn.execute("DELETE FROM messages")  # the archive guard is back in force
 
 
-async def test_forgotten_memory_leaves_nothing_on_disk(open_store, db: Path):
+async def test_a_deleted_note_leaves_nothing_on_disk(open_store, db: Path):
     memory = open_store()
     await memory.create_conversation(title="test")
-    entry = await memory.remember("The user's locker code is marmalade.")
-    await memory.revise(entry.id, "The user's locker code is pumpernickel.")
+    note = await memory.save_note("Locker", "The gym locker", "The code is marmalade.")
+    await memory.save_note("Locker", "", "The code is pumpernickel.")
     with sqlite3.connect(db) as conn:  # the edit kept the earlier revision
-        texts = [r[0] for r in conn.execute("SELECT text FROM memory_revisions ORDER BY id")]
-    assert texts == ["The user's locker code is marmalade.",
-                     "The user's locker code is pumpernickel."]
-    await memory.forget(entry.id)
+        texts = [r[0] for r in conn.execute("SELECT text FROM note_revisions WHERE note_id = ?"
+                                            " ORDER BY id", (int(note.id),))]
+    assert texts == ["The code is marmalade.", "The code is pumpernickel."]
+    await memory.delete_note(note.id)
     assert b"marmalade" not in on_disk(db) and b"pumpernickel" not in on_disk(db)
-
-
-async def test_forgotten_fact_is_not_re_extracted(open_store):
-    memory = open_store()
-    conv = await memory.create_conversation(title="test")
-    fact = Text("remember: user prefers green tea.")
-    completion = FakeCompletion(render=tagged)
-    await memory.append(conv.id, [Message("f1", Role.USER, (fact,), time.time())])
-    await fill(memory, conv.id, tokens(0, 40))
-    await maintain(memory, conv.id, completion)
-    [entry] = await memory.memories()
-    await memory.forget(entry.id)
-
-    await memory.append(conv.id, [Message("f2", Role.USER, (fact,), time.time())])
-    await fill(memory, conv.id, tokens(100, 40))
-    await maintain(memory, conv.id, completion)
-    assert "green tea" in completion.calls[-1]["messages"][0].blocks[0].text
-    assert await memory.memories() == []
-    new = Message("f3", Role.USER, (Text("remember: user prefers black coffee."),), time.time())
-    await memory.append(conv.id, [new])
-    await fill(memory, conv.id, tokens(200, 40))
-    await maintain(memory, conv.id, completion)
-    assert [e.text for e in await memory.memories()] == ["user prefers black coffee"]
 
 
 async def test_an_empty_seed_is_retried_rather_than_lost(open_store):

@@ -26,7 +26,8 @@ Runtime guarantees to modules:
   a collision surfaces as an append failure.
 - Mutating Memory calls (append, maintain) are serialized per conversation. maintain
   runs before every inference (the first of a cycle included, after the user message
-  is appended), after a turn's results are appended and before the next assemble, never
+  is appended), after a turn's results are appended and before the next assemble, and
+  once after a cycle's last answer is appended, before the agent goes idle; never
   concurrently with inference or appends. Stop cancels it; the runtime re-checks the
   budget after it returns. Inference, maintain and built-in Memory calls get Stop's
   grace period like operations; one that does not stop in time is reported as
@@ -401,15 +402,24 @@ class ArchiveHit:
     score: float | None = None
 
 
+PROFILE = "About you"  # the note every request sees in full
+
+
 @dataclass(frozen=True, slots=True)
-class MemoryEntry:
-    """One long-term memory entry, at its latest revision."""
+class MemoryNote:
+    """One long-term memory note at its latest revision: a project, person or topic, or the
+    profile (titled PROFILE: who the user is, how they want answers). Requests see the
+    profile in full and every other note's title and description; the text of those is
+    read on demand."""
 
     id: str
+    title: str  # unique, case ignored
+    description: str  # one line: what the note is about, for the index
     text: str
-    # None = added by the user, or its conversation was deleted
+    # The conversation that last wrote it; None = written by the user, or its conversation
+    # was deleted.
     source_conversation_id: ConversationId | None
-    created_at: float  # when the entry was first written
+    updated_at: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,7 +427,7 @@ class MemoryView:
     """Read-only, display-oriented snapshot of what Memory currently holds."""
 
     summary: str
-    long_term: Sequence[str]
+    long_term: Sequence[str]  # the profile, then the index: what every request sees
 
 
 class BudgetExhausted(Exception):
@@ -540,7 +550,8 @@ class Memory(abc.ABC):
     ) -> bool:
         """Compaction / consolidation / forgetting. Memory decides whether to act and
         returns whether it did. `context` gives the current window so thresholds can be
-        fractions of it (the model may change mid-conversation).
+        fractions of it (the model may change mid-conversation). The call after a cycle's
+        last answer is where Memory saves what the exchange taught it.
 
         Called by the runtime only inside an authorized inference cycle, so it can
         never restart an agent by itself. Archive writes and compaction-state updates must
@@ -585,32 +596,31 @@ class Memory(abc.ABC):
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         raise NotImplementedError
 
-    # Optional: long-term memory the user can see and change. The base class raises
-    # NotImplementedError; the runtime then reports that memories cannot be edited.
+    # Optional: long-term memory notes the user can see and change. The base class raises
+    # NotImplementedError; the runtime then reports that memory cannot be edited.
 
-    async def memories(self) -> Sequence[MemoryEntry]:
-        """Current entries, oldest first."""
+    async def notes(self) -> Sequence[MemoryNote]:
+        """The profile first, then the other notes, most recently written first."""
         raise NotImplementedError
 
-    async def remember(self, text: str, *,
-                       conversation_id: ConversationId | None = None) -> MemoryEntry:
-        """Add an entry: written by the user (None), or by the agent in that conversation
-        (the remember tool)."""
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None,
+                        conversation_id: ConversationId | None = None) -> MemoryNote:
+        """Write a note: the one `note_id` names (KeyError if unknown; its title may
+        change), else the one with this title (case ignored), else a new one. ValueError for
+        an empty title, a title another note has, or renaming the profile.
+        `conversation_id` is where the agent wrote it; None, the user."""
         raise NotImplementedError
 
-    async def revise(self, entry_id: str, text: str) -> MemoryEntry:
-        """Correct an entry. The earlier text may be kept as a revision."""
-        raise NotImplementedError
-
-    async def forget(self, entry_id: str) -> None:
-        """Erase an entry and all its revisions. Compaction must not re-extract the
-        same fact from the summary it came from."""
+    async def delete_note(self, note_id: str) -> None:
+        """Erase a note and its revisions. ValueError for the profile, which can only be
+        emptied."""
         raise NotImplementedError
 
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
         """Optional. Erase a conversation: messages, summaries, search index entries,
-        and metadata. Long-term entries from it stay, with no source conversation: they are
-        managed in long-term memory (forget).
+        and metadata. Notes it wrote stay, with no source conversation: they are managed in
+        long-term memory (delete_note).
         Conversations seeded from it keep their own summaries; their seed_from becomes
         None. The runtime never calls it for the open conversation."""
         raise NotImplementedError
@@ -1214,8 +1224,7 @@ class RuntimeAPI(Protocol):
     which case it performs a full Stop.
 
     Conversation and memory management (rename_conversation, archive_conversation,
-    delete_conversation, memories, add_memory, edit_memory, forget_memory) is allowed in
-    any state.
+    delete_conversation, notes, save_note, delete_note) is allowed in any state.
     Changes apply from the next turn or assemble. Each emits ConversationUpdated,
     ConversationDeleted or MemoriesChanged and is logged without any text. The memory
     commands raise NotImplementedError ("this memory module cannot ...") when the Memory
@@ -1264,7 +1273,7 @@ class RuntimeAPI(Protocol):
         """conversation_id None searches every conversation, archived ones included."""
 
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None: ...
-    async def memories(self) -> Sequence[MemoryEntry]: ...
+    async def notes(self) -> Sequence[MemoryNote]: ...
 
     # Control
 
@@ -1334,11 +1343,12 @@ class RuntimeAPI(Protocol):
         RuntimeStateError for the open conversation; switch away first. Frontends must
         ask the user to confirm and say it cannot be undone."""
 
-    async def add_memory(self, text: str) -> MemoryEntry: ...
-    async def edit_memory(self, entry_id: str, text: str) -> MemoryEntry: ...
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None) -> MemoryNote:
+        """Write a note as the user (see Memory.save_note)."""
 
-    async def forget_memory(self, entry_id: str) -> None:
-        """Erase the entry with its revisions. The messages it came from stay until their
+    async def delete_note(self, note_id: str) -> None:
+        """Erase the note with its revisions. The messages it came from stay until their
         conversation is deleted."""
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None: ...

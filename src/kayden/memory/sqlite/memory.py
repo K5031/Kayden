@@ -13,7 +13,6 @@ write-ahead log afterwards so no copy stays there.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re
 import sqlite3
@@ -32,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import (
+    PROFILE,
     ArchiveHit,
     AssembledContext,
     Block,
@@ -42,7 +42,7 @@ from kayden.api import (
     CoreError,
     InstancePaths,
     Memory,
-    MemoryEntry,
+    MemoryNote,
     MemoryView,
     Message,
     OperationResult,
@@ -63,9 +63,11 @@ from . import codec
 
 logger = logging.getLogger(__name__)
 # A store of another version is refused.
-SCHEMA_VERSION = 6
-# Output headroom on top of the summary budget for tags and new long-term entries.
-_LONG_TERM_OUTPUT_TOKENS = 256
+SCHEMA_VERSION = 7
+# Output headroom on top of the summary budget, for its tags.
+_SUMMARY_TAG_TOKENS = 64
+_SAVE_OUTPUT_TOKENS = 1024  # the pass after an answer: the changes it writes
+_SAVE_NOTES_FRACTION = 0.05  # of its window: note texts shown to it, newest first
 _TITLE_OUTPUT_TOKENS = 20
 _TITLE_INPUT_CHARS = 2000
 _TITLE_MAX_CHARS = 80
@@ -82,7 +84,7 @@ class CompactionConfig:
     trigger_fraction: float = 0.75  # compact once summary + active verbatim context exceed this
     remove_fraction: float = 0.5  # share of active tokens moved into the summary; 0.5 = cut-half
     summary_fraction: float = 0.05  # rolling-summary budget
-    long_term_fraction: float = 0.05  # budget for long-term entries rendered into the prompt
+    long_term_fraction: float = 0.05  # budget for the profile and the notes' index
 
     def __post_init__(self) -> None:
         for name in ("trigger_fraction", "remove_fraction", "summary_fraction",
@@ -112,21 +114,33 @@ CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
 WHEN OLD.conversation_id NOT IN (SELECT conversation_id FROM erasing)
 BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
 """
-_MEMORY_TABLES = """
-CREATE TABLE memory_entries (
+# Notes, each change a revision; note 1 is the profile. saved_exchanges says how far the
+# pass after each answer has read a conversation.
+_PROFILE_ID = 1
+_PROFILE_DESCRIPTION = "Who the user is and how they want answers"
+_MEMORY_TABLES = f"""
+CREATE TABLE notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL
+);
+CREATE TABLE note_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL REFERENCES notes(id),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    text TEXT NOT NULL,
     source_conversation_id TEXT REFERENCES conversations(id),
     created_at REAL NOT NULL
 );
-CREATE INDEX memory_entries_source ON memory_entries(source_conversation_id);
-CREATE TABLE memory_revisions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_id INTEGER NOT NULL REFERENCES memory_entries(id),
-    text TEXT NOT NULL,
-    created_at REAL NOT NULL
+CREATE INDEX note_revisions_note ON note_revisions(note_id, id);
+CREATE INDEX note_revisions_source ON note_revisions(source_conversation_id);
+INSERT INTO notes (id, created_at) VALUES ({_PROFILE_ID}, 0);
+INSERT INTO note_revisions (note_id, title, description, text, created_at)
+    VALUES ({_PROFILE_ID}, '{PROFILE}', '{_PROFILE_DESCRIPTION}', '', 0);
+CREATE TABLE saved_exchanges (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+    through_seq INTEGER NOT NULL
 );
-CREATE INDEX memory_revisions_entry ON memory_revisions(entry_id, id);
-CREATE TABLE forgotten (hash TEXT PRIMARY KEY);
 """
 _FTS_TABLE = """CREATE VIRTUAL TABLE messages_fts USING fts5(
     body, content='', tokenize='porter unicode61 remove_diacritics 2'
@@ -179,23 +193,42 @@ summary of at most {summary_tokens} tokens. Keep what is needed to continue the 
 goals, decisions, facts, open tasks and their status. Drop details that no longer
 matter; the original messages stay searchable in an archive.
 
-Also list durable facts worth remembering beyond this conversation (user preferences,
-stable facts about the user or environment) that are not already in long-term memory.
-List nothing if there are none.
-
 Reply exactly in this format:
 <summary>
 updated summary
 </summary>
-<long_term>
-- one new fact per line
-</long_term>
 
 Previous summary:
 {summary}
+"""
 
-Existing long-term memory:
-{long_term}
+_SAVE_PROMPT = """\
+You keep the long-term memory of an AI agent that works for a user. Read their latest
+exchange, which follows, and save what will matter in later conversations: who the user
+is and how they want answers, their projects, the people in them, decisions and plans,
+lasting facts about their work or setup. Save what the user said or decided, not what
+the agent suggested, and nothing the exchange does not state. Skip passing remarks, small
+talk, one-off requests and anything already saved. Never save passwords, keys or other
+secrets.
+
+Memory is a profile, titled "{profile_title}", and notes, one per project, person or
+topic, each with a one-line description.
+
+Reply with changes only, or with nothing at all when nothing lasting was said:
+<save title="..." description="...">the note's whole new text</save> creates a note, or
+replaces one shown in full below (the profile included);
+<append title="...">text to add</append> adds to a note listed by title only.
+To change a note, use its exact title. Keep notes short: facts and decisions, not the
+conversation.
+
+The profile:
+{profile}
+
+Notes shown in full:
+{shown}
+
+Other notes (title: description):
+{index}
 """
 
 _TITLE_PROMPT = """\
@@ -203,14 +236,17 @@ Write a title of at most six words for a conversation that starts with the user'
 below. Reply with the title only: no quotes, no punctuation at the end."""
 
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
-_LONG_TERM_RE = re.compile(r"<long_term>(.*?)</long_term>", re.DOTALL)
+_SAVE_RE = re.compile(r'<save title="([^"]*)"(?: description="([^"]*)")?>(.*?)</save>',
+                      re.DOTALL)
+_APPEND_RE = re.compile(r'<append title="([^"]*)">(.*?)</append>', re.DOTALL)
 _WORD_RE = re.compile(r"\w+")
 _INFO_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder"
-_CURRENT_ENTRIES = (
-    "SELECT e.id, r.text, e.source_conversation_id, e.created_at FROM memory_entries e"
-    " JOIN memory_revisions r ON r.id ="
-    " (SELECT MAX(id) FROM memory_revisions WHERE entry_id = e.id)"
+_CURRENT_NOTES = (
+    "SELECT n.id, r.title, r.description, r.text, r.source_conversation_id, r.created_at"
+    " FROM notes n JOIN note_revisions r ON r.id ="
+    " (SELECT MAX(id) FROM note_revisions WHERE note_id = n.id)"
 )
+_NOTES_ORDER = f" ORDER BY n.id != {_PROFILE_ID}, r.created_at DESC, n.id DESC"
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +259,8 @@ class _Active:
 class _State:
     info: ConversationInfo
     summary: str
-    long_term: list[str]
+    profile: str
+    index: list[str]  # "title: description" of the other notes, most recently written first
     active: list[_Active]
     seeded: bool  # a summary row exists
 
@@ -325,8 +362,10 @@ class SqliteMemory(Memory):
                 conn.execute("DELETE FROM erasing WHERE conversation_id = ?", (conversation_id,))
                 conn.execute("DELETE FROM summaries WHERE conversation_id = ?",
                              (conversation_id,))
-                conn.execute("UPDATE memory_entries SET source_conversation_id = NULL"
+                conn.execute("UPDATE note_revisions SET source_conversation_id = NULL"
                              " WHERE source_conversation_id = ?", (conversation_id,))
+                conn.execute("DELETE FROM saved_exchanges WHERE conversation_id = ?",
+                             (conversation_id,))
                 conn.execute("UPDATE conversations SET seed_from = NULL WHERE seed_from = ?",
                              (conversation_id,))
                 conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
@@ -433,16 +472,69 @@ class SqliteMemory(Memory):
                 acted = await self._compact(state, complete, context) or acted
             if state.info.title is None:
                 acted = await self._title(conversation_id, complete) or acted
+            acted = await self._save_exchange(conversation_id, complete, context) or acted
             return acted
 
     def _prompt(self, state: _State, summary: str, context: ContextRequest) -> tuple[str, int]:
         summary_tokens = max(1, int(self._config.summary_fraction * context.max_tokens))
-        system = _SYSTEM_PROMPT.format(
-            summary_tokens=summary_tokens,
-            summary=summary or "(none)",
-            long_term="\n".join(f"- {e}" for e in state.long_term) or "(none)",
-        )
+        system = _SYSTEM_PROMPT.format(summary_tokens=summary_tokens,
+                                       summary=summary or "(none)")
         return system, summary_tokens
+
+    async def _save_exchange(self, conversation_id: ConversationId, complete: Completion,
+                             context: ContextRequest) -> bool:
+        """After an answer (the newest message an answer that calls no tool): the light
+        model reads the exchange since the last save and writes what will matter later
+        into the profile and notes. A failed request is tried again after the next answer;
+        an exhausted budget propagates."""
+        count = context.count_tokens
+        rows, notes = await self._run(_unsaved, conversation_id)
+        messages = [_message(r[1:]) for r in rows]
+        if not messages or messages[-1].role is not Role.ASSISTANT or any(
+                isinstance(b, ToolCall) for b in messages[-1].blocks):
+            return False
+        profile = notes[0]
+        others = notes[1:]
+        shown, room = [], int(_SAVE_NOTES_FRACTION * complete.max_input_tokens(light=True))
+        for note in others:  # most recently written first
+            if count(note.text) > room:
+                break
+            shown.append(note)
+            room -= count(note.text)
+        listed = [n for n in others if n not in shown]
+        system = _SAVE_PROMPT.format(
+            profile_title=PROFILE, profile=profile.text or "(empty)",
+            shown="\n\n".join(f'<note title="{n.title}" description="{n.description}">\n'
+                               f"{n.text}\n</note>" for n in shown) or "(none)",
+            index="\n".join(f"- {n.title}: {n.description}" for n in listed) or "(none)")
+        allowance = (complete.max_input_tokens(light=True) - _SAVE_OUTPUT_TOKENS
+                     - count(system))
+        transcript = _render_transcript(messages)
+        if count(transcript) > allowance:  # keep the newest part
+            keep = _max_true(len(transcript), lambda n: count(transcript[-n:]) <= allowance)
+            transcript = transcript[-keep:] if keep else ""
+        try:
+            output = await complete(system, [_user_message(transcript)],
+                                    max_tokens=_SAVE_OUTPUT_TOKENS, light=True)
+        except CoreError as e:
+            logger.warning("saving the exchange of %s failed: %s", conversation_id, e)
+            return False
+        changes = _parse_saves(output)
+        last = rows[-1][0]
+
+        def commit(conn: sqlite3.Connection) -> None:
+            now = time.time()
+            with _transaction(conn):
+                _require_conversation(conn, conversation_id)
+                for kind, title, description, text in changes:
+                    _apply_change(conn, kind, title, description, text, conversation_id, now)
+                conn.execute(
+                    "INSERT INTO saved_exchanges VALUES (?, ?) ON CONFLICT(conversation_id)"
+                    " DO UPDATE SET through_seq = excluded.through_seq",
+                    (conversation_id, last))
+
+        await self._run(commit)
+        return bool(changes)
 
     async def _seed(self, state: _State, complete: Completion, context: ContextRequest
                     ) -> bool | None:
@@ -456,7 +548,7 @@ class SqliteMemory(Memory):
         if not source.summary and not messages:
             return False
         system, summary_tokens = self._prompt(state, source.summary, context)
-        output_tokens = summary_tokens + _LONG_TERM_OUTPUT_TOKENS
+        output_tokens = summary_tokens + _SUMMARY_TAG_TOKENS
         allowance = complete.max_input_tokens(light=True) - output_tokens - count(system)
         starts = _valid_starts(messages, pending_calls_block=False) if messages else []
         first = _max_true(len(starts), lambda k: k == 0 or count(
@@ -465,7 +557,7 @@ class SqliteMemory(Memory):
         output = await complete(
             system, [_user_message(transcript)], max_tokens=output_tokens, light=True
         )
-        summary, _ = _parse_output(output, summary_tokens, count)  # its facts are known
+        summary = _parse_output(output, summary_tokens, count)
         if not summary:
             return None
 
@@ -486,7 +578,7 @@ class SqliteMemory(Memory):
         if total <= config.trigger_fraction * context.max_tokens:
             return False
         system, summary_tokens = self._prompt(state, state.summary, context)
-        output_tokens = summary_tokens + _LONG_TERM_OUTPUT_TOKENS
+        output_tokens = summary_tokens + _SUMMARY_TAG_TOKENS
         allowance = complete.max_input_tokens(light=True) - output_tokens - count(system)
         selection = _choose_cut(state.active, sizes, config.remove_fraction, allowance, count)
         if selection is None:
@@ -495,23 +587,16 @@ class SqliteMemory(Memory):
         output = await complete(
             system, [_user_message(transcript)], max_tokens=output_tokens, light=True
         )
-        summary, new_entries = _parse_output(output, summary_tokens, count)
+        summary = _parse_output(output, summary_tokens, count)
         if not summary:  # e.g. reasoning used the whole output limit: keep the context
             logger.warning("compaction of %s returned no summary; nothing compacted",
                            conversation_id)
             return False
-        known = set(state.long_term)
-        new_entries = [e for e in dict.fromkeys(new_entries) if e not in known]
         through_seq = state.active[cut - 1].seq
 
         def commit(conn: sqlite3.Connection) -> None:
-            now = time.time()
             with _transaction(conn):
-                _replace_summary(conn, conversation_id, through_seq, summary, now)
-                forgotten = {r[0] for r in conn.execute("SELECT hash FROM forgotten")}
-                for entry in new_entries:
-                    if _fingerprint(entry) not in forgotten:
-                        _add_entry(conn, entry, conversation_id, now)
+                _replace_summary(conn, conversation_id, through_seq, summary, time.time())
 
         await self._run(commit)
         return True
@@ -590,7 +675,7 @@ class SqliteMemory(Memory):
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView:
         state = await self._run(_read_state, conversation_id, False)
-        return MemoryView(summary=state.summary, long_term=state.long_term)
+        return MemoryView(summary=state.summary, long_term=[state.profile, *state.index])
 
     # ── Tools ─────────────────────────────────────────────────────────────
 
@@ -602,44 +687,32 @@ class SqliteMemory(Memory):
 
     # ── Long-term memory ──────────────────────────────────────────────────
 
-    async def memories(self) -> Sequence[MemoryEntry]:
-        def run(conn: sqlite3.Connection) -> list[MemoryEntry]:
-            return [_entry(row) for row in conn.execute(_CURRENT_ENTRIES + " ORDER BY e.id")]
+    async def notes(self) -> Sequence[MemoryNote]:
+        def run(conn: sqlite3.Connection) -> list[MemoryNote]:
+            return [_note(row) for row in conn.execute(_CURRENT_NOTES + _NOTES_ORDER)]
 
         return await self._run(run)
 
-    async def remember(self, text: str, *,
-                       conversation_id: ConversationId | None = None) -> MemoryEntry:
-        def run(conn: sqlite3.Connection) -> MemoryEntry:
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None,
+                        conversation_id: ConversationId | None = None) -> MemoryNote:
+        def run(conn: sqlite3.Connection) -> MemoryNote:
             with _transaction(conn):
                 if conversation_id is not None:
                     _require_conversation(conn, conversation_id)
-                return _add_entry(conn, text, conversation_id, time.time())
+                return _save(conn, title, description, text, note_id, conversation_id,
+                             time.time())
 
         return await self._run(run)
 
-    async def revise(self, entry_id: str, text: str) -> MemoryEntry:
-        def run(conn: sqlite3.Connection) -> MemoryEntry:
-            with _transaction(conn):
-                _require_entry(conn, entry_id)
-                conn.execute(
-                    "INSERT INTO memory_revisions (entry_id, text, created_at) VALUES (?, ?, ?)",
-                    (int(entry_id), text, time.time()),
-                )
-                return _require_entry(conn, entry_id)
-
-        return await self._run(run)
-
-    async def forget(self, entry_id: str) -> None:
+    async def delete_note(self, note_id: str) -> None:
         def run(conn: sqlite3.Connection) -> None:
             with _transaction(conn):
-                _require_entry(conn, entry_id)
-                texts = [r[0] for r in conn.execute(
-                    "SELECT text FROM memory_revisions WHERE entry_id = ?", (int(entry_id),))]
-                conn.executemany("INSERT OR IGNORE INTO forgotten VALUES (?)",
-                                 [(_fingerprint(t),) for t in texts])
-                conn.execute("DELETE FROM memory_revisions WHERE entry_id = ?", (int(entry_id),))
-                conn.execute("DELETE FROM memory_entries WHERE id = ?", (int(entry_id),))
+                note = _require_note(conn, note_id)
+                if note.id == str(_PROFILE_ID):
+                    raise ValueError("the profile can be emptied but not deleted")
+                conn.execute("DELETE FROM note_revisions WHERE note_id = ?", (int(note_id),))
+                conn.execute("DELETE FROM notes WHERE id = ?", (int(note_id),))
             _checkpoint(conn)
 
         await self._run(run)
@@ -745,22 +818,88 @@ def _clean_title(output: str) -> str:
     return title[:_TITLE_MAX_CHARS].strip()
 
 
-def _fingerprint(text: str) -> str:
-    """What a forgotten entry leaves behind: enough to recognise the same fact, not its text."""
-    return hashlib.sha256(" ".join(text.casefold().split()).encode()).hexdigest()
+def _note(row: Sequence[Any]) -> MemoryNote:
+    return MemoryNote(str(row[0]), row[1], row[2], row[3], row[4], row[5])
 
 
-def _entry(row: Sequence[Any]) -> MemoryEntry:
-    return MemoryEntry(str(row[0]), row[1], row[2], row[3])
-
-
-def _require_entry(conn: sqlite3.Connection, entry_id: str) -> MemoryEntry:
+def _require_note(conn: sqlite3.Connection, note_id: str) -> MemoryNote:
     row = None
-    if entry_id.isdigit():
-        row = conn.execute(_CURRENT_ENTRIES + " WHERE e.id = ?", (int(entry_id),)).fetchone()
+    if note_id.isdigit():
+        row = conn.execute(_CURRENT_NOTES + " WHERE n.id = ?", (int(note_id),)).fetchone()
     if row is None:
-        raise KeyError(f"unknown memory entry {entry_id}")
-    return _entry(row)
+        raise KeyError(f"unknown memory note {note_id}")
+    return _note(row)
+
+
+def _note_titled(conn: sqlite3.Connection, title: str) -> MemoryNote | None:
+    key = title.strip().casefold()
+    return next((n for n in map(_note, conn.execute(_CURRENT_NOTES))
+                 if n.title.casefold() == key), None)
+
+
+def _save(conn: sqlite3.Connection, title: str, description: str, text: str,
+          note_id: str | None, source: ConversationId | None, now: float) -> MemoryNote:
+    """Write a revision of the note `note_id` names, else of the one titled `title`, else of
+    a new note."""
+    title, description = title.strip(), " ".join(description.split())
+    if not title:
+        raise ValueError("a note needs a title")
+    same = _note_titled(conn, title)
+    if note_id is not None:
+        current = _require_note(conn, note_id)
+        if same is not None and same.id != current.id:
+            raise ValueError(f"another note is titled {same.title!r}")
+    else:
+        current = same
+        title = same.title if same is not None else title  # found by title: keep its own
+    if current is None:
+        note_id = str(conn.execute("INSERT INTO notes (created_at) VALUES (?)", (now,)).lastrowid)
+        description = description or title
+    else:
+        note_id = current.id
+        if note_id == str(_PROFILE_ID) and title.casefold() != PROFILE.casefold():
+            raise ValueError(f"the profile keeps its title, {PROFILE!r}")
+        title = current.title if note_id == str(_PROFILE_ID) else title
+        description = description or current.description
+    conn.execute(
+        "INSERT INTO note_revisions (note_id, title, description, text, source_conversation_id,"
+        " created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (int(note_id), title, description, text.strip(), source, now))
+    return _require_note(conn, note_id)
+
+
+def _apply_change(conn: sqlite3.Connection, kind: str, title: str, description: str,
+                  text: str, source: ConversationId, now: float) -> None:
+    """One change from the pass after an answer: `save` writes the whole text, `append`
+    adds to a note's text (creating the note when there is none)."""
+    title = title.strip().lstrip("#").strip()  # a heading copied as a title is the title
+    if kind == "append" and (current := _note_titled(conn, title)) is not None:
+        text = f"{current.text}\n{text.strip()}".strip()
+    _save(conn, title, description, text, None, source, now)
+
+
+def _unsaved(conn: sqlite3.Connection, conversation_id: ConversationId
+             ) -> tuple[list[Sequence[Any]], list[MemoryNote]]:
+    """What the pass after an answer reads: the messages since its last save, and the
+    notes (the profile first)."""
+    with _transaction(conn, "DEFERRED"):
+        _require_conversation(conn, conversation_id)
+        row = conn.execute("SELECT through_seq FROM saved_exchanges WHERE conversation_id = ?",
+                           (conversation_id,)).fetchone()
+        through = row[0] if row else 0
+        rows = conn.execute(
+            "SELECT seq, id, role, created_at, blocks FROM messages"
+            " WHERE conversation_id = ? AND seq > ? ORDER BY seq",
+            (conversation_id, through)).fetchall()
+        notes = [_note(r) for r in conn.execute(_CURRENT_NOTES + _NOTES_ORDER)]
+    return rows, notes
+
+
+def _parse_saves(output: str) -> list[tuple[str, str, str, str]]:
+    """(kind, title, description, text) for each change, in the order written."""
+    changes = [(m.start(), ("save", m[1], m[2] or "", m[3])) for m in _SAVE_RE.finditer(output)]
+    changes += [(m.start(), ("append", m[1], "", m[2])) for m in _APPEND_RE.finditer(output)]
+    return [c for _, c in sorted(changes) if c[1].strip() and c[3].strip()]
 
 
 def _replace_summary(conn: sqlite3.Connection, conversation_id: ConversationId,
@@ -773,19 +912,6 @@ def _replace_summary(conn: sqlite3.Connection, conversation_id: ConversationId,
         " VALUES (?, ?, ?, ?)",
         (conversation_id, through_seq, text, now),
     )
-
-
-def _add_entry(conn: sqlite3.Connection, text: str, source: ConversationId | None,
-               now: float) -> MemoryEntry:
-    cursor = conn.execute(
-        "INSERT INTO memory_entries (source_conversation_id, created_at) VALUES (?, ?)",
-        (source, now),
-    )
-    conn.execute(
-        "INSERT INTO memory_revisions (entry_id, text, created_at) VALUES (?, ?, ?)",
-        (cursor.lastrowid, text, now),
-    )
-    return MemoryEntry(str(cursor.lastrowid), text, source, now)
 
 
 def _message(row: Sequence[Any]) -> Message:
@@ -807,7 +933,7 @@ def _read_state(
             (conversation_id,),
         ).fetchone()
         through_seq, summary = row if row else (0, "")
-        long_term = [r[1] for r in conn.execute(_CURRENT_ENTRIES + " ORDER BY e.id")]
+        notes = [_note(r) for r in conn.execute(_CURRENT_NOTES + _NOTES_ORDER)]
         rows = (
             conn.execute(
                 "SELECT seq, id, role, created_at, blocks FROM messages"
@@ -818,7 +944,8 @@ def _read_state(
             else []
         )
     active = [_Active(r[0], _message(r[1:])) for r in rows]
-    return _State(info, summary, long_term, active, row is not None)
+    index = [f"{n.title}: {n.description}" for n in notes[1:]]
+    return _State(info, summary, notes[0].text, index, active, row is not None)
 
 
 def _valid_starts(messages: Sequence[Message], *, pending_calls_block: bool) -> list[int]:
@@ -914,34 +1041,31 @@ def _shortened(text: str) -> str:
             f"them ...] {text[-half:]}")
 
 
-def _parse_output(output: str, summary_tokens: int, count: TokenCounter) -> tuple[str, list[str]]:
+def _parse_output(output: str, summary_tokens: int, count: TokenCounter) -> str:
     summary_match = _SUMMARY_RE.search(output)
     summary = (summary_match.group(1) if summary_match else output).strip()
     if count(summary) > summary_tokens:
         cut = summary[: _max_true(len(summary), lambda n: count(summary[:n]) <= summary_tokens)]
         summary = cut.rsplit(None, 1)[0] if " " in cut.strip() else cut
-    entries: list[str] = []
-    if summary_match and (long_term_match := _LONG_TERM_RE.search(output)):
-        for line in long_term_match.group(1).splitlines():
-            entry = line.strip().removeprefix("-").strip()
-            if entry:
-                entries.append(entry)
-    return summary, entries
+    return summary
 
 
-def _render_addendum(summary: str, long_term: Sequence[str]) -> str:
+def _render_addendum(summary: str, profile: str, index: Sequence[str]) -> str:
     parts = []
     if summary:
         parts.append(f"## Conversation summary\n{summary}")
-    if long_term:
-        parts.append("## Long-term memory\n" + "\n".join(f"- {e}" for e in long_term))
+    if profile:
+        parts.append(f"## {PROFILE}\n{profile}")
+    if index:
+        parts.append("## Memory notes (read one with read_note)\n"
+                     + "\n".join(f"- {line}" for line in index))
     return "\n\n".join(parts)
 
 
 def _fit(state: _State, request: ContextRequest, long_term_fraction: float) -> AssembledContext:
     """The newest exchange (from the last USER message on) is always included, truncated in
-    view if it alone exceeds the budget. The addendum (summary, then the newest long-term
-    entries) gets what remains, and the verbatim tail extends back as far as still fits."""
+    view if it alone exceeds the budget. The addendum (summary, the profile, then the
+    notes' index, most recently written first) gets what remains, and the verbatim tail extends back as far as still fits."""
     count, budget = request.count_tokens, request.max_tokens
     messages = [a.message for a in state.active]
     starts = _valid_starts(messages, pending_calls_block=False)
@@ -952,17 +1076,17 @@ def _fit(state: _State, request: ContextRequest, long_term_fraction: float) -> A
     def size(addendum: str) -> int:
         return count(addendum) if addendum else 0
 
-    entries = list(state.long_term)
-    keep = _max_true(len(entries), lambda k: size(_render_addendum("", entries[-k:] if k else []))
+    profile, index = state.profile, state.index
+    keep = _max_true(len(index), lambda k: size(_render_addendum("", profile, index[:k]))
                      <= long_term_fraction * budget)
     keep = _max_true(keep, lambda k: size(
-        _render_addendum(state.summary, entries[-k:] if k else [])) <= room)
-    entries = entries[-keep:] if keep else []
+        _render_addendum(state.summary, profile, index[:k])) <= room)
+    index = index[:keep]
     summary = state.summary
-    if size(_render_addendum(summary, entries)) > room:
-        summary = summary[: _max_true(len(summary),
-                                      lambda n: size(_render_addendum(summary[:n], [])) <= room)]
-    addendum = _render_addendum(summary, entries)
+    if size(_render_addendum(summary, profile, index)) > room:
+        summary = summary[: _max_true(len(summary), lambda n: size(
+            _render_addendum(summary[:n], profile, [])) <= room)]
+    addendum = _render_addendum(summary, profile, index)
     if view != newest:
         return AssembledContext(addendum, view)
 

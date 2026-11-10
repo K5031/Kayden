@@ -448,8 +448,8 @@ async def test_k_permanent_error_not_retried(make: Any) -> None:
 
 
 async def test_l_budget_enforcement(make: Any) -> None:
-    core = ScriptedCore(default=Step(text="ok", usage=Usage(1000, 100)))
-    h: Harness = await make(core=core, budget=Budget(max_tokens=2000))
+    core = ScriptedCore(default=Step(text="ok", usage=Usage(5000, 100)))
+    h: Harness = await make(core=core, budget=Budget(max_tokens=10_000))
     await h.start()
     await h.turn("one")
     await h.turn("two")

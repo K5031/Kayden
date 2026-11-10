@@ -46,7 +46,7 @@ from kayden.api import (
     MaintenanceStarted,
     MemoriesChanged,
     Memory,
-    MemoryEntry,
+    MemoryNote,
     MemoryView,
     Message,
     MessageCommitted,
@@ -340,10 +340,10 @@ class Runtime:
         self._hold_lock()
         return await self._memory.inspect(conversation_id)
 
-    async def memories(self) -> Sequence[MemoryEntry]:
+    async def notes(self) -> Sequence[MemoryNote]:
         self._hold_lock()
         try:
-            return await self._memory.memories()
+            return await self._memory.notes()
         except NotImplementedError:
             raise NotImplementedError(_NO_MEMORY_EDITING) from None
 
@@ -504,28 +504,19 @@ class Runtime:
         self._log.decision("delete_conversation", conversation=conversation_id)
         self._emit(ConversationDeleted(conversation_id))
 
-    async def add_memory(self, text: str) -> MemoryEntry:
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None) -> MemoryNote:
         self._hold_lock()
-        if not text.strip():
-            raise ValueError("the memory is empty")
-        entry = await self._edit_memories(self._memory.remember(text.strip()))
-        self._log.decision("memory_added", entry=entry.id)
+        note = await self._edit_memories(
+            self._memory.save_note(title, description, text, note_id=note_id))
+        self._log.decision("note_saved", note=note.id, by="user")
         self._emit(MemoriesChanged())
-        return entry
+        return note
 
-    async def edit_memory(self, entry_id: str, text: str) -> MemoryEntry:
+    async def delete_note(self, note_id: str) -> None:
         self._hold_lock()
-        if not text.strip():
-            raise ValueError("the memory is empty")
-        entry = await self._edit_memories(self._memory.revise(entry_id, text.strip()))
-        self._log.decision("memory_edited", entry=entry_id)
-        self._emit(MemoriesChanged())
-        return entry
-
-    async def forget_memory(self, entry_id: str) -> None:
-        self._hold_lock()
-        await self._edit_memories(self._memory.forget(entry_id))
-        self._log.decision("memory_forgotten", entry=entry_id)
+        await self._edit_memories(self._memory.delete_note(note_id))
+        self._log.decision("note_deleted", note=note_id, by="user")
         self._emit(MemoriesChanged())
 
     async def _edit_memories[T](self, call: Awaitable[T]) -> T:
@@ -1021,6 +1012,11 @@ class Runtime:
             delivered = await self._deliver_inbox()
             if calls or delivered:  # a queued user message authorizes the next turn
                 continue
+            # After the answer: Memory saves what the exchange taught it.
+            if await self._maintain(list(specs.values())):
+                self._emit(MemoriesChanged())
+            if self._stopping:
+                return
             self._enter_idle()
             return
 
@@ -1073,7 +1069,8 @@ class Runtime:
 
     # ── Maintenance ──────────────────────────────────────────────────────
 
-    async def _maintain(self, tools: Sequence[ToolSpec]) -> None:
+    async def _maintain(self, tools: Sequence[ToolSpec]) -> bool:
+        """Whether Memory acted."""
         assert self._conversation is not None
         context, _ = self._context_request(self._info(), tools)
         complete = _Completion(self)
@@ -1081,21 +1078,23 @@ class Runtime:
             task = asyncio.ensure_future(
                 self._memory.maintain(self._conversation.id, complete, context))
             if await self._race_stop(task):
-                return
+                return False
         if complete.started:
             self._emit(MaintenanceFinished(self._conversation.id))
         if task.cancelled():
-            return
+            return False
         exc = task.exception()
         if exc is None and task.result() and self._conversation.title is None:
             info = await self._find_conversation(self._conversation.id)
             if info.title is not None:  # Memory wrote an automatic title
                 self._log.decision("title", conversation=info.id)
                 self._conversation_updated(info)
-        if exc is None or isinstance(exc, BudgetExhausted):
-            return  # the budget is re-checked by the caller
-        kind = FailureKind.MODEL if isinstance(exc, CoreError) else FailureKind.INTERNAL
-        self._failure(kind, f"Memory maintenance failed: {exc}")
+        if exc is None:
+            return bool(task.result())
+        if not isinstance(exc, BudgetExhausted):  # the budget is re-checked by the caller
+            kind = FailureKind.MODEL if isinstance(exc, CoreError) else FailureKind.INTERNAL
+            self._failure(kind, f"Memory maintenance failed: {exc}")
+        return False
 
     async def _race_stop(self, task: asyncio.Future[Any]) -> bool:
         """Wait for task or Stop. On Stop, cancel it and allow the grace period.
