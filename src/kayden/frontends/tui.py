@@ -906,7 +906,7 @@ class StartScreen(ModalScreen[StartOptions | None]):
     async def _load_models(self) -> None:
         models = await self.runtime.list_models()
         self.query_one("#model", Select).set_options(
-            [("Runtime default", DEFAULT_MODEL), *((f"{m.name} [{m.id}]", m.id) for m in models)]
+            [("Default", DEFAULT_MODEL), *((f"{m.name} [{m.id}]", m.id) for m in models)]
         )
         self.query_one("#model", Select).value = DEFAULT_MODEL
 

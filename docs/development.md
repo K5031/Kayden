@@ -76,7 +76,8 @@ uv run pytest
 uv run ruff check
 ```
 
-The suite runs offline against fakes. Tests against real providers are skipped unless
+The suite runs in parallel (pytest-xdist) and takes about 10 seconds; add `-n 0` to run it in
+one process, for example under a debugger. It runs offline against fakes. Tests against real providers are skipped unless
 `KAYDEN_LIVE_TESTS=1` is set together with `ANTHROPIC_API_KEY` (Anthropic),
 `DEEPSEEK_API_KEY` (DeepSeek; `KAYDEN_DEEPSEEK_MODEL` defaults to `deepseek-flash`) or
 `KAYDEN_OPENAI_MODEL` (OpenAI-compatible; `OPENAI_API_KEY` and `KAYDEN_OPENAI_BASE_URL` as

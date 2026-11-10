@@ -49,6 +49,7 @@ dev = [
     "psutil>=7.2.2",
     "pytest",
     "pytest-asyncio",
+    "pytest-xdist>=3.8.0",
     "ruff",
 ]
 
@@ -63,6 +64,7 @@ packages = ["src/kayden"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+addopts = "-n auto"  # parallel (pytest-xdist); -n 0 runs in one process
 
 [tool.ruff]
 line-length = 100

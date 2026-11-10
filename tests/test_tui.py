@@ -661,10 +661,10 @@ async def test_start_screen_fits_a_small_terminal():
     app = make(stub)
     async with app.run_test(size=(80, 24)) as pilot:
         await until(pilot, lambda: isinstance(app.screen, StartScreen))
-        await pilot.pause()
         start = app.screen.query_one("#start", Button)
-        assert app.screen.focused is start
-        assert app.screen.region.contains_region(start.region)
+        # Scrolling Start into view takes a few refreshes.
+        await until(pilot, lambda: app.screen.focused is start
+                    and app.screen.region.contains_region(start.region))
         await pilot.press("enter")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
 
