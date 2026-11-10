@@ -76,7 +76,9 @@ TextDelta, ReasoningDelta, ToolCallDelta and ToolProgress are not logged.
 `config.DEFAULT_SYSTEM_PROMPT` explains backgrounded operations, `op_status`/`op_cancel`
 and `recall` (with scope "all" for the other conversations). `[runtime] system_prompt` or
 `system_prompt_file` replaces it. An autonomous conversation appends `AUTONOMY_PROMPT`
-(how to idle, and that finished background work wakes it) to either.
+to either: finished background work wakes the agent, and it ends with a reply and calls no
+tool after it. Claude Opus 5.5 returns text that precedes a tool call as a hidden progress
+note, so a reply followed by `idle()` never reached the user.
 Memory's `system_addendum` follows, separated by a blank line.
 
 ## Runtime-authored texts

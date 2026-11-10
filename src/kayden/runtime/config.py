@@ -22,11 +22,15 @@ ACTIVATION_NOTICE = (
     "or idle if there is nothing to do."
 )
 
+# A reply must not be followed by a tool call: some models return text that precedes a
+# call as hidden reasoning, so a model that reports and then calls idle() says nothing.
 AUTONOMY_PROMPT = (
-    "You work autonomously in this conversation. When you have nothing more to do right now, "
-    "call idle(); ending a turn without tool calls also idles. Background operations keep "
-    "running while you are idle, and you are woken when the ones you wait for finish. "
-    "Calling idle() also conserves your budget."
+    "This conversation is autonomous. Operations you started in the background keep running "
+    "after your reply, and when they finish you are woken to continue without waiting for "
+    "the user. When you are done for now, end your turn with a reply to the user, as in any "
+    "conversation, and call no tool after it: the user may not see text that is followed by "
+    "a tool call. Call idle only to wait for some of the running operations instead of all "
+    "of them, with at most one short sentence before it."
 )
 
 

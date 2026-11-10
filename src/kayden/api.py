@@ -585,8 +585,9 @@ _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "idle": ToolSpec(
         "idle",
-        "End this cycle and wait. Background operations keep running; you are woken when "
-        "the awaited ones finish, or by the user.",
+        "Wait for chosen background operations: ends this cycle now, and you are woken when "
+        "they finish, or by the user. Not needed to finish a reply; ending a turn without "
+        "tool calls waits for all of them.",
         {
             "type": "object",
             "properties": {
