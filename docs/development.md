@@ -54,7 +54,6 @@ src/kayden/memory/        SQLite Memory
 src/kayden/tools/         shell and file Tools
 src/kayden/frontends/     terminal app; common.py holds what every frontend shares
 src/kayden/frontends/desktop/  desktop app: viewmodel.py (no Qt), window.py, launcher.py
-src/kayden_desktop/       the module a Briefcase bundle runs
 src/kayden/__main__.py    the `kayden` command: config, saved settings, restarts
 tests/                    tests; fakes/ and conformance/ hold shared test modules
 SPEC.md                   product spec
@@ -106,7 +105,8 @@ uvx --python 3.13 briefcase build linux flatpak
 uvx --python 3.13 briefcase package macOS
 ```
 
-`build/` and `logs/` are Briefcase output and are not committed.
+A bundle runs `python -m kayden`, the `kayden` command: started without a terminal, it opens
+the desktop app. `build/` and `logs/` are Briefcase output and are not committed.
 
 ## Design records
 

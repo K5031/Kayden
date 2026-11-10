@@ -60,8 +60,9 @@ the one that runs. The desktop app therefore gets its own launcher,
    `QApplication` that does not quit when its last window closes, so the runtime shuts down
    before the loop stops.
 
-A Briefcase bundle runs `python -m <app module>`, so a two-line `kayden_desktop` package
-calls the same `main`.
+A Briefcase bundle runs `python -m <app module>`. The Briefcase app is named `kayden`, so
+it runs `python -m kayden`; started without a terminal on stdin and with a display,
+`kayden` runs the desktop launcher's `main` in its own process.
 
 "Frontend owns the process's main loop" (`api.Frontend` docstring) does not match how the
 loop is created. That mismatch goes into `.agents/contract-issues.md` when this is built.

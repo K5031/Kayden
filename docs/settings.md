@@ -45,7 +45,8 @@ after the restart.
 
 With the desktop app chosen, running `kayden` opens the desktop app instead of the terminal
 app, and says so. It opens the terminal app, saying why, only when there is no screen to
-show a window on or the desktop app is not installed. The desktop app, started from the app
+show a window on or the desktop app is not installed. Started without a terminal (from a
+file manager or a desktop bundle), `kayden` always opens the desktop app. The desktop app, started from the app
 menu, always opens a window, even with the terminal app chosen. Both need to be installed;
 see [Desktop app](desktop-app.md#install).
 

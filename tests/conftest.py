@@ -149,6 +149,14 @@ class MemoryKeyring(keyring.backend.KeyringBackend):
 
 
 @pytest.fixture(autouse=True)
+def in_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests have no terminal on stdin; `kayden` would open the desktop app instead."""
+    import kayden.__main__
+
+    monkeypatch.setattr(kayden.__main__, "in_terminal", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def keychain() -> Any:
     previous = keyring.get_keyring()
     memory = MemoryKeyring()

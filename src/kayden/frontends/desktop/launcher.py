@@ -1,4 +1,4 @@
-"""The desktop app's launcher, which `kayden` hands over to and the Briefcase bundle runs.
+"""The desktop app's launcher, which `kayden` hands over to, or runs when it has no terminal.
 
 A GUI toolkit's loop must be the one that runs, so this creates the QApplication and runs
 the instance on qasync's QEventLoop. It reads config.toml and settings.toml like `kayden`,
