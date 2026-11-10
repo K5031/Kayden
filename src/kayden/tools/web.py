@@ -22,6 +22,10 @@ import httpx2
 from kayden.api import ToolSpec
 
 SEARCH_TIMEOUT = 10.0  # seconds per search engine request
+# Engines refuse some requests for a while (ddgs then reports "No results found"); the same
+# query often works a moment later.
+SEARCH_ATTEMPTS = 3
+SEARCH_RETRY_DELAY = 1.0  # seconds between attempts
 DEFAULT_RESULTS = 8
 MAX_RESULTS = 20
 FETCH_TIMEOUT = 30.0  # seconds per HTTP request
@@ -108,10 +112,12 @@ class Web:
 
     def __init__(self, *, search: SearchFn = ddgs_search,
                  transport: httpx2.AsyncBaseTransport | None = None,
-                 resolve: ResolveFn = resolve_host) -> None:
+                 resolve: ResolveFn = resolve_host,
+                 retry_delay: float = SEARCH_RETRY_DELAY) -> None:
         self._search = search
         self._transport = transport
         self._resolve = resolve
+        self._retry_delay = retry_delay
 
     async def run(self, name: str, args: dict[str, Any]) -> str:
         try:
@@ -125,9 +131,24 @@ class Web:
                            "Updating) and restart it.") from None
 
     async def search(self, query: str, max_results: int) -> str:
-        results = await asyncio.to_thread(self._search, query, max_results)
+        """Tries an empty or failed search again, SEARCH_ATTEMPTS times in all."""
+        results: Sequence[dict[str, Any]] = []
+        for attempt in range(SEARCH_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(self._retry_delay)
+            try:
+                results = await asyncio.to_thread(self._search, query, max_results)
+            except WebError:
+                if attempt == SEARCH_ATTEMPTS - 1:
+                    raise
+                continue
+            if results:
+                break
         if not results:
-            return f"No results for {query!r}."
+            return (f"Nothing found for {query!r} after {SEARCH_ATTEMPTS} tries. The search "
+                    "engines sometimes refuse automated searches for a while, so this may "
+                    "not mean nothing exists: try other words, or read a page you know with "
+                    "web_fetch.")
         lines = [UNTRUSTED]
         for n, r in enumerate(results[:max_results], 1):
             lines.append(f"{n}. {r.get('title') or '(no title)'}\n   {r.get('href', '')}\n"
@@ -146,6 +167,9 @@ class Web:
                     if response.is_redirect and "location" in response.headers:
                         current = urljoin(current, response.headers["location"])
                         continue
+                    if response.status_code == 403:
+                        raise WebError(f"{current} answered HTTP 403: the site refuses programs "
+                                       "that read it automatically. Use another source.")
                     if response.status_code >= 400:
                         raise WebError(f"{current} answered HTTP {response.status_code}.")
                     kind = response.headers.get("content-type", "").split(";")[0].strip()

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import httpx2
 import pytest
@@ -38,6 +39,8 @@ def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(302, headers={"location": "http://127.0.0.1:8000/admin"})
     if path == "/moved":
         return httpx2.Response(301, headers={"location": "https://other.example/article"})
+    if path == "/forbidden":
+        return httpx2.Response(403, text="blocked")
     if path == "/loop":
         return httpx2.Response(302, headers={"location": "/loop"})
     if path in ("/article", "/"):
@@ -74,7 +77,8 @@ def fake_search(query: str, max_results: int) -> list[dict]:
 def tools(tmp_path: Path) -> ShellFilesTools:
     (tmp_path / "ws").mkdir()
     return ShellFilesTools(tmp_path / "ws", web_tools=web.Web(
-        search=fake_search, transport=httpx2.MockTransport(handler), resolve=fake_resolve))
+        search=fake_search, transport=httpx2.MockTransport(handler), resolve=fake_resolve,
+        retry_delay=0))
 
 
 async def run(tools: ShellFilesTools, tmp_path: Path, name: str, **args):
@@ -107,9 +111,30 @@ async def test_search_defaults_and_failures(tools, tmp_path):
     await run(tools, tmp_path, "web_search", query="defaults")
     assert searches[-1] == ("defaults", web.DEFAULT_RESULTS)
     empty = await run(tools, tmp_path, "web_search", query="nothing")
-    assert not empty.is_error and empty.content == "No results for 'nothing'."
+    assert not empty.is_error and empty.content.startswith("Nothing found for 'nothing'")
+    assert f"after {web.SEARCH_ATTEMPTS} tries" in empty.content
+    assert "refuse" in empty.content  # it may be the engines, not the query
     broken = await run(tools, tmp_path, "web_search", query="broken")
     assert broken.is_error and "unavailable" in broken.content
+
+
+async def test_an_empty_or_failed_search_is_tried_again(tmp_path):
+    """Search engines refuse some requests for a while: the same query may work a moment
+    later, so an empty or failed search is retried before Kayden reports it."""
+    answers: list[Any] = [[], web.WebError("Web search is unavailable right now: busy"),
+                          [{"title": "Found", "href": "https://example.com/", "body": "it"}]]
+    calls = []
+
+    def flaky(query: str, max_results: int) -> list[dict]:
+        calls.append(query)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    tools = ShellFilesTools(tmp_path, web_tools=web.Web(search=flaky, retry_delay=0))
+    out = await run(tools, tmp_path, "web_search", query="worlds")
+    assert not out.is_error and "1. Found" in out.content and len(calls) == 3
 
 
 async def test_fetch_extracts_the_main_text_as_markdown(tools, tmp_path):
@@ -169,6 +194,7 @@ async def test_fetch_refuses_local_addresses_and_other_schemes(tools, tmp_path, 
 
 @pytest.mark.parametrize("path, message", [
     ("/missing", "HTTP 404"),
+    ("/forbidden", "refuses programs"),
     ("/loop", "redirected more than"),
     ("/huge.txt", "larger than 5 MB"),
     ("/file.pdf", "application/pdf"),

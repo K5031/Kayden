@@ -519,6 +519,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-web-search.md).
 | Choice | Value |
 |---|---|
 | Search | `ddgs` `DDGS(timeout=10).text(query, max_results)`, in a thread; default 8 results, at most 20; "no results" is an empty list, other ddgs errors an error result |
+| Search retries | ddgs picks engines at random and reports "No results found" when those refuse, so the same query can fail and then work: an empty or failed search is tried 3 times in all, 1 s apart; after that, "Nothing found … after 3 tries", saying the engines may be refusing searches for a while (checked 2026-11-10: two common queries each failed about one time in three) |
+| HTTP 403 | Said to be a site that refuses programs reading it, with a hint to use another source. Kayden does not disguise itself as a browser to get past such blocks |
 | Download | `httpx2`, 30 s per request, at most 5 MB, at most 5 redirects followed by hand |
 | Public addresses | Every hop's host is resolved; any address that is not `is_global` is refused. Names that do not resolve are an error result |
 | Extraction | HTML: `trafilatura.extract(output_format="markdown", include_links, include_tables, with_metadata)` in a thread; text types and JSON (pretty-printed) as they are; anything else is an error |

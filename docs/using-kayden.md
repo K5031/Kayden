@@ -94,7 +94,9 @@ The agent can search the web and read web pages, for anything recent or that it 
 sure of. It links the pages its answer relies on. Searches go to DuckDuckGo and other
 search engines, and pages are fetched from the sites themselves. Anything the agent has
 read can end up in a search or an address, so keep secrets out of what you share with it.
-It reads public pages only, not pages on your computer or your local network.
+It reads public pages only, not pages on your computer or your local network. Some sites
+refuse programs that read them (Kayden says so and looks elsewhere), and search engines
+sometimes turn searches away for a while; Kayden tries a search again before it gives up.
 
 ## More tools (MCP)
 
