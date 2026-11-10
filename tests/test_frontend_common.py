@@ -1,7 +1,15 @@
 """Settings texts and the loosening check shared by the TUI and the desktop app."""
 
 
-from kayden.api import Budget, ModelInfo, ModuleChoice, PermissionPolicy, Settings, SettingsUpdate
+from kayden.api import (
+    ALREADY_OPEN,
+    Budget,
+    ModelInfo,
+    ModuleChoice,
+    PermissionPolicy,
+    Settings,
+    SettingsUpdate,
+)
 from kayden.frontends.common import (
     dollars,
     loosening,
@@ -10,7 +18,6 @@ from kayden.frontends.common import (
     needs_restart,
     restart_notice,
 )
-from kayden.runtime.instance import ALREADY_OPEN
 from tests.fakes.settings import chosen, settings
 
 

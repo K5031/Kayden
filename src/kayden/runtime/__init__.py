@@ -10,7 +10,6 @@ from kayden.runtime.config import (
     RuntimeConfig,
 )
 from kayden.runtime.instance import (
-    InstanceLockedError,
     ModuleLoadError,
     load_module,
     run_instance,
@@ -19,7 +18,6 @@ from kayden.runtime.orchestrator import Runtime
 
 __all__ = [
     "InstanceConfig",
-    "InstanceLockedError",
     "InstancePaths",
     "ModuleLoadError",
     "ModuleSpec",

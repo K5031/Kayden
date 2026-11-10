@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from kayden.runtime import InstanceLockedError
+from kayden.api import InstanceLockedError
 from tests.conftest import Harness
 from tests.fakes.memory import MemoryStore
 

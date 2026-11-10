@@ -15,6 +15,7 @@ from kayden.api import (
     AgentState,
     ContextOverflowError,
     Decision,
+    InstanceLockedError,
     MessageCommitted,
     MessageQueued,
     ModelRetry,
@@ -35,7 +36,6 @@ from kayden.api import (
     ToolStatus,
     TransientCoreError,
 )
-from kayden.runtime import InstanceLockedError
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools

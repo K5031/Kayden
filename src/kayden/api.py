@@ -793,6 +793,14 @@ class RuntimeStateError(Exception):
     """Command not valid in the current state (see RuntimeAPI)."""
 
 
+class InstanceLockedError(RuntimeError):
+    """Another process uses this data directory."""
+
+
+# Settings.startup_error starts with this when the lock was held at startup.
+ALREADY_OPEN = "Kayden is already open in another window"
+
+
 @dataclass(frozen=True, slots=True)
 class Budget:
     """None = unlimited on that dimension.

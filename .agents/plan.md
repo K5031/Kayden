@@ -9,7 +9,7 @@ covers it. Test files live in `tests/`; fakes in `tests/fakes/`.
   implements `RuntimeAPI`; `await runtime.aclose()` shuts down.
 - `kayden.runtime.run_instance(InstanceConfig)` loads the four modules from
   `"package.module:factory"` import paths, runs `frontend.run(runtime)`, then shuts down.
-- `kayden.runtime.InstanceLockedError` when the (data dir, mode) lock is held.
+- `kayden.api.InstanceLockedError` when the (data dir, mode) lock is held.
 
 ## Acceptance scenarios (SPEC 12) — `tests/test_scenarios.py`
 

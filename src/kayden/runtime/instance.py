@@ -10,19 +10,20 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from kayden.api import Core, Frontend, InstancePaths, Memory, Tools
+from kayden.api import (
+    ALREADY_OPEN,
+    Core,
+    Frontend,
+    InstanceLockedError,
+    InstancePaths,
+    Memory,
+    Tools,
+)
 from kayden.runtime.config import InstanceConfig, ModuleSpec, Restart
 from kayden.runtime.modules import targets
 
 LOCK_FILE = "instance.lock"
 # Starts startup_error and refusals when another process holds the data directory.
-ALREADY_OPEN = "Kayden is already open in another window"
-
-
-class InstanceLockedError(RuntimeError):
-    """Another process uses this data directory."""
-
-
 class ModuleLoadError(Exception):
     """A module could not be built from its configuration (bad factory path, bad options,
     missing credentials). The message names the factory and fits on one line."""

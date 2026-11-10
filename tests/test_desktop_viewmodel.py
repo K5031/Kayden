@@ -15,6 +15,7 @@ from kayden.api import (
     EventEnvelope,
     Failure,
     FailureKind,
+    InstanceLockedError,
     MemoryEntry,
     Message,
     ModuleChoice,
@@ -60,7 +61,6 @@ from kayden.frontends.desktop.viewmodel import (
     settings_update,
     user_message,
 )
-from kayden.runtime import InstanceLockedError
 from tests.conftest import Harness, eventually
 from tests.fakes.core import Step, call
 from tests.fakes.settings import settings as fake_settings

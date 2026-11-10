@@ -20,6 +20,7 @@ from enum import StrEnum
 from typing import Any
 
 from kayden.api import (
+    ALREADY_OPEN,
     AgentState,
     Budget,
     ConversationDeleted,
@@ -29,6 +30,7 @@ from kayden.api import (
     EventEnvelope,
     Failure,
     FailureKind,
+    InstanceLockedError,
     MaintenanceFinished,
     MaintenanceStarted,
     MemoriesChanged,
@@ -79,8 +81,6 @@ from kayden.frontends.common import (
     step_problems,
     steps_title,
 )
-from kayden.runtime import InstanceLockedError
-from kayden.runtime.instance import ALREADY_OPEN
 
 HISTORY_PAGE = 100
 MAX_ARGS_CHARS = 120

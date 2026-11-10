@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import (
+    ALREADY_OPEN,
     DESCRIPTION_ARG,
     ModelInfo,
     ModuleChoice,
@@ -19,7 +20,6 @@ from kayden.api import (
     SettingsUpdate,
     ToolStatus,
 )
-from kayden.runtime.instance import ALREADY_OPEN
 
 PERMISSION_LABELS = {
     PermissionPolicy.AUTO: "Decide automatically, ask me only when unsure",
