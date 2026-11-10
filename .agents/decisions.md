@@ -427,6 +427,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-free-in-the-work-folder.md).
 | Sandbox check | `bwrap ... true` once at construction with the starting root, 5 s limit; any failure leaves the shell unsandboxed. The command line is rebuilt for each folder (`use_folder`) |
 | Home in the sandbox | An empty tmpfs directory at the same path, so `$HOME` exists; what a command writes there is gone when it ends |
 | Shell start | `create_subprocess_exec(*sandbox, "sh", "-c", command)`, also without a sandbox |
+| Sandbox environment | `os.environ` without names matching `KEY\|TOKEN\|SECRET\|PASSW\|CREDENTIAL` (case ignored); unsandboxed commands get it unchanged |
 
 ## Changes for contract Draft 3 (autonomy into sessions)
 
@@ -536,6 +537,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-auto-permissions.md).
 | Review request | Maintenance model, `REVIEW_PROMPT` (runtime/review.py) as system prompt, one USER message, no tools, `maintenance=True`, at most 1 024 output tokens |
 | What it sees | Text of USER messages among the newest 200 (activation notices left out), newest first up to 16 000 characters; the work folder; tool name, description and arguments (cut at 4 000 characters) |
 | Answer | First line `ALLOW` or `ASK` (case and `*`, `` ` ``, `.` ignored), second line the reason (300 characters); anything else asks |
+| Always ask | `review.always_ask` on the JSON of the arguments: the data folder (absolute, `~/`, `$HOME/` forms), then credential paths and tools (`CREDENTIALS`); logged as `permission_review` with `by: "rule"` |
 | Failures | Exhausted budget (checked first), any exception from the request: ask, with a reason saying Kayden could not check. No transient retries |
 | Stop | The review is raced against Stop with the grace period; the call is then not started |
 | Log | `permission_review` with call id and `allow`; the permission record says `by: "review"`. The reason is not logged |

@@ -288,7 +288,7 @@ Organizational roles and ranks are not hardcoded into Kayden.
 Capabilities and authority depend on each instance's configuration, model, tools, and permissions.
 10.4 Instance Safety
 Each instance owns its data directory. The runtime holds an OS-level lock on it, taken before any stored data is read or changed and released at shutdown; a second process opening the same directory fails immediately with an error naming the holder, and touches none of its data.
-A launched instance cannot be more permissive than its launcher. At startup the runtime exports its permission policy as a ceiling in its environment, and every instance clamps its own policy to the stricter of its configuration and any inherited ceiling. Strictness order: deny, ask, allow read-only, allow workspace, auto. The exported ceiling is the instance's effective policy, carried in the KAYDEN_PERMISSION_CEILING environment variable; tools that launch subprocesses must pass the environment through. Launched instances have their own independent budgets.
+A launched instance cannot be more permissive than its launcher. At startup the runtime exports its permission policy as a ceiling in its environment, and every instance clamps its own policy to the stricter of its configuration and any inherited ceiling. Strictness order: deny, ask, allow read-only, allow workspace, auto. The exported ceiling is the instance's effective policy, carried in the KAYDEN_PERMISSION_CEILING environment variable; tools that launch subprocesses must pass that variable through. Launched instances have their own independent budgets.
 The ceiling is a guardrail against accidental or naive escalation, not a sandbox. It follows the trust model in section 3.2: an agent with arbitrary terminal access can defeat it.
 
 11. Persistence
@@ -414,7 +414,7 @@ Tools never block the event loop. Blocking work goes through threads or subproce
 stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps the agent waiting until it ends or the user writes.
 The built-in tools (op_status, op_cancel, recall, remember, forget) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules.
 Results are plain strings. Frontends may parse formats they know.
-Tools that launch subprocesses pass the environment through unmodified.
+Tools that launch subprocesses pass the permission ceiling variable through unmodified; they may leave out other variables, such as secrets from sandboxed commands.
 use_folder is optional: the runtime calls it whenever it opens a conversation, with that conversation's work folder, before any of its calls. A module without it has one fixed folder, and conversations cannot choose another.
 
 16.5 Frontend and Runtime API

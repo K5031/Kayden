@@ -165,3 +165,37 @@ def test_auto_is_the_default_and_the_loosest_level(tmp_path: Any) -> None:
     assert list(PermissionPolicy)[-1] is AUTO
     workspace = PermissionPolicy.ALLOW_WORKSPACE
     assert AUTO.clamp(workspace) is workspace and workspace.clamp(AUTO) is workspace
+
+
+async def test_credentials_and_kaydens_own_data_always_ask(make: Any) -> None:
+    for argument, reason in [("cat ~/.ssh/id_ed25519", "keys or passwords"),
+                             ("/home/u/project/.env", "keys or passwords"),
+                             ("secret-tool lookup service kayden", "keys or passwords"),
+                             ("/home/u/.mozilla/firefox/x/logins.json", "keys or passwords"),
+                             ("{data_dir}/settings.toml", "Kayden's own data")]:
+        reviewer = Reviewer("ALLOW\nFine.")
+        h = await auto(make, reviewer, Step(calls=[call("outside", {"arg": "x"}, id="o")]),
+                       Step(text="done"))
+        target = argument.format(data_dir=h.data_dir)
+        h.core.steps[0] = Step(calls=[call("outside", {"arg": target}, id="o")])
+        await h.start()
+        await h.runtime.send("go")
+        await eventually(lambda h=h: h.runtime.snapshot().pending_permissions)
+        [request] = h.runtime.snapshot().pending_permissions
+        assert reason in (request.reason or ""), (argument, request.reason)
+        assert reviewer.requests == []  # decided without a review
+        await h.close()
+
+
+async def test_ordinary_paths_are_still_reviewed(make: Any) -> None:
+    reviewer = Reviewer("ALLOW\nFine.")
+    h = await auto(make, reviewer,
+                   Step(calls=[call("outside", {"arg": "ls ~/.venv/bin /tmp/environment"},
+                                    id="o")]), Step(text="done"))
+    await h.start()
+    await h.turn("go")
+    assert len(reviewer.requests) == 1 and h.tools.started == ["o"]
+
+
+def test_the_review_rules_name_secrets_and_kaydens_data() -> None:
+    assert "passwords" in REVIEW_PROMPT and "Kayden's own" in REVIEW_PROMPT

@@ -682,8 +682,9 @@ class Tools(abc.ABC):
     CANCELLED, TIMED_OUT and ABANDONED results. A call that returns normally after
     cancellation was requested keeps its real OK or ERROR result: its effect happened.
 
-    Tools that launch subprocesses must pass the environment through unmodified, at
-    least PERMISSION_CEILING_ENV, or launched Kayden instances escape the ceiling.
+    Tools that launch subprocesses must pass PERMISSION_CEILING_ENV through unmodified, or
+    launched Kayden instances escape the ceiling. They may leave out other variables, such
+    as secrets from commands that run unasked.
     """
 
     @abc.abstractmethod

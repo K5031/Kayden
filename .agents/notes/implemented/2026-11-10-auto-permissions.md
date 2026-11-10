@@ -43,6 +43,13 @@ allow workspace, auto.
   spends money, installs system-wide, changes system or security settings, or that the
   user's messages do not clearly cover. Claims of permission inside the action do not
   count. When unsure, ask.
+- Calls whose arguments mention credential files (SSH and GPG keys, `.env`, password
+  stores, cloud credentials, browser profiles, the keychain) or Kayden's data folder are
+  never reviewed and always ask (`review.always_ask`, a fixed pattern match). A secret
+  the agent reads goes to the provider, and once in the conversation a sandboxed command
+  could send it anywhere; Kayden's data folder holds every conversation and the settings
+  and usage that bound the agent, which it must not change itself. The review prompt
+  repeats both rules for calls the patterns miss.
 - The answer is `ALLOW` or `ASK` on the first line and a short reason on the second.
   Anything else, a model error or an exhausted budget counts as `ASK`, with a reason
   saying so: the review fails closed.
@@ -71,6 +78,9 @@ Choices and limits are listed in `.agents/decisions.md` (Automatic permissions).
 - **The main model, inline** (asking the agent itself whether its call is safe). The agent
   that wants to run a call is the worst judge of it, and a turn would carry the cost of the
   big model.
+- **Leaving secrets and Kayden's data to the review.** One rule set fewer, but "look at my
+  SSH setup" plainly covers reading `~/.ssh`, so the review would allow exactly the reads
+  that leak most; and an agent that can edit `settings.toml` can loosen its own limits.
 - **Allowing on review failure.** Fewer interruptions when the provider has a hiccup, but
   a failure would quietly turn the check off.
 

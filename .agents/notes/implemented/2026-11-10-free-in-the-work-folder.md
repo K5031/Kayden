@@ -71,7 +71,8 @@ Inside the sandbox (`shell_files._sandbox`):
 | System (`/usr`, `/etc`, ...) | read-only, so installed programs run |
 | `/home`, `/root`, the user's home | empty, except the work folder itself |
 | `/tmp` | private and empty |
-| `/run/user` | hidden, so the session bus and its services cannot be reached |
+| `/run/user` | hidden, so the session bus and its services (the keychain) cannot be reached |
+| Environment | as outside, minus variables whose names look like secrets (`KEY`, `TOKEN`, `SECRET`, `PASSW`, `CREDENTIAL`) |
 | Processes | only its own (`--unshare-pid`) |
 | Network | as outside |
 
@@ -124,6 +125,11 @@ start in `~` does not.
 - **A sandbox bug is a security bug.** A mistake in the bubblewrap arguments lets an
   unasked command out. A test probes the boundary from inside: writing outside, listing
   the home folder, reaching the session bus.
+- **Secrets in the environment stay out.** Keys exported in a shell profile reach Kayden
+  started from a terminal; a sandboxed command runs unasked and may use the network, so it
+  gets the environment without them (`shell_files.sandbox_environment`). A secret under
+  another name still gets through; unsandboxed commands, which are checked first, keep
+  the whole environment.
 - **Network plus the work folder.** A confined command can send anything in the work
   folder anywhere. The docs say to keep secrets out of it.
 - **Tools under the home folder do not work in the sandbox** (toolchains, caches, `uv`,

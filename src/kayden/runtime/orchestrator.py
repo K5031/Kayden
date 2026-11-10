@@ -103,7 +103,14 @@ from kayden.runtime.instance import InstanceLock
 from kayden.runtime.modules import ModuleSettings
 from kayden.runtime.operations import Context, Operation
 from kayden.runtime.review import MAX_OUTPUT_TOKENS as REVIEW_OUTPUT_TOKENS
-from kayden.runtime.review import REVIEW_PROMPT, Verdict, parse, review_messages, user_requests
+from kayden.runtime.review import (
+    REVIEW_PROMPT,
+    Verdict,
+    always_ask,
+    parse,
+    review_messages,
+    user_requests,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1404,6 +1411,9 @@ class Runtime:
 
     async def _review(self, call: ToolCall, spec: ToolSpec) -> Verdict:
         """The automatic permission check (review.py). Fails closed: any problem asks."""
+        if reason := always_ask(call, self._config.data_dir):
+            self._log.decision("permission_review", call_id=call.id, allow=False, by="rule")
+            return Verdict(False, reason)
         if reason := self._check_budget("review"):
             return Verdict(False, f"The spending limit is reached ({reason}), so Kayden "
                                   "could not check this itself.")

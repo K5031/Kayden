@@ -1,8 +1,8 @@
 """The built-in Tools module: shell commands, file operations and the web (POSIX only).
 
 Relative paths resolve against the workspace root, which is also the shell's working
-directory. Commands inherit the process environment unchanged (PERMISSION_CEILING_ENV
-included).
+directory. Commands inherit the process environment (PERMISSION_CEILING_ENV included);
+sandboxed ones without the variables that look like secrets (sandbox_environment).
 
 The workspace is a boundary the runtime can rely on (`confined`): a file call is confined
 when its path is inside it, and a shell command when it runs in the bubblewrap sandbox,
@@ -22,7 +22,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from fnmatch import fnmatch
 from pathlib import Path
@@ -74,10 +74,14 @@ SHELL = ToolSpec(
 )
 SANDBOX_NOTE = (
     " Commands run in a sandbox: they can read and write the workspace, read the system "
-    "and use the network, but the rest of the home directory is hidden and nothing "
-    "outside the workspace can be changed. Set `unsandboxed` to true only when a command "
-    "needs something outside; the user is then asked first, so say why."
+    "and use the network, but the rest of the home directory and environment variables "
+    "holding keys or tokens are hidden, and nothing outside the workspace can be "
+    "changed. Set `unsandboxed` to true only when a command needs something outside; "
+    "the user is then asked first, so say why."
 )
+# Variables whose names look like secrets (API keys, tokens, passwords) are left out of a
+# sandboxed command's environment: it runs unasked and may use the network.
+SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL", re.IGNORECASE)
 SANDBOX_CHECK_TIMEOUT = 5.0  # seconds for the one test run of the sandbox at startup
 FILE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
@@ -150,6 +154,10 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
 
 
 factory.display_name = "Shell, files and web"  # type: ignore[attr-defined]
+
+
+def sandbox_environment(environ: Mapping[str, str]) -> dict[str, str]:
+    return {k: v for k, v in environ.items() if not SECRET_NAME.search(k)}
 
 
 def _sandbox(bwrap: str, root: Path, home: Path) -> list[str]:
@@ -291,6 +299,7 @@ class ShellFilesTools(Tools):
             sandbox = [] if self._sandbox is None or args.get("unsandboxed") else self._sandbox
             proc = await asyncio.create_subprocess_exec(
                 *sandbox, "sh", "-c", args["command"],
+                env=sandbox_environment(os.environ) if sandbox else None,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=write_fd,
                 stderr=asyncio.subprocess.STDOUT,

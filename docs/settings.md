@@ -91,6 +91,11 @@ says why. If the check fails or the spending limit is reached, Kayden asks too.
 
 - The check sees your messages and the action, not what the agent read, so a web page or
   a file cannot talk it into allowing something.
+- Anything that touches keys and passwords (SSH and GPG keys, `.env` files, password
+  stores, cloud credentials, browser profiles, the keychain) or Kayden's own data folder
+  always asks you, without a check: a secret the agent reads goes to your AI provider, and
+  Kayden's data folder holds your conversations and the very settings that limit the
+  agent.
 - Each check is a small request to your provider and counts toward the spending limit. Set
   a cheap **Model for memory upkeep** to keep it cheap.
 - It can be wrong. Choose "Work freely in the work folder, ask before anything else" to
@@ -104,8 +109,9 @@ sandbox ([bubblewrap](https://github.com/containers/bubblewrap)) in which they c
 - read the system, so installed programs run;
 - use the network.
 
-They cannot change anything else, and cannot see your home folder, other programs or your
-desktop session. Searching the web and reading web pages also count as inside: they touch
+They cannot change anything else, and cannot see your home folder, other programs, your
+desktop session (so not your keychain either) or environment variables whose names look
+like secrets (API keys, tokens, passwords). Searching the web and reading web pages also count as inside: they touch
 nothing on your computer. When a command needs more, for example a tool installed in your home
 folder, the agent asks to run it outside the sandbox, and the question says so.
 
