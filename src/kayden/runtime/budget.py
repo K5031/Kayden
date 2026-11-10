@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -9,6 +10,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from kayden.api import (
     Budget,
@@ -99,8 +101,15 @@ def _read_totals(path: Path) -> Totals:
     return Totals(**data)
 
 
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, path)
+
+
 class BudgetTracker:
-    """Usage for the instance lifetime, persisted as JSON in the data directory.
+    """Usage for the instance lifetime, persisted as JSON in the data directory: written
+    off the event loop, one write at a time, the latest totals each time (flush() waits).
 
     Duration accrues while at least one inference or tool operation is active."""
 
@@ -110,6 +119,8 @@ class BudgetTracker:
         self._path: Path | None = None
         self._active = 0
         self._active_since = 0.0
+        self._dirty = False
+        self._writer: asyncio.Task[None] | None = None
 
     def load(self, path: Path) -> None:
         self._path = path
@@ -119,11 +130,20 @@ class BudgetTracker:
     def save(self) -> None:
         if self._path is None:
             return
-        data = {"schema_version": USAGE_SCHEMA_VERSION, **asdict(self.totals)}
-        data["elapsed_s"] = self.elapsed()
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data))
-        os.replace(tmp, self._path)
+        self._dirty = True
+        if self._writer is None or self._writer.done():
+            self._writer = asyncio.get_running_loop().create_task(self._write())
+
+    async def flush(self) -> None:
+        if self._writer is not None:
+            await self._writer
+
+    async def _write(self) -> None:
+        while self._dirty and self._path is not None:
+            self._dirty = False
+            data = {"schema_version": USAGE_SCHEMA_VERSION, **asdict(self.totals)}
+            data["elapsed_s"] = self.elapsed()
+            await asyncio.to_thread(_write_json, self._path, data)
 
     # Duration
 

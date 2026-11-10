@@ -2,7 +2,9 @@
 
 Search goes through ddgs (no account or key); pages are downloaded with httpx2 and their
 main content extracted with trafilatura. Only public addresses are fetched: a host that
-resolves to a loopback, private or link-local address is refused, at every redirect.
+resolves to a loopback, private or link-local address is refused, at every redirect, and the
+request goes to the address that was checked, so the name cannot be pointed elsewhere
+between the check and the connection (DNS rebinding).
 """
 
 from __future__ import annotations
@@ -138,8 +140,10 @@ class Web:
                                       headers={"User-Agent": USER_AGENT}) as client:
             current = url
             for _ in range(MAX_REDIRECTS + 1):
-                await self._check_public(current)
-                async with client.stream("GET", current) as response:
+                address = await self._check_public(current)
+                async with client.stream("GET", _to_address(current, address),
+                                         headers={"Host": _host_header(current)},
+                                         extensions=_tls_name(current)) as response:
                     if response.is_redirect and "location" in response.headers:
                         current = urljoin(current, response.headers["location"])
                         continue
@@ -153,7 +157,8 @@ class Web:
                 raise WebError(f"{url} redirected more than {MAX_REDIRECTS} times.")
         return _page(current, text, start)
 
-    async def _check_public(self, url: str) -> None:
+    async def _check_public(self, url: str) -> str:
+        """The address to connect to; WebError unless every address of the host is public."""
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise WebError(f"{url} is not an http or https address.")
@@ -166,6 +171,31 @@ class Web:
             if not ipaddress.ip_address(address.split("%")[0]).is_global:
                 raise WebError(f"{host} is a local or private network address; web_fetch "
                                "reads public pages only. Use the shell for local addresses.")
+        if not addresses:
+            raise WebError(f"{host} could not be found.")
+        return addresses[0].split("%")[0]
+
+
+def _to_address(url: str, address: str) -> str:
+    """`url` with its host replaced by `address`, keeping the port, path and query."""
+    parts = urlsplit(url)
+    host = f"[{address}]" if ":" in address else address
+    return parts._replace(netloc=f"{host}:{parts.port}" if parts.port else host).geturl()
+
+
+def _host_header(url: str) -> str:
+    parts = urlsplit(url)
+    assert parts.hostname is not None  # checked by _check_public
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    return f"{host}:{parts.port}" if parts.port else host
+
+
+def _tls_name(url: str) -> dict[str, Any]:
+    """For https to a name: the name to verify the certificate against, not the address."""
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname is None or _is_ip(parts.hostname):
+        return {}
+    return {"sni_hostname": parts.hostname}
 
 
 def _is_ip(host: str) -> bool:

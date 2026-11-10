@@ -396,8 +396,9 @@ class Runtime:
         if not self._started:
             data_dir = self._config.data_dir
             self._started = True
-            self._budget.load(data_dir / USAGE_FILE)
+            await asyncio.to_thread(self._budget.load, data_dir / USAGE_FILE)
             self._budget.save()
+            await self._budget.flush()
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._scratch.mkdir(exist_ok=True)
             self._loop_task = asyncio.create_task(self._run_loop())
@@ -616,6 +617,7 @@ class Runtime:
                 logger.exception("module aclose failed")
         if self._started:
             self._budget.save()
+            await self._budget.flush()
         if self._lock is not None:
             self._lock.release()
         self._log.close()
@@ -1446,7 +1448,7 @@ class Runtime:
         assert self._conversation is not None
         history = await self._memory.history(self._conversation.id, limit=REVIEW_HISTORY)
         info = self._maintenance_info()
-        messages = review_messages(user_requests(history), call, spec,
+        messages = review_messages(user_requests(history), self._bare(call), spec,
                                    self._conversation.folder)
         request = InferenceRequest(info.id, REVIEW_PROMPT, messages, (),
                                    min(REVIEW_OUTPUT_TOKENS,

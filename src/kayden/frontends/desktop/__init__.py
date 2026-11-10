@@ -73,3 +73,4 @@ class DesktopFrontend(Frontend):
             for task in (events, waiter):
                 task.cancel()
             window.close()
+            await window.save_pending_zoom()

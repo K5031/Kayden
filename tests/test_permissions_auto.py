@@ -206,13 +206,25 @@ def test_the_review_rules_name_secrets_and_kaydens_data() -> None:
     assert "passwords" in REVIEW_PROMPT and "Kayden's own" in REVIEW_PROMPT
 
 
-def test_the_reviewer_judges_the_command_not_its_description() -> None:
-    from kayden.api import ToolCall, ToolSpec
-    from kayden.runtime.review import review_messages
+async def test_the_reviewer_judges_the_command_not_its_description(make: Any) -> None:
+    reviewer = Reviewer("ALLOW\nFine.")
+    h = await auto(make, reviewer, Step(calls=[call("outside", {
+        "command": "rm -rf ~/photos", "description": "Tidy up a few temporary files"},
+        id="o")]), Step(text="done"))
+    await h.start()
+    await h.turn("clean up")
+    assert "rm -rf ~/photos" in reviewer.seen() and "Tidy up" not in reviewer.seen()
 
-    call = ToolCall("c", "shell", {"command": "rm -rf ~/photos",
-                                   "description": "Tidy up a few temporary files"})
-    [message] = review_messages(["clean up"], call, ToolSpec("shell", "Run a command", {}),
-                                "/work")
-    text = message.blocks[0].text
-    assert "rm -rf ~/photos" in text and "Tidy up" not in text
+
+async def test_the_reviewer_sees_a_tools_own_description_argument(make: Any) -> None:
+    from kayden.api import ToolSpec
+
+    reviewer = Reviewer("ALLOW\nFine.")
+    h = await auto(make, reviewer, Step(calls=[call("ticket", {
+        "description": "my bank password is hunter2"}, id="o")]), Step(text="done"))
+    own = {"type": "object", "properties": {"description": {"type": "string"}}}
+    h.tools.add(ToolSpec("ticket", "files a public ticket", own, read_only=False),
+                h.tools.fns["outside"])
+    await h.start()
+    await h.turn("file a ticket")
+    assert "hunter2" in reviewer.seen()

@@ -28,8 +28,10 @@ in `kayden/tools/web.py`:
   the main content as Markdown with links and tables, in a thread. Plain text and JSON
   are returned as they are; other types (PDF, images) are an error.
 - **Public addresses only.** `web_fetch` refuses a host that resolves to a loopback,
-  private or link-local address, checked at every redirect. Local pages are what the shell
-  is for, where permissions apply as usual.
+  private or link-local address, checked at every redirect. The request goes to the
+  address that was checked (`Host` header and TLS name kept), so a name cannot resolve to
+  a public address for the check and a local one for the connection (DNS rebinding).
+  Local pages are what the shell is for, where permissions apply as usual.
 - **Permissions:** both tools are read-only and confined: they read nothing on the
   computer and change nothing. `Tools.confined` means "can read and change nothing on this
   computer outside the work folder", so a web request qualifies; that holds even when the

@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import threading
 import time
@@ -49,6 +51,11 @@ MAX_SEARCH_FILE_BYTES = 1_000_000
 
 class ToolError(Exception):
     """Expected failure reported to the model as an is_error output."""
+
+
+# Set while a call that `confined` allowed runs: its files must really be in the workspace,
+# wherever a link that appeared since the check leads.
+_must_stay_inside = contextvars.ContextVar("must_stay_inside", default=False)
 
 
 def _object(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[str, Any]:
@@ -209,6 +216,7 @@ class ShellFilesTools(Tools):
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
+        self._confined_calls: set[str] = set()  # file calls `confined` allowed, by call id
         self._set_root(self._default)
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
             "shell": self._shell,
@@ -249,7 +257,10 @@ class ShellFilesTools(Tools):
         if call.name == "shell":
             return self._sandbox is not None and call.arguments.get("unsandboxed") is not True
         path = call.arguments.get("path", ".")
-        return isinstance(path, str) and await asyncio.to_thread(self._inside, path)
+        inside = isinstance(path, str) and await asyncio.to_thread(self._inside, path)
+        if inside:
+            self._confined_calls.add(call.id)
+        return inside
 
     def _inside(self, raw: str) -> bool:
         """Whether the path, with symlinks followed, is in the workspace."""
@@ -263,6 +274,8 @@ class ShellFilesTools(Tools):
             jsonschema.validate(call.arguments, spec.parameters)
         except jsonschema.ValidationError as e:
             return ToolOutput(f"Invalid arguments: {e.message}", is_error=True)
+        token = _must_stay_inside.set(call.id in self._confined_calls)
+        self._confined_calls.discard(call.id)
         try:
             return ToolOutput(await self._handlers[call.name](call.arguments, ctx))
         except (ToolError, web.WebError) as e:
@@ -272,6 +285,8 @@ class ShellFilesTools(Tools):
                               is_error=True)
         except OSError as e:
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
+        finally:
+            _must_stay_inside.reset(token)
 
     def _web_call(self, name: str) -> Callable[[dict[str, Any], ToolContext], Awaitable[str]]:
         async def call(args: dict[str, Any], ctx: ToolContext) -> str:
@@ -282,6 +297,19 @@ class ShellFilesTools(Tools):
     def _path(self, raw: str | None) -> Path:
         path = Path(raw or ".").expanduser()
         return path if path.is_absolute() else self.root / path
+
+    def _open(self, path: Path, flags: int) -> int:
+        """os.open, for a call `confined` allowed only if the file opened is in the
+        workspace: checked on the open file, so a link swapped in after the check (or
+        between this check and the read or write) cannot lead outside."""
+        if not _must_stay_inside.get():
+            return os.open(path, flags, 0o644)
+        fd = os.open(path.resolve(), flags | os.O_NOFOLLOW, 0o644)
+        if not Path(os.readlink(f"/proc/self/fd/{fd}")).is_relative_to(self.root):
+            os.close(fd)
+            raise ToolError(f"{self._display(path)} leads outside the work folder; set it "
+                            "up again inside the folder or ask the user")
+        return fd
 
     def _display(self, path: Path) -> str:
         try:
@@ -344,16 +372,25 @@ class ShellFilesTools(Tools):
             raise ToolError(f"{self._display(path)} is a directory")
 
         def read() -> str:
-            with path.open(encoding="utf-8", errors="replace") as f:
-                lines = f.read().splitlines(keepends=True)
-            selected = "".join(lines[offset - 1 : offset - 1 + limit])
-            notes = []
-            if len(selected) > MAX_READ_CHARS:
-                selected = selected[:MAX_READ_CHARS]
-                notes.append(f"[truncated at {MAX_READ_CHARS} characters]")
-            if offset - 1 + limit < len(lines):
-                notes.append(f"[{len(lines)} lines total; use offset to read more]")
-            return "\n".join([selected, *notes]) if notes else selected
+            """Reads only up to what it returns: the file may be huge or endless."""
+            selected: list[str] = []
+            size, notes = 0, []
+            with open(self._open(path, os.O_RDONLY), encoding="utf-8", errors="replace") as f:
+                lines = iter(lambda: f.readline(MAX_READ_CHARS + 1), "")
+                for number, line in enumerate(lines, 1):
+                    if number < offset:
+                        continue
+                    if number >= offset + limit:
+                        notes.append(f"[more lines follow; use offset {number} to read on]")
+                        break
+                    if size + len(line) > MAX_READ_CHARS:
+                        selected.append(line[: MAX_READ_CHARS - size])
+                        notes.append(f"[truncated at {MAX_READ_CHARS} characters]")
+                        break
+                    selected.append(line)
+                    size += len(line)
+            text = "".join(selected)
+            return "\n".join([text, *notes]) if notes else text
 
         return await asyncio.to_thread(read)
 
@@ -363,7 +400,9 @@ class ShellFilesTools(Tools):
 
         def write() -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            with open(self._open(path, os.O_WRONLY | os.O_CREAT), "w", encoding="utf-8") as f:
+                f.truncate()
+                f.write(content)
 
         await asyncio.to_thread(write)
         return f"Wrote {len(content)} characters to {self._display(path)}"
@@ -374,8 +413,13 @@ class ShellFilesTools(Tools):
         replace_all = args.get("replace_all", False)
 
         def edit() -> int:
-            text = path.read_text(encoding="utf-8")
-            count = text.count(old)
+            with open(self._open(path, os.O_RDWR), "r+", encoding="utf-8") as f:
+                text = f.read()
+                count = text.count(old)
+                if count == 1 or (count > 1 and replace_all):
+                    f.seek(0)
+                    f.truncate()
+                    f.write(text.replace(old, new))
             if count == 0:
                 raise ToolError(f"old_string not found in {self._display(path)}")
             if count > 1 and not replace_all:
@@ -383,7 +427,6 @@ class ShellFilesTools(Tools):
                     f"old_string occurs {count} times in {self._display(path)}; "
                     "add context to make it unique or set replace_all"
                 )
-            path.write_text(text.replace(old, new), encoding="utf-8")
             return count
 
         count = await asyncio.to_thread(edit)
@@ -427,7 +470,8 @@ class ShellFilesTools(Tools):
                 if name_glob and not fnmatch(path.name, name_glob):
                     continue
                 try:
-                    if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
+                    info = path.lstat()  # links and special files are skipped, not followed
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SEARCH_FILE_BYTES:
                         continue
                     data = path.read_bytes()
                 except OSError:

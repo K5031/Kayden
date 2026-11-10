@@ -28,8 +28,12 @@ async def fake_resolve(host: str) -> list[str]:
     return PUBLIC[host]
 
 
+connections: list[tuple[str, str, str | None]] = []  # address, Host header, TLS name
+
+
 def handler(request: httpx2.Request) -> httpx2.Response:
-    host, path = request.url.host, request.url.path
+    host, path = request.headers["host"], request.url.path
+    connections.append((request.url.host, host, request.extensions.get("sni_hostname")))
     if host == "sneaky.example":
         return httpx2.Response(302, headers={"location": "http://127.0.0.1:8000/admin"})
     if path == "/moved":
@@ -120,6 +124,16 @@ async def test_fetch_extracts_the_main_text_as_markdown(tools, tmp_path):
 async def test_fetch_follows_redirects_and_reports_the_final_url(tools, tmp_path):
     out = await run(tools, tmp_path, "web_fetch", url="https://example.com/moved")
     assert out.content.startswith("URL: https://other.example/article")
+
+
+async def test_fetch_connects_to_the_address_it_checked(tools, tmp_path):
+    """No second lookup at connect time, so a name cannot be switched to a local address
+    between the check and the request (DNS rebinding)."""
+    connections.clear()
+    await run(tools, tmp_path, "web_fetch", url="https://example.com/data.json")
+    assert connections == [("93.184.215.14", "example.com", "example.com")]
+    await run(tools, tmp_path, "web_fetch", url="http://[2606:4700::1111]:8080/data.json")
+    assert connections[-1] == ("2606:4700::1111", "[2606:4700::1111]:8080", None)
 
 
 async def test_fetch_returns_text_and_json_as_they_are(tools, tmp_path):

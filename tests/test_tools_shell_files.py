@@ -99,7 +99,52 @@ async def test_read_file_offset_and_limit(tools, workspace, tmp_path):
     (workspace / "lines.txt").write_text("".join(f"{i}\n" for i in range(1, 11)))
     out = await run(tools, tmp_path, "read_file", path="lines.txt", offset=3, limit=2)
     assert out.content.startswith("3\n4\n")
-    assert "10 lines total" in out.content
+    assert "use offset 5 to read on" in out.content
+
+
+async def test_read_file_stops_at_its_limits_without_reading_everything(tools, workspace,
+                                                                         tmp_path):
+    (workspace / "zero").symlink_to("/dev/zero")  # endless, with no line breaks
+    out = await asyncio.wait_for(run(tools, tmp_path, "read_file", path="zero"), 5)
+    assert "[truncated at" in out.content
+
+
+def outside_secret(tmp_path: Path) -> Path:
+    secret = tmp_path / "outside" / "id_key"
+    secret.parent.mkdir()
+    secret.write_text("PRIVATE KEY\n")
+    return secret
+
+
+async def test_search_skips_links_and_special_files(tools, workspace, tmp_path):
+    (workspace / "key.txt").symlink_to(outside_secret(tmp_path))
+    (workspace / "zero").symlink_to("/dev/zero")
+    out = await asyncio.wait_for(run(tools, tmp_path, "search_files", pattern="."), 5)
+    assert "PRIVATE KEY" not in out.content and "key.txt" not in out.content
+
+
+@pytest.mark.parametrize("name, args", [
+    ("read_file", {}),
+    ("write_file", {"content": "pwned"}),
+    ("edit_file", {"old_string": "PRIVATE", "new_string": "pwned"}),
+])
+async def test_a_path_swapped_for_a_link_after_the_check_is_refused(tools, workspace, tmp_path,
+                                                                    name, args):
+    secret = outside_secret(tmp_path)
+    call = ToolCall("c", name, {"path": "notes.txt", **args})
+    (workspace / "notes.txt").write_text("PRIVATE notes\n")
+    assert await tools.confined(call)
+    (workspace / "notes.txt").unlink()
+    (workspace / "notes.txt").symlink_to(secret)  # swapped between the check and the run
+    out = await tools.execute(call, ctx(tmp_path))
+    assert out.is_error and "outside the work folder" in out.content
+    assert secret.read_text() == "PRIVATE KEY\n" and "PRIVATE KEY" not in out.content
+
+
+async def test_a_call_that_was_not_confined_may_still_reach_outside(tools, tmp_path):
+    secret = outside_secret(tmp_path)  # the user was asked and allowed it
+    out = await run(tools, tmp_path, "read_file", path=str(secret))
+    assert out.content == "PRIVATE KEY\n"
 
 
 async def test_read_directory_is_error(tools, tmp_path):

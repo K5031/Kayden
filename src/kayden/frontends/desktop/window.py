@@ -760,6 +760,7 @@ class MainWindow(QMainWindow):
         self.model.on_change = self._changed
         self._widgets: dict[int, QWidget] = {}  # by id() of its item
         self._groups: dict[int, StepGroup] = {}  # by id() of its first step
+        self._arrange_pending = False
         self._dialog: QDialog | None = None
         self.memory_dialog: MemoryDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
@@ -999,6 +1000,13 @@ class MainWindow(QMainWindow):
         await asyncio.sleep(ZOOM_SAVE_DELAY_S)
         await save_zoom(path, theme.zoom())
 
+    async def save_pending_zoom(self) -> None:
+        """Write a zoom change still waiting for its delay, before the window goes."""
+        if self._zoom_saver is not None and not self._zoom_saver.done():
+            self._zoom_saver.cancel()
+            assert self.zoom_file is not None
+            await save_zoom(self.zoom_file, theme.zoom())
+
     # ── startup ───────────────────────────────────────────────────────────
 
     async def begin(self, conversation_id: str | None = None) -> None:
@@ -1048,21 +1056,21 @@ class MainWindow(QMainWindow):
                     self.memory_dialog.refresh()
             case Inserted(item=item):
                 self._widgets[id(item)] = self._widget_for(item)
-                self._arrange()
+                self._arrange_soon()
                 self._show_empty_state()
             case Updated(item=item):
                 if (widget := self._widgets.get(id(item))) is not None:
                     widget.refresh()  # type: ignore[attr-defined]
                     if isinstance(group := self._group_of(widget), StepGroup):
                         if isinstance(item, AssistantItem) and (item.text or item.refused):
-                            self._arrange()  # a reply now: out of the group
+                            self._arrange_soon()  # a reply now: out of the group
                         else:
                             group.refresh()
             case Removed(item=item):
                 if (widget := self._widgets.pop(id(item), None)) is not None:
                     _detach(widget)
                     _discard(widget)
-                self._arrange()
+                self._arrange_soon()
                 self._show_empty_state()
             case PromptsChanged():
                 self._rebuild_prompts()
@@ -1094,9 +1102,17 @@ class MainWindow(QMainWindow):
         self._rebuild_prompts()
         self._refresh_status()
 
+    def _arrange_soon(self) -> None:
+        """Arrange once the current burst of changes is in (a page of history, a commit
+        that replaces what streamed), not once per item."""
+        if not self._arrange_pending:
+            self._arrange_pending = True
+            asyncio.get_running_loop().call_soon(self._arrange)
+
     def _arrange(self) -> None:
         """Lay the item widgets out as step_segments groups them, keeping each group (and
         whether it is open) for as long as its first step stays first."""
+        self._arrange_pending = False
         groups: dict[int, StepGroup] = {}
         for index, segment in enumerate(step_segments(self.model.items)):
             if isinstance(segment, list):
@@ -1240,13 +1256,13 @@ class MainWindow(QMainWindow):
         box.open()
 
     def _add_to_app_menu(self) -> None:
-        try:
-            app_menu.install()
-        except OSError as e:
-            self.model.notify(f"Kayden could not be added to the app menu: {e}")
-            return
-        self.app_menu_action.setVisible(False)
-        self.model.notify("Kayden is now in your app menu.")
+        def added(_: None) -> None:
+            self.app_menu_action.setVisible(False)
+            self.model.notify("Kayden is now in your app menu.")
+
+        self.controller.command(
+            asyncio.to_thread(app_menu.install), done=added,
+            failed=lambda e: self.model.notify(f"Kayden could not be added to the app menu: {e}"))
 
     def open_memory(self) -> None:
         if self.memory_dialog is None:

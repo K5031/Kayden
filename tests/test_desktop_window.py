@@ -257,8 +257,8 @@ async def test_kayden_can_be_added_to_the_app_menu(make, qapp, tmp_path, monkeyp
     add = window.app_menu_action
     assert add.text() == "&Add to App Menu" and add.isVisible()
     add.trigger()
+    await eventually(lambda: not add.isVisible())
     assert (tmp_path / "applications/io.github.k5031.kayden.desktop").exists()
-    assert not add.isVisible()
     assert "app menu" in controller.model.items[-1].text
     other, _controller, _ = await open_window(h)
     assert not other.app_menu_action.isVisible()  # already there
@@ -597,6 +597,10 @@ async def test_ctrl_plus_minus_and_zero_zoom_and_are_remembered(make, qapp, unzo
     assert theme.zoom() == theme.zoom_step(1.0, 1)
     actions["Actual Size"].trigger()
     assert theme.zoom() == 1.0
+    actions["Zoom In"].trigger()
+    await window.save_pending_zoom()  # as when the window closes right away
+    assert '"zoom": 1.1' in saved.read_text()
+    actions["Actual Size"].trigger()
     assert "Ctrl+=" in [k.toString() for k in actions["Zoom In"].shortcuts()]
     assert actions["Actual Size"].shortcut().toString() == "Ctrl+0"
     await eventually(lambda: '"zoom": 1.0' in saved.read_text())
@@ -675,3 +679,17 @@ async def test_a_replaced_streaming_reply_stays_hidden(make, qapp):
     shown = [b for b in window.findChildren(AssistantBubble) if b.isVisible()]
     assert shown == widgets(window, AssistantBubble)
     window.close()
+
+
+async def test_a_burst_of_changes_is_laid_out_once(make, qapp, monkeypatch):
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    await asyncio.sleep(0)
+    arranged = []
+    original = window._arrange
+    monkeypatch.setattr(window, "_arrange", lambda: (arranged.append(1), original()))
+    for n in range(20):  # as a page of earlier messages arrives
+        controller.model.notify(f"note {n}", "info")
+    await asyncio.sleep(0)
+    assert len(arranged) == 1 and window.items_layout.count() >= 20

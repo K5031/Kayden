@@ -231,3 +231,19 @@ async def test_usage_persists(make: Any) -> None:
     h3: Harness = await make(data_dir=h.data_dir)
     await h3.start()  # one budget per data folder, whatever the conversation
     assert h3.runtime.snapshot().usage.usage.input_tokens == 500
+
+
+async def test_usage_is_written_off_the_loop_with_the_latest_totals(tmp_path):
+    import json
+
+    from kayden.api import Budget, Usage
+    from kayden.runtime.budget import BudgetTracker
+
+    tracker = BudgetTracker(Budget())
+    tracker.load(tmp_path / "usage.json")
+    for _ in range(50):
+        tracker.charge(Usage(input_tokens=10), 0.01)
+    assert not (tmp_path / "usage.json").exists()  # nothing written on the loop
+    await tracker.flush()
+    saved = json.loads((tmp_path / "usage.json").read_text())
+    assert saved["input_tokens"] == 500 and saved["cost_usd"] == pytest.approx(0.5)
