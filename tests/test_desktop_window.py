@@ -8,6 +8,7 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import asyncio
+import itertools
 from typing import Any
 
 import pytest
@@ -17,6 +18,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QPushButton
 
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
+from kayden.frontends.desktop import theme
 from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
 from kayden.frontends.desktop.window import (
     DATE_ROLE,
@@ -41,7 +43,10 @@ RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
 
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+    """Styled as the launcher styles it: sizes and layout depend on the style sheet."""
+    app = QApplication.instance() or QApplication([])
+    theme.apply(app, dark=False)
+    return app
 
 
 async def open_window(h: Harness) -> tuple[MainWindow, Controller, asyncio.Task[None]]:
@@ -172,12 +177,17 @@ async def test_welcome_saves_the_key_folder_and_limit_then_restarts(installed, q
     runtime = setup_runtime(tmp_path)
     controller = Controller(runtime, ConversationModel())
     window = MainWindow(runtime, controller)
+    window.show()  # as the launcher does, before the welcome opens
     asyncio.create_task(controller.run())
     await window.begin()
     dialog = window._dialog
     assert isinstance(dialog, WelcomeDialog)
     names = [dialog.provider.item(i).text() for i in range(dialog.provider.count())]
     assert "First AI" in names and "keyless" not in names  # only providers that take keys
+    await asyncio.sleep(0)
+    rows = [dialog.provider.visualItemRect(dialog.provider.item(i)) for i in range(len(names))]
+    assert all(below.top() >= above.bottom() for above, below in itertools.pairwise(rows)), (
+        "provider rows overlap")
     dialog.provider.setCurrentRow(names.index("Second AI"))
     dialog.pages.setCurrentIndex(1)
     dialog.key.setText("sk-good")

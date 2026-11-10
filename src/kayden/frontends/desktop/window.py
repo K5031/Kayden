@@ -1398,6 +1398,9 @@ class WelcomeDialog(QDialog):
         column.addWidget(_label("Choose your AI provider. Kayden uses its models and you pay "
                                 "it directly for what you use."))
         self.provider = QListWidget(objectName="choices")
+        # Rows are sized by the style sheet, and the list lays them out as soon as one is
+        # selected: without this they are placed by their unstyled height and overlap.
+        self.provider.ensurePolished()
         self.provider.setAccessibleName("AI provider")
         self.cores = [m for m in settings.modules["core"].installed if m.key_name is not None]
         for core in self.cores:
