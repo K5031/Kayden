@@ -32,8 +32,9 @@ def test_install_adds_a_launcher_that_starts_the_desktop_app(data_home: Path) ->
     assert (e["Type"], e["Name"], e["Terminal"]) == ("Application", "Kayden", "false")
     # The desktop launcher, not `kayden`: a menu has no terminal for the terminal app.
     assert e["Exec"] == f"{sys.executable} -m kayden.frontends.desktop.launcher"
-    assert e["Icon"] == e["StartupWMClass"] == "io.github.k5031.kayden"
-    icon = data_home / "icons/hicolor/scalable/apps/io.github.k5031.kayden.svg"
+    assert e["StartupWMClass"] == "io.github.k5031.kayden"
+    assert e["Icon"] == app_menu.ICON_NAME and e["Icon"].startswith("io.github.k5031.kayden-")
+    icon = data_home / f"icons/hicolor/scalable/apps/{app_menu.ICON_NAME}.svg"
     assert icon.read_text() == app_menu.ICON.read_text() and "<svg" in icon.read_text()
     assert app_menu.is_current()
 
@@ -54,8 +55,18 @@ def test_only_linux_has_an_app_menu_entry(monkeypatch: pytest.MonkeyPatch) -> No
     assert not app_menu.supported()
 
 
-def test_an_older_icon_is_not_current(data_home: Path) -> None:
-    app_menu.install()
-    icon = data_home / "icons/hicolor/scalable/apps/io.github.k5031.kayden.svg"
-    icon.write_text("<svg>old</svg>")
+def test_a_new_icon_gets_a_new_name_and_replaces_the_old_one(data_home: Path) -> None:
+    """Desktops cache icons by name, so a changed icon must not keep its name."""
+    apps = data_home / "icons/hicolor/scalable/apps"
+    apps.mkdir(parents=True)
+    (apps / "io.github.k5031.kayden.svg").write_text("<svg>old</svg>")
+    (apps / "io.github.k5031.kayden-0ld0ld00.svg").write_text("<svg>older</svg>")
+    (data_home / "applications").mkdir()
+    (data_home / "applications/io.github.k5031.kayden.desktop").write_text(
+        "[Desktop Entry]\nIcon=io.github.k5031.kayden\n")
+    (apps / "other-app.svg").write_text("<svg/>")
     assert not app_menu.is_current()  # Add to App Menu shows again, to update it
+    app_menu.install()
+    assert sorted(p.name for p in apps.iterdir()) == [f"{app_menu.ICON_NAME}.svg",
+                                                      "other-app.svg"]
+    assert app_menu.is_current()
