@@ -10,7 +10,7 @@ import os
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +22,6 @@ from kayden.api import (
     BUILTIN_TOOLS,
     PERMISSION_CEILING_ENV,
     RESERVED_TOOL_NAMES,
-    Activation,
     AgentConfig,
     AgentState,
     ArchiveHit,
@@ -32,8 +31,10 @@ from kayden.api import (
     Completed,
     ContextOverflowError,
     ContextRequest,
+    ConversationDeleted,
     ConversationId,
     ConversationInfo,
+    ConversationUpdated,
     Core,
     CoreError,
     Decision,
@@ -45,12 +46,13 @@ from kayden.api import (
     InstancePaths,
     MaintenanceFinished,
     MaintenanceStarted,
+    MemoriesChanged,
     Memory,
+    MemoryEntry,
     MemoryView,
     Message,
     MessageCommitted,
     MessageQueued,
-    Mode,
     ModelInfo,
     ModelRetry,
     ModelSelected,
@@ -95,7 +97,7 @@ from kayden.api import (
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
 from kayden.runtime.config import (
     ACTIVATION_NOTICE,
-    CONTINUOUS_PROMPT,
+    AUTONOMY_PROMPT,
     ModuleSpec,
     Provider,
     RuntimeConfig,
@@ -111,6 +113,12 @@ _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_P
 _QUIET = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 _HIT_PREVIEW_CHARS = 1000
 _OP_STATUS_MAX_WAIT_S = 60
+USAGE_FILE = "usage.json"
+EVENT_LOG_FILE = "events.jsonl"
+# Usage files of the Kayden versions that kept a budget per mode; summed into USAGE_FILE.
+LEGACY_USAGE_FILES = ("usage-session.json", "usage-continuous.json")
+_NO_MEMORY_EDITING = "this memory module cannot edit memories"
+_NO_DELETION = "this memory module cannot delete conversations"
 
 
 def _new_id() -> str:
@@ -251,7 +259,7 @@ class Runtime:
         self._bus = EventBus(config.subscriber_queue_size, self._log)
         self._budget = BudgetTracker(config.budget)
 
-        self._mode: Mode | None = None
+        self._started = False
         self._lock: InstanceLock | None = None
         self._agent_config: AgentConfig | None = None
         self._conversation: ConversationInfo | None = None
@@ -314,21 +322,28 @@ class Runtime:
     async def list_tools(self) -> Sequence[ToolSpec]:
         return list((await self._offered_tools()).values())
 
-    async def list_conversations(self, mode: Mode) -> Sequence[ConversationInfo]:
-        return await self._memory.list_conversations(mode)
+    async def list_conversations(self, *, include_archived: bool = False
+                                 ) -> Sequence[ConversationInfo]:
+        return await self._memory.list_conversations(include_archived=include_archived)
 
     async def history(self, conversation_id: ConversationId, *, before: str | None = None,
                       limit: int | None = None) -> Sequence[Message]:
         return await self._memory.history(conversation_id, before=before, limit=limit)
 
-    async def search_archive(self, query: str, *, mode: Mode | None = None,
+    async def search_archive(self, query: str, *,
                              conversation_id: ConversationId | None = None,
                              limit: int = 10) -> Sequence[ArchiveHit]:
-        return await self._memory.search(query, mode=mode, conversation_id=conversation_id,
-                                         limit=limit)
+        scope = None if conversation_id is None else [conversation_id]
+        return await self._memory.search(query, conversation_ids=scope, limit=limit)
 
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None:
         return await self._memory.inspect(conversation_id)
+
+    async def memories(self) -> Sequence[MemoryEntry]:
+        try:
+            return await self._memory.memories()
+        except NotImplementedError:
+            raise NotImplementedError(_NO_MEMORY_EDITING) from None
 
     # ── Control ──────────────────────────────────────────────────────────
 
@@ -340,8 +355,9 @@ class Runtime:
             raise RuntimeStateError(f"cannot start while {self._state()}")
         if self._ops:
             raise RuntimeStateError("operations are still outstanding")
-        if self._mode is not None and options.mode != self._mode:
-            raise RuntimeStateError(f"this process runs {self._mode} mode")
+        if options.conversation_id is not None and (
+                options.seed_from is not None or not options.remember):
+            raise ValueError("remember and seed_from apply to a new conversation only")
         await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
         if model is None:
@@ -350,11 +366,13 @@ class Runtime:
         if (light := self._config.maintenance_model) is not None:
             self._check_model(light)
 
-        if self._mode is None:
-            self._lock = InstanceLock.acquire(self._config.data_dir, options.mode)
-            self._mode = options.mode
-            self._budget.load(self._config.data_dir / f"usage-{options.mode}.json")
-            self._log.open(self._config.data_dir / f"events-{options.mode}.jsonl")
+        if not self._started:
+            data_dir = self._config.data_dir
+            self._lock = InstanceLock.acquire(data_dir)
+            self._started = True
+            self._budget.load(data_dir / USAGE_FILE, [data_dir / f for f in LEGACY_USAGE_FILES])
+            self._budget.save()
+            self._log.open(data_dir / EVENT_LOG_FILE)
             self._scratch.mkdir(exist_ok=True)
             self._loop_task = asyncio.create_task(self._run_loop())
 
@@ -363,19 +381,16 @@ class Runtime:
             self._grants.clear()
         self._conversation = conversation
         self._model = model
-        activation = (options.activation if options.mode == Mode.CONTINUOUS
-                      else Activation.USER_CONTROLLED)
-        self._agent_config = AgentConfig(options.mode, activation, self._config.budget,
-                                         self._permissions)
+        self._agent_config = AgentConfig(self._config.budget, self._permissions)
+        # A resumed autonomous conversation has no pending wake-up: it waits for the user.
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
         self._backlog.clear()
         if resumed:
             await self._repair()
         self._log.decision("start", conversation=conversation.id, resumed=resumed,
-                           mode=options.mode, activation=activation, model=model)
-        # A resumed continuous agent comes back stopped and waits for the user.
-        resumed_continuous = resumed and options.mode == Mode.CONTINUOUS
-        self._set_base(AgentState.STOPPED if resumed_continuous else AgentState.IDLE)
+                           autonomous=conversation.autonomous, remember=conversation.remember,
+                           seed_from=conversation.seed_from, model=model)
+        self._set_base(AgentState.IDLE)
         return conversation
 
     async def select_model(self, model_id: str) -> None:
@@ -419,14 +434,10 @@ class Runtime:
 
     async def activate(self) -> None:
         state = self._state()
-        if state == AgentState.IDLE:
-            assert self._agent_config is not None
-            if self._agent_config.activation != Activation.USER_CONTROLLED:
-                raise RuntimeStateError("an agent-controlled agent activates itself")
-        elif state == AgentState.FAILED:
+        if state == AgentState.FAILED:
             if reason := self._budget.exhausted():
                 raise RuntimeStateError(f"budget exhausted: {reason}")
-        elif state != AgentState.STOPPED:
+        elif state not in (AgentState.IDLE, AgentState.STOPPED):
             raise RuntimeStateError(f"cannot activate while {state}")
         self._request_cycle("user activation")
 
@@ -457,6 +468,87 @@ class Runtime:
             raise RuntimeStateError(f"call {call_id} is not running")
         self._log.decision("cancel_operation", call_id=call_id, by="user")
         op.request_cancel()
+
+    # ── Conversations and long-term memory ───────────────────────────────
+
+    async def set_autonomous(self, autonomous: bool) -> None:
+        if self._conversation is None:
+            raise RuntimeStateError("not started")
+        previous = self._conversation
+        # In memory first, so a wake-up check during the write already sees it.
+        self._conversation = replace(previous, autonomous=autonomous)
+        if not autonomous:
+            self._wake_set, self._immediate_wake = None, False
+        try:
+            info = await self._memory.update_conversation(previous.id, autonomous=autonomous)
+        except BaseException:
+            if self._conversation.id == previous.id:
+                self._conversation = replace(self._conversation,
+                                             autonomous=previous.autonomous)
+            raise
+        self._log.decision("set_autonomous", conversation=info.id, autonomous=autonomous)
+        self._conversation_updated(info)
+
+    async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
+        info = await self._memory.update_conversation(conversation_id, title=title)
+        self._log.decision("rename_conversation", conversation=conversation_id,
+                           cleared=info.title is None)
+        self._conversation_updated(info)
+
+    async def archive_conversation(self, conversation_id: ConversationId,
+                                   archived: bool) -> None:
+        info = await self._memory.update_conversation(conversation_id, archived=archived)
+        self._log.decision("archive_conversation", conversation=conversation_id,
+                           archived=archived)
+        self._conversation_updated(info)
+
+    async def delete_conversation(self, conversation_id: ConversationId) -> None:
+        if self._conversation is not None and conversation_id == self._conversation.id:
+            raise RuntimeStateError("this conversation is open; open another one first")
+        try:
+            await self._memory.delete_conversation(conversation_id)
+        except NotImplementedError:
+            raise NotImplementedError(_NO_DELETION) from None
+        self._log.decision("delete_conversation", conversation=conversation_id)
+        self._emit(ConversationDeleted(conversation_id))
+
+    async def add_memory(self, text: str) -> MemoryEntry:
+        if not text.strip():
+            raise ValueError("the memory is empty")
+        entry = await self._edit_memories(self._memory.remember(text.strip()))
+        self._log.decision("memory_added", entry=entry.id)
+        self._emit(MemoriesChanged())
+        return entry
+
+    async def edit_memory(self, entry_id: str, text: str) -> MemoryEntry:
+        if not text.strip():
+            raise ValueError("the memory is empty")
+        entry = await self._edit_memories(self._memory.revise(entry_id, text.strip()))
+        self._log.decision("memory_edited", entry=entry_id)
+        self._emit(MemoriesChanged())
+        return entry
+
+    async def forget_memory(self, entry_id: str) -> None:
+        await self._edit_memories(self._memory.forget(entry_id))
+        self._log.decision("memory_forgotten", entry=entry_id)
+        self._emit(MemoriesChanged())
+
+    async def _edit_memories[T](self, call: Awaitable[T]) -> T:
+        try:
+            return await call
+        except NotImplementedError:
+            raise NotImplementedError(_NO_MEMORY_EDITING) from None
+
+    def _conversation_updated(self, info: ConversationInfo) -> None:
+        if self._conversation is not None and info.id == self._conversation.id:
+            self._conversation = info
+        self._emit(ConversationUpdated(info))
+
+    async def _find_conversation(self, conversation_id: ConversationId) -> ConversationInfo:
+        for info in await self._memory.list_conversations(include_archived=True):
+            if info.id == conversation_id:
+                return info
+        raise KeyError(conversation_id)
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:
         if self._state() != AgentState.AWAITING_PERMISSION:
@@ -749,9 +841,12 @@ class Runtime:
     def _counter(self, model: str) -> TokenCounter:
         return calibrated(self._calibration.get(model, 1.0))
 
+    def _autonomous(self) -> bool:
+        return self._conversation is not None and self._conversation.autonomous
+
     def _system_prompt(self) -> str:
-        if self._mode == Mode.CONTINUOUS:
-            return f"{self._config.system_prompt}\n\n{CONTINUOUS_PROMPT}"
+        if self._autonomous():
+            return f"{self._config.system_prompt}\n\n{AUTONOMY_PROMPT}"
         return self._config.system_prompt
 
     def _context_request(self, info: ModelInfo, tools: Sequence[ToolSpec],
@@ -770,7 +865,7 @@ class Runtime:
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
         specs = {name: spec for name, spec in BUILTIN_TOOLS.items()
-                 if name != "idle" or self._mode == Mode.CONTINUOUS}
+                 if name != "idle" or self._autonomous()}
         try:
             module_specs = await self._tools.list_tools()
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
@@ -786,21 +881,15 @@ class Runtime:
     # ── Conversations and resume repair ──────────────────────────────────
 
     async def _open_conversation(self, options: StartOptions) -> tuple[ConversationInfo, bool]:
-        existing = await self._memory.list_conversations(options.mode)
-        if options.mode == Mode.CONTINUOUS:
-            if options.conversation_id is not None and (
-                    not existing or existing[0].id != options.conversation_id):
-                raise ValueError(f"{options.conversation_id} is not this instance's continuous "
-                                 "conversation")
-            if existing:
-                return existing[0], True
-            return await self._memory.create_conversation(Mode.CONTINUOUS), False
         if options.conversation_id is None:
-            return await self._memory.create_conversation(Mode.SESSION), False
-        for info in existing:
-            if info.id == options.conversation_id:
-                return info, True
-        raise KeyError(options.conversation_id)
+            return await self._memory.create_conversation(
+                autonomous=bool(options.autonomous), remember=options.remember,
+                seed_from=options.seed_from), False
+        info = await self._find_conversation(options.conversation_id)
+        if options.autonomous is not None and options.autonomous != info.autonomous:
+            info = await self._memory.update_conversation(info.id,
+                                                          autonomous=options.autonomous)
+        return info, True
 
     async def _repair(self) -> None:
         assert self._conversation is not None
@@ -974,7 +1063,7 @@ class Runtime:
 
     def _enter_idle(self, idle: _IdleRequest | None) -> None:
         self._base = AgentState.IDLE
-        if self._mode != Mode.CONTINUOUS:
+        if not self._autonomous():
             return
         outstanding = set(self._ops)
         if idle is not None and idle.wait_for is not None:
@@ -986,10 +1075,7 @@ class Runtime:
         self._log.decision("idle", wait_for=sorted(wake), immediate=self._immediate_wake)
 
     def _check_wake(self) -> None:
-        cfg = self._agent_config
-        if (cfg is None or cfg.mode != Mode.CONTINUOUS
-                or cfg.activation != Activation.AGENT_CONTROLLED
-                or self._base != AgentState.IDLE or self._cycle_active
+        if (not self._autonomous() or self._base != AgentState.IDLE or self._cycle_active
                 or self._cycle_requested or self._stopping):
             return
         if self._immediate_wake or (self._wake_set and not self._wake_set & set(self._ops)):
@@ -1044,6 +1130,11 @@ class Runtime:
         if task.cancelled():
             return
         exc = task.exception()
+        if exc is None and task.result() and self._conversation.title is None:
+            info = await self._find_conversation(self._conversation.id)
+            if info.title is not None:  # Memory wrote an automatic title
+                self._log.decision("title", conversation=info.id)
+                self._conversation_updated(info)
         if exc is None or isinstance(exc, BudgetExhausted):
             return  # the budget is re-checked by the caller
         kind = FailureKind.MODEL if isinstance(exc, CoreError) else FailureKind.INTERNAL
@@ -1426,7 +1517,7 @@ class Runtime:
 
     async def _builtin(self, call: ToolCall) -> tuple[ToolStatus, str]:
         args = call.arguments
-        assert self._conversation is not None and self._mode is not None
+        assert self._conversation is not None
         match call.name:
             case "op_status":
                 op = self._known_ops.get(args["call_id"])
@@ -1448,13 +1539,15 @@ class Runtime:
                 return ToolStatus.OK, (f"Cancellation requested; operation {op.call.id} ended "
                                        f"as {op.supervisor.result().status}.")
             case "recall":
-                hits = await self._memory.search(args["query"],
-                                                 conversation_id=self._conversation.id,
-                                                 limit=args.get("limit", 5))
-                return ToolStatus.OK, _format_hits(hits)
-            case "peek_other_mode":
-                other = Mode.CONTINUOUS if self._mode == Mode.SESSION else Mode.SESSION
-                hits = await self._memory.search(args["query"], mode=other,
+                scope = [self._conversation.id]
+                if args.get("scope", "conversation") == "all":
+                    if not self._conversation.remember:
+                        return ToolStatus.ERROR, (
+                            'recall with scope "all" is not available here: the user turned '
+                            "off Remember for this conversation, so it stays private.")
+                    scope += [c.id for c in await self._memory.list_conversations()
+                              if c.remember and c.id != self._conversation.id]
+                hits = await self._memory.search(args["query"], conversation_ids=scope,
                                                  limit=args.get("limit", 5))
                 return ToolStatus.OK, _format_hits(hits)
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."

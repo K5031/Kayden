@@ -114,11 +114,10 @@ the oldest envelopes. It follows the `RuntimeSnapshot` order:
 
 "Load earlier messages" pages back with `history(before=...)`.
 
-**Conversations.** The app has no mode choice. It always runs Session Mode, the one kind
-of conversation that remains once Continuous Mode is retired
-([Autonomy into sessions](2026-11-07-autonomy-into-sessions.md)). A sidebar lists
-`list_conversations(Mode.SESSION)`, newest first, with a New conversation button. An entry
-shows its title, or the date when it has none. Choosing one calls `start()`, which is
+**Conversations.** The app has no mode choice: there is one kind of conversation
+([Autonomy into sessions](../implemented/2026-11-07-autonomy-into-sessions.md)). A sidebar lists
+`list_conversations()`, newest first, with a New conversation button. An entry
+shows its title, else the start of its first message, else the date. Choosing one calls `start()`, which is
 allowed only while idle with no outstanding operations. Otherwise the sidebar is disabled
 with the reason shown. A Model menu lists `list_models()` with prices and calls
 `select_model`. Search over the archive (`search_archive`) is in a later version.
@@ -205,9 +204,6 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 - **Windows.** The runtime's instance lock uses `fcntl`, and the shell tool uses `killpg`
   and a POSIX shell. Porting both needs its own note. The toolkit and Briefcase already
   target Windows.
-- **Autonomy, conversation management and memory editing.** They come from the
-  [autonomy note](2026-11-07-autonomy-into-sessions.md), which retires Continuous Mode, so
-  the app never gets a mode choice. Each control is added when its runtime part lands.
 - Archive search, memory inspection, a tool list, editing the other budget dimensions.
 - Automatic updates.
 - Moving the TUI onto the shared view model beyond the loosening check.

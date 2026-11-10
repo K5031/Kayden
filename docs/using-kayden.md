@@ -2,24 +2,33 @@
 
 ## Starting
 
-`kayden` opens the start screen: choose the mode (see [Concepts](concepts.md#modes)), an
-existing conversation or a new one, and the model, then press Enter. To skip the screen:
+`kayden` opens the start screen: pick an existing conversation or a new one, and the model,
+then press Enter. For a new conversation you can also set:
+
+| Field | Does |
+|---|---|
+| Autonomous | The agent may wait for its background work and continue on its own (see [Autonomy](concepts.md#autonomy)) |
+| Continue from | Start from where an earlier conversation left off |
+| Remember | Off: this chat won't use or add to long-term memory |
+
+To skip the screen:
 
 ```bash
-kayden --mode session                      # a new conversation
-kayden --mode session --conversation ID    # continue one
-kayden --mode continuous                   # the always-on agent
+kayden --conversation ID       # continue a conversation
+kayden --autonomous            # a new autonomous conversation
 ```
 
 | Option | Does |
 |---|---|
-| `--mode session\|continuous` | Start right away in this mode |
-| `--activation user_controlled\|agent_controlled` | Continuous mode's [activation](concepts.md#activation-continuous-mode) |
-| `--conversation ID` | Continue this session conversation |
+| `--conversation ID` | Start right away in this conversation |
+| `--autonomous`, `--no-autonomous` | Start right away; turn autonomy on or off for the conversation |
 | `--model ID`, `--maintenance-model ID` | Override the models for this run |
 | `--permissions ask\|allow_read_only\|deny` | Override the [permission level](settings.md#permissions) for this run |
 | `--data-dir DIR`, `--config FILE` | Use another data folder or config file |
 | `--show-config` | Print the settings Kayden would use, then exit |
+
+`--mode` and `--activation` still work for now but print a warning: use `--autonomous`
+instead.
 
 ## Talking to the agent
 
@@ -50,9 +59,24 @@ The permission level is set in [Settings](settings.md#permissions).
 | Ctrl+O | `/model [id]` | Switch the model |
 | F2 | `/settings` | Open the settings screen |
 | Ctrl+K | `/cancel [id]` | Cancel one running tool |
+| F3 | `/conversations` | Open, start, rename, archive or delete conversations |
+| F4 | `/memory` | See, add, edit or forget long-term memory |
+| Ctrl+T | `/autonomous [on\|off]` | Turn autonomy on or off for this conversation |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
 | Ctrl+Q | `/quit` | Quit |
 | | `/help` | List the commands |
+
+## Conversations and memory
+
+F3 lists your conversations, newest first; "Show archived" includes archived ones. Open
+one, start a new one, rename it (leave the name empty for an automatic one), archive it to
+hide it, or delete it for good. Deleting asks first and cannot be undone; the open
+conversation cannot be deleted, so open another one first. You can only switch
+conversations while the agent is not working. See [Deleting](concepts.md#deleting) for what
+deletion does and does not reach.
+
+F4 shows long-term memory: facts Kayden keeps across conversations. Add one, correct one,
+or forget one. Forgetting a fact does not delete the messages it came from.
 
 ## Long-running tools
 

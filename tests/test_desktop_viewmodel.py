@@ -15,8 +15,8 @@ from kayden.api import (
     EventEnvelope,
     Failure,
     FailureKind,
+    MemoryEntry,
     Message,
-    Mode,
     PermissionPolicy,
     PermissionRequested,
     ProviderInfo,
@@ -37,16 +37,22 @@ from kayden.api import (
 from kayden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     BUSY_MESSAGE,
+    LABEL_CHARS,
+    NO_DELETE_MESSAGE,
+    OPEN_DELETE_MESSAGE,
     AssistantItem,
     Closed,
     Controller,
+    ConversationListChanged,
     ConversationModel,
+    MemoryListChanged,
     NoticeItem,
     Phase,
     ToolItem,
     UserItem,
     conversation_label,
     form_from,
+    memory_source,
     needs_welcome,
     newest_first,
     settings_update,
@@ -282,9 +288,121 @@ async def test_shutting_down_closes_the_view(make):
     assert model.closed and len(closed) == 1
 
 
+# ── conversations and long-term memory ───────────────────────────────────
+
+
+def changes(model: ConversationModel) -> list[object]:
+    seen: list[object] = []
+    model.on_change = seen.append
+    return seen
+
+
+async def test_private_chat_and_continue_from(make):
+    h: Harness = await make()
+    first = await h.start()
+    await h.turn("plan a trip")
+    model, controller, _ = await attach(h)
+    assert not model.private
+    await controller.open_conversation(None, remember=False)
+    await eventually(lambda: model.conversation.id != first.id)
+    assert model.private and not model.conversation.remember
+    await controller.open_conversation(None, seed_from=first.id)
+    await eventually(lambda: model.conversation.seed_from == first.id)
+    assert not model.private
+    listed = await controller.conversations()
+    assert listed[-1].id == first.id and listed[-1].preview == "plan a trip"
+
+
+async def test_autonomy_switch_follows_the_runtime(make):
+    h: Harness = await make()
+    await h.start()
+    model, controller, _ = await attach(h)
+    assert not model.autonomous
+    seen = changes(model)
+    await controller.set_autonomous(True)
+    await eventually(lambda: model.autonomous)
+    assert h.runtime.snapshot().conversation.autonomous
+    assert any(isinstance(c, ConversationListChanged) for c in seen)
+    await controller.set_autonomous(False)
+    await eventually(lambda: not model.autonomous)
+
+
+async def test_rename_and_archive_keep_the_list_current(make):
+    h: Harness = await make()
+    other = await h.start()
+    await h.start()
+    model, controller, _ = await attach(h)
+    seen = changes(model)
+    await controller.rename(other.id, "  Trip plans ")
+    await eventually(lambda: any(isinstance(c, ConversationListChanged) for c in seen))
+    assert model.conversation.id != other.id  # the open one is untouched
+    (renamed,) = [c for c in await controller.conversations() if c.id == other.id]
+    assert renamed.title == "Trip plans"
+    await controller.rename(other.id, "")
+    assert next(c for c in await controller.conversations() if c.id == other.id).title is None
+    await controller.archive(other.id, True)
+    assert other.id not in [c.id for c in await controller.conversations()]
+    (archived,) = [c for c in await controller.conversations(include_archived=True)
+                   if c.id == other.id]
+    assert archived.archived
+    await controller.archive(other.id, False)
+    assert other.id in [c.id for c in await controller.conversations()]
+
+
+async def test_delete_refuses_the_open_conversation(make):
+    h: Harness = await make()
+    other = await h.start()
+    current = await h.start()
+    model, controller, _ = await attach(h)
+    assert controller.delete_refusal(current.id) == OPEN_DELETE_MESSAGE
+    assert controller.delete_refusal(other.id) is None
+    await controller.delete(current.id)
+    assert of(model, NoticeItem)[-1].text == OPEN_DELETE_MESSAGE
+    seen = changes(model)
+    await controller.delete(other.id)
+    await eventually(lambda: any(isinstance(c, ConversationListChanged) for c in seen))
+    assert [c.id for c in await controller.conversations()] == [current.id]
+    assert controller.can_delete
+
+
+async def test_unsupported_memory_hides_its_controls(make):
+    h: Harness = await make(memory_kw={"editable": False})
+    other = await h.start()
+    await h.start()
+    model, controller, _ = await attach(h)
+    assert await controller.memories() is None
+    assert controller.can_delete
+    await controller.delete(other.id)
+    assert not controller.can_delete
+    assert of(model, NoticeItem)[-1].text == NO_DELETE_MESSAGE
+
+
+async def test_long_term_memory_add_edit_forget(make):
+    h: Harness = await make()
+    await h.start()
+    model, controller, _ = await attach(h)
+    assert await controller.memories() == []
+    seen = changes(model)
+    await controller.add_memory("  Likes tea ")
+    await eventually(lambda: any(isinstance(c, MemoryListChanged) for c in seen))
+    (entry,) = await controller.memories()
+    assert entry.text == "Likes tea" and memory_source(entry).startswith("Added by you")
+    await controller.edit_memory(entry.id, "Likes green tea")
+    assert [e.text for e in await controller.memories()] == ["Likes green tea"]
+    await controller.forget_memory(entry.id)
+    assert await controller.memories() == []
+    await controller.add_memory(" ")
+    assert of(model, NoticeItem)[-1].text == "Write something to remember first."
+
+
+def test_memory_source_label():
+    learned = MemoryEntry("1", "x", "c1", 0.0)
+    assert memory_source(learned).startswith("Learned in a conversation")
+
+
 # ── pure model ────────────────────────────────────────────────────────────
 
-CONVERSATION = ConversationInfo("c", Mode.SESSION, None, 0.0, 0.0)
+CONVERSATION = ConversationInfo("c", None, 0.0, 0.0)
 
 
 def _snapshot(seq: int = 0) -> RuntimeSnapshot:
@@ -413,11 +531,15 @@ def test_welcome_conversation_labels_and_refusals():
     assert not needs_welcome(replace(SETTINGS, provider=None, providers=()))  # custom Core
     assert not needs_welcome(replace(SETTINGS, providers=(
         ProviderInfo("anthropic", "Local", None, False),)))
-    old = ConversationInfo("a", Mode.SESSION, "Trip plans", 0.0, 1.0)
-    new = ConversationInfo("b", Mode.SESSION, None, 0.0, 2.0)
+    old = ConversationInfo("a", "Trip plans", 0.0, 1.0)
+    new = ConversationInfo("b", None, 0.0, 2.0)
     assert newest_first([old, new]) == [new, old]
     assert conversation_label(old) == "Trip plans"
     assert conversation_label(new).startswith("Conversation of ")
+    previewed = ConversationInfo("c", None, 0.0, 3.0, preview="  What should I\npack for Oslo?")
+    assert conversation_label(previewed) == "What should I pack for Oslo?"
+    assert conversation_label(replace(previewed, preview="x" * 200)).endswith("…")
+    assert len(conversation_label(replace(previewed, preview="x" * 200))) == LABEL_CHARS
     assert user_message(RuntimeStateError("cannot start while thinking")) == BUSY_MESSAGE
     assert user_message(RuntimeStateError("budget exhausted: max_cost_usd")) == BUDGET_MESSAGE
     assert user_message(InstanceLockedError("session mode in /d is already in use by process 7")

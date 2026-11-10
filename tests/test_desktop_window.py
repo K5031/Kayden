@@ -10,12 +10,13 @@ import asyncio
 from typing import Any
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QAction, QContextMenuEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QPushButton
 
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate
-from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
+from kayden.frontends.desktop.viewmodel import OPEN_DELETE_MESSAGE, Controller, ConversationModel
 from kayden.frontends.desktop.window import (
     AssistantBubble,
     MainWindow,
@@ -184,3 +185,157 @@ async def test_welcome_saves_the_key_folder_and_limit(make, qapp, keychain, tmp_
     after = await h.runtime.settings()
     assert after.work_folder == str(tmp_path / "work") and (tmp_path / "work").is_dir()
     assert after.budget.max_cost_usd == 3.0
+
+
+# ── conversations and long-term memory ───────────────────────────────────
+
+
+def visible[W](parent: Any, kind: type[W]) -> W:
+    (found,) = [w for w in parent.findChildren(kind) if w.isVisible()]
+    return found
+
+
+def entries(window: MainWindow) -> list[str]:
+    return [window.conversation_list.item(i).text()
+            for i in range(window.conversation_list.count())]
+
+
+def action(menu: QMenu, text: str) -> QAction:
+    (found,) = [a for a in menu.actions() if a.text() == text and a.isVisible()]
+    return found
+
+
+async def test_sidebar_labels_rename_and_archive(make, qapp):
+    h: Harness = await make()
+    other = await h.start()
+    await h.turn("What should I pack for Oslo?")
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    assert "What should I pack for Oslo?" in entries(window)
+    window.conversation_list.setCurrentRow(1)
+    QApplication.sendEvent(window.conversation_list.viewport(), QContextMenuEvent(
+        QContextMenuEvent.Reason.Keyboard, QPoint(0, 0), QPoint(0, 0)))
+    menu = visible(window, QMenu)
+    assert [a.text() for a in menu.actions() if a.text()] == [
+        "Rename…", "Continue in a new conversation", "Archive", "Delete…"]
+    menu.close()
+    info = window.conversation_info(other.id)
+    action(window.conversation_menu(info), "Rename…").trigger()
+    dialog = visible(window, QInputDialog)
+    dialog.setTextValue("Oslo trip")
+    dialog.accept()
+    await eventually(lambda: "Oslo trip" in entries(window))
+    action(window.conversation_menu(window.conversation_info(other.id)), "Archive").trigger()
+    await eventually(lambda: "Oslo trip" not in entries(window))
+    window.show_archived.setChecked(True)
+    await eventually(lambda: "Oslo trip  (archived)" in entries(window))
+    menu = window.conversation_menu(window.conversation_info(other.id))
+    action(menu, "Unarchive").trigger()
+    await eventually(lambda: "Oslo trip" in entries(window))
+
+
+async def test_delete_asks_and_offers_archive_first(make, qapp):
+    h: Harness = await make()
+    other = await h.start()
+    await h.runtime.rename_conversation(other.id, "Old notes")
+    current = await h.start()
+    window, _controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    action(window.conversation_menu(window.conversation_info(current.id)), "Delete…").trigger()
+    box = visible(window, QMessageBox)
+    assert box.text() == OPEN_DELETE_MESSAGE
+    box.accept()
+    action(window.conversation_menu(window.conversation_info(other.id)), "Delete…").trigger()
+    box = visible(window, QMessageBox)
+    assert "“Old notes”" in box.text() and "cannot be undone" in box.informativeText()
+    assert box.defaultButton().text() == "Archive instead"
+    box.defaultButton().click()
+    await eventually(lambda: "Old notes" not in entries(window))
+    assert other.id in [c.id for c in await h.runtime.list_conversations(include_archived=True)]
+    window.show_archived.setChecked(True)
+    await eventually(lambda: "Old notes  (archived)" in entries(window))
+    action(window.conversation_menu(window.conversation_info(other.id)), "Delete…").trigger()
+    box = visible(window, QMessageBox)
+    next(b for b in box.buttons() if b.text() == "Delete for good").click()
+    await eventually(lambda: not any("Old notes" in e for e in entries(window)))
+    assert [c.id for c in await h.runtime.list_conversations(include_archived=True)] == [
+        current.id]
+
+
+async def test_private_chat_and_continue(make, qapp):
+    h: Harness = await make()
+    first = await h.start()
+    window, controller, _ = await open_window(h)
+    assert not window.private_label.isVisibleTo(window)
+    window.private_action.trigger()
+    await eventually(lambda: controller.model.conversation.id != first.id)
+    await eventually(lambda: window.private_label.isVisibleTo(window))
+    assert "won't use or add to long-term memory" in window.private_label.text()
+    assert not h.runtime.snapshot().conversation.remember
+    await window.fill_sidebar()
+    action(window.conversation_menu(window.conversation_info(first.id)),
+           "Continue in a new conversation").trigger()
+    await eventually(lambda: controller.model.conversation.seed_from == first.id)
+    assert not window.private_label.isVisibleTo(window)
+
+
+async def test_autonomy_switch_with_spending_next_to_it(make, qapp):
+    h: Harness = await make()
+    h.core.add(Step(text="hi"))
+    await h.start()
+    await h.turn("hello")
+    window, _controller, _ = await open_window(h)
+    assert window.autonomy.text() == "Let Kayden continue on its own"
+    assert not window.autonomy.isChecked() and window.spending_label.text().endswith("spent")
+    window.autonomy.click()
+    await eventually(lambda: h.runtime.snapshot().conversation.autonomous)
+    await h.runtime.set_autonomous(False)
+    await eventually(lambda: not window.autonomy.isChecked())
+
+
+async def test_memory_dialog_add_edit_forget(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    await window.check_memory()
+    assert window.memory_action.isVisible()
+    await h.runtime.add_memory("Likes tea")
+    window.open_memory()
+    dialog = await eventually(lambda: window.memory_dialog)
+    await eventually(lambda: dialog.entries.count() == 1)
+    assert dialog.entries.item(0).text() == "Likes tea"
+    dialog.add_button.click()
+    editor = visible(dialog, QInputDialog)
+    editor.setTextValue("Lives in Oslo")
+    editor.accept()
+    await eventually(lambda: dialog.entries.count() == 2)
+    dialog.entries.setCurrentRow(0)
+    dialog.edit_button.click()
+    editor = visible(dialog, QInputDialog)
+    editor.setTextValue("Likes green tea")
+    editor.accept()
+    await eventually(lambda: dialog.entries.item(0).text() == "Likes green tea")
+    dialog.entries.setCurrentRow(0)
+    dialog.forget_button.click()
+    box = visible(dialog, QMessageBox)
+    assert "stay until you delete their conversation" in box.text()
+    box.button(QMessageBox.StandardButton.Yes).click()
+    await eventually(lambda: dialog.entries.count() == 1)
+    assert [e.text for e in await h.runtime.memories()] == ["Lives in Oslo"]
+
+
+async def test_unsupported_memory_hides_memory_and_delete(make, qapp):
+    h: Harness = await make(memory_kw={"editable": False})
+    other = await h.start()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    await window.check_memory()
+    assert not window.memory_action.isVisible()
+    await window.fill_sidebar()
+    action(window.conversation_menu(window.conversation_info(other.id)), "Delete…").trigger()
+    next(b for b in visible(window, QMessageBox).buttons()
+     if b.text() == "Delete for good").click()
+    await eventually(lambda: not controller.can_delete)
+    assert not [a for a in window.conversation_menu(window.conversation_info(other.id)).actions()
+                if a.text() == "Delete…" and a.isVisible()]

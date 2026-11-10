@@ -1,8 +1,8 @@
 # Desktop app
 
 The desktop app is a window for Kayden: a conversation list on the left, the conversation
-in the middle, and a message box at the bottom. It does everything the terminal app does
-in Session mode, without a terminal.
+in the middle, and a message box at the bottom. It does what the terminal app does, without
+a terminal.
 
 ## Install
 
@@ -42,16 +42,27 @@ When no API key is saved, a welcome window asks for three things:
 | Cancel one task | Press **Cancel** on its card. |
 | See what a tool did | Press **Details** on its card. |
 | See the model's reasoning | Open **Thinking** above a reply. |
-| Start over | **New conversation** in the list. |
+| Start over | **New conversation** (**Ctrl+N**). |
+| Chat without long-term memory | **New private chat** (**Ctrl+Shift+N**), in the menu next to New conversation. Its messages are still kept. |
 | Go back to a conversation | Click it in the list. |
+| Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). **Show archived** under the list shows hidden ones. |
+| Pick up where one left off | Right-click it: **Continue in a new conversation**. |
+| Let Kayden keep working on its own | Tick **Let Kayden continue on its own** above the conversation. See [Autonomy](concepts.md#autonomy). |
+| See what Kayden remembers | **Kayden → Memory…**: add, edit or forget what it keeps across conversations. |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |
 
 Messages you send while Kayden works are queued and shown greyed until Kayden reads them.
-You can switch conversations only while Kayden is not working on anything.
+You can switch conversations only while Kayden is not working on anything; renaming,
+archiving and deleting work any time.
 
-The status bar shows what Kayden is doing, how many tasks run in the background, the model
-and how much has been spent.
+**Delete…** asks first and offers **Archive instead**: deleting erases the conversation,
+its summary and what Kayden learned from it, and cannot be undone. The open conversation
+cannot be deleted; open another one first. See [Deleting](concepts.md#deleting) for what
+deletion does not reach.
+
+Next to the autonomy switch is what Kayden has spent so far, across all conversations. The
+status bar shows what Kayden is doing, how many tasks run in the background and the model.
 
 At start the app reopens your most recent conversation.
 
@@ -66,4 +77,3 @@ to confirm first.
 - The app and the terminal app share the same data folder (`~/.kayden`). Only one of them
   can be open at a time; the other says Kayden is already open.
 - Closing the window stops running tasks, as quitting the terminal app does.
-- The app does not offer Continuous mode.

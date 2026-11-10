@@ -14,12 +14,10 @@ import pytest
 import kayden.frontends.desktop  # noqa: F401 - before any Qt import: see its lazy-import note
 from kayden.api import (
     PERMISSION_CEILING_ENV,
-    Activation,
     AgentState,
     ConversationInfo,
     Decision,
     Message,
-    Mode,
     PermissionPolicy,
     PermissionRequested,
     Role,
@@ -77,13 +75,12 @@ class Harness:
 
     async def start(
         self,
-        mode: Mode = Mode.SESSION,
-        activation: Activation = Activation.USER_CONTROLLED,
         conversation_id: str | None = None,
         model: str | None = None,
+        **options: Any,
     ) -> ConversationInfo:
         self.conversation = await self.runtime.start(
-            StartOptions(mode, activation, conversation_id, model)
+            StartOptions(conversation_id, model, **options)
         )
         return self.conversation
 

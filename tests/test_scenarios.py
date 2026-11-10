@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from kayden.api import (
-    Activation,
     AgentState,
     Budget,
     Completed,
@@ -24,7 +23,6 @@ from kayden.api import (
     InferenceRequest,
     Message,
     MessageCommitted,
-    Mode,
     ModelInfo,
     ModelRetry,
     OperationResult,
@@ -49,9 +47,6 @@ from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.frontend import ScriptedFrontend
 from tests.fakes.memory import MemoryStore, render
 from tests.fakes.tools import FakeTools
-
-USER_CTL = Activation.USER_CONTROLLED
-AGENT_CTL = Activation.AGENT_CONTROLLED
 
 
 def op_results(messages: Sequence[Message]) -> list[OperationResult]:
@@ -100,7 +95,7 @@ async def test_a_replaceable_modules(
 
     async def script(runtime: RuntimeAPI, fe: ScriptedFrontend) -> None:
         assert fe.recorder is not None
-        conv = await runtime.start(StartOptions(Mode.SESSION))
+        conv = await runtime.start(StartOptions())
         await runtime.send("hello")
         await fe.recorder.wait_state(AgentState.IDLE, count=2)
         seen["history"] = await runtime.history(conv.id)
@@ -114,7 +109,7 @@ async def test_a_replaceable_modules(
     )
     await run_instance(config)
     assert last_text(seen["history"]) == expected
-    assert (tmp_path / "session.lock").exists()
+    assert (tmp_path / "instance.lock").exists()
 
 
 # ── B: session conversation ──
@@ -134,7 +129,7 @@ async def test_b_session_conversation(make: Any) -> None:
 
     h2: Harness = await make(store=h.store, data_dir=h.data_dir,
                              core=ScriptedCore(default=Step(text="second")))
-    assert conv.id in [c.id for c in await h2.runtime.list_conversations(Mode.SESSION)]
+    assert conv.id in [c.id for c in await h2.runtime.list_conversations()]
     await h2.start(conversation_id=conv.id)
     assert list(await h2.runtime.history(conv.id)) == before
     await h2.turn("follow-up")
@@ -142,10 +137,10 @@ async def test_b_session_conversation(make: Any) -> None:
     assert [m.id for m in request.messages][: len(before)] == [m.id for m in before]
 
 
-# ── C: continuous autonomy ──
+# ── C: autonomy ──
 
 
-async def test_c_continuous_autonomy(make: Any) -> None:
+async def test_c_autonomous_conversation(make: Any) -> None:
     tools = FakeTools()
     tools.slow("fetch", 0.4)
     core = ScriptedCore([
@@ -154,7 +149,7 @@ async def test_c_continuous_autonomy(make: Any) -> None:
         Step(text="got the result"),
     ])
     h: Harness = await make(core=core, tools=tools)
-    await h.start(Mode.CONTINUOUS, AGENT_CTL)
+    await h.start(autonomous=True)
     await h.runtime.send("go")
     await h.rec.wait_for(lambda r: any(
         isinstance(e, MessageCommitted) and e.message.blocks == (Text("got the result"),)
@@ -219,9 +214,9 @@ def batch_core() -> ScriptedCore:
     ])
 
 
-async def test_e_batch_wakeup_agent_controlled(make: Any) -> None:
+async def test_e_batch_wakeup_autonomous(make: Any) -> None:
     h: Harness = await make(core=batch_core(), tools=batch_tools())
-    await h.start(Mode.CONTINUOUS, AGENT_CTL)
+    await h.start(autonomous=True)
     await h.runtime.send("run the batch")
     await eventually(lambda: len(h.core.requests) == 3)
     assert h.tools.max_running == 3
@@ -236,9 +231,14 @@ async def test_e_batch_wakeup_agent_controlled(make: Any) -> None:
     assert {o.call_id for o in op_results(woken.messages)} == {"a", "b", "c"}
 
 
-async def test_e_batch_user_controlled_retains(make: Any) -> None:
-    h: Harness = await make(core=batch_core(), tools=batch_tools())
-    await h.start(Mode.CONTINUOUS, USER_CTL)
+async def test_e_batch_not_autonomous_retains(make: Any) -> None:
+    core = ScriptedCore([
+        Step(calls=[call("a", id="a"), call("b", id="b"), call("c", id="c")]),
+        Step(text="waiting for the batch"),
+        Step(text="batch complete"),
+    ])
+    h: Harness = await make(core=core, tools=batch_tools())
+    await h.start()
     await h.runtime.send("run the batch")
     await h.rec.wait_for(lambda r: len(r.of(ToolFinished)) == 3)
     await asyncio.sleep(0.3)
@@ -256,7 +256,7 @@ async def test_e_batch_user_controlled_retains(make: Any) -> None:
 async def test_f_stop_during_inference(make: Any) -> None:
     core = ScriptedCore([Step(text="partial", hang=True)])
     h: Harness = await make(core=core)
-    await h.start(Mode.CONTINUOUS, AGENT_CTL)
+    await h.start(autonomous=True)
     await h.runtime.send("think hard")
     await h.rec.wait_for(lambda r: any(getattr(e, "text", None) == "partial" for e in r.events))
     await h.runtime.stop()
@@ -275,7 +275,7 @@ async def test_f_stop_during_tools(make: Any) -> None:
     tools.hanging("work", progress="halfway")
     core = ScriptedCore([Step(calls=[call("work", id="w1")])])
     h: Harness = await make(core=core, tools=tools, initial_wait_s=10)
-    await h.start(Mode.CONTINUOUS, AGENT_CTL)
+    await h.start(autonomous=True)
     await h.runtime.send("do work")
     await eventually(lambda: tools.started)
     await h.runtime.stop()
@@ -302,7 +302,7 @@ def summarizing_core(reply: str = "noted") -> ScriptedCore:
 
 async def test_g_restart_persistence(make: Any) -> None:
     h: Harness = await make(core=summarizing_core(), memory_kw={"compact_at": 0.002})
-    conv = await h.start(Mode.CONTINUOUS, USER_CTL)
+    conv = await h.start(autonomous=True)
     await h.turn("remember the harbour code 7731 " + "x" * 400)
     for i in range(4):
         await h.turn(f"filler message {i} " + "y" * 400)
@@ -313,16 +313,16 @@ async def test_g_restart_persistence(make: Any) -> None:
     await h.close()
 
     h2: Harness = await make(store=h.store, data_dir=h.data_dir, core=summarizing_core())
-    conv2 = await h2.start(Mode.CONTINUOUS, AGENT_CTL)
-    assert conv2.id == conv.id
-    assert h2.runtime.snapshot().state == AgentState.STOPPED
+    conv2 = await h2.start(conv.id)
+    assert conv2.id == conv.id and conv2.autonomous
+    assert h2.runtime.snapshot().state == AgentState.IDLE
     assert list(await h2.runtime.history(conv.id)) == before
     restored = await h2.runtime.inspect_memory(conv.id)
     assert restored == view and restored is not None and restored.summary.startswith("SUMMARY")
-    hits = await h2.runtime.search_archive("harbour code", mode=Mode.CONTINUOUS)
+    hits = await h2.runtime.search_archive("harbour code")
     assert hits and "7731" in render(hits[0].message)
     await asyncio.sleep(0.2)
-    assert h2.core.requests == []  # comes back stopped, regardless of activation policy
+    assert h2.core.requests == []  # an autonomous conversation waits for the user
 
 
 # ── H: historical recall ──
@@ -354,33 +354,32 @@ async def test_h_historical_recall(make: Any) -> None:
     assert result.status == ToolStatus.OK and "4417" in result.content
 
 
-# ── I: cross-mode memory access ──
+# ── I: recall across conversations, never in a temporary chat ──
 
 
-async def test_i_cross_mode_memory(make: Any, tmp_path: Path) -> None:
-    store = MemoryStore()
-    shared_dir = tmp_path / "shared"
-    session: Harness = await make(store=store, data_dir=shared_dir,
-                                  core=ScriptedCore(default=Step(text="noted")))
-    s_conv = await session.start(Mode.SESSION)
-    await session.turn("project falcon launches on tuesday")
-    s_history = await session.transcript()
-    s_events = len(session.rec.envelopes)
-
+async def test_i_recall_across_conversations(make: Any) -> None:
     core = ScriptedCore([
-        Step(calls=[call("peek_other_mode", {"query": "falcon launches"}, id="p1")]),
+        Step(text="noted"),
+        Step(calls=[call("recall", {"query": "falcon launches", "scope": "all"}, id="p1")]),
         Step(text="tuesday it is"),
+        Step(calls=[call("recall", {"query": "falcon launches", "scope": "all"}, id="p2")]),
+        Step(text="I cannot look"),
     ])
-    cont: Harness = await make(store=store, data_dir=shared_dir, core=core)
-    await cont.start(Mode.CONTINUOUS, USER_CTL)
-    await cont.turn("when does falcon launch?")
-    result = (await cont.results())["p1"]
-    assert result.status == ToolStatus.OK and "tuesday" in result.content
+    h: Harness = await make(core=core)
+    first = await h.start()
+    await h.turn("project falcon launches on tuesday")
+    first_history = await h.transcript()
 
-    assert list(await session.runtime.history(s_conv.id)) == s_history
-    assert len(await session.runtime.list_conversations(Mode.SESSION)) == 1
-    await asyncio.sleep(0.1)
-    assert len(session.rec.envelopes) == s_events  # not woken or interrupted
+    await h.start()
+    await h.turn("when does falcon launch?")
+    result = (await h.results())["p1"]
+    assert result.status == ToolStatus.OK and "tuesday" in result.content
+    assert list(await h.runtime.history(first.id)) == first_history  # read, never changed
+
+    await h.start(remember=False)
+    await h.turn("when does falcon launch?")
+    refused = (await h.results())["p2"]
+    assert refused.status == ToolStatus.ERROR and "tuesday" not in refused.content
 
 
 # ── J: multi-instance workforce ──
@@ -415,7 +414,7 @@ async def test_j_multi_instance_workforce(make: Any) -> None:
     for name, steps in roles.items():
         harnesses[name] = await make(core=ScriptedCore(steps), tools=mailbox(),
                                      budget=Budget(max_tokens=budgets[name]))
-        await harnesses[name].start(Mode.CONTINUOUS, USER_CTL)
+        await harnesses[name].start()
     for name in roles:
         await harnesses[name].turn(f"you are the {name}")
 
@@ -427,7 +426,7 @@ async def test_j_multi_instance_workforce(make: Any) -> None:
         snap = h.runtime.snapshot()
         assert snap.config is not None and snap.config.budget.max_tokens == budgets[name]
         assert len(h.store.conversations) == 1
-        assert (h.data_dir / "usage-continuous.json").exists()
+        assert (h.data_dir / "usage.json").exists()
     usage = {n: h.runtime.snapshot().usage.usage.input_tokens for n, h in harnesses.items()}
     assert usage["assistant"] > usage["lead"]  # three inferences vs two, counted separately
 

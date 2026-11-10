@@ -27,7 +27,6 @@ from kayden.api import (
     Frontend,
     InstancePaths,
     Memory,
-    Mode,
     PermissionPolicy,
     PermissionRequested,
     Role,
@@ -65,7 +64,7 @@ def steps() -> list[Step]:
 async def transcript(data_dir: Path) -> list[Any]:
     memory = SqliteMemory(data_dir / "memory.db")
     try:
-        [conversation] = await memory.list_conversations(Mode.SESSION)
+        [conversation] = await memory.list_conversations()
         return list(await memory.history(conversation.id))
     finally:
         await memory.aclose()
@@ -83,7 +82,7 @@ def assert_wired(messages: list[Any], workspace: Path) -> None:
 
 def test_build_config_wires_the_real_modules(workspace, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    config = build_config(["--data-dir", str(tmp_path / "data"), "--mode", "session",
+    config = build_config(["--data-dir", str(tmp_path / "data"), "--autonomous",
                            "--permissions", "allow_read_only"])
     assert config.runtime.data_dir == tmp_path / "data"
     assert config.runtime.permissions == "allow_read_only"
@@ -95,7 +94,7 @@ def test_build_config_wires_the_real_modules(workspace, tmp_path, monkeypatch):
     tools = load_module(config.tools, Tools, paths)
     assert tools.root == workspace.resolve()
     frontend = load_module(config.frontend, Frontend, paths)
-    assert frontend.start_options == StartOptions(Mode.SESSION)
+    assert frontend.start_options == StartOptions(autonomous=True)
 
 
 DEEPSEEK_CORE = """
@@ -135,11 +134,28 @@ def test_explicit_config_file_wins_over_the_data_dir(workspace, tmp_path):
 
 def test_command_line_start_options_override_the_frontend_options(workspace, tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text('[frontend]\noptions = { mode = "continuous", model = "m" }\n')
+    path.write_text('[frontend]\noptions = { autonomous = true, model = "m" }\n')
     config = build_config(["--data-dir", str(tmp_path), "--config", str(path),
-                           "--mode", "session"])
-    assert config.frontend.options == {"mode": "session", "model": "m",
-                                       "activation": "user_controlled"}
+                           "--conversation", "c1", "--no-autonomous"])
+    assert config.frontend.options == {"start": True, "conversation_id": "c1",
+                                       "autonomous": False, "model": "m"}
+    assert build_config(["--data-dir", str(tmp_path / "plain")]).frontend.options == {}
+
+
+@pytest.mark.parametrize(("flags", "expected"), [
+    (["--mode", "session"], {"start": True}),
+    (["--mode", "continuous"], {"start": True, "autonomous": True}),
+    (["--mode", "continuous", "--activation", "user_controlled"],
+     {"start": True, "autonomous": True}),
+    (["--activation", "agent_controlled"], {"start": True, "autonomous": True}),
+    (["--mode", "continuous", "--no-autonomous"], {"start": True, "autonomous": False}),
+])
+def test_deprecated_mode_flags_warn_and_map_to_autonomous(workspace, tmp_path, capsys, flags,
+                                                          expected):
+    config = build_config(["--data-dir", str(tmp_path), *flags])
+    assert config.frontend.options == expected
+    err = capsys.readouterr().err
+    assert "deprecated" in err and "--autonomous" in err
 
 
 RUNTIME = """
@@ -375,7 +391,7 @@ def test_module_startup_errors_are_one_line(workspace, tmp_path, config, message
 async def test_instance_runs_on_the_scripted_core(workspace, tmp_path):
     async def script(runtime, frontend) -> None:
         recorder = frontend.recorder
-        await runtime.start(StartOptions(Mode.SESSION))
+        await runtime.start(StartOptions())
         await runtime.send("make the file")
         [request] = await recorder.wait_for(lambda r: r.of(PermissionRequested))
         await runtime.resolve_permission(request.request.id, Decision.ALLOW_ONCE)
@@ -385,22 +401,30 @@ async def test_instance_runs_on_the_scripted_core(workspace, tmp_path):
     config = build_config(["--data-dir", str(data_dir)])
     config = replace(
         config,
-        core=ModuleSpec("tests.fakes.core:factory", {"steps": steps()}),
+        core=ModuleSpec("tests.fakes.core:factory",
+                        {"steps": steps(), "maintenance": Step(text="Make a file")}),
         frontend=ModuleSpec("tests.fakes.frontend:factory", {"script": script}),
     )
     await asyncio.wait_for(run_instance(config), 20)
     assert_wired(await transcript(data_dir), workspace)
-    assert (data_dir / "usage-session.json").exists()
+    assert (data_dir / "usage.json").exists()
+    memory = SqliteMemory(data_dir / "memory.db")
+    try:
+        [conversation] = await memory.list_conversations()
+        assert conversation.title == "Make a file"  # written by maintenance, light model
+    finally:
+        await memory.aclose()
 
 
 async def test_tui_drives_the_real_runtime(workspace, tmp_path):
     data_dir = tmp_path / "data"
     config = build_config(["--data-dir", str(data_dir)])
     paths = InstancePaths(data_dir)
-    runtime = Runtime(core=ScriptedCore(steps()), memory=load_module(config.memory, Memory, paths),
+    runtime = Runtime(core=ScriptedCore(steps(), maintenance=Step(text="Make a file")),
+                      memory=load_module(config.memory, Memory, paths),
                       tools=load_module(config.tools, Tools, paths),
                       frontend=TuiFrontend().info, config=config.runtime)
-    app = KaydenApp(runtime, StartOptions(Mode.SESSION))
+    app = KaydenApp(runtime, StartOptions())
     try:
         async with app.run_test(size=(120, 40)) as pilot:
             async def until(predicate) -> None:

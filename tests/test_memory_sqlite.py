@@ -12,7 +12,6 @@ from kayden.api import (
     ContextRequest,
     InstancePaths,
     Message,
-    Mode,
     OpaqueBlock,
     Reasoning,
     Role,
@@ -91,7 +90,7 @@ async def test_factory_uses_the_instance_data_dir(tmp_path: Path):
     memory = factory({"trigger_fraction": 0.5}, InstancePaths(tmp_path))
     try:
         assert isinstance(memory, SqliteMemory)
-        await memory.create_conversation(Mode.SESSION)
+        await memory.create_conversation(title="test")
         assert (tmp_path / "memory.db").exists()
     finally:
         await memory.aclose()
@@ -102,7 +101,7 @@ async def test_factory_uses_the_instance_data_dir(tmp_path: Path):
 @pytest.mark.parametrize("fraction", [0.25, 0.5, 0.75])
 async def test_remove_fraction_controls_how_much_is_compacted(open_store, fraction: float):
     memory = open_store(CompactionConfig(remove_fraction=fraction))
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     messages = await fill(memory, conv.id, tokens(0, 40))  # equal-sized messages
     assert await maintain(memory, conv.id, FakeCompletion(render=tagged))
     removed = len(messages) - len(await active(memory, conv.id))
@@ -114,7 +113,7 @@ async def test_trigger_is_a_fraction_of_the_window(open_store):
     window = 2 * count_tokens(conv_messages)
     for fraction, compacts in ((0.75, False), (0.25, True)):
         memory = open_store(CompactionConfig(trigger_fraction=fraction))
-        conv = await memory.create_conversation(Mode.SESSION)
+        conv = await memory.create_conversation(title="test")
         await memory.append(conv.id, conv_messages)
         completion = FakeCompletion(render=tagged)
         assert await maintain(memory, conv.id, completion, window) is compacts
@@ -123,7 +122,7 @@ async def test_trigger_is_a_fraction_of_the_window(open_store):
 
 async def test_compaction_uses_light_model_and_summary_budget(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     await fill(memory, conv.id, tokens(0, 40))
     completion = FakeCompletion(render=tagged)
     await maintain(memory, conv.id, completion)
@@ -138,7 +137,7 @@ async def test_compaction_uses_light_model_and_summary_budget(open_store):
     "", "   \n", "<summary>  </summary>\n<long_term>\n- likes tea\n</long_term>"])
 async def test_an_empty_summary_compacts_nothing(open_store, output: str):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     messages = await fill(memory, conv.id, tokens(0, 40))
     assert not await maintain(memory, conv.id, FakeCompletion(render=lambda kept, text: output))
     view = await memory.assemble(context(conv.id, 10_000_000))
@@ -149,7 +148,7 @@ async def test_an_empty_summary_compacts_nothing(open_store, output: str):
 
 async def test_compaction_of_one_huge_message_is_truncated_to_fit(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     huge = Message("huge", Role.USER, (Text("tok0001 " + "word " * 20_000),), time.time())
     await memory.append(conv.id, [huge, *[text_message(t) for t in tokens(2, 3)]])
     completion = FakeCompletion(render=tagged, input_tokens=2_000)
@@ -162,7 +161,7 @@ async def test_compaction_of_one_huge_message_is_truncated_to_fit(open_store):
 
 async def test_summary_is_held_to_its_budget(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     await fill(memory, conv.id, tokens(0, 40))
     await maintain(memory, conv.id, FakeCompletion(render=lambda k, t: "word " * 10_000))
     view = await memory.inspect(conv.id)
@@ -170,11 +169,11 @@ async def test_summary_is_held_to_its_budget(open_store):
     assert view.long_term == []
 
 
-async def test_long_term_entries_are_shared_within_a_mode(open_store):
+async def test_long_term_entries_are_shared_by_conversations_that_remember(open_store):
     memory = open_store()
-    first = await memory.create_conversation(Mode.SESSION)
-    second = await memory.create_conversation(Mode.SESSION)
-    continuous = await memory.create_conversation(Mode.CONTINUOUS)
+    first = await memory.create_conversation(title="test")
+    second = await memory.create_conversation(title="test")
+    private = await memory.create_conversation(title="test", remember=False)
     fact = Message("fact", Role.USER, (Text("remember: user prefers green tea."),), time.time())
     await memory.append(first.id, [fact])
     await fill(memory, first.id, tokens(0, 40))
@@ -183,7 +182,7 @@ async def test_long_term_entries_are_shared_within_a_mode(open_store):
 
     assert (await memory.inspect(first.id)).long_term == ["user prefers green tea"]
     assert "user prefers green tea" in await addendum(memory, second.id)
-    assert "green tea" not in await addendum(memory, continuous.id)
+    assert "green tea" not in await addendum(memory, private.id)
 
     # Re-extracting a known fact does not duplicate it; entries survive a reopen.
     fact2 = Message("fact2", Role.USER, fact.blocks, time.time())
@@ -197,14 +196,10 @@ async def test_long_term_entries_are_shared_within_a_mode(open_store):
 
 async def test_long_term_rendering_is_a_fraction_of_the_budget(open_store, db: Path):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     await memory.append(conv.id, [text_message("tok0001")])
-    with sqlite3.connect(db) as conn:
-        conn.executemany(
-            "INSERT INTO long_term (mode, text, source_conversation_id, created_at)"
-            " VALUES ('session', ?, ?, 0)",
-            [(f"fact number {i} " + "x" * 100, conv.id) for i in range(100)],
-        )
+    for i in range(100):
+        await memory.remember(f"fact number {i} " + "x" * 100)
     budget = 4_000
     rendered = (await memory.assemble(context(conv.id, budget))).system_addendum
     assert "fact number 99" in rendered and "fact number 0 " not in rendered
@@ -214,7 +209,7 @@ async def test_long_term_rendering_is_a_fraction_of_the_budget(open_store, db: P
 
 async def test_untagged_output_becomes_the_summary(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     await fill(memory, conv.id, tokens(0, 40))
     await maintain(memory, conv.id, FakeCompletion(render=lambda k, t: "  plain summary  "))
     assert (await memory.inspect(conv.id)).summary == "plain summary"
@@ -222,7 +217,7 @@ async def test_untagged_output_becomes_the_summary(open_store):
 
 async def test_compaction_never_strands_a_pending_tool_call(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.CONTINUOUS)
+    conv = await memory.create_conversation(title="test")
     before = await fill(memory, conv.id, tokens(0, 5))
     call = Message("call", Role.ASSISTANT, (ToolCall("c1", "slow_job", {}),), time.time())
     await memory.append(conv.id, [call])
@@ -241,7 +236,7 @@ async def test_compaction_never_strands_a_pending_tool_call(open_store):
 
 async def test_assemble_trims_whole_tool_exchanges(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     ask = Message("ask", Role.USER, (Text("read it"),), time.time())
     call = Message("call", Role.ASSISTANT, (ToolCall("c1", "read", {}),), time.time())
     result = Message(
@@ -257,7 +252,7 @@ async def test_assemble_trims_whole_tool_exchanges(open_store):
 
 async def test_conflicting_append_is_atomic(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     first = text_message("tok0001")
     await memory.append(conv.id, [first])
     changed = Message(first.id, Role.USER, (Text("tok0009"),), first.created_at)
@@ -268,7 +263,7 @@ async def test_conflicting_append_is_atomic(open_store):
 
 async def test_archive_is_append_only(open_store, db: Path):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     await fill(memory, conv.id, tokens(0, 2))
     with sqlite3.connect(db) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
@@ -280,12 +275,12 @@ async def test_archive_is_append_only(open_store, db: Path):
 
 async def test_unsupported_schema_version_is_refused(open_store, db: Path):
     memory = open_store()
-    await memory.create_conversation(Mode.SESSION)
+    await memory.create_conversation(title="test")
     await memory.aclose()
     with sqlite3.connect(db) as conn:
         conn.execute("PRAGMA user_version = 99")
     with pytest.raises(RuntimeError, match="schema version 99"):
-        await open_store().list_conversations(Mode.SESSION)
+        await open_store().list_conversations()
 
 
 def _raw_blocks(db: Path) -> list[list[dict]]:
@@ -295,7 +290,7 @@ def _raw_blocks(db: Path) -> list[list[dict]]:
 
 async def test_stored_tags_are_stable_names(open_store, db: Path):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     await memory.append(conv.id, [Message("m", Role.ASSISTANT, (
         Text("a"), Reasoning("r"), ToolCall("c", "t", {})), 1.0)])
     assert [b["type"] for b in _raw_blocks(db)[0]] == ["text", "reasoning", "tool_call"]
@@ -303,7 +298,7 @@ async def test_stored_tags_are_stable_names(open_store, db: Path):
 
 async def test_known_tag_with_unknown_fields_stays_opaque(open_store, db: Path):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     future = OpaqueBlock("text", {"text": "hi", "lang": "en"})
     await memory.append(conv.id, [Message("m", Role.USER, (future,), 1.0)])
     assert (await memory.history(conv.id))[0].blocks == (future,)
@@ -312,7 +307,7 @@ async def test_known_tag_with_unknown_fields_stays_opaque(open_store, db: Path):
 
 async def test_history_returns_the_full_transcript(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     messages = await fill(memory, conv.id, tokens(0, 40))
     await maintain(memory, conv.id, FakeCompletion(render=tagged))
     assert len(await active(memory, conv.id)) < len(messages)
@@ -321,7 +316,7 @@ async def test_history_returns_the_full_transcript(open_store):
 
 async def test_history_before_unknown_message_raises(open_store):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     await fill(memory, conv.id, tokens(0, 2))
     with pytest.raises(KeyError):
         await memory.history(conv.id, before="nope")
@@ -358,7 +353,7 @@ asyncio.run(main(*sys.argv[1:]))
 
 async def test_process_crash_inside_compaction_transaction(open_store, db: Path):
     memory = open_store()
-    conv = await memory.create_conversation(Mode.CONTINUOUS)
+    conv = await memory.create_conversation(title="test")
     messages = await fill(memory, conv.id, tokens(0, 40))
     await memory.aclose()
 
@@ -377,7 +372,7 @@ async def test_process_crash_inside_compaction_transaction(open_store, db: Path)
 async def test_repeated_consolidation(open_store, capsys):
     """Many compaction cycles: what the summary keeps versus what only the archive holds."""
     memory = open_store()
-    conv = await memory.create_conversation(Mode.CONTINUOUS)
+    conv = await memory.create_conversation(title="test")
     completion = FakeCompletion(keep=6, render=tagged)
     anchor = Message(
         "anchor", Role.USER, (Text("tok9000 remember: deploy target is staging."),), time.time()
@@ -415,7 +410,7 @@ async def test_repeated_consolidation(open_store, capsys):
 async def test_replayed_reasoning_counts_against_the_context_budget(open_store):
     """DeepSeek needs reasoning replayed, so the runtime's estimator must count it."""
     memory = open_store()
-    conv = await memory.create_conversation(Mode.SESSION)
+    conv = await memory.create_conversation(title="test")
     thinking = Reasoning("x" * 4000, model="m")
     older = Message("a1", Role.ASSISTANT, (thinking, Text("ok")), 1.0)
     messages = [Message("u1", Role.USER, (Text("first"),), 0.0), older,
@@ -429,3 +424,185 @@ async def test_replayed_reasoning_counts_against_the_context_budget(open_store):
     tight = await memory.assemble(ContextRequest(conv.id, 500, estimate_tokens))
     assert [m.id for m in tight.messages] == ["u2"]
     assert estimate_tokens(tight.messages) <= 500
+
+
+# ── Erasure ──────────────────────────────────────────────────────────────
+
+
+def on_disk(db: Path) -> bytes:
+    """Everything SQLite keeps for this store: the database file and its write-ahead log."""
+    return b"".join(p.read_bytes() for p in (db, db.with_name(db.name + "-wal")) if p.exists())
+
+
+async def test_secure_delete_is_on(open_store, db: Path):
+    memory = open_store()
+    await memory.create_conversation(title="test")
+    assert await memory._run(lambda conn: conn.execute("PRAGMA secure_delete").fetchone()[0]) == 1
+
+
+async def test_deleted_conversation_leaves_nothing_on_disk(open_store, db: Path):
+    memory = open_store()
+    kept = await memory.create_conversation(title="kept")
+    doomed = await memory.create_conversation(title="quokkatitle")
+    await fill(memory, kept.id, tokens(0, 3))
+    secret = Message("s", Role.USER, (Text("remember: password is zanzibarquux"),), time.time())
+    big = Message("b", Role.TOOL, (ToolResult("c", ToolStatus.OK, "wombatblob " * 2000),),
+                  time.time())
+    await memory.append(doomed.id, [secret, big])
+    await fill(memory, doomed.id, tokens(100, 40))
+    await maintain(memory, doomed.id, FakeCompletion(render=lambda kept_, text: tagged(
+        [*kept_, "summarysecretword"], text)))
+    assert (await memory.memories())[0].text == "password is zanzibarquux"
+    for word in (b"zanzibarquux", b"wombatblob", b"summarysecretword", b"quokkatitle"):
+        assert word in on_disk(db)
+
+    await memory.delete_conversation(doomed.id)
+    for word in (b"zanzibarquux", b"wombatblob", b"summarysecretword", b"quokkatitle",
+                 doomed.id.encode()):
+        assert word not in on_disk(db), word
+    assert await memory.memories() == []
+    assert len(await memory.history(kept.id)) == 3
+    with sqlite3.connect(db) as conn, pytest.raises(sqlite3.IntegrityError,
+                                                    match="append-only"):
+        conn.execute("DELETE FROM messages")  # the archive guard is back in force
+
+
+async def test_forgotten_memory_leaves_nothing_on_disk(open_store, db: Path):
+    memory = open_store()
+    await memory.create_conversation(title="test")
+    entry = await memory.remember("The user's locker code is marmalade.")
+    await memory.revise(entry.id, "The user's locker code is pumpernickel.")
+    with sqlite3.connect(db) as conn:  # the edit kept the earlier revision
+        texts = [r[0] for r in conn.execute("SELECT text FROM memory_revisions ORDER BY id")]
+    assert texts == ["The user's locker code is marmalade.",
+                     "The user's locker code is pumpernickel."]
+    await memory.forget(entry.id)
+    assert b"marmalade" not in on_disk(db) and b"pumpernickel" not in on_disk(db)
+
+
+async def test_forgotten_fact_is_not_re_extracted(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    fact = Text("remember: user prefers green tea.")
+    completion = FakeCompletion(render=tagged)
+    await memory.append(conv.id, [Message("f1", Role.USER, (fact,), time.time())])
+    await fill(memory, conv.id, tokens(0, 40))
+    await maintain(memory, conv.id, completion)
+    [entry] = await memory.memories()
+    await memory.forget(entry.id)
+
+    await memory.append(conv.id, [Message("f2", Role.USER, (fact,), time.time())])
+    await fill(memory, conv.id, tokens(100, 40))
+    await maintain(memory, conv.id, completion)
+    assert "green tea" in completion.calls[-1]["messages"][0].blocks[0].text
+    assert await memory.memories() == []
+    new = Message("f3", Role.USER, (Text("remember: user prefers black coffee."),), time.time())
+    await memory.append(conv.id, [new])
+    await fill(memory, conv.id, tokens(200, 40))
+    await maintain(memory, conv.id, completion)
+    assert [e.text for e in await memory.memories()] == ["user prefers black coffee"]
+
+
+# ── Migration ────────────────────────────────────────────────────────────
+
+SCHEMA_2 = """
+CREATE TABLE conversations (
+    id TEXT PRIMARY KEY, mode TEXT NOT NULL, title TEXT,
+    created_at REAL NOT NULL, updated_at REAL NOT NULL
+);
+CREATE TABLE messages (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    id TEXT NOT NULL, role TEXT NOT NULL, created_at REAL NOT NULL, format INTEGER NOT NULL,
+    blocks TEXT NOT NULL, archived_at REAL NOT NULL, UNIQUE (conversation_id, id)
+);
+CREATE INDEX messages_conversation ON messages(conversation_id, seq);
+CREATE TRIGGER messages_no_update BEFORE UPDATE ON messages
+BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
+CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
+BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+    body, content='', tokenize='porter unicode61 remove_diacritics 2'
+);
+CREATE TABLE summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    through_seq INTEGER NOT NULL, text TEXT NOT NULL, created_at REAL NOT NULL
+);
+CREATE INDEX summaries_conversation ON summaries(conversation_id, id);
+CREATE TABLE long_term (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, mode TEXT NOT NULL, text TEXT NOT NULL,
+    source_conversation_id TEXT NOT NULL REFERENCES conversations(id), created_at REAL NOT NULL
+);
+CREATE INDEX long_term_mode ON long_term(mode, id);
+PRAGMA user_version = 2;
+"""
+
+
+def schema_2_store(db: Path) -> dict[str, list[Message]]:
+    """A store as Kayden wrote it before conversations replaced modes."""
+    from kayden.memory.sqlite import codec
+
+    transcripts = {
+        "s1": [Message("a", Role.USER, (Text("session about tok0001 otters"),), 1.0),
+               Message("b", Role.ASSISTANT, (Text("otters noted"),), 2.0)],
+        "c1": [Message("c", Role.USER, (Text("continuous tok0002 badgers"),), 3.0),
+               Message("d", Role.ASSISTANT, (Text("badgers noted"),), 4.0)],
+    }
+    with sqlite3.connect(db) as conn:
+        conn.executescript(SCHEMA_2)
+        conn.execute("INSERT INTO conversations VALUES ('s1', 'session', NULL, 1, 2)")
+        conn.execute("INSERT INTO conversations VALUES ('c1', 'continuous', NULL, 3, 4)")
+        for cid, messages in transcripts.items():
+            for m in messages:
+                blocks = codec.encode_blocks(m.blocks)
+                cur = conn.execute(
+                    "INSERT INTO messages (conversation_id, id, role, created_at, format,"
+                    " blocks, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (cid, m.id, m.role.value, m.created_at, codec.FORMAT_VERSION, blocks, 9.0))
+                conn.execute("INSERT INTO messages_fts (rowid, body) VALUES (?, ?)",
+                             (cur.lastrowid, codec.searchable_text(blocks)))
+        conn.execute("INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
+                     " VALUES ('c1', 3, 'Badger survey under way.', 5)")
+        conn.executemany(
+            "INSERT INTO long_term (mode, text, source_conversation_id, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            [("session", "User likes otters.", "s1", 6.0),
+             ("continuous", "User likes otters.", "c1", 7.0),
+             ("continuous", "User studies badgers.", "c1", 8.0)])
+    return transcripts
+
+
+async def test_schema_2_store_migrates_in_place(open_store, db: Path):
+    transcripts = schema_2_store(db)
+    memory = open_store()
+    listed = {c.id: c for c in await memory.list_conversations()}
+    assert set(listed) == {"s1", "c1"}
+    assert listed["c1"].autonomous and listed["c1"].title == "Continuous conversation"
+    assert not listed["s1"].autonomous and listed["s1"].title is None
+    assert all(c.remember and not c.archived and c.seed_from is None for c in listed.values())
+    for cid, messages in transcripts.items():
+        assert list(await memory.history(cid)) == messages
+    assert (await memory.inspect("c1")).summary == "Badger survey under way."
+    entries = await memory.memories()
+    assert [(e.text, e.source_conversation_id, e.created_at) for e in entries] == [
+        ("User likes otters.", "s1", 6.0), ("User studies badgers.", "c1", 8.0)]
+    assert {h.conversation_id for h in await memory.search("otters badgers")} == {"s1", "c1"}
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    await memory.delete_conversation("s1")
+    assert [c.id for c in await memory.list_conversations()] == ["c1"]
+    await memory.aclose()
+    assert [c.id for c in await open_store().list_conversations()] == ["c1"]
+
+
+async def test_failed_migration_changes_nothing(open_store, db: Path):
+    schema_2_store(db)
+    with sqlite3.connect(db) as conn:  # a store the migration cannot read
+        conn.execute("DROP TABLE long_term")
+    with pytest.raises(sqlite3.OperationalError):
+        await open_store().list_conversations()
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert [r[0] for r in conn.execute("SELECT mode FROM conversations ORDER BY id")] == [
+            "continuous", "session"]

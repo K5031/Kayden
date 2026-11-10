@@ -30,15 +30,18 @@ from textual.widgets import (
     OptionList,
     Select,
     Static,
+    Switch,
     TextArea,
 )
 from textual.widgets.option_list import Option
 
 from kayden.api import (
-    Activation,
     AgentConfig,
     AgentState,
+    ConversationDeleted,
+    ConversationId,
     ConversationInfo,
+    ConversationUpdated,
     Decision,
     EventEnvelope,
     Failure,
@@ -47,10 +50,11 @@ from kayden.api import (
     InstancePaths,
     MaintenanceFinished,
     MaintenanceStarted,
+    MemoriesChanged,
+    MemoryEntry,
     Message,
     MessageCommitted,
     MessageQueued,
-    Mode,
     ModelInfo,
     ModelRetry,
     ModelSelected,
@@ -118,9 +122,14 @@ DECISION_ALIASES = {
 }
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
+    "/conversations (F3), /memory (F4), /autonomous [on|off] (Ctrl+T toggles), "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
+UNTITLED = "Untitled conversation"
+REMEMBER_HINT = "Off: this chat won't use or add to long-term memory."
+# States in which runtime.start() may switch conversations (given no outstanding call).
+SWITCHABLE = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 HISTORY_PAGE = 100  # messages loaded per history page
 MAX_ARGS_CHARS = 300
 MAX_RESULT_LINES = 6
@@ -134,6 +143,12 @@ def _clip(text: str, limit: int) -> str:
 def _format_args(arguments: Any) -> str:
     raw = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
     return _clip(raw, MAX_ARGS_CHARS)
+
+
+def conversation_label(info: ConversationInfo) -> str:
+    """The title, else the start of the first user message."""
+    return info.title or (_clip(" ".join(info.preview.split()), 60) if info.preview
+                          else UNTITLED)
 
 
 # ── transcript entries ───────────────────────────────────────────────────
@@ -514,34 +529,271 @@ class SettingsScreen(ModalScreen[SettingsUpdate | None]):
         return SettingsUpdate(**changes)
 
 
-NEW_CONVERSATION = "__new__"
-DEFAULT_MODEL = "__default__"
+class TextPromptScreen(ModalScreen[str | None]):
+    """Asks for one line of text; Enter saves, Escape cancels."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, title: str, value: str = "", hint: str = "") -> None:
+        super().__init__()
+        self.title_text = title
+        self.value = value
+        self.hint = hint
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(self.title_text, classes="title")
+            yield Input(self.value, id="text-value")
+            if self.hint:
+                yield Label(self.hint, classes="hint")
+
+    @on(Input.Submitted, "#text-value")
+    def _submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value.strip())
 
 
-class StartScreen(ModalScreen[StartOptions]):
-    """Chooses mode, activation, conversation and model before the agent starts."""
+class ListScreen(ModalScreen[str | None]):
+    """A list the user changes in place; reload() re-reads it from the runtime."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Close")]
 
     def __init__(self, runtime: RuntimeAPI) -> None:
         super().__init__()
         self.runtime = runtime
 
+    def on_mount(self) -> None:
+        self.reload()
+
+    def reload(self) -> None:
+        self.run_worker(self._load(), group="load", exclusive=True)
+
+    async def _load(self) -> None:
+        raise NotImplementedError
+
+    def _show(self, options: list[Option]) -> None:
+        """Replace the options, keeping the highlighted item when it is still listed."""
+        option_list = self.query_one(OptionList)
+        current = option_list.highlighted_option
+        option_list.clear_options()
+        option_list.add_options(options)
+        ids = [o.id for o in options]
+        if options:
+            option_list.highlighted = (ids.index(current.id)
+                                       if current is not None and current.id in ids else 0)
+
+    def _selected_id(self) -> str | None:
+        option = self.query_one(OptionList).highlighted_option
+        return None if option is None else option.id
+
+    def _run(self, awaitable: Awaitable[Any], *, unsupported: str | None = None) -> None:
+        """Run a runtime command, report errors, then reload. `unsupported` names a button
+        to disable when the Memory module does not support the command."""
+
+        async def run() -> None:
+            try:
+                await awaitable
+            except NotImplementedError as e:
+                if unsupported is not None:
+                    self.query_one(unsupported, Button).disabled = True
+                self.notify(str(e) or "This memory module does not support that.",
+                            severity="error", markup=False)
+            except Exception as e:  # noqa: BLE001 - any runtime error is shown, never fatal
+                self.notify(str(e) or type(e).__name__, severity="error", markup=False)
+            self.reload()
+
+        self.run_worker(run(), group="commands")
+
+
+class ConversationsScreen(ListScreen):
+    """Lists conversations; renames, archives and deletes them in place. Dismisses with
+    the id of the conversation to open, NEW_CONVERSATION, or None."""
+
+    def __init__(self, runtime: RuntimeAPI, open_id: ConversationId | None) -> None:
+        super().__init__(runtime)
+        self.open_id = open_id
+        self.conversations: dict[str, ConversationInfo] | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label("Conversations", classes="title")
+            with Horizontal(classes="switch-row"):
+                yield Switch(False, id="show-archived")
+                yield Label("Show archived")
+            yield OptionList(id="conversations")
+            with Horizontal(classes="buttons actions"):
+                yield Button("Open", variant="primary", id="open")
+                yield Button("New", id="new")
+                yield Button("Rename", id="rename")
+                yield Button("Archive", id="archive")
+                yield Button("Delete", variant="error", id="delete")
+
+    async def _load(self) -> None:
+        archived = self.query_one("#show-archived", Switch).value
+        try:
+            listed = await self.runtime.list_conversations(include_archived=archived)
+        except Exception as e:  # noqa: BLE001
+            self.notify(str(e) or type(e).__name__, severity="error", markup=False)
+            return
+        self._show([
+            Option(("● " if c.id == self.open_id else "  ") + conversation_label(c)
+                   + ("  · autonomous" if c.autonomous else "")
+                   + ("  · archived" if c.archived else ""), id=c.id)
+            for c in listed
+        ])
+        self.conversations = {c.id: c for c in listed}
+        self._sync_archive_label()
+
+    def _selected(self) -> ConversationInfo | None:
+        conversation_id = self._selected_id()
+        if conversation_id is None or self.conversations is None:
+            return None
+        return self.conversations.get(conversation_id)
+
+    def _sync_archive_label(self) -> None:
+        selected = self._selected()
+        archived = selected is not None and selected.archived
+        self.query_one("#archive", Button).label = "Unarchive" if archived else "Archive"
+
+    @on(Switch.Changed, "#show-archived")
+    def _show_archived(self) -> None:
+        self.reload()
+
+    @on(OptionList.OptionHighlighted)
+    def _highlighted(self) -> None:
+        self._sync_archive_label()
+
+    @on(OptionList.OptionSelected)
+    @on(Button.Pressed, "#open")
+    def _open(self) -> None:
+        if (selected := self._selected()) is not None:
+            self.dismiss(selected.id)
+
+    @on(Button.Pressed, "#new")
+    def _new(self) -> None:
+        self.dismiss(NEW_CONVERSATION)
+
+    @on(Button.Pressed, "#rename")
+    def _rename(self) -> None:
+        if (selected := self._selected()) is None:
+            return
+
+        def renamed(title: str | None) -> None:
+            if title is not None:
+                self._run(self.runtime.rename_conversation(selected.id, title))
+
+        self.app.push_screen(TextPromptScreen("Rename conversation", selected.title or "",
+                                              "Leave empty for an automatic title."), renamed)
+
+    @on(Button.Pressed, "#archive")
+    def _archive(self) -> None:
+        if (selected := self._selected()) is not None:
+            self._run(self.runtime.archive_conversation(selected.id, not selected.archived))
+
+    @on(Button.Pressed, "#delete")
+    def _delete(self) -> None:
+        if (selected := self._selected()) is None:
+            return
+        if selected.id == self.open_id:
+            self.notify("This conversation is open. To delete it, open another conversation "
+                        "first.", severity="warning")
+            return
+
+        def confirmed(yes: bool | None) -> None:
+            if yes:
+                self._run(self.runtime.delete_conversation(selected.id), unsupported="#delete")
+
+        self.app.push_screen(ConfirmScreen(
+            f'Delete "{conversation_label(selected)}" for good? Its messages and the memories '
+            "learned from it are erased. This cannot be undone. To only hide it, archive it "
+            "instead."), confirmed)
+
+
+class MemoryScreen(ListScreen):
+    """Lists long-term memory entries; adds, edits and forgets them."""
+
+    def __init__(self, runtime: RuntimeAPI) -> None:
+        super().__init__(runtime)
+        self.entries: dict[str, MemoryEntry] = {}
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label("Long-term memory", classes="title")
+            yield Label("Shared by every conversation that remembers.", classes="hint")
+            yield OptionList(id="memories")
+            with Horizontal(classes="buttons actions"):
+                yield Button("Add", variant="primary", id="add")
+                yield Button("Edit", id="edit")
+                yield Button("Forget", variant="error", id="forget")
+
+    async def _load(self) -> None:
+        try:
+            entries = await self.runtime.memories()
+        except Exception as e:  # noqa: BLE001
+            self.notify(str(e) or type(e).__name__, severity="error", markup=False)
+            return
+        self.entries = {e.id: e for e in entries}
+        self._show([Option(e.text + ("  · added by you" if e.source_conversation_id is None
+                                     else ""), id=e.id) for e in entries])
+
+    def _selected(self) -> MemoryEntry | None:
+        entry_id = self._selected_id()
+        return None if entry_id is None else self.entries.get(entry_id)
+
+    @on(Button.Pressed, "#add")
+    def _add(self) -> None:
+        def added(text: str | None) -> None:
+            if text:
+                self._run(self.runtime.add_memory(text))
+
+        self.app.push_screen(TextPromptScreen("Add a memory"), added)
+
+    @on(OptionList.OptionSelected)
+    @on(Button.Pressed, "#edit")
+    def _edit(self) -> None:
+        if (selected := self._selected()) is None:
+            return
+
+        def edited(text: str | None) -> None:
+            if text and text != selected.text:
+                self._run(self.runtime.edit_memory(selected.id, text))
+
+        self.app.push_screen(TextPromptScreen("Edit memory", selected.text), edited)
+
+    @on(Button.Pressed, "#forget")
+    def _forget(self) -> None:
+        if (selected := self._selected()) is None:
+            return
+
+        def confirmed(yes: bool | None) -> None:
+            if yes:
+                self._run(self.runtime.forget_memory(selected.id))
+
+        self.app.push_screen(ConfirmScreen(
+            f'Forget "{_clip(selected.text, 200)}"? The messages it came from stay until '
+            "their conversation is deleted."), confirmed)
+
+
+NEW_CONVERSATION = "__new__"
+FRESH = "__fresh__"
+DEFAULT_MODEL = "__default__"
+
+
+class StartScreen(ModalScreen[StartOptions | None]):
+    """Chooses the conversation and model, and how a new conversation starts."""
+
+    BINDINGS: ClassVar = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, runtime: RuntimeAPI, *, cancellable: bool = False) -> None:
+        super().__init__()
+        self.runtime = runtime
+        self.cancellable = cancellable
+        self.conversations: dict[str, ConversationInfo] = {}
+
     def compose(self) -> ComposeResult:
         # Scrolls so Start stays reachable when the terminal is shorter than the dialog.
         with VerticalScroll(classes="dialog"):
             yield Label("Start Kayden", classes="title")
-            yield Label("Mode")
-            yield Select(
-                [("Session", Mode.SESSION), ("Continuous", Mode.CONTINUOUS)],
-                value=Mode.SESSION, allow_blank=False, id="mode",
-            )
-            yield Label("Activation (Continuous Mode)")
-            yield Select(
-                [
-                    ("User-controlled", Activation.USER_CONTROLLED),
-                    ("Agent-controlled", Activation.AGENT_CONTROLLED),
-                ],
-                value=Activation.USER_CONTROLLED, allow_blank=False, id="activation",
-            )
             yield Label("Conversation")
             yield Select(
                 [("New conversation", NEW_CONVERSATION)],
@@ -552,12 +804,26 @@ class StartScreen(ModalScreen[StartOptions]):
                 [("Runtime default", DEFAULT_MODEL)],
                 value=DEFAULT_MODEL, allow_blank=False, id="model",
             )
+            with Horizontal(classes="switch-row"):
+                yield Switch(False, id="autonomous")
+                yield Label("Autonomous: the agent may wait for its work and wake itself")
+            yield Label("Continue from")
+            yield Select([("Nothing, start fresh", FRESH)], value=FRESH, allow_blank=False,
+                         id="seed-from")
+            with Horizontal(classes="switch-row"):
+                yield Switch(True, id="remember")
+                yield Label("Remember")
+            yield Label(REMEMBER_HINT, id="remember-hint", classes="hint")
             yield Button("Start", variant="primary", id="start")
 
     def on_mount(self) -> None:
         self.query_one("#start", Button).focus()  # Enter starts with the defaults
         self.run_worker(self._load_models(), exit_on_error=False)
-        self.run_worker(self._load_conversations(Mode.SESSION), group="conv", exclusive=True)
+        self.run_worker(self._load_conversations(), exit_on_error=False)
+
+    def action_cancel(self) -> None:
+        if self.cancellable:
+            self.dismiss(None)
 
     async def _load_models(self) -> None:
         models = await self.runtime.list_models()
@@ -566,35 +832,39 @@ class StartScreen(ModalScreen[StartOptions]):
         )
         self.query_one("#model", Select).value = DEFAULT_MODEL
 
-    async def _load_conversations(self, mode: Mode) -> None:
-        conversations = await self.runtime.list_conversations(mode)
-        select = self.query_one("#conversation", Select)
-        select.set_options(
-            [
-                ("New conversation", NEW_CONVERSATION),
-                *((c.title or f"Untitled {c.id}", c.id) for c in conversations),
-            ]
-        )
-        select.value = NEW_CONVERSATION
+    async def _load_conversations(self) -> None:
+        conversations = await self.runtime.list_conversations()
+        self.conversations = {c.id: c for c in conversations}
+        labels = [(conversation_label(c), c.id) for c in conversations]
+        self.query_one("#conversation", Select).set_options(
+            [("New conversation", NEW_CONVERSATION), *labels])
+        self.query_one("#seed-from", Select).set_options(
+            [("Nothing, start fresh", FRESH), *labels])
 
-    @on(Select.Changed, "#mode")
-    def _mode_changed(self, event: Select.Changed) -> None:
-        mode = Mode(event.value)
-        self.query_one("#activation", Select).disabled = mode is not Mode.CONTINUOUS
-        self.run_worker(self._load_conversations(mode), group="conv", exclusive=True)
+    @on(Select.Changed, "#conversation")
+    def _conversation_changed(self, event: Select.Changed) -> None:
+        resumed = self.conversations.get(str(event.value))
+        self.query_one("#autonomous", Switch).value = resumed is not None and resumed.autonomous
+        for selector in ("#seed-from", "#remember"):
+            self.query_one(selector).disabled = resumed is not None
 
     @on(Button.Pressed, "#start")
     def _start(self) -> None:
         conversation = self.query_one("#conversation", Select).value
         model = self.query_one("#model", Select).value
-        self.dismiss(
-            StartOptions(
-                mode=Mode(self.query_one("#mode", Select).value),
-                activation=Activation(self.query_one("#activation", Select).value),
-                conversation_id=None if conversation == NEW_CONVERSATION else str(conversation),
-                model=None if model == DEFAULT_MODEL else str(model),
-            )
-        )
+        model_id = None if model == DEFAULT_MODEL else str(model)
+        autonomous = self.query_one("#autonomous", Switch).value
+        if conversation != NEW_CONVERSATION:
+            self.dismiss(StartOptions(conversation_id=str(conversation), model=model_id,
+                                      autonomous=autonomous))
+            return
+        seed = self.query_one("#seed-from", Select).value
+        self.dismiss(StartOptions(
+            model=model_id,
+            autonomous=autonomous,
+            remember=self.query_one("#remember", Switch).value,
+            seed_from=None if seed == FRESH else str(seed),
+        ))
 
 
 # ── app ──────────────────────────────────────────────────────────────────
@@ -641,12 +911,20 @@ class KaydenApp(App[None]):
     .dialog Select, .dialog Button { margin-bottom: 1; }
     .dialog TextArea { height: 6; }
     .dialog .buttons { height: auto; }
+    .dialog .actions Button { min-width: 0; width: auto; margin-right: 1; }
+    .dialog OptionList { height: auto; max-height: 20; margin-bottom: 1; }
+    .dialog .hint { color: $text-muted; margin-bottom: 1; }
+    .switch-row { height: auto; }
+    .switch-row Label { padding: 1 0 0 1; }
     """
     BINDINGS: ClassVar = [
         Binding("escape", "stop", "Stop"),
         Binding("ctrl+r", "activate", "Activate", priority=True),
         Binding("ctrl+o", "models", "Model", priority=True),
         Binding("f2", "settings", "Settings", priority=True),
+        Binding("f3", "conversations", "Conversations", priority=True),
+        Binding("f4", "memory", "Memory", priority=True),
+        Binding("ctrl+t", "autonomous", "Autonomy", priority=True),
         Binding("ctrl+k", "operations", "Cancel op", priority=True),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
@@ -834,6 +1112,14 @@ class KaydenApp(App[None]):
                 await self._discard_stream()  # the retried request streams from scratch
             case ModelSelected(model_id=model_id):
                 self.model = model_id
+            case ConversationUpdated(info=info):
+                if self.conversation is not None and info.id == self.conversation.id:
+                    self.conversation = info
+                self._reload(ConversationsScreen)
+            case ConversationDeleted():
+                self._reload(ConversationsScreen)
+            case MemoriesChanged():
+                self._reload(MemoryScreen)
             case MaintenanceStarted():
                 self.notice = "maintaining memory…"
             case MaintenanceFinished():
@@ -854,6 +1140,11 @@ class KaydenApp(App[None]):
             case ShuttingDown(reason=reason):
                 await self._mount(SystemEntry(f"Shutting down: {reason}", severity="warning"))
                 self.exit()
+
+    def _reload(self, kind: type[ListScreen]) -> None:
+        for screen in self.screen_stack:
+            if isinstance(screen, kind):
+                screen.reload()
 
     # ── transcript rendering ─────────────────────────────────────────────
 
@@ -961,11 +1252,8 @@ class KaydenApp(App[None]):
     def _render_status(self) -> None:
         state = STATE_LABELS[self.state]
         parts = [state + (f" · {self.pending_ops} ops" if self.pending_ops else "")]
-        if self.config is not None:
-            mode = self.config.mode.value
-            if self.config.mode is Mode.CONTINUOUS:
-                mode += f"/{self.config.activation.value.replace('_controlled', '')}"
-            parts.append(mode)
+        if self.conversation is not None and self.conversation.autonomous:
+            parts.append("autonomous")
         if self.model:
             parts.append(self.model)
         if self.usage is not None:
@@ -1002,6 +1290,14 @@ class KaydenApp(App[None]):
 
         self.run_worker(run(), group="commands")
 
+    def _can_switch(self) -> bool:
+        """Whether runtime.start() may open another conversation now; tells the user if not."""
+        if self.state in SWITCHABLE and not self.pending_ops:
+            return True
+        self.notify("Stop the agent and wait for running calls to finish before switching "
+                    "conversations.", severity="warning")
+        return False
+
     def _on_start_chosen(self, options: StartOptions | None) -> None:
         if options is not None:
             self._call(self._start(options))
@@ -1035,6 +1331,16 @@ class KaydenApp(App[None]):
                 self.action_models()
             case "settings":
                 self.action_settings()
+            case "conversations":
+                self.action_conversations()
+            case "memory":
+                self.action_memory()
+            case "autonomous" if arg in ("on", "off"):
+                self._call(self.runtime.set_autonomous(arg == "on"))
+            case "autonomous" if not arg:
+                self.action_autonomous()
+            case "autonomous":
+                self.notify("Use /autonomous on or /autonomous off.", severity="error")
             case "cancel" if arg:
                 self._call(self.runtime.cancel_operation(arg))
             case "cancel":
@@ -1062,14 +1368,41 @@ class KaydenApp(App[None]):
     def action_activate(self) -> None:
         self._call(self.runtime.activate())
 
+    def action_autonomous(self) -> None:
+        if self.conversation is not None:
+            self._call(self.runtime.set_autonomous(not self.conversation.autonomous))
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action == "activate":
-            config = self.config
-            agent_controlled = (config is not None and config.mode is Mode.CONTINUOUS
-                                and config.activation is Activation.AGENT_CONTROLLED)
-            return config is not None and not (agent_controlled
-                                               and self.state is AgentState.IDLE)
+        if action in ("activate", "autonomous"):
+            return self.config is not None and self.conversation is not None
         return True
+
+    def action_conversations(self) -> None:
+        open_id = None if self.conversation is None else self.conversation.id
+        self.push_screen(ConversationsScreen(self.runtime, open_id),
+                         self._on_conversation_chosen)
+
+    def _on_conversation_chosen(self, choice: str | None) -> None:
+        if choice is None or (self.conversation is not None
+                              and choice == self.conversation.id):
+            return
+        if not self._can_switch():
+            return
+        if choice == NEW_CONVERSATION:
+            self.push_screen(StartScreen(self.runtime, cancellable=True), self._on_start_chosen)
+        else:
+            self._call(self._start(StartOptions(conversation_id=choice)))
+
+    def action_memory(self) -> None:
+        async def open_screen() -> None:
+            try:
+                await self.runtime.memories()
+            except NotImplementedError:
+                self.notify("This memory module cannot edit memories.", severity="warning")
+                return
+            self.push_screen(MemoryScreen(self.runtime))
+
+        self._call(open_screen())
 
     def action_operations(self) -> None:
         self.push_screen(OperationsScreen(self.runtime.snapshot().operations),
@@ -1129,15 +1462,14 @@ class KaydenApp(App[None]):
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> TuiFrontend:
-    """Options: mode, activation, conversation_id, model. With a mode the agent starts
-    right away; without one the start screen asks."""
-    if "mode" not in options:
+    """Options: start, conversation_id, autonomous, model. With start true the agent starts
+    right away with the others; otherwise the start screen asks."""
+    if not options.get("start"):
         return TuiFrontend()
     return TuiFrontend(StartOptions(
-        mode=Mode(options["mode"]),
-        activation=Activation(options.get("activation", Activation.USER_CONTROLLED)),
         conversation_id=options.get("conversation_id"),
         model=options.get("model"),
+        autonomous=options.get("autonomous"),
     ))
 
 

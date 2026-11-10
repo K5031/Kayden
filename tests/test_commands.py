@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 
 from kayden.api import (
-    Activation,
     AgentState,
     Budget,
     ConversationInfo,
@@ -16,7 +15,6 @@ from kayden.api import (
     Decision,
     MessageCommitted,
     MessageQueued,
-    Mode,
     ModelSelected,
     PermissionPolicy,
     PermissionRequested,
@@ -99,7 +97,7 @@ async def run_command(h: Harness, command: str) -> None:
     rt = h.runtime
     match command:
         case "start":
-            info = await rt.start(StartOptions(Mode.SESSION))
+            info = await rt.start(StartOptions())
             assert isinstance(info, ConversationInfo)
         case "send":
             await rt.send("hello")
@@ -180,24 +178,10 @@ async def test_start_refused_with_outstanding_ops(make: Any) -> None:
     assert first is not None and other.id != first.id
 
 
-async def test_mode_cannot_change(make: Any) -> None:
+@pytest.mark.parametrize("autonomous", [False, True])
+async def test_activate_in_idle(make: Any, autonomous: bool) -> None:
     h: Harness = await make()
-    await h.start(Mode.SESSION)
-    with pytest.raises(RuntimeStateError):
-        await h.start(Mode.CONTINUOUS)
-
-
-async def test_activate_idle_agent_controlled_raises(make: Any) -> None:
-    h: Harness = await make()
-    await h.start(Mode.CONTINUOUS, Activation.AGENT_CONTROLLED)
-    await h.rec.wait_state(AgentState.IDLE)
-    with pytest.raises(RuntimeStateError):
-        await h.runtime.activate()
-
-
-async def test_activate_idle_user_controlled_continuous(make: Any) -> None:
-    h: Harness = await make()
-    await h.start(Mode.CONTINUOUS, Activation.USER_CONTROLLED)
+    await h.start(autonomous=autonomous)
     await h.rec.wait_state(AgentState.IDLE)
     await h.runtime.activate()
     await h.rec.wait_state(AgentState.THINKING)

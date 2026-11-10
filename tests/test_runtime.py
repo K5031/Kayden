@@ -12,13 +12,11 @@ import pytest
 
 from kayden.api import (
     PERMISSION_CEILING_ENV,
-    Activation,
     AgentState,
     ContextOverflowError,
     Decision,
     MessageCommitted,
     MessageQueued,
-    Mode,
     ModelRetry,
     ModelSelected,
     OperationResult,
@@ -41,9 +39,6 @@ from kayden.runtime import InstanceLockedError
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
-
-AGENT_CTL = Activation.AGENT_CONTROLLED
-USER_CTL = Activation.USER_CONTROLLED
 
 
 def perm_tools() -> FakeTools:
@@ -207,14 +202,12 @@ async def test_subprocess_tools_see_ceiling(make: Any) -> None:
 
 async def test_instance_lock(make: Any) -> None:
     h: Harness = await make()
-    await h.start(Mode.SESSION)
+    await h.start()
     other: Harness = await make(data_dir=h.data_dir)
     with pytest.raises(InstanceLockedError, match=str(os.getpid())):
-        await other.start(Mode.SESSION)
-    third: Harness = await make(data_dir=h.data_dir)
-    await third.start(Mode.CONTINUOUS)  # different mode shares the directory
+        await other.start()
     await h.close()
-    await other.start(Mode.SESSION)  # released on shutdown
+    await other.start()  # released on shutdown
 
 
 # ── Event stream and snapshot ──
@@ -283,7 +276,7 @@ async def test_jsonl_event_log(make: Any) -> None:
     await h.rec.wait_state(AgentState.STOPPED)
     await h.close()
     lines = [json.loads(line) for line in
-             (h.data_dir / "events-session.jsonl").read_text().splitlines()]
+             (h.data_dir / "events.jsonl").read_text().splitlines()]
     kinds = {line.get("event") for line in lines}
     assert {"StateChanged", "ToolStarted", "ToolFinished", "MessageCommitted"} <= kinds
     decisions = {line.get("decision") for line in lines}
@@ -415,7 +408,7 @@ async def test_stop_in_idle_with_background_ops(make: Any) -> None:
     tools.hanging("bg")
     core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(calls=[call("idle")])])
     h: Harness = await make(core=core, tools=tools)
-    await h.start(Mode.CONTINUOUS, AGENT_CTL)
+    await h.start(autonomous=True)
     await h.turn("go")
     assert h.runtime.snapshot().state == AgentState.IDLE
     await h.runtime.stop()
@@ -439,7 +432,7 @@ async def test_idle_wait_for_subset(make: Any) -> None:
         Step(text="quick is done"),
     ])
     h: Harness = await make(core=core, tools=tools)
-    await h.start(Mode.CONTINUOUS, AGENT_CTL)
+    await h.start(autonomous=True)
     await h.runtime.send("go")
     await eventually(lambda: len(core.requests) == 3)
     assert [o.call.id for o in h.runtime.snapshot().operations] == ["f"]
@@ -448,32 +441,33 @@ async def test_idle_wait_for_subset(make: Any) -> None:
 async def test_idle_unseen_results_wake_immediately(make: Any) -> None:
     tools = FakeTools()
     tools.slow("job", 0.25)
-    for activation, expected in ((AGENT_CTL, 3), (USER_CTL, 2)):
+    for autonomous, expected in ((True, 3), (False, 2)):
         core = ScriptedCore([
             Step(calls=[call("job", id="j")]),
             Step(text="musing", chunks=4, delay=0.1),  # job ends mid-inference
             Step(text="saw the job result"),
         ])
         h: Harness = await make(core=core, tools=tools)
-        await h.start(Mode.CONTINUOUS, activation)
+        await h.start(autonomous=autonomous)
         await h.runtime.send("go")
         await eventually(lambda core=core: len(core.requests) >= 2)
         await asyncio.sleep(0.8)
-        assert len(core.requests) == expected, activation
+        assert len(core.requests) == expected, autonomous
         await h.close()
 
 
-async def test_idle_only_in_continuous(make: Any) -> None:
+async def test_idle_only_when_autonomous(make: Any) -> None:
     h: Harness = await make()
-    await h.start(Mode.SESSION)
+    await h.start()
     await h.turn("hi")
     assert "idle" not in {t.name for t in h.core.requests[0].tools}
     assert "idle" not in {t.name for t in await h.runtime.list_tools()}
     h2: Harness = await make()
-    await h2.start(Mode.CONTINUOUS)
+    await h2.start(autonomous=True)
     await h2.turn("hi")
     names = {t.name for t in h2.core.requests[0].tools}
-    assert {"idle", "op_status", "op_cancel", "recall", "peek_other_mode"} <= names
+    assert {"idle", "op_status", "op_cancel", "recall"} <= names
+    assert "idle" in {t.name for t in await h2.runtime.list_tools()}
 
 
 async def test_session_switch_conversation(make: Any) -> None:
@@ -485,20 +479,7 @@ async def test_session_switch_conversation(make: Any) -> None:
     reopened = await h.start(conversation_id=first.id)
     assert reopened.id == first.id
     with pytest.raises(KeyError):
-        await h.runtime.start(StartOptions(Mode.SESSION, conversation_id="missing"))
-
-
-async def test_continuous_single_conversation(make: Any) -> None:
-    h: Harness = await make()
-    with pytest.raises(ValueError):
-        await h.start(Mode.CONTINUOUS, conversation_id="other")
-    a = await h.start(Mode.CONTINUOUS)
-    b = await h.start(Mode.CONTINUOUS)
-    c = await h.start(Mode.CONTINUOUS, conversation_id=a.id)
-    assert a.id == b.id == c.id
-    with pytest.raises(ValueError):
-        await h.start(Mode.CONTINUOUS, conversation_id="other")
-    assert len(await h.runtime.list_conversations(Mode.CONTINUOUS)) == 1
+        await h.runtime.start(StartOptions(conversation_id="missing"))
 
 
 async def test_background_result_appended_when_idle(make: Any) -> None:
@@ -513,7 +494,7 @@ async def test_background_result_appended_when_idle(make: Any) -> None:
     assert last.role == Role.USER and last.blocks == (
         OperationResult("bg", ToolStatus.OK, "bg finished"),)
     await asyncio.sleep(0.1)
-    assert len(core.requests) == 2  # Session Mode never restarts on its own
+    assert len(core.requests) == 2  # an ordinary conversation never restarts on its own
 
 
 async def test_shutdown_cancels_calls(make: Any) -> None:
@@ -655,8 +636,8 @@ async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
     assert asked == [1_000, 300]
 
 
-@pytest.mark.parametrize("mode", [Mode.SESSION, Mode.CONTINUOUS])
-async def test_only_completion_requests_are_maintenance(make: Any, mode: Mode) -> None:
+@pytest.mark.parametrize("autonomous", [False, True])
+async def test_only_completion_requests_are_maintenance(make: Any, autonomous: bool) -> None:
     """Requests made through Memory's Completion are marked maintenance; turns, retries and
     overflow recovery are not, whatever tools they carry."""
     from kayden.api import Completion, Message
@@ -672,7 +653,7 @@ async def test_only_completion_requests_are_maintenance(make: Any, mode: Mode) -
         return False
 
     h.memory.maintain_override = maintain
-    await h.start(mode)
+    await h.start(autonomous=autonomous)
     await h.turn("go")
     await h.runtime.activate()
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
@@ -699,9 +680,9 @@ async def test_activate_appends_notice_after_assistant(make: Any) -> None:
     assert h.core.requests[1].messages[-1].id == notice.id
 
 
-async def test_activate_empty_continuous_conversation(make: Any) -> None:
+async def test_activate_empty_conversation(make: Any) -> None:
     h: Harness = await make()
-    await h.start(Mode.CONTINUOUS, Activation.USER_CONTROLLED)
+    await h.start()
     await h.runtime.activate()
     await h.rec.wait_state(AgentState.IDLE, count=2)
     transcript = await h.transcript()

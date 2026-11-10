@@ -30,7 +30,7 @@ first.
 
 ## Spending limit
 
-The limit counts everything spent in this mode, across all its conversations, at the
+The limit counts everything spent in this data folder, across all conversations, at the
 providers' list prices. When it is reached, Kayden stops the current step and refuses new
 ones until you raise the limit. The settings screen shows what has been spent so far.
 
@@ -42,6 +42,9 @@ Everything is in Kayden's data folder, `~/.kayden` (or `--data-dir`, or `$KAYDEN
 |---|---|
 | `settings.toml` | What you changed in the settings screen |
 | `config.toml` | Optional hand-written configuration, for advanced use |
+| `memory.db` | Your conversations and long-term memory |
+| `usage.json` | What has been spent so far; delete it, while Kayden is closed, to start counting from zero |
+| `events.jsonl` | Activity log of everything Kayden did, messages included |
 
 Settings from the screen override `config.toml`, and command-line options override both.
 To see the result, with defaults filled in and secrets hidden:

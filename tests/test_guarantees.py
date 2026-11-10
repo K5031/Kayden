@@ -6,7 +6,6 @@ import asyncio
 from typing import Any
 
 from kayden.api import (
-    Activation,
     AgentState,
     Budget,
     BudgetExhausted,
@@ -16,7 +15,6 @@ from kayden.api import (
     Message,
     MessageCommitted,
     MessageQueued,
-    Mode,
     OperationResult,
     Role,
     StopReason,
@@ -198,7 +196,7 @@ async def test_completion_budget_exhausted(make: Any) -> None:
 async def test_resume_repair(make: Any) -> None:
     store = MemoryStore()
     seed: Harness = await make(store=store)
-    info = await seed.memory.create_conversation(Mode.CONTINUOUS)
+    info = await seed.memory.create_conversation()
     await seed.memory.append(info.id, [
         Message("u1", Role.USER, (Text("start"),), 1.0),
         Message("a1", Role.ASSISTANT, (ToolCall("bg", "slow", {}),), 2.0),
@@ -209,8 +207,8 @@ async def test_resume_repair(make: Any) -> None:
 
     h: Harness = await make(store=store, data_dir=seed.data_dir,
                             core=ScriptedCore(default=Step(text="I see")))
-    await h.start(Mode.CONTINUOUS, Activation.AGENT_CONTROLLED)
-    assert h.runtime.snapshot().state == AgentState.STOPPED
+    await h.start(info.id, autonomous=True)
+    assert h.runtime.snapshot().state == AgentState.IDLE
     transcript = await h.transcript()
     assert [m.role for m in transcript[4:]] == [Role.TOOL, Role.USER]
     assert [(b.call_id, b.status) for b in transcript[4].blocks] == [
@@ -227,7 +225,7 @@ async def test_resume_repair(make: Any) -> None:
 
     # Repair is idempotent: a second restart adds nothing.
     h2: Harness = await make(store=store, data_dir=seed.data_dir)
-    await h2.start(Mode.CONTINUOUS)
+    await h2.start(info.id)
     conv: Conversation = store.conversations[info.id]
     assert sum(1 for m in conv.messages
                for b in m.blocks if getattr(b, "status", None) == ToolStatus.INTERRUPTED) == 3
@@ -245,7 +243,7 @@ async def test_tool_call_validation(make: Any) -> None:
             call("nope", id="unknown"),
             call("echo", {"n": "x"}, id="badschema"),
             ToolCall("unparsed", "echo", {}, raw_arguments='{"n": '),
-            call("idle", id="idle"),  # not offered in Session Mode
+            call("idle", id="idle"),  # not offered unless autonomous
             call("echo", {"n": 1}, id="good"),
         ]),
         Step(text="ok"),

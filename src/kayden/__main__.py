@@ -22,7 +22,7 @@ from typing import Any
 
 import tomli_w
 
-from kayden.api import Activation, Budget, Mode, PermissionPolicy
+from kayden.api import Budget, PermissionPolicy
 from kayden.runtime import (
     InstanceConfig,
     ModuleLoadError,
@@ -55,6 +55,9 @@ PROVIDERS = (
 SAVED_KEYS = ("provider", "model", "maintenance_model", "permissions", "system_prompt",
               "work_folder", "budget")
 BUDGET_INTS = ("max_tokens", "max_tool_calls")
+# Flags of the per-mode versions, accepted for one release with a warning.
+DEPRECATED_MODES = ("session", "continuous")
+DEPRECATED_ACTIVATIONS = ("user_controlled", "agent_controlled")
 BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
 
 
@@ -189,12 +192,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="instance data directory (default: $KAYDEN_DATA_DIR or ~/.kayden)")
     parser.add_argument("--config", type=Path,
                         help=f"config file (default: <data dir>/{CONFIG_FILE})")
-    parser.add_argument("--mode", choices=[m.value for m in Mode],
-                        help="start right away in this mode (default: ask)")
-    parser.add_argument("--activation", choices=[a.value for a in Activation],
-                        default=Activation.USER_CONTROLLED.value,
-                        help="Continuous Mode activation policy")
-    parser.add_argument("--conversation", help="Session conversation id to resume")
+    parser.add_argument("--conversation",
+                        help="start right away in this conversation (default: ask)")
+    parser.add_argument("--autonomous", action=argparse.BooleanOptionalAction,
+                        help="start right away; the conversation may continue on its own")
+    parser.add_argument("--mode", choices=DEPRECATED_MODES, help="deprecated: use --autonomous")
+    parser.add_argument("--activation", choices=DEPRECATED_ACTIVATIONS,
+                        help="deprecated: use --autonomous")
     parser.add_argument("--model", help="model id (default: the first the Core lists)")
     parser.add_argument("--maintenance-model", help="cheaper model for memory maintenance")
     parser.add_argument("--permissions", choices=[p.value for p in PermissionPolicy],
@@ -202,6 +206,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
     return parser.parse_args(argv)
+
+
+def start_options(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Frontend options that start right away, or None to let the frontend ask. Maps the
+    deprecated --mode and --activation onto --autonomous, with a warning."""
+    autonomous = args.autonomous
+    for flag, value, autonomous_value in (("--mode", args.mode, "continuous"),
+                                          ("--activation", args.activation, "agent_controlled")):
+        if value is not None:
+            print(f"kayden: {flag} is deprecated and will be removed; autonomy is now a "
+                  "setting of each conversation: use --autonomous", file=sys.stderr)
+            if value == autonomous_value and autonomous is None:
+                autonomous = True
+    if args.conversation is None and autonomous is None and args.mode is None:
+        return None
+    options: dict[str, Any] = {"start": True}
+    if args.conversation is not None:
+        options["conversation_id"] = args.conversation
+    if autonomous is not None:
+        options["autonomous"] = autonomous
+    return options
 
 
 def config_path(args: argparse.Namespace) -> Path:
@@ -275,10 +300,7 @@ def load_config(args: argparse.Namespace, *, default_root: Path | None = None) -
             runtime[key] = getattr(args, key)
     if args.permissions:
         runtime["permissions"] = PermissionPolicy(args.permissions)
-    if args.mode:
-        start = {"mode": args.mode, "activation": args.activation}
-        if args.conversation:
-            start["conversation_id"] = args.conversation
+    if (start := start_options(args)) is not None:
         frontend = modules["frontend"]
         modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
     _, provider = providers_for(modules["core"])
