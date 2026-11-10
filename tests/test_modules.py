@@ -21,9 +21,11 @@ from kayden.api import (
 )
 from kayden.frontends.desktop import launcher as desktop_launcher
 from kayden.runtime import ModuleSpec, ModuleState, Restart, run_instance
+from kayden.runtime.instance import InstanceLock
 from kayden.runtime.modules import TERMINAL, WINDOW, installed
 from tests.fakes import frontend as fake_frontend
-from tests.fakes.frontend import ScriptedFrontend
+from tests.fakes.frontend import Recorder, ScriptedFrontend
+from tests.fakes.memory import InMemoryMemory
 
 RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
            "frontend": "scripted"}
@@ -340,6 +342,37 @@ async def test_restart_reopens_the_conversation_with_the_new_modules(tmp_path, m
     await asyncio.wait_for(launcher.launch(args(tmp_path), TERMINAL), 10)
     assert seen["options"] == {"start": True, "conversation_id": seen["conversation"]}
     assert seen["models"] == ["s-1", "s-2"]
+
+
+def test_the_desktop_app_starts_after_the_terminal_let_go_of_the_data(tmp_path, monkeypatch):
+    """The TUI exits on ShuttingDown, while Restart now is still shutting down; the hand
+    over waits until the data directory is free."""
+    with_display(monkeypatch, True)
+    monkeypatch.setenv("FIRST_API_KEY", "k")
+    settings_file(tmp_path, FAKE_MODULES + 'frontend = "scripted"\n')
+
+    async def slow_close(self: Any) -> None:  # SQLite and HTTP clients take a moment
+        await asyncio.sleep(0.2)
+
+    monkeypatch.setattr(InMemoryMemory, "aclose", slow_close, raising=False)
+
+    async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
+        recorder = Recorder(runtime)
+        await runtime.start(StartOptions())
+        await runtime.update_settings(SettingsUpdate(modules={"frontend": "desktop"}))
+        asyncio.get_running_loop().create_task(runtime.restart())
+        await recorder.wait_for(lambda r: r.of(ShuttingDown))
+
+    free = []
+
+    def spawn(command: Any, **kw: Any) -> None:
+        InstanceLock.acquire(tmp_path).release()
+        free.append(True)
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    scripted(monkeypatch, script)
+    launcher.main(["--data-dir", str(tmp_path)])
+    assert free == [True]
 
 
 def test_the_terminal_hands_over_to_the_desktop_app(tmp_path, monkeypatch, capsys):

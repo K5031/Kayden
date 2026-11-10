@@ -275,6 +275,7 @@ class Runtime:
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_abandoned: list[CallId] = []
         self._closed = False
+        self._close_task: asyncio.Future[None] | None = None
 
         self._mem_lock = asyncio.Lock()
         self._backlog: deque[tuple[Message, list[RuntimeEvent], StopReason | None]] = deque()
@@ -581,10 +582,14 @@ class Runtime:
 
     async def aclose(self) -> None:
         """Graceful shutdown: running calls end as by Stop (cancelled or abandoned), never
-        interrupted."""
-        if self._closed:
-            return
-        self._closed = True
+        interrupted. A second call waits for the first: a frontend may stop on ShuttingDown
+        while Restart now is still closing modules and releasing the data directory."""
+        if self._close_task is None:
+            self._closed = True
+            self._close_task = asyncio.ensure_future(self._shut_down())
+        await asyncio.shield(self._close_task)
+
+    async def _shut_down(self) -> None:
         self._cycle_requested = False
         await self.stop()
         if self._stop_task is not None:
