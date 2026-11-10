@@ -884,7 +884,7 @@ class StartScreen(ModalScreen[StartOptions | None]):
             )
             with Horizontal(classes="switch-row"):
                 yield Switch(False, id="autonomous")
-                yield Label("Let Kayden continue on its own")
+                yield Label("Autonomous mode")
             yield Label("Continue from")
             yield Select([("Nothing, start fresh", FRESH)], value=FRESH, allow_blank=False,
                          id="seed-from")

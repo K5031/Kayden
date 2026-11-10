@@ -127,7 +127,7 @@ KEY_PAGES = {
 }
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
 PRIVATE_NOTE = "This chat won't use or add to long-term memory. Its messages are still kept."
-AUTONOMY_LABEL = "Let Kayden continue on its own"
+AUTONOMY_LABEL = "Autonomous mode"
 AUTONOMY_HINT = ("Kayden may keep working without waiting for you, for example when a "
                  "background task finishes. It still asks before actions as set in Settings "
                  "and stops at the spending limit.")

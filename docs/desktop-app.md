@@ -64,7 +64,7 @@ another reason, the Settings window opens with the message.
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **Show archived** under the list to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
-| Let Kayden keep working on its own | Turn on **Let Kayden continue on its own** above the conversation. See [Autonomy](concepts.md#autonomy). |
+| Let Kayden keep working on its own | Turn on **Autonomous mode** above the conversation. See [Autonomy](concepts.md#autonomy). |
 | See what Kayden remembers | **Kayden → Memory…**: add, edit or forget what it keeps across conversations. |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |

@@ -352,7 +352,7 @@ async def test_autonomy_switch_with_spending_next_to_it(make, qapp):
     await h.start()
     await h.turn("hello")
     window, _controller, _ = await open_window(h)
-    assert window.autonomy.text() == "Let Kayden continue on its own"
+    assert window.autonomy.text() == "Autonomous mode"
     assert not window.autonomy.isChecked() and window.spending_label.text().endswith("spent")
     window.autonomy.click()
     await eventually(lambda: h.runtime.snapshot().conversation.autonomous)
