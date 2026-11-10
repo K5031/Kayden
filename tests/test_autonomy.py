@@ -367,7 +367,7 @@ async def test_rename_and_clear_a_title(make: Any) -> None:
     await h.runtime.rename_conversation(first.id, "Groceries")
     [listed] = [c for c in await h.runtime.list_conversations() if c.id == first.id]
     assert listed.title == "Groceries"
-    await h.runtime.rename_conversation(first.id, "")
+    await h.runtime.rename_conversation(first.id, "   ")  # whitespace only counts as empty
     [listed] = [c for c in await h.runtime.list_conversations() if c.id == first.id]
     assert listed.title is None
     await settled(h)

@@ -459,8 +459,9 @@ class Memory(abc.ABC):
         archived: bool | None = None,
         autonomous: bool | None = None,
     ) -> ConversationInfo:
-        """Change metadata; None leaves a field as it is. An empty title clears it, so an
-        automatic title follows. Returns the updated info."""
+        """Change metadata; None leaves a field as it is. A title is stripped of surrounding
+        whitespace; an empty one clears it, so an automatic title follows. Returns the
+        updated info."""
 
     @abc.abstractmethod
     async def append(
@@ -1250,7 +1251,7 @@ class RuntimeAPI(Protocol):
         RuntimeStateError before start()."""
 
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
-        """An empty title clears it, so an automatic title follows."""
+        """An empty (or whitespace-only) title clears it, so an automatic title follows."""
 
     async def archive_conversation(
         self, conversation_id: ConversationId, archived: bool
