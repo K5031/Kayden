@@ -39,7 +39,8 @@ Runtime guarantees to modules:
 - Tool calls are validated (known name, arguments match the schema) before they
   start; violations are answered with ToolResult(ERROR) and the tool is not run. A
   known name is one offered in this turn's request: the runtime's built-ins, then Memory's
-  tools, then the Tools module's, each listed once per request. A name already offered
+  tools, then each Tools module's in configured order (several may run at once), each
+  listed once per request. A name already offered
   (a reserved one included) is dropped from the later module's offer and logged; each
   call goes to the module that offered its name. If a list_tools fails,
   Failure(INTERNAL) is emitted and the turn offers the others only.
@@ -843,8 +844,8 @@ class StartOptions:
     """conversation_id None = a new conversation, else resume that one (KeyError if
     unknown). seed_from and folder apply to a new conversation only (ValueError with
     conversation_id); seed_from must name an existing conversation. folder is the new
-    conversation's work folder (ValueError if it is not a folder, or the Tools have a
-    fixed one); without it, seed_from's folder, else Settings.work_folder."""
+    conversation's work folder (ValueError if it is not a folder, or no Tools module takes
+    one; each module that takes folders gets it); without it, seed_from's folder, else Settings.work_folder."""
 
     conversation_id: ConversationId | None = None
     model: str | None = None

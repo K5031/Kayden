@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -206,6 +206,7 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
         *,
         core: ScriptedCore | None = None,
         tools: FakeTools | None = None,
+        more_tools: Sequence[FakeTools] = (),
         store: MemoryStore | None = None,
         memory_kw: dict[str, Any] | None = None,
         data_dir: Path | None = None,
@@ -225,7 +226,7 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
         runtime = Runtime(
             core=core,
             memory=memory,
-            tools=tools,
+            tools=[tools, *more_tools],
             frontend=frontend.info,
             config=RuntimeConfig(data_dir=data_dir, **{**FAST, **config}),
         )

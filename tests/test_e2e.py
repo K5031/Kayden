@@ -385,7 +385,7 @@ async def test_tui_drives_the_real_runtime(workspace, tmp_path):
     paths = InstancePaths(data_dir)
     runtime = Runtime(core=ScriptedCore(steps(), maintenance=Step(text="Make a file")),
                       memory=load_module(config.memory, Memory, paths),
-                      tools=load_module(config.tools, Tools, paths),
+                      tools=[load_module(config.tools, Tools, paths)],
                       frontend=TuiFrontend().info, config=config.runtime)
     app = KaydenApp(runtime, StartOptions())
     try:

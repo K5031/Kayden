@@ -231,11 +231,12 @@ class _Completion:
 class Runtime:
     """Implements RuntimeAPI. One agent per process."""
 
-    def __init__(self, *, core: Core, memory: Memory, tools: Tools, frontend: FrontendInfo,
-                 config: RuntimeConfig, lock: InstanceLock | None = None):
+    def __init__(self, *, core: Core, memory: Memory, tools: Sequence[Tools],
+                 frontend: FrontendInfo, config: RuntimeConfig,
+                 lock: InstanceLock | None = None):
         self._core = core
         self._memory = memory
-        self._tools = tools
+        self._tools = list(tools)  # every Tools module, in the order their tools are offered
         self._frontend = frontend
         self._config = config
         config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -281,6 +282,7 @@ class Runtime:
         # folder: one given for a confined call covers confined calls only.
         self._grants: dict[str, bool] = {}
         self._memory_tools: set[str] = set()  # offered by Memory this request
+        self._tool_owner: dict[str, Tools] = {}  # the Tools module that offered each name
         self._own_description: set[str] = set()  # tools whose schema declares DESCRIPTION_ARG
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
@@ -581,7 +583,7 @@ class Runtime:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
         self._emit(ShuttingDown("shutdown"))
-        for module in (self._core, self._memory, self._tools):
+        for module in (self._core, self._memory, *self._tools):
             try:
                 await module.aclose()
             except Exception:
@@ -772,11 +774,11 @@ class Runtime:
     # ── Tools offered to the model ───────────────────────────────────────
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
-        """The runtime's built-ins, then Memory's tools, then the Tools module's; a name
+        """The runtime's built-ins, then Memory's tools, then each Tools module's; a name
         offered already is dropped from the later module."""
         specs = dict(BUILTIN_TOOLS)
-        self._memory_tools = set()
-        for module, owned in ((self._memory, self._memory_tools), (self._tools, None)):
+        self._memory_tools, self._tool_owner = set(), {}
+        for module in (self._memory, *self._tools):
             try:
                 offered = await module.list_tools()
             except Exception as e:  # noqa: BLE001 - module calls are wrapped
@@ -789,8 +791,10 @@ class Runtime:
                                        module=type(module).__name__)
                     continue
                 specs[spec.name] = spec
-                if owned is not None:
-                    owned.add(spec.name)
+                if module is self._memory:
+                    self._memory_tools.add(spec.name)
+                else:
+                    self._tool_owner[spec.name] = module
         return {name: self._describable(spec) for name, spec in specs.items()}
 
     def _describable(self, spec: ToolSpec) -> ToolSpec:
@@ -839,14 +843,18 @@ class Runtime:
         return info, False
 
     async def _use_folder(self, folder: str | None) -> bool:
-        """Hand the Tools the folder; False when they have a fixed one."""
-        try:
-            await self._tools.use_folder(None if folder is None else Path(folder))
-        except NotImplementedError:
-            return False
-        except OSError as e:
-            raise ValueError(f"the folder {folder} cannot be used: {e.strerror or e}") from e
-        return True
+        """Hand every Tools module that takes one the folder; False when none does."""
+        taken = False
+        for module in self._tools:
+            try:
+                await module.use_folder(None if folder is None else Path(folder))
+            except NotImplementedError:
+                continue
+            except OSError as e:
+                raise ValueError(
+                    f"the folder {folder} cannot be used: {e.strerror or e}") from e
+            taken = True
+        return taken
 
     async def _repair(self) -> None:
         assert self._conversation is not None
@@ -1376,7 +1384,8 @@ class Runtime:
             auto(Decision.DENY, "policy")
             return "Refused: the permission policy denies tool calls."
         try:
-            confined = await self._tools.confined(self._bare(call))
+            owner = self._tool_owner.get(call.name)
+            confined = owner is not None and await owner.confined(self._bare(call))
         except Exception:  # module calls are wrapped; not knowing means asking
             logger.exception("Tools.confined failed for %s", call.name)
             confined = False
@@ -1462,7 +1471,8 @@ class Runtime:
 
     async def _supervise(self, op: Operation, ctx: Context) -> ToolResult:
         try:
-            result = await op.run(lambda: self._tools.execute(self._bare(op.call), ctx))
+            owner = self._tool_owner[op.call.name]
+            result = await op.run(lambda: owner.execute(self._bare(op.call), ctx))
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
             result = ToolResult(op.call.id, ToolStatus.ERROR, f"Runtime error: {e}")
         op.result = result

@@ -208,7 +208,7 @@ async def test_the_key_applies_at_the_next_start_the_folder_at_the_next_chat(
                                                        work_folder=str(tmp_path)))
     assert keychain.store[("kayden", "FIRST_API_KEY")] == "sk-1"
     assert s.work_folder == str(tmp_path) and s.restart_needed
-    assert h.runtime._tools is h.tools and not h.tools.closed  # nothing was rebuilt
+    assert h.runtime._tools == [h.tools] and not h.tools.closed  # nothing was rebuilt
     assert h.runtime._core is h.core and not h.core.closed
     assert saved(h) == {"work_folder": str(tmp_path)}
 
