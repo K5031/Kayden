@@ -370,6 +370,7 @@ Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
 
 | Choice | Value |
 |---|---|
+| App menu | `app_menu.install()` (Linux, from **Kayden → Add to App Menu**) writes `applications/io.github.k5031.kayden.desktop` and `icons/hicolor/scalable/apps/io.github.k5031.kayden.svg` under `$XDG_DATA_HOME` (default `~/.local/share`). `Exec` is this install's Python with `-m kayden.frontends.desktop.launcher`, since a menu has no terminal for `kayden`; the id is the window's desktop file name, so the window gets the icon. The action shows while the entry is missing or differs |
 | Entry points | No command of its own: `kayden` hands over to `python -m kayden.frontends.desktop.launcher`; bundles run `python -m kayden_desktop`, which calls the same `main` |
 | Dependencies | `pyside6-essentials` and `qasync`, in the `desktop` extra (also in the dev group) |
 | Default work folder | `~/Kayden`, created at launch when neither config file sets a root (`load_config(default_root=...)`) |

@@ -85,7 +85,7 @@ from kayden.frontends.common import (
     needs_restart,
     restart_notice,
 )
-from kayden.frontends.desktop import theme
+from kayden.frontends.desktop import app_menu, theme
 from kayden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     AssistantItem,
@@ -787,8 +787,12 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         self.memory_action = QAction("&Memory…", self)
         self.memory_action.triggered.connect(self.open_memory)
+        self.app_menu_action = QAction("&Add to App Menu", self)
+        self.app_menu_action.setStatusTip("Start Kayden from your app menu, with its own icon.")
+        self.app_menu_action.triggered.connect(self._add_to_app_menu)
+        self.app_menu_action.setVisible(app_menu.supported() and not app_menu.is_current())
         for action in (self.new_action, None, self.memory_action,
-                       settings, None, stop, quit_action):
+                       settings, self.app_menu_action, None, stop, quit_action):
             if action is None:
                 file_menu.addSeparator()
             else:
@@ -997,6 +1001,15 @@ class MainWindow(QMainWindow):
         box.buttonClicked.connect(lambda button: button is delete
                                   and self.controller.delete(info.id))
         box.open()
+
+    def _add_to_app_menu(self) -> None:
+        try:
+            app_menu.install()
+        except OSError as e:
+            self.model.notify(f"Kayden could not be added to the app menu: {e}")
+            return
+        self.app_menu_action.setVisible(False)
+        self.model.notify("Kayden is now in your app menu.")
 
     def open_memory(self) -> None:
         if self.memory_dialog is None:

@@ -39,14 +39,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> None:
     import qasync
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication, QMessageBox
 
-    from kayden.frontends.desktop import theme
+    from kayden.frontends.desktop import app_menu, theme
 
     args = parse_args(argv)
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Kayden")
-    app.setDesktopFileName("io.github.k5031.kayden")
+    app.setDesktopFileName(app_menu.APP_ID)
+    app.setWindowIcon(QIcon(str(app_menu.ICON)))
     app.setQuitOnLastWindowClosed(False)  # the runtime shuts down first, then asyncio.run ends
     theme.apply(app)
     theme.follow_system(app)

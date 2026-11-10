@@ -29,6 +29,10 @@ cd Kayden
 uv run --python 3.13 --extra desktop kayden
 ```
 
+On Linux, choose **Kayden → Add to App Menu** once the app is open. Kayden then appears in
+your app menu with its own icon and starts without a terminal. The menu item is there only
+while the app menu has no entry for this install.
+
 The app is tested on Python 3.13. The Qt libraries it uses are not fully compatible with
 Python 3.15 yet. Without the `desktop` extra, the desktop app is not offered in Settings.
 

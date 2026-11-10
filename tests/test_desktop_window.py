@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -222,6 +223,22 @@ async def test_choosing_the_tui_says_when_it_is_used(make, installed, qapp):
     next(b for b in box.buttons() if b.text() == "Restart now").click()  # restarts the desktop app itself
     await h.rec.wait_for(lambda r: r.of(ShuttingDown))
     assert h.runtime.restart_request.frontend == "scripted-window"
+
+
+async def test_kayden_can_be_added_to_the_app_menu(make, qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    add = window.app_menu_action
+    assert add.text() == "&Add to App Menu" and add.isVisible()
+    add.trigger()
+    assert (tmp_path / "applications/io.github.k5031.kayden.desktop").exists()
+    assert not add.isVisible()
+    assert "app menu" in controller.model.items[-1].text
+    other, _controller, _ = await open_window(h)
+    assert not other.app_menu_action.isVisible()  # already there
 
 
 async def test_model_menu_is_filled_before_it_opens(make, qapp):
