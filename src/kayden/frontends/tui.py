@@ -54,6 +54,7 @@ from kayden.api import (
     InstancePaths,
     MaintenanceFinished,
     MaintenanceStarted,
+    McpServer,
     MemoriesChanged,
     MemoryEntry,
     Message,
@@ -94,6 +95,8 @@ from kayden.api import (
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
     AT_RESTART,
+    MCP_VARIABLES_HINT,
+    MCP_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
     RESULT_LABELS,
@@ -102,6 +105,9 @@ from kayden.frontends.common import (
     folder_path,
     group_title,
     loosening,
+    mcp_server,
+    mcp_target,
+    mcp_variables,
     model_label,
     module_options,
     needs_restart,
@@ -142,7 +148,7 @@ DECISION_ALIASES = {
 }
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
-    "/conversations (F3), /memory (F4), /folder [path], "
+    "/conversations (F3), /memory (F4), /mcp (tool servers), /folder [path], "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -911,6 +917,123 @@ class MemoryScreen(ListScreen):
             yes="Forget", no="Cancel", danger=True), confirmed)
 
 
+class McpScreen(ListScreen):
+    """The MCP servers whose tools Kayden offers; changes start with the next start."""
+
+    def __init__(self, runtime: RuntimeAPI) -> None:
+        super().__init__(runtime)
+        self.servers: list[McpServer] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label("Tool servers (MCP)", classes="title")
+            yield Label("Each server gives Kayden more tools, such as GitHub, a database or "
+                        "your calendar.", classes="hint")
+            yield OptionList(id="servers")
+            yield Label("", id="mcp-notice", classes="hint")
+            with Horizontal(classes="buttons actions"):
+                yield Button("Add", variant="primary", id="add")
+                yield Button("Edit", id="edit")
+                yield Button("Remove", variant="error", id="remove")
+                yield Button("Restart now", id="restart")
+
+    async def _load(self) -> None:
+        settings = await self.runtime.settings()
+        self.servers = list(settings.mcp_servers)
+        self._show([Option(f"{s.name}  · {mcp_target(s)}", id=s.name) for s in self.servers])
+        notice = restart_notice(settings) if settings.restart_needed else None
+        self.query_one("#mcp-notice", Label).update(notice or "")
+        self.query_one("#restart", Button).display = settings.restart_needed
+
+    def _selected(self) -> McpServer | None:
+        name = self._selected_id()
+        return next((s for s in self.servers if s.name == name), None)
+
+    def _save(self, servers: list[McpServer]) -> None:
+        self._run(self.runtime.update_settings(SettingsUpdate(mcp_servers=servers)))
+
+    @on(Button.Pressed, "#add")
+    def _add(self) -> None:
+        def added(server: McpServer | None) -> None:
+            if server is not None:
+                self._save([*self.servers, server])
+
+        self.app.push_screen(ServerScreen(None), added)
+
+    @on(OptionList.OptionSelected)
+    @on(Button.Pressed, "#edit")
+    def _edit(self) -> None:
+        if (selected := self._selected()) is None:
+            return
+
+        def edited(server: McpServer | None) -> None:
+            if server is not None:
+                self._save([server if s.name == selected.name else s for s in self.servers])
+
+        self.app.push_screen(ServerScreen(selected), edited)
+
+    @on(Button.Pressed, "#remove")
+    def _remove(self) -> None:
+        if (selected := self._selected()) is None:
+            return
+
+        def confirmed(yes: bool | None) -> None:
+            if yes:
+                self._save([s for s in self.servers if s.name != selected.name])
+
+        self.app.push_screen(ConfirmScreen(
+            f'Remove the tool server "{selected.name}"? Its tools are gone after the next '
+            "restart, and the keys saved for it are deleted.",
+            yes="Remove", no="Cancel", danger=True), confirmed)
+
+    @on(Button.Pressed, "#restart")
+    def _restart(self) -> None:
+        self._run(self.runtime.restart())
+
+
+class ServerScreen(ModalScreen[McpServer | None]):
+    """Add or edit one MCP server. The runtime checks it when the list is saved."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, server: McpServer | None) -> None:
+        super().__init__()
+        self.server = server
+
+    def compose(self) -> ComposeResult:
+        server = self.server
+        with Vertical(classes="dialog"):
+            yield Label("Edit tool server" if server else "Add tool server", classes="title")
+            yield Label("Name")
+            yield Input(server.name if server else "", placeholder="github", id="server-name")
+            yield Label("Command or URL")
+            yield Input(mcp_target(server) if server else "",
+                        placeholder="npx -y @modelcontextprotocol/server-github, or a URL",
+                        id="server-target")
+            yield Label("Variables")
+            yield TextArea(mcp_variables(server) if server else "", id="server-variables")
+            yield Label(MCP_VARIABLES_HINT, classes="hint")
+            yield Label(MCP_WARNING, id="warning", classes="hint")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    @on(Button.Pressed, "#save")
+    def _save(self) -> None:
+        try:
+            server = mcp_server(self.query_one("#server-name", Input).value,
+                                self.query_one("#server-target", Input).value,
+                                self.query_one("#server-variables", TextArea).text)
+        except ValueError as e:
+            self.notify(str(e), severity="error", markup=False)
+            return
+        self.dismiss(server)
+
+    @on(Button.Pressed, "#cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
+
+
 NEW_CONVERSATION = "__new__"
 FRESH = "__fresh__"
 DEFAULT_MODEL = "__default__"
@@ -1521,6 +1644,8 @@ class KaydenApp(App[None]):
                 self.action_conversations()
             case "memory":
                 self.action_memory()
+            case "mcp":
+                self.push_screen(McpScreen(self.runtime))
             case "folder" if arg:
                 self.new_in_folder(str(Path(arg).expanduser()))
             case "folder":

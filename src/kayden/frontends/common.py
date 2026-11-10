@@ -13,6 +13,7 @@ from typing import Any
 
 from kayden.api import (
     DESCRIPTION_ARG,
+    McpServer,
     ModelInfo,
     ModuleChoice,
     PermissionPolicy,
@@ -243,3 +244,35 @@ def restart_notice(settings: Settings) -> str | None:
         notice += (f" Restart now to switch to "
                    f"{module_name(frontend, settings.restart_frontend)}.")
     return notice
+
+
+MCP_WARNING = ("An MCP server is someone else's program running with your permissions: add "
+               "only servers you trust. Kayden checks or asks before each of its actions.")
+MCP_VARIABLES_HINT = ("One per line, NAME=value, for keys or tokens the server needs. Values "
+                      "are kept in your system's keychain; leave a value empty to keep it.")
+
+
+def mcp_server(name: str, target: str, variables: str) -> McpServer:
+    """A server from what the user typed: a URL (http or https) or else a command, and its
+    variables as NAME=value lines. The runtime checks the rest."""
+    env = {}
+    for line in variables.splitlines():
+        if not line.strip():
+            continue
+        variable, sep, value = line.partition("=")
+        if not sep:
+            raise ValueError(f"write each variable as NAME=value: {line.strip()!r}")
+        env[variable.strip()] = value.strip()
+    target = target.strip()
+    if target.startswith(("http://", "https://")):
+        return McpServer(name.strip(), url=target, env=env)
+    return McpServer(name.strip(), command=target, env=env)
+
+
+def mcp_target(server: McpServer) -> str:
+    return server.command or server.url or ""
+
+
+def mcp_variables(server: McpServer) -> str:
+    """The saved variables for editing: their names, values left empty (kept)."""
+    return "\n".join(f"{name}=" for name in server.env)

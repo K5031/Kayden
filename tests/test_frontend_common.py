@@ -1,5 +1,6 @@
 """Settings texts and the loosening check shared by the TUI and the desktop app."""
 
+import pytest
 
 from kayden.api import (
     Budget,
@@ -152,3 +153,17 @@ def test_a_finished_step_reads_in_the_past_tense():
     }
     for sentence, past in cases.items():
         assert past_tense(sentence) == past, sentence
+
+
+def test_mcp_servers_from_the_form_and_back():
+    from kayden.api import McpServer
+    from kayden.frontends.common import mcp_server, mcp_target, mcp_variables
+
+    server = mcp_server(" github ", " npx -y server-github ", "GITHUB_TOKEN = ghp-1\n\n")
+    assert server == McpServer("github", command="npx -y server-github",
+                               env={"GITHUB_TOKEN": "ghp-1"})
+    assert mcp_server("docs", "https://d.example/mcp", "").url == "https://d.example/mcp"
+    saved = McpServer("github", command="npx s", env={"GITHUB_TOKEN": ""})
+    assert mcp_target(saved) == "npx s" and mcp_variables(saved) == "GITHUB_TOKEN="
+    with pytest.raises(ValueError, match="NAME=value"):
+        mcp_server("x", "cmd", "just-a-name")

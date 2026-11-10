@@ -694,3 +694,39 @@ async def test_a_burst_of_changes_is_laid_out_once(make, qapp, monkeypatch):
         controller.model.notify(f"note {n}", "info")
     await asyncio.sleep(0)
     assert len(arranged) == 1 and window.items_layout.count() >= 20
+
+
+async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
+    from kayden.frontends.desktop.window import McpDialog, ServerDialog
+
+    h: Harness = await make(modules=ModuleState(running=RUNNING, work_folder="/start"))
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    window.open_tool_servers()
+    dialog = window.mcp_dialog
+    assert isinstance(dialog, McpDialog)
+    await eventually(lambda: dialog.empty.isVisible())
+    dialog.add_button.click()
+    server = dialog.findChild(ServerDialog)
+    assert "trust" in server.warning.text()
+    server.name.setText("github")
+    server.target.setText("npx -y server-github")
+    server.variables.setPlainText("GITHUB_TOKEN=ghp-1")
+    server.save_button.click()
+    await eventually(lambda: dialog.servers.count() == 1)
+    assert keychain.store[("kayden", "mcp/github/GITHUB_TOKEN")] == "ghp-1"
+    assert dialog.restart_button.isVisible()  # servers start with the next start
+    dialog.servers.setCurrentRow(0)
+    dialog.edit_button.click()
+    server = [d for d in dialog.findChildren(ServerDialog) if d.isVisible()][-1]
+    assert server.variables.toPlainText() == "GITHUB_TOKEN="  # the value stays hidden
+    server.target.setText("not 'closed")
+    server.save_button.click()
+    await eventually(lambda: server.error.isVisible())
+    assert "quotes" in server.error.text()
+    server.reject()
+    dialog.remove_button.click()
+    [remove] = [b for b in message_box(dialog).buttons() if b.text() == "Remove"]
+    remove.click()
+    await eventually(lambda: dialog.servers.count() == 0)
+    assert ("kayden", "mcp/github/GITHUB_TOKEN") not in keychain.store

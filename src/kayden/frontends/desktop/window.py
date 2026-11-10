@@ -67,6 +67,7 @@ from PySide6.QtWidgets import (
 from kayden.api import (
     ConversationInfo,
     Decision,
+    McpServer,
     MemoryEntry,
     ModelInfo,
     PermissionPolicy,
@@ -78,6 +79,8 @@ from kayden.api import (
 )
 from kayden.frontends.common import (
     AT_RESTART,
+    MCP_VARIABLES_HINT,
+    MCP_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
     call_parts,
@@ -85,6 +88,9 @@ from kayden.frontends.common import (
     dollars,
     folder_path,
     loosening,
+    mcp_server,
+    mcp_target,
+    mcp_variables,
     model_label,
     module_options,
     needs_restart,
@@ -763,6 +769,7 @@ class MainWindow(QMainWindow):
         self._arrange_pending = False
         self._dialog: QDialog | None = None
         self.memory_dialog: MemoryDialog | None = None
+        self.mcp_dialog: McpDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
         self.setWindowTitle("Kayden")
@@ -962,11 +969,13 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         self.memory_action = QAction("&Memory…", self)
         self.memory_action.triggered.connect(self.open_memory)
+        servers = QAction("&Tool servers (MCP)…", self)
+        servers.triggered.connect(self.open_tool_servers)
         self.app_menu_action = QAction("&Add to App Menu", self)
         self.app_menu_action.setStatusTip("Start Kayden from your app menu, with its own icon.")
         self.app_menu_action.triggered.connect(self._add_to_app_menu)
         self.app_menu_action.setVisible(app_menu.supported() and not app_menu.is_current())
-        for action in (self.new_action, None, self.memory_action,
+        for action in (self.new_action, None, self.memory_action, servers,
                        settings, self.app_menu_action, None, stop, quit_action):
             if action is None:
                 file_menu.addSeparator()
@@ -1270,6 +1279,12 @@ class MainWindow(QMainWindow):
         self.memory_dialog.refresh()
         self.memory_dialog.open()
 
+    def open_tool_servers(self) -> None:
+        if self.mcp_dialog is None:
+            self.mcp_dialog = McpDialog(self, self.runtime, self.controller)
+        self.mcp_dialog.refresh()
+        self.mcp_dialog.open()
+
     # ── commands ──────────────────────────────────────────────────────────
 
     def _send(self) -> None:
@@ -1423,6 +1438,161 @@ class MemoryDialog(QDialog):
                     lambda: self.controller.forget_memory(entry.id), yes="Forget", danger=True,
                     details="Kayden won't use it again. The messages it came from stay until "
                             "you delete their conversation.")
+
+
+class McpDialog(QDialog):
+    """The MCP servers whose tools Kayden offers. Changes are saved at once and start with
+    the next start, which Restart now brings."""
+
+    def __init__(self, parent: QWidget, runtime: RuntimeAPI, controller: Controller) -> None:
+        super().__init__(parent)
+        self.runtime, self.controller = runtime, controller
+        self.saved: list[McpServer] = []
+        self.setWindowTitle("Tool servers")
+        self.setMinimumSize(520, 400)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.addWidget(_label("Tool servers (MCP)", selectable=False, role="heading"))
+        layout.addWidget(_label("Each server gives Kayden more tools, such as GitHub, a "
+                                "database or your calendar.", tone="muted"))
+        self.servers = QListWidget()
+        self.servers.setAccessibleName("Tool servers")
+        self.servers.setItemDelegate(RowDelegate(self.servers))
+        self.servers.currentItemChanged.connect(lambda *_: self._selection_changed())
+        self.servers.itemActivated.connect(lambda _: self._edit())
+        self.empty = _label("No servers yet.", selectable=False, tone="muted")
+        layout.addWidget(self.servers, 1)
+        layout.addWidget(self.empty)
+        self.notice = _label("", selectable=False, tone="warning")
+        self.notice.hide()
+        layout.addWidget(self.notice)
+        self.add_button = _primary(QPushButton("Add…"))
+        self.add_button.clicked.connect(self._add)
+        self.edit_button = QPushButton("Edit…")
+        self.edit_button.clicked.connect(self._edit)
+        self.remove_button = QPushButton("Remove…")
+        self.remove_button.clicked.connect(self._remove)
+        self.restart_button = QPushButton("Restart now")
+        self.restart_button.clicked.connect(
+            lambda: (self.accept(), self.controller.command(self.runtime.restart())))
+        self.restart_button.hide()
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        for button in (self.add_button, self.edit_button, self.remove_button):
+            row.addWidget(button)
+        row.addStretch()
+        row.addWidget(self.restart_button)
+        row.addWidget(close)
+        layout.addLayout(row)
+        self._selection_changed()
+
+    def refresh(self) -> None:
+        self.controller.command(self.runtime.settings(), done=self._show)
+
+    def _show(self, settings: Settings) -> None:
+        self.saved = list(settings.mcp_servers)
+        self.servers.clear()
+        for server in self.saved:
+            item = QListWidgetItem(server.name)
+            item.setData(Qt.ItemDataRole.UserRole, server)
+            item.setData(PREVIEW_ROLE, mcp_target(server))
+            self.servers.addItem(item)
+        self.empty.setVisible(not self.saved)
+        notice = restart_notice(settings) if settings.restart_needed else None
+        self.notice.setText(notice or "")
+        self.notice.setVisible(notice is not None)
+        self.restart_button.setVisible(settings.restart_needed)
+        self._selection_changed()
+
+    def _selected(self) -> McpServer | None:
+        item = self.servers.currentItem()
+        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+
+    def _selection_changed(self) -> None:
+        for button in (self.edit_button, self.remove_button):
+            button.setEnabled(self._selected() is not None)
+
+    async def save(self, servers: list[McpServer]) -> Settings:
+        return await self.runtime.update_settings(SettingsUpdate(mcp_servers=servers))
+
+    def _add(self) -> None:
+        ServerDialog(self, None).open()
+
+    def _edit(self) -> None:
+        if (server := self._selected()) is not None:
+            ServerDialog(self, server).open()
+
+    def _remove(self) -> None:
+        if (server := self._selected()) is not None:
+            rest = [s for s in self.saved if s.name != server.name]
+            confirm(self, f"Remove the tool server “{server.name}”?",
+                    lambda: self.controller.command(self.save(rest), done=self._show),
+                    yes="Remove", danger=True,
+                    details="Its tools are gone after the next restart, and the keys saved "
+                            "for it are deleted.")
+
+
+class ServerDialog(QDialog):
+    """Add or edit one server; saved through the runtime, which checks it."""
+
+    def __init__(self, parent: McpDialog, server: McpServer | None) -> None:
+        super().__init__(parent)
+        self.list, self.original = parent, server
+        self.setWindowTitle("Edit tool server" if server else "Add tool server")
+        self.setMinimumWidth(520)
+        form = QFormLayout(self)
+        form.setContentsMargins(20, 18, 20, 16)
+        self.name = QLineEdit(server.name if server else "")
+        self.name.setPlaceholderText("github")
+        self.target = QLineEdit(mcp_target(server) if server else "")
+        self.target.setPlaceholderText("npx -y @modelcontextprotocol/server-github, or a URL")
+        self.variables = QPlainTextEdit(mcp_variables(server) if server else "")
+        self.variables.setPlaceholderText("GITHUB_TOKEN=…")
+        self.variables.setMaximumHeight(90)
+        self.warning = _label(MCP_WARNING, tone="warning")
+        self.error = _label()
+        theme.mark(self.error, "tone", "error")
+        self.error.hide()
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        self.save_button = _primary(buttons.button(QDialogButtonBox.StandardButton.Save))
+        form.addRow("Name", self.name)
+        form.addRow("Command or URL", self.target)
+        form.addRow("Variables", self.variables)
+        form.addRow("", _label(MCP_VARIABLES_HINT, selectable=False, role="small"))
+        form.addRow(self.warning)
+        form.addRow(self.error)
+        form.addRow(buttons)
+
+    def _save(self) -> None:
+        try:
+            server = mcp_server(self.name.text(), self.target.text(),
+                                self.variables.toPlainText())
+        except ValueError as e:
+            self._show_error(str(e))
+            return
+        servers = [server if self.original and s.name == self.original.name else s
+                   for s in self.list.saved]
+        if self.original is None:
+            servers.append(server)
+        self.save_button.setEnabled(False)
+
+        def saved(settings: Settings) -> None:
+            self.accept()
+            self.list._show(settings)
+
+        def failed(error: Exception) -> None:
+            self.save_button.setEnabled(True)
+            self._show_error(user_message(error))
+
+        self.list.controller.command(self.list.save(servers), done=saved, failed=failed)
+
+    def _show_error(self, text: str) -> None:
+        self.error.setText(text)
+        self.error.show()
 
 
 # ── settings ──────────────────────────────────────────────────────────────

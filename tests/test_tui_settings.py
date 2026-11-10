@@ -282,3 +282,37 @@ async def test_a_core_from_the_config_file_shows_as_custom():
         await save(pilot, app)
         await until(pilot, lambda: not isinstance(app.screen, SettingsScreen))
         assert updates(stub) == []
+
+
+async def test_tool_servers_are_added_and_removed():
+    from dataclasses import replace
+
+    from kayden.api import McpServer
+    from kayden.frontends.tui import McpScreen, ServerScreen
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        await type_text(pilot, "/mcp")
+        await pilot.press("enter")
+        await until(pilot, lambda: isinstance(app.screen, McpScreen))
+        app.screen.query_one("#add", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, ServerScreen))
+        screen = app.screen
+        assert "trust" in str(screen.query_one("#warning").content)
+        screen.query_one("#server-name", Input).value = "github"
+        screen.query_one("#server-target", Input).value = "npx -y server-github"
+        screen.query_one("#server-variables", TextArea).text = "GITHUB_TOKEN=ghp-1"
+        stub.current_settings = replace(stub.current_settings, restart_needed=True, mcp_servers=(
+            McpServer("github", command="npx -y server-github", env={"GITHUB_TOKEN": ""}),))
+        screen.query_one("#save", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, McpScreen) and updates(stub))
+        assert updates(stub)[-1] == SettingsUpdate(mcp_servers=[McpServer(
+            "github", command="npx -y server-github", env={"GITHUB_TOKEN": "ghp-1"})])
+        await until(pilot, lambda: app.screen.query_one("#restart", Button).display)
+        app.screen.query_one("#remove", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#confirm-yes", Button).press()
+        await until(pilot, lambda: len(updates(stub)) == 2)
+        assert updates(stub)[-1] == SettingsUpdate(mcp_servers=[])
