@@ -52,7 +52,7 @@ data folder: `instance.lock`, `usage.json` and `events.jsonl`.
 | | Off (default) | On |
 |---|---|---|
 | Who starts a cycle | Only the user | The user, and the end of awaited background work |
-| `idle()` offered | No | Yes, with `AUTONOMY_PROMPT` added to the system prompt |
+| System prompt | The configured one | With `AUTONOMY_PROMPT` added |
 | The agent is told to | Work with the user | Work on the task until done or blocked, decide rather than ask, report its choices |
 
 Autonomy changes neither permissions nor budgets: the agent still asks as the settings
@@ -167,6 +167,11 @@ command-line flags of the per-mode versions.
 
 ## Alternatives considered
 
+- **An `idle()` tool for the agent to end its cycle**, optionally naming the operations to
+  wait for. Claude Opus 5.5 returns text that precedes a tool call as a hidden progress
+  note, so an agent that replied and then called `idle()` appeared to say nothing; told
+  not to, it still did. Ending a turn without tool calls already ends the cycle. The cost
+  is that an autonomous agent waits for all of its background work, never a part of it.
 - **Autonomy that also loosens permissions** (read freely, or anything inside the work
   folder). It would make hands-off runs work with no other setting, but the shell tool is
   not a sandbox, and a switch on a chat should not quietly widen what the agent may do.

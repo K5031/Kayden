@@ -290,7 +290,7 @@ async def test_reasoning_is_replayed_only_while_everything_before_it_is_unchange
 
     assert await sent() == ["sig-abc"]
     assert await sent(system="You are a terse assistant.\n\nYou work autonomously.") == []
-    assert await sent(tools=[WEATHER_TOOL, replace(WEATHER_TOOL, name="idle")]) == []
+    assert await sent(tools=[WEATHER_TOOL, replace(WEATHER_TOOL, name="get_time")]) == []
     assert await sent(messages=[user("Think again"), answer, user("And now?")]) == []
     assert await sent(messages=[*history, answer, user("Once more")]) == ["sig-abc"]
     unbound = Message("a", Role.ASSISTANT, (

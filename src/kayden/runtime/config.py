@@ -19,11 +19,9 @@ DEFAULT_SYSTEM_PROMPT = (
 
 ACTIVATION_NOTICE = (
     "[Runtime notice] You were activated without a new user message. Continue your work, "
-    "or idle if there is nothing to do."
+    "or just say so if there is nothing to do."
 )
 
-# A reply must not be followed by a tool call: some models return text that precedes a
-# call as hidden reasoning, so a model that reports and then calls idle() says nothing.
 AUTONOMY_PROMPT = (
     "This conversation is autonomous: the user hands you a task and may not be watching. "
     "Work on it until it is done or you cannot go on without the user. Make reasonable "
@@ -32,10 +30,7 @@ AUTONOMY_PROMPT = (
     "the permission the user's settings require; when one is refused, go on with what you "
     "can do. Operations you started in the background keep running after your reply, and "
     "when they finish you are woken to continue without waiting for the user. When you are "
-    "done for now, end your turn with a reply to the user, as in any conversation, and call "
-    "no tool after it: the user may not see text that is followed by a tool call. Call "
-    "idle only to wait for some of the running operations instead of all of them, with at "
-    "most one short sentence before it."
+    "done for now, end your turn with a reply to the user, as in any conversation."
 )
 
 

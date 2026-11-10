@@ -183,11 +183,6 @@ class _Stream:
         )
 
 
-@dataclass
-class _IdleRequest:
-    wait_for: list[str] | None
-
-
 class _Completion:
     """Metered one-shot inference handed to Memory.maintain."""
 
@@ -803,8 +798,7 @@ class Runtime:
     # ── Tools offered to the model ───────────────────────────────────────
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
-        specs = {name: spec for name, spec in BUILTIN_TOOLS.items()
-                 if name != "idle" or self._autonomous()}
+        specs = dict(BUILTIN_TOOLS)
         try:
             module_specs = await self._tools.list_tools()
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
@@ -978,32 +972,25 @@ class Runtime:
                                    "Not run: the assistant message could not be saved.")
                         for c in calls), time.time()), [], None))
                 raise
-            idle: _IdleRequest | None = None
             if calls:
                 self._set_phase(AgentState.RUNNING_TOOLS)
-                results, finished, idle = await self._run_tools(calls, specs)
+                results, finished = await self._run_tools(calls, specs)
                 await self._append(
                     Message(_new_id(), Role.TOOL, tuple(results), time.time()), finished)
             if self._stopping:
                 return
             await self._flush_results()
             delivered = await self._deliver_inbox()
-            if calls and idle is None:
+            if calls or delivered:  # a queued user message authorizes the next turn
                 continue
-            if delivered:  # a queued user message authorizes the next turn
-                continue
-            self._enter_idle(idle)
+            self._enter_idle()
             return
 
-    def _enter_idle(self, idle: _IdleRequest | None) -> None:
+    def _enter_idle(self) -> None:
         self._base = AgentState.IDLE
         if not self._autonomous():
             return
-        outstanding = set(self._ops)
-        if idle is not None and idle.wait_for is not None:
-            wake = outstanding & set(idle.wait_for)
-        else:
-            wake = outstanding
+        wake = set(self._ops)  # woken once everything running now has finished
         self._wake_set = wake or None
         self._immediate_wake = not wake and self._unseen
         self._log.decision("idle", wait_for=sorted(wake), immediate=self._immediate_wake)
@@ -1273,24 +1260,17 @@ class Runtime:
         return None
 
     async def _run_tools(self, calls: list[ToolCall], specs: dict[str, ToolSpec]
-                         ) -> tuple[list[ToolResult], list[RuntimeEvent], _IdleRequest | None]:
+                         ) -> tuple[list[ToolResult], list[RuntimeEvent]]:
         """Consecutive read-only calls run concurrently; a non-read-only call starts once
         every earlier call has finished or been backgrounded, and later calls wait for it.
         Returns results in emission order and the ToolFinished events to emit after the
         TOOL message is appended."""
         results: dict[CallId, tuple[ToolResult, float]] = {}
-        idle: _IdleRequest | None = None
         tasks: dict[CallId, asyncio.Task[tuple[ToolResult, float]]] = {}
         barrier: asyncio.Task[Any] | None = None
         for call in calls:
             if error := self._validate(call, specs):
                 results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, error), 0.0)
-                continue
-            if call.name == "idle":
-                idle = _IdleRequest(call.arguments.get("wait_for"))
-                results[call.id] = (ToolResult(call.id, ToolStatus.OK,
-                                               "Idle: this cycle ends after the current turn."),
-                                    0.0)
                 continue
             spec = specs[call.name]
             if spec.read_only:
@@ -1308,7 +1288,7 @@ class Runtime:
         ordered = [results[c.id] for c in calls]
         finished: list[RuntimeEvent] = [ToolFinished(r, d) for r, d in ordered
                                         if r.status != ToolStatus.BACKGROUNDED]
-        return [r for r, _ in ordered], finished, idle
+        return [r for r, _ in ordered], finished
 
     async def _run_call(self, call: ToolCall, spec: ToolSpec, after: list[asyncio.Task[Any]]
                         ) -> tuple[ToolResult, float]:

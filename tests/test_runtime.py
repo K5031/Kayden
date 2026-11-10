@@ -404,7 +404,7 @@ async def test_stop_queue_while_stopping(make: Any) -> None:
 async def test_stop_in_idle_with_background_ops(make: Any) -> None:
     tools = FakeTools()
     tools.hanging("bg")
-    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(calls=[call("idle")])])
+    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="waiting")])
     h: Harness = await make(core=core, tools=tools)
     await h.start(autonomous=True)
     await h.turn("go")
@@ -420,20 +420,18 @@ async def test_stop_in_idle_with_background_ops(make: Any) -> None:
 # ── Idle ──
 
 
-async def test_idle_wait_for_subset(make: Any) -> None:
-    tools = FakeTools()
-    tools.slow("quick", 0.3)
-    tools.hanging("forever")
-    core = ScriptedCore([
-        Step(calls=[call("quick", id="q"), call("forever", id="f")]),
-        Step(calls=[call("idle", {"wait_for": ["q"]})]),
-        Step(text="quick is done"),
-    ])
-    h: Harness = await make(core=core, tools=tools)
-    await h.start(autonomous=True)
-    await h.runtime.send("go")
-    await eventually(lambda: len(core.requests) == 3)
-    assert [o.call.id for o in h.runtime.snapshot().operations] == ["f"]
+async def test_the_same_tools_are_offered_with_and_without_autonomy(make: Any) -> None:
+    """The agent ends a turn with a reply; there is no tool for going idle."""
+    offered = []
+    for autonomous in (False, True):
+        h: Harness = await make()
+        await h.start(autonomous=autonomous)
+        await h.turn("hi")
+        names = {t.name for t in h.core.requests[0].tools}
+        assert names == {t.name for t in await h.runtime.list_tools()}
+        offered.append(names)
+    assert offered[0] == offered[1] and {"op_status", "op_cancel", "recall"} <= offered[0]
+    assert "idle" not in offered[0]
 
 
 async def test_idle_unseen_results_wake_immediately(make: Any) -> None:
@@ -454,18 +452,7 @@ async def test_idle_unseen_results_wake_immediately(make: Any) -> None:
         await h.close()
 
 
-async def test_idle_only_when_autonomous(make: Any) -> None:
-    h: Harness = await make()
-    await h.start()
-    await h.turn("hi")
-    assert "idle" not in {t.name for t in h.core.requests[0].tools}
-    assert "idle" not in {t.name for t in await h.runtime.list_tools()}
-    h2: Harness = await make()
-    await h2.start(autonomous=True)
-    await h2.turn("hi")
-    names = {t.name for t in h2.core.requests[0].tools}
-    assert {"idle", "op_status", "op_cancel", "recall"} <= names
-    assert "idle" in {t.name for t in await h2.runtime.list_tools()}
+
 
 
 async def test_session_switch_conversation(make: Any) -> None:

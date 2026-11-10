@@ -243,7 +243,7 @@ async def test_tool_call_validation(make: Any) -> None:
             call("nope", id="unknown"),
             call("echo", {"n": "x"}, id="badschema"),
             ToolCall("unparsed", "echo", {}, raw_arguments='{"n": '),
-            call("idle", id="idle"),  # not offered unless autonomous
+            call("idle", id="idle"),  # no such tool
             call("echo", {"n": 1}, id="good"),
         ]),
         Step(text="ok"),

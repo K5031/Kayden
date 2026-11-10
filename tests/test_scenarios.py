@@ -145,7 +145,7 @@ async def test_c_autonomous_conversation(make: Any) -> None:
     tools.slow("fetch", 0.4)
     core = ScriptedCore([
         Step(text="let me fetch", calls=[call("fetch", id="f1")]),
-        Step(calls=[call("idle")]),
+        Step(text="fetching, back soon"),
         Step(text="got the result"),
     ])
     h: Harness = await make(core=core, tools=tools)
@@ -156,8 +156,7 @@ async def test_c_autonomous_conversation(make: Any) -> None:
         for e in r.events))
     transcript = await h.transcript()
     assert [m.role for m in transcript] == [
-        Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.USER,
-        Role.ASSISTANT,
+        Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.USER, Role.ASSISTANT,
     ]
     assert transcript[2].blocks[0].status == ToolStatus.BACKGROUNDED
     assert op_results(transcript)[0].status == ToolStatus.OK
@@ -209,7 +208,7 @@ def batch_tools() -> FakeTools:
 def batch_core() -> ScriptedCore:
     return ScriptedCore([
         Step(calls=[call("a", id="a"), call("b", id="b"), call("c", id="c")]),
-        Step(calls=[call("idle")]),
+        Step(text="waiting for the batch"),
         Step(text="batch complete"),
     ])
 

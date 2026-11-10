@@ -52,11 +52,10 @@ Runtime guarantees to modules:
 - Turn boundary: reached once the current turn's foreground ToolResults are appended.
   At a boundary the runtime appends, in order: foreground ToolResults; results of
   background operations that terminated (OperationResult, in one USER message);
-  queued user messages (one USER message each, in send order). idle() takes effect at
-  the end of its turn: the wake set (every operation outstanding then) is computed at
-  that boundary, and unknown wait_for ids are ignored. Other calls in that turn run
-  normally; if queued user messages are delivered at that boundary, they authorize the
-  next turn and the cycle continues.
+  queued user messages (one USER message each, in send order). A turn without tool
+  calls ends the cycle, unless queued user messages are delivered at that boundary: they
+  authorize the next turn and the cycle continues. In an autonomous conversation the
+  wake set (every operation outstanding then) is computed at that boundary.
 - Budgets: a tool start checks every dimension and counts the call in one atomic step.
   Inference checks every dimension before it starts (nothing is reserved, since its cost
   is unknown) and is cancelled as soon as in-flight usage exhausts one.
@@ -338,7 +337,7 @@ class ConversationInfo:
     title: str | None  # None = not set yet; Memory writes one during maintain
     created_at: float
     updated_at: float
-    autonomous: bool = False  # the agent may idle() and wake itself (SPEC 4)
+    autonomous: bool = False  # the agent wakes when its background work ends (SPEC 4)
     archived: bool = False  # hidden from list_conversations() and recall(scope="all")
     seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
     preview: str | None = None  # start of the first user message, for display
@@ -573,8 +572,7 @@ class Memory(abc.ABC):
 _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 
 # Runtime built-ins. Never gated by permissions; they don't count as tool calls for
-# budgets. `idle` is offered only in an autonomous conversation (elsewhere it is an unknown
-# tool).
+# budgets.
 # op_status and op_cancel answer ERROR for an unknown or finished id; operations from
 # before a restart are unknown, their outcome is the INTERRUPTED OperationResult from
 # resume repair. op_cancel waits for termination (bounded by the grace period) and
@@ -583,23 +581,6 @@ _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 # truncate" rule applies to module tools). recall with scope "all" searches every
 # conversation that is not archived.
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
-    "idle": ToolSpec(
-        "idle",
-        "Wait for chosen background operations: ends this cycle now, and you are woken when "
-        "they finish, or by the user. Not needed to finish a reply; ending a turn without "
-        "tool calls waits for all of them.",
-        {
-            "type": "object",
-            "properties": {
-                "wait_for": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Call ids to wait for. Default: all outstanding.",
-                }
-            },
-        },
-        read_only=True,
-    ),
     "op_status": ToolSpec(
         "op_status",
         "Check a backgrounded call. Optionally wait up to wait_s seconds for it to finish (values above 60 are treated as 60).",

@@ -91,7 +91,7 @@ In an autonomous conversation the user hands over a task: the model is told to w
 Continue reasoning.
 Invoke tools.
 Take permitted actions.
-Voluntarily enter Idle.
+End its turn and be woken when its background work finishes.
 The application remains running even when the model is idle.
 The runtime does not impose an artificial maximum number of consecutive thinking cycles.
 The agent may continue until:
@@ -106,22 +106,22 @@ Turning autonomy off clears any pending wake-up. Background operations keep runn
 4.3 Processes
 One process runs one agent with one open conversation. The user may open a different conversation only when the agent has no outstanding operations. To let an autonomous conversation work while chatting in another, run a second instance with its own data directory; the two do not share memory.
 5. Idle and Stop
-5.1 Idle Tool
-An autonomous conversation exposes a built-in idle() tool.
-When invoked:
+5.1 Idle
+There is no tool for going idle: a model turn that ends without tool calls ends the cycle, in every conversation. (A reply followed by an idle call was returned by some models as hidden reasoning, so the user saw nothing.)
+When a turn ends without tool calls:
 The current inference cycle ends.
 The agent enters Idle.
 Conversation context remains available.
 Pending asynchronous tools continue running.
 The runtime waits for an eligible activation event.
 If no tools are pending, the agent remains idle until user interaction, unless it is autonomous and has results it has not seen (see 5.2).
-A model turn that ends without tool calls is treated as an implicit idle(); the runtime never re-prompts on its own. idle() may name the operations to wait for; by default it waits for all outstanding ones, including operations from earlier turns. Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
+The runtime never re-prompts on its own. An autonomous conversation waits for all outstanding operations, including ones from earlier turns. Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
 5.2 Batch Wake-Up
 When the agent has outstanding operations belonging to a pending batch, the runtime waits until all operations reach a terminal outcome.
 In an autonomous conversation, batch completion may automatically reactivate the model.
 Otherwise, results are retained until user initiation.
 The runtime does not need to invoke the model separately for every individual tool completion.
-The wake set is every operation outstanding at the end of the turn that contains idle(), including operations from earlier turns; unknown ids in wait_for are ignored. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, an autonomous conversation starts the next cycle immediately and an ordinary one retains them. This is checked when the agent goes idle; operations that complete later but are outside the wake set do not wake it.
+The wake set is every operation outstanding when the cycle ends, including operations from earlier turns. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, an autonomous conversation starts the next cycle immediately and an ordinary one retains them. This is checked when the agent goes idle.
 5.3 Stop Control
 Kayden provides one user-facing Stop action.
 There is no separate Pause control in v1.
@@ -149,7 +149,7 @@ The model may inspect progress, poll again, perform other work, or request cance
 This gives the model the ability to investigate slow operations without requiring every tool to finish before inference can continue.
 6.3 Tool Batches
 Multiple independent tool calls may execute concurrently.
-If the model calls idle() while a batch is outstanding, Kayden waits for all operations outstanding at the end of that turn (section 5.2) to finish or otherwise terminate before issuing the batch-completion wake-up.
+If the model ends its turn while a batch is outstanding, Kayden waits for all operations outstanding then (section 5.2) to finish or otherwise terminate before issuing the batch-completion wake-up.
 6.4 Tool Failures
 Failed operations return errors rather than silently disappearing.
 Unresponsive tools must have an appropriate timeout, cancellation, or failure-handling path.
@@ -247,7 +247,7 @@ Tool calls.
 Model providers report usage when available.
 Frontends may display configuration and usage information, but do not enforce budgets.
 Once a configured hard budget is exhausted, the runtime must prevent further chargeable execution and report the reason.
-The model may be instructed to call idle() to conserve resources, but this does not replace runtime budget enforcement.
+The model may be instructed to stop early to conserve resources, but this does not replace runtime budget enforcement.
 Usage is persisted in the instance data directory and applies for the instance lifetime; it resets only by explicit user action.
 Token budgets count input (cached tokens included) plus output. Cost budgets need per-model prices when the provider reports no cost; an instance configured with a cost budget and no price source refuses to start.
 Duration counts wall-clock time while any inference or tool operation runs, background operations included, excluding permission waits and retry backoff.
@@ -410,7 +410,7 @@ One coroutine per call. The runtime owns backgrounding, polling and cancellation
 A backgrounded call gets a placeholder result with status backgrounded; its outcome is recorded later as an operation result.
 Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
-stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. The model can exclude a deliberate long-runner with idle(wait_for).
+stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps an autonomous agent waiting until it ends or the user writes.
 The built-in tools (idle, op_status, op_cancel, recall) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules. idle is offered only in an autonomous conversation.
 Results are plain strings. Frontends may parse formats they know.
 Tools that launch subprocesses pass the environment through unmodified.
