@@ -101,6 +101,7 @@ from kayden.frontends.common import (
     model_label,
     module_options,
     needs_restart,
+    past_tense,
     request_note,
     restart_notice,
 )
@@ -248,7 +249,6 @@ class ToolEntry(Static):
         self.progress: str | None = None
         self.result: ToolResult | OperationResult | None = None
         self.duration: float | None = None
-        self.notes: list[str] = []
         self.refresh_content()
 
     def stream_arguments(self, name: str | None, chunk: str) -> None:
@@ -276,12 +276,10 @@ class ToolEntry(Static):
         self.duration = duration if duration is not None else self.duration
         self.refresh_content()
 
-    def note(self, text: str) -> None:
-        self.notes.append(text)
-        self.refresh_content()
-
     def refresh_content(self) -> None:
         headline, detail = _call_parts(self.arguments)
+        if headline and self.result is not None and self.result.status is ToolStatus.OK:
+            headline = past_tense(headline)
         if headline:  # the model's own words say what the step is
             out = Text.assemble(("⚙ ", "cyan"), (_clip(headline, MAX_ARGS_CHARS), "bold"))
             out.append(f"\n  {_clip(detail, MAX_ARGS_CHARS)}", style="dim")
@@ -295,8 +293,6 @@ class ToolEntry(Static):
                 out.append(f": {_clip(self.progress, 200)}", style="dim")
         elif self.phase == "not run":
             out.append("\n  (not run)", style="dim")
-        for note in self.notes:
-            out.append(f"\n  {note}", style="magenta")
         if self.result is not None:
             icon, style = STATUS_ICONS[self.result.status]
             head = f"\n  {icon} {self.result.status.value}"
@@ -1209,11 +1205,9 @@ class KaydenApp(App[None]):
                 await self._finish_tool(result, duration)
             case PermissionRequested(request=request):
                 await self._add_prompt(request)
-            case PermissionResolved(request_id=request_id, decision=decision, call_id=call_id):
+            case PermissionResolved(request_id=request_id):
                 if (prompt := self._prompts.pop(request_id, None)) is not None:
                     await prompt.remove()
-                if entry := self._tool_entries.get(call_id):
-                    entry.note(f"permission: {DECISION_LABELS[decision].lower()}")
             case ModelRetry(attempt=attempt, max_attempts=max_attempts, delay_s=delay, error=err):
                 self.notice = f"Retrying ({attempt} of {max_attempts}) in {delay:.0f}s: {err}"
                 await self._discard_stream()  # the retried request streams from scratch

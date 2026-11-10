@@ -104,7 +104,6 @@ async def test_a_turn_with_reasoning_and_a_tool(make):
     assert isinstance(tool, ToolItem) and tool.name == "look" and tool.summary == "x"
     assert tool.status is ToolStatus.OK and tool.state_label == "done"
     assert tool.content.startswith("found it") and tool.duration_s is not None
-    assert tool.notes == ["Permission: allowed"]  # read-only, allowed by policy
     assert isinstance(last, AssistantItem) and last.text == "**Done.**"
     assert model.status_text == "Ready"
     assert model.spending_text.endswith("spent")
@@ -124,7 +123,7 @@ async def test_permission_prompt_is_answered_and_removed(make):
     controller.resolve(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: not model.prompts and not model.busy)
     (tool,) = of(model, ToolItem)
-    assert tool.status is ToolStatus.OK and "Permission: allowed" in tool.notes
+    assert tool.status is ToolStatus.OK and not hasattr(tool, "notes")  # no permission line
 
 
 async def test_denied_call_is_shown_as_declined(make):

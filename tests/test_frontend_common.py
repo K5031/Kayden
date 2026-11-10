@@ -120,3 +120,26 @@ def test_a_call_with_one_text_argument_shows_just_that_text():
     assert call_parts({"text": "Studies CS at UCL"}) == (None, "Studies CS at UCL")
     assert call_parts({"query": "python 3.14"}) == (None, "python 3.14")
     assert call_parts({"path": "notes.md", "offset": 3}) == (None, "path: notes.md\noffset: 3")
+
+
+def test_a_finished_step_reads_in_the_past_tense():
+    from kayden.frontends.common import past_tense
+
+    cases = {
+        "Read BBC explainer on the Jensen Huang story": "Read BBC explainer on the Jensen Huang story",
+        "Search the web for flights": "Searched the web for flights",
+        "Check Kayden's activity log": "Checked Kayden's activity log",
+        "Make a folder for your notes": "Made a folder for your notes",
+        "Remove the old build": "Removed the old build",
+        "Write the summary": "Wrote the summary",
+        "Find large files": "Found large files",
+        "Run the tests": "Ran the tests",
+        "Copy the photos": "Copied the photos",
+        "Stop the server": "Stopped the server",
+        "Look up UCL's modules": "Looked up UCL's modules",
+        "remember that you study CS": "remembered that you study CS",
+        "The weather in Oslo": "The weather in Oslo",  # not a known verb: as written
+        "": "",
+    }
+    for sentence, past in cases.items():
+        assert past_tense(sentence) == past, sentence

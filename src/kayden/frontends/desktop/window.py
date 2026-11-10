@@ -26,6 +26,8 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
     QShortcut,
+    QTextBlockFormat,
+    QTextCursor,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -119,6 +121,10 @@ from kayden.frontends.desktop.viewmodel import (
     user_message,
 )
 
+LINE_HEIGHT_PERCENT = 145  # reply text, of the font's line spacing
+PARAGRAPH_SPACING = 10  # px below a reply paragraph
+LIST_ITEM_SPACING = 4  # px below a list item
+HEADING_SPACING = 6  # px above a heading, on top of the paragraph below the previous block
 RENDER_INTERVAL_MS = 100  # Markdown of a streaming reply is re-rendered at most this often
 DEFAULT_WORK_FOLDER = Path("~/Kayden")
 KEY_PAGES = {
@@ -342,6 +348,24 @@ class MarkdownView(QTextBrowser):
         self.document().setIndentWidth(20)
         self.document().documentLayout().documentSizeChanged.connect(self._fit)
 
+    def setMarkdown(self, markdown: str) -> None:
+        """Markdown with room to breathe: taller lines, space between paragraphs and list
+        items, more above headings."""
+        super().setMarkdown(markdown)
+        block = self.document().begin()
+        while block.isValid():
+            fmt = block.blockFormat()
+            fmt.setLineHeight(LINE_HEIGHT_PERCENT,
+                              QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+            if block.textList() is not None:
+                fmt.setBottomMargin(LIST_ITEM_SPACING)
+            else:
+                fmt.setBottomMargin(PARAGRAPH_SPACING)
+            if fmt.headingLevel():
+                fmt.setTopMargin(HEADING_SPACING)
+            QTextCursor(block).setBlockFormat(fmt)
+            block = block.next()
+
     def _fit(self, *_: object) -> None:
         self.document().setTextWidth(self.viewport().width())
         self.setFixedHeight(int(self.document().size().height()) + 4)
@@ -351,7 +375,7 @@ class MarkdownView(QTextBrowser):
         self._fit()
 
 
-def _avatar(size: int = 24, name: str = "avatar") -> QLabel:
+def _avatar(size: int, name: str) -> QLabel:
     avatar = QLabel("K", objectName=name)
     avatar.setFixedSize(size, size)
     avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -405,7 +429,6 @@ class AssistantBubble(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
-        row.addWidget(_avatar(), 0, Qt.AlignmentFlag.AlignTop)
         layout = QVBoxLayout()
         layout.setSpacing(4)
         row.addLayout(layout, 1)
@@ -482,11 +505,10 @@ class ToolCard(QFrame):
         head.addWidget(self.toggle)
         layout.addLayout(head)
         self.progress = _label(tone="muted")
-        self.notes = _label(tone="muted")
         self.details = QPlainTextEdit(readOnly=True)
         self.details.setMaximumHeight(200)
         self.details.hide()
-        for widget in (self.progress, self.notes, self.details):
+        for widget in (self.progress, self.details):
             layout.addWidget(widget)
         self.refresh()
 
@@ -504,8 +526,6 @@ class ToolCard(QFrame):
         self.cancel.setVisible(item.cancellable)
         self.progress.setText(item.progress)
         self.progress.setVisible(bool(item.progress) and item.status is None)
-        self.notes.setText("\n".join(item.notes))
-        self.notes.setVisible(bool(item.notes))
         self.details.setPlainText(f"{item.arguments}\n\n{item.content}".strip())
         self.setAccessibleName(f"Tool {item.name}, {item.state_label}")
 

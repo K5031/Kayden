@@ -531,3 +531,25 @@ def test_a_reply_with_nothing_to_show_is_not_drawn(qapp):
     filling.text, filling.final = "Hello", True
     bubble.refresh()
     assert not bubble.isHidden()
+
+
+async def test_a_finished_step_is_in_the_past_tense_without_a_permission_line(make, qapp):
+    h: Harness = await make()
+    h.tools.instant("look")
+    h.core.add(Step(calls=[call("look", {"q": "x", "description": "Search the web for x"})]),
+               Step(text="done"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("go")
+    await eventually(lambda: not controller.model.busy and widgets(window, ToolCard))
+    [card] = widgets(window, ToolCard)
+    await eventually(lambda: card.title.text() == "Searched the web for x")
+    assert not hasattr(card, "notes")
+
+
+def test_replies_have_no_avatar_and_roomy_lines(qapp):
+    bubble = AssistantBubble(AssistantItem(text="One.\n\n- a\n- b\n\nTwo.", final=True))
+    assert not [w for w in bubble.findChildren(QLabel) if w.objectName() == "avatar"]
+    block = bubble.body.document().begin()
+    assert block.blockFormat().lineHeight() >= 140  # percent of the font's line
+    assert block.blockFormat().bottomMargin() >= 8

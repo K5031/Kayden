@@ -442,7 +442,7 @@ async def test_permission_prompt_offers_every_decision(decision: Decision):
                   StateChanged(AgentState.RUNNING_TOOLS))
         await caught_up(pilot, app, stub)
         assert not app.query(PermissionPrompt)
-        assert "permission:" in plain(entries(app, ToolEntry)[0])
+        assert "permission" not in plain(entries(app, ToolEntry)[0])  # no permission line
 
 
 async def test_permission_commands_and_runtime_side_resolution():
@@ -766,7 +766,7 @@ async def test_refusal_is_shown_distinctly():
         assert [e.refused for e in entries(app, AssistantEntry)] == [True, False]
 
 
-async def test_permission_auto_decision_is_noted_on_the_call():
+async def test_a_permission_decision_adds_no_line_to_the_call():
     stub = StubRuntime()
     app = make(stub)
     call = ToolCall("c1", "read_file", {"path": "x"})
@@ -774,7 +774,7 @@ async def test_permission_auto_decision_is_noted_on_the_call():
         stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, call)))
         stub.emit(PermissionResolved("auto-1", Decision.DENY, "c1"))
         await caught_up(pilot, app, stub)
-        assert "permission: deny" in plain(entries(app, ToolEntry)[0])
+        assert "permission" not in plain(entries(app, ToolEntry)[0]).lower()
 
 
 async def test_always_allow_is_not_offered():

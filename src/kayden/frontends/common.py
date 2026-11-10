@@ -38,6 +38,60 @@ def request_note(request: PermissionRequest) -> str:
     return f"{note} Why it asks: {request.reason}" if request.reason else note
 
 
+# Verbs a step description starts with, as the model writes them (imperative), and their
+# past tense. A sentence starting with any other word is shown as written.
+_IRREGULAR = {
+    "build": "built", "buy": "bought", "choose": "chose", "do": "did", "draw": "drew",
+    "find": "found", "forget": "forgot", "get": "got", "give": "gave", "go": "went", "keep": "kept",
+    "leave": "left", "make": "made", "put": "put", "read": "read", "rerun": "reran",
+    "run": "ran", "see": "saw", "send": "sent", "set": "set", "show": "showed",
+    "take": "took", "tell": "told", "think": "thought", "undo": "undid",
+    "understand": "understood", "write": "wrote", "rewrite": "rewrote",
+}
+_DOUBLED = {"stop": "stopped", "plan": "planned", "drop": "dropped", "commit": "committed",
+            "submit": "submitted", "ship": "shipped", "zip": "zipped", "unzip": "unzipped",
+            "tag": "tagged", "log": "logged", "pin": "pinned", "map": "mapped"}
+_REGULAR = frozenset({
+    "add", "analyse", "analyze", "append", "apply", "archive", "ask", "back", "backup",
+    "calculate", "cancel", "change", "check", "clean", "clear", "clone", "close", "collect",
+    "combine", "compare", "compile", "compress", "configure", "confirm", "convert", "copy",
+    "count", "crawl", "create", "debug", "decrypt", "delete", "deploy", "describe", "disable",
+    "download", "draft", "edit", "enable", "encrypt", "estimate", "execute", "explain",
+    "export", "extract", "fetch", "fill", "filter", "fix", "format", "gather", "generate",
+    "grep", "inspect", "install", "launch", "list", "load", "locate", "look", "merge", "move",
+    "name", "open", "organise", "organize", "parse", "paste", "patch", "pause", "ping", "play",
+    "prepare", "print", "process", "pull", "push", "query", "remember", "remove", "rename",
+    "render", "reorganise", "reorganize", "replace", "reply", "report", "request", "research",
+    "resize", "restart", "restore", "retry", "review", "save", "scan", "schedule", "scrape",
+    "search", "select", "sort", "split", "start", "summarise", "summarize", "sync", "test",
+    "track", "transcribe", "translate", "trim", "try", "type", "update", "upgrade", "upload",
+    "use", "validate", "verify", "view", "visit", "wait", "watch",
+})
+
+
+def past_tense(sentence: str) -> str:
+    """A finished step's description: its first word in the past tense when it is a verb
+    Kayden knows ("Search the web" -> "Searched the web"), else the sentence as written."""
+    first, _, rest = sentence.partition(" ")
+    verb = first.lower()
+    if verb in _IRREGULAR:
+        past = _IRREGULAR[verb]
+    elif verb in _DOUBLED:
+        past = _DOUBLED[verb]
+    elif verb in _REGULAR:
+        if verb.endswith("e"):
+            past = verb + "d"
+        elif verb.endswith("y") and verb[-2:-1] not in ("a", "e", "o", "u"):
+            past = verb[:-1] + "ied"
+        else:
+            past = verb + "ed"
+    else:
+        return sentence
+    if first[:1].isupper():
+        past = past[0].upper() + past[1:]
+    return f"{past} {rest}" if rest else past
+
+
 def call_parts(arguments: Any) -> tuple[str | None, str]:
     """A tool call for display: the plain-language description the model gave it
     (api.DESCRIPTION_ARG), if any, and the rest of its arguments: a single text argument as

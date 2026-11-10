@@ -15,7 +15,7 @@ import datetime
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -71,7 +71,7 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.api import Text as TextBlock
-from kayden.frontends.common import call_parts, money
+from kayden.frontends.common import call_parts, money, past_tense
 from kayden.runtime import InstanceLockedError
 from kayden.runtime.instance import ALREADY_OPEN
 
@@ -97,11 +97,6 @@ RESULT_LABELS = {
     ToolStatus.TIMED_OUT: "timed out",
     ToolStatus.ABANDONED: "abandoned, may still be running",
     ToolStatus.INTERRUPTED: "interrupted",
-}
-DECISION_NOTES = {
-    Decision.ALLOW_ONCE: "allowed",
-    Decision.ALLOW_CONVERSATION: "allowed for this conversation",
-    Decision.DENY: "denied",
 }
 BUSY_STATES = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
                AgentState.STOPPING)
@@ -149,7 +144,6 @@ class ToolItem:
     status: ToolStatus | None = None
     content: str = ""
     duration_s: float | None = None
-    notes: list[str] = field(default_factory=list)
 
     @property
     def sentence(self) -> str | None:
@@ -159,8 +153,10 @@ class ToolItem:
 
     @property
     def summary(self) -> str:
-        """The call's description, else its arguments."""
-        return self.sentence or clip(self.detail, MAX_ARGS_CHARS)
+        """The call's description, in the past tense once it succeeded, else its arguments."""
+        if self.sentence is None:
+            return clip(self.detail, MAX_ARGS_CHARS)
+        return past_tense(self.sentence) if self.status is ToolStatus.OK else self.sentence
 
     @property
     def detail(self) -> str:
@@ -398,12 +394,9 @@ class ConversationModel:
             case PermissionRequested(request=request):
                 self.prompts[request.id] = request
                 self.on_change(PromptsChanged())
-            case PermissionResolved(request_id=request_id, decision=decision, call_id=call_id):
+            case PermissionResolved(request_id=request_id):
                 if self.prompts.pop(request_id, None) is not None:
                     self.on_change(PromptsChanged())
-                if item := self._tools.get(call_id):
-                    item.notes.append(f"Permission: {DECISION_NOTES[decision]}")
-                    self.on_change(Updated(item))
             case ModelRetry(attempt=attempt, max_attempts=max_attempts):
                 self.notice = f"Retrying ({attempt + 1} of {max_attempts})…"
                 self._discard_stream()

@@ -38,7 +38,7 @@ class Palette:
     muted: str  # secondary text
     accent: str
     accent_hover: str
-    accent_soft: str  # selection and the avatar
+    accent_soft: str  # selection and the empty-chat avatar
     accent_text: str  # text on accent_soft
     on_accent: str  # text on accent
     ok: str
@@ -190,8 +190,6 @@ QFrame#user {{ background: {c.accent}; border-radius: 14px;
 QFrame#user QLabel {{ color: {c.on_accent}; }}
 QFrame#user:disabled {{ background: {c.accent_soft}; }}
 QFrame#user QLabel:disabled {{ color: {c.accent_text}; }}
-QLabel#avatar {{ background: {c.accent_soft}; color: {c.accent_text}; border-radius: 12px;
-    font-weight: 600; }}
 QLabel#bigAvatar {{ background: {c.accent_soft}; color: {c.accent_text}; border-radius: 24px;
     font-size: {heading}; font-weight: 600; }}
 QFrame#tool {{ background: {c.card}; border: 1px solid {c.line}; border-radius: 10px; }}
