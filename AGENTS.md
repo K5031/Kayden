@@ -11,6 +11,7 @@ Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, r
 - Define expected behavior as a test before implementing it.
 - The runtime owns orchestration; modules never call each other.
 - No speculative abstractions, no features outside the MVP, no unrequested refactoring.
+- No migration or compatibility code for older data folders, settings or flags. A store of another schema version is refused.
 - Prefer established libraries over custom mechanisms.
 - Modules must never block the event loop.
 - Memory archive: append-only, full-fidelity, schema-versioned. The one exception is deletion the user explicitly asks for.

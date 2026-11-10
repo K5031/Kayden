@@ -101,13 +101,6 @@ def test_saved_module_ids_pick_their_factories(tmp_path):
     assert config.startup_error is None
 
 
-def test_a_saved_provider_picks_the_core(tmp_path):
-    settings_file(tmp_path, 'provider = "deepseek"\n')
-    config = launcher.load_config(args(tmp_path))
-    assert config.core.factory == "kayden.core.openai_compat:deepseek_factory"
-    assert config.runtime.modules.running["core"] == "deepseek"
-
-
 def test_config_options_stay_with_their_module(tmp_path):
     (tmp_path / "config.toml").write_text(
         '[core]\nfactory = "tests.fakes.core:second_factory"\noptions = {models = ["x"]}\n')

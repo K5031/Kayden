@@ -142,22 +142,6 @@ def test_command_line_start_options_override_the_frontend_options(workspace, tmp
     assert build_config(["--data-dir", str(tmp_path / "plain")]).frontend.options == {}
 
 
-@pytest.mark.parametrize(("flags", "expected"), [
-    (["--mode", "session"], {"start": True}),
-    (["--mode", "continuous"], {"start": True, "autonomous": True}),
-    (["--mode", "continuous", "--activation", "user_controlled"],
-     {"start": True, "autonomous": True}),
-    (["--activation", "agent_controlled"], {"start": True, "autonomous": True}),
-    (["--mode", "continuous", "--no-autonomous"], {"start": True, "autonomous": False}),
-])
-def test_deprecated_mode_flags_warn_and_map_to_autonomous(workspace, tmp_path, capsys, flags,
-                                                          expected):
-    config = build_config(["--data-dir", str(tmp_path), *flags])
-    assert config.frontend.options == expected
-    err = capsys.readouterr().err
-    assert "deprecated" in err and "--autonomous" in err
-
-
 RUNTIME = """
 [runtime]
 model = "deepseek-flash"
@@ -220,9 +204,9 @@ def test_saved_settings_override_the_config_file(workspace, tmp_path):
     folder = tmp_path / "work"
     folder.mkdir()
     (tmp_path / "settings.toml").write_text(
-        'provider = "deepseek"\nmodel = "deepseek-v4-pro"\nmaintenance_model = ""\n'
+        'model = "deepseek-v4-pro"\nmaintenance_model = ""\n'
         'permissions = "ask"\nsystem_prompt = "Saved."\n'
-        f'work_folder = "{folder}"\n[budget]\nmax_cost_usd = 7.0\n')
+        f'work_folder = "{folder}"\n[modules]\ncore = "deepseek"\n[budget]\nmax_cost_usd = 7.0\n')
     config = build_config(["--data-dir", str(tmp_path)])
     runtime = config.runtime
     assert config.core == ModuleSpec("kayden.core.openai_compat:deepseek_factory")

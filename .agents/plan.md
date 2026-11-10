@@ -113,7 +113,7 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Raising a spent budget lets the agent continue | `test_raising_a_spent_budget_lets_the_agent_continue` |
 | An invalid update changes nothing | `test_an_invalid_update_changes_nothing` |
 | Module choices, key and work folder are saved, build nothing and save in any state | `test_choosing_a_module_saves_it_and_builds_nothing`, `test_api_key_and_work_folder_apply_at_the_next_start`, `test_module_settings_save_while_the_agent_works`, `test_module_settings_before_start`, `test_choosing_the_running_module_again_needs_no_restart` |
-| A Core change clears the saved models; models chosen meanwhile are not saved | `test_choosing_a_module_saves_it_and_builds_nothing`, `test_a_model_chosen_while_another_core_waits_is_not_saved`, `test_a_core_change_replaces_a_saved_provider` |
+| A Core change clears the saved models; models chosen meanwhile are not saved | `test_choosing_a_module_saves_it_and_builds_nothing`, `test_a_model_chosen_while_another_core_waits_is_not_saved` |
 | The Core is asked for models only when needed | `test_settings_before_start_need_the_provider_only_for_models` |
 | Keys go to the keychain only, for the chosen Core; a failed save restores it | `test_api_key_*`, `test_a_failed_save_restores_the_keychain` |
 | Only changed settings are saved; changes are logged without secrets, loosening flagged | `test_only_changed_settings_are_saved`, `test_settings_changes_are_logged_without_values_that_are_secret`, `test_raising_a_limit_and_loosening_permissions_are_flagged` |
@@ -134,7 +134,7 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Behavior | Test |
 |----------|------|
 | Installed entry points that load are listed, in every frontend's settings | `test_installed_modules_are_the_entry_points_that_load`, `test_an_installed_package_appears_in_settings` |
-| Saved ids pick factories; legacy provider; config options stay with their module; import paths have no id | `test_saved_module_ids_pick_their_factories`, `test_a_saved_provider_picks_the_core`, `test_config_options_stay_with_their_module`, `test_import_paths_in_config_have_no_id` |
+| Saved ids pick factories; config options stay with their module; import paths have no id | `test_saved_module_ids_pick_their_factories`, `test_config_options_stay_with_their_module`, `test_import_paths_in_config_have_no_id` |
 | Each launcher runs the saved frontend of its kind, else its own | `test_each_launcher_runs_the_saved_frontend_of_its_kind` |
 | `kayden` opens a saved window frontend at launch, or says why it runs the TUI | `test_kayden_opens_the_saved_window_frontend`, `test_kayden_says_why_it_opens_in_the_terminal` |
 | restart() shuts down, names the conversation (none after a Memory change) and the frontend it can bring up | `test_restart_shuts_down_and_names_the_open_conversation`, `test_a_memory_change_restarts_without_the_conversation`, `test_restart_brings_up_the_chosen_frontend_where_it_can` |

@@ -53,17 +53,15 @@ async def store_key(name: str, value: str | None) -> None:
         raise ValueError(f"no keychain available ({e}); set {name} in the environment") from e
 
 
-def save_settings(data_dir: Path, changes: dict[str, Any], *, tables: Collection[str] = (),
-                  remove: Collection[str] = ()) -> None:
+def save_settings(data_dir: Path, changes: dict[str, Any], *, tables: Collection[str] = ()
+                  ) -> None:
     """Merge `changes` into the settings file and replace it atomically. A change to one
-    of `tables` merges into that table; `remove` drops keys."""
+    of `tables` merges into that table."""
     path = data_dir / SETTINGS_FILE
     try:
         saved = tomllib.loads(path.read_text())
     except FileNotFoundError:
         saved = {}
-    for key in remove:
-        saved.pop(key, None)
     for key, value in changes.items():
         saved[key] = {**saved.get(key, {}), **value} if key in tables else value
     tmp = path.with_suffix(".tmp")

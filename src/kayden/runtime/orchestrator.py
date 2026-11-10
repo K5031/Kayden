@@ -111,7 +111,6 @@ _OP_STATUS_MAX_WAIT_S = 60
 USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
 # Usage files of the Kayden versions that kept a budget per mode; summed into USAGE_FILE.
-LEGACY_USAGE_FILES = ("usage-session.json", "usage-continuous.json")
 _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
 
@@ -373,7 +372,7 @@ class Runtime:
         if not self._started:
             data_dir = self._config.data_dir
             self._started = True
-            self._budget.load(data_dir / USAGE_FILE, [data_dir / f for f in LEGACY_USAGE_FILES])
+            self._budget.load(data_dir / USAGE_FILE)
             self._budget.save()
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._scratch.mkdir(exist_ok=True)
@@ -622,7 +621,7 @@ class Runtime:
     def _hold_lock(self) -> None:
         """Nothing reads or writes stored data before this process holds the data
         directory (InstanceLockedError otherwise): another process may have a conversation
-        open, or an older Kayden may still use the store."""
+        open."""
         if self._lock is None:
             self._lock = InstanceLock.acquire(self._config.data_dir)
 
@@ -674,7 +673,7 @@ class Runtime:
         if not changed:
             return await self.settings()
         cfg = self._config
-        saved, removed = await self._modules.prepare(u)
+        saved = await self._modules.prepare(u)
         # Models belong to the running Core; with another one chosen, they are not saved.
         core_pending = ("core" in saved.get("modules", {})
                         or self._modules.chosen["core"] != self._modules.running["core"])
@@ -702,7 +701,7 @@ class Runtime:
             saved["permissions"] = u.permissions.value
         if u.system_prompt is not None:
             saved["system_prompt"] = u.system_prompt
-        await self._modules.commit(u, saved, removed)
+        await self._modules.commit(u, saved)
 
         # Apply: nothing below can fail.
         loosened = self._loosened(u)

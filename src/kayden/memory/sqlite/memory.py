@@ -57,8 +57,7 @@ from kayden.api import (
 from . import codec
 
 logger = logging.getLogger(__name__)
-# 2: stable block tags, one store per mode. 3: conversations instead of modes, editable
-# long-term memory, erasure. Version 2 stores are migrated on open; others are refused.
+# A store of another version is refused.
 SCHEMA_VERSION = 3
 # Output headroom on top of the summary budget for tags and new long-term entries.
 _LONG_TERM_OUTPUT_TOKENS = 256
@@ -66,7 +65,6 @@ _TITLE_OUTPUT_TOKENS = 20
 _TITLE_INPUT_CHARS = 2000
 _TITLE_MAX_CHARS = 80
 _PREVIEW_CHARS = 100
-CONTINUOUS_TITLE = "Continuous conversation"  # the migrated continuous conversation
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,29 +159,6 @@ CREATE TABLE summaries (
 );
 CREATE INDEX summaries_conversation ON summaries(conversation_id, id);
 {_MEMORY_TABLES}
-"""
-# Version 2 to 3, in the transaction that opens the store. Long-term entries of both
-# modes become one list; exact duplicates collapse into the oldest entry.
-_MIGRATE_FROM_2 = f"""
-ALTER TABLE conversations ADD COLUMN autonomous INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE conversations ADD COLUMN remember INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE conversations ADD COLUMN seed_from TEXT;
-UPDATE conversations SET autonomous = 1, title = COALESCE(title, '{CONTINUOUS_TITLE}')
-WHERE mode = 'continuous';
-ALTER TABLE conversations DROP COLUMN mode;
-DROP TRIGGER messages_no_delete;
-{_NO_DELETE_TRIGGER}
-{_MEMORY_TABLES}
-INSERT INTO memory_entries (id, source_conversation_id, created_at)
-SELECT id, source_conversation_id, created_at FROM long_term AS l
-WHERE id = (SELECT MIN(id) FROM long_term WHERE text = l.text) ORDER BY id;
-INSERT INTO memory_revisions (entry_id, text, created_at)
-SELECT id, text, created_at FROM long_term WHERE id IN (SELECT id FROM memory_entries)
-ORDER BY id;
-DROP TABLE long_term;
-DROP TABLE messages_fts;
-{_FTS_TABLE}
 """
 _TRUNCATION_MARKER = (
     "\n[{omitted} characters truncated in this view. The full message ({id}) is kept in the"
@@ -703,10 +678,6 @@ def _open(path: Path) -> sqlite3.Connection:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             if version == 0:
                 _execute_script(conn, _SCHEMA)
-            elif version == 2:
-                logger.info("migrating %s from memory schema 2 to %d", path, SCHEMA_VERSION)
-                _execute_script(conn, _MIGRATE_FROM_2)
-                _reindex(conn)
             elif version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"{path}: memory schema version {version} is not supported"
@@ -717,14 +688,6 @@ def _open(path: Path) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
-
-
-def _reindex(conn: sqlite3.Connection) -> None:
-    """Index every message with today's searchable text. Erasure removes a row from the
-    contentless index by repeating the text it was indexed with, so the two must match."""
-    for seq, blocks in conn.execute("SELECT seq, blocks FROM messages").fetchall():
-        conn.execute("INSERT INTO messages_fts (rowid, body) VALUES (?, ?)",
-                     (seq, codec.searchable_text(blocks)))
 
 
 def _execute_script(conn: sqlite3.Connection, script: str) -> None:

@@ -428,18 +428,8 @@ async def test_deleting_the_open_conversation_is_refused(make: Any) -> None:
 async def test_usage_lock_and_log_are_per_data_folder(make: Any, tmp_path: Path) -> None:
     data = tmp_path / "shared"
     data.mkdir()
-    (data / "usage-session.json").write_text(json.dumps(
-        {"schema_version": 1, "input_tokens": 10, "output_tokens": 1, "cached_tokens": 0,
-         "cost_usd": 0.5, "tool_calls": 2, "elapsed_s": 3.0}))
-    (data / "usage-continuous.json").write_text(json.dumps(
-        {"schema_version": 1, "input_tokens": 5, "output_tokens": 2, "cached_tokens": 1,
-         "cost_usd": 0.25, "tool_calls": 1, "elapsed_s": 1.0}))
     h: Harness = await make(data_dir=data)
     await h.start()
-    usage = h.runtime.snapshot().usage
-    assert (usage.usage.input_tokens, usage.usage.output_tokens) == (15, 3)
-    assert usage.usage.cost_usd == pytest.approx(0.75) and usage.tool_calls == 3
-    assert (data / "usage-session.json").exists() and (data / "usage-continuous.json").exists()
     assert (data / "instance.lock").exists() and (data / "usage.json").exists()
 
     other: Harness = await make(data_dir=data)
@@ -447,20 +437,3 @@ async def test_usage_lock_and_log_are_per_data_folder(make: Any, tmp_path: Path)
         await other.start()
 
 
-async def test_an_old_kayden_holding_a_mode_lock_blocks_start(make: Any, tmp_path: Path) -> None:
-    import fcntl
-    import os
-
-    data = tmp_path / "old"
-    data.mkdir()
-    fd = os.open(data / "continuous.lock", os.O_RDWR | os.O_CREAT)
-    os.write(fd, b"4242\n")
-    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    try:
-        h: Harness = await make(data_dir=data)
-        with pytest.raises(RuntimeError, match="4242"):
-            await h.start()
-    finally:
-        os.close(fd)
-    h2: Harness = await make(data_dir=data)
-    await h2.start()

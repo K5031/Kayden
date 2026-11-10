@@ -149,26 +149,11 @@ control what the agent sees; deletion controls what the disk keeps.
   and what the AI provider already received.
 - Frontends ask for confirmation naming the conversation and say it is permanent.
 
-### Migrating existing data
+### Stored data
 
-`SqliteMemory` schema 3, migrated in place from schema 2 on open, in one transaction:
-
-- `conversations` gains `autonomous`, `remember`, `archived` and `seed_from`. The continuous
-  conversation becomes an ordinary one with `autonomous = 1` and the title "Continuous
-  conversation". Its messages and summaries stay as they are. The `mode` column is dropped.
-- `long_term` entries of both modes become one list in the new tables; exact duplicates
-  collapse into the older entry.
-
-The runtime locks `instance.lock`, and any `session.lock` or `continuous.lock` it finds,
-before its first Memory call, so the store is migrated only once nothing else uses it. At
-the first start on a data folder it also sums `usage-session.json` and
-`usage-continuous.json` into `usage.json` when it does not exist yet, leaving the old files
-in place, and starts `events.jsonl` beside the old logs. It refuses to start while an
-older Kayden holds a lock, and an older Kayden cannot start while it runs.
-
-`--mode` and `--activation` are accepted for one release with a warning naming
-`--autonomous`; `--mode continuous` and `--activation agent_controlled` mean
-`--autonomous`.
+`SqliteMemory` is at schema 3 and refuses a store of another version. Lock, usage and
+event log are one each per data folder. Kayden carries no code for data folders or
+command-line flags of the per-mode versions.
 
 ### Frontends
 
@@ -214,8 +199,9 @@ older Kayden holds a lock, and an older Kayden cannot start while it runs.
 - **Deleting single messages.** Finer control, but a hole in a transcript breaks the
   pairing of tool calls and results, and summaries already include the message. Deleting
   the conversation is the unit that leaves nothing inconsistent.
-- **Keeping the `mode` column after migration.** Unused, and new rows would need a made-up
-  value; SQLite drops a column in place.
+- **Keeping migration code for the per-mode versions** (schema 2 stores, per-mode usage,
+  lock and log files, `--mode` and `--activation`). The only data folder those versions
+  wrote has been converted, so the code would never run again.
 
 ## Consequences
 

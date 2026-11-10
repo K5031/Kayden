@@ -128,11 +128,10 @@ class ModuleSettings:
             conversation_id = None
         return Restart(frontend, kind, conversation_id)
 
-    async def prepare(self, u: SettingsUpdate) -> tuple[dict[str, Any], list[str]]:
-        """Validate the module part of `u`: what to save to the settings file, and the
-        saved keys it removes. ValueError for an invalid part."""
+    async def prepare(self, u: SettingsUpdate) -> dict[str, Any]:
+        """Validate the module part of `u`: what to save to the settings file. ValueError
+        for an invalid part."""
         saved: dict[str, Any] = {}
-        removed: list[str] = []
         if u.modules:
             for kind, module_id in u.modules.items():
                 if kind not in MODULE_KINDS:
@@ -144,7 +143,6 @@ class ModuleSettings:
                 saved["modules"] = changed
             if "core" in changed:
                 saved["model"] = saved["maintenance_model"] = ""  # the new Core's first
-                removed.append("provider")
         if u.api_key is not None:
             core = (u.modules or {}).get("core") or self.chosen["core"]
             info = await asyncio.to_thread(find, "core", core)
@@ -161,10 +159,9 @@ class ModuleSettings:
                 raise ValueError(f"{folder} is not a folder")
             if str(folder) != self.work_folder:
                 saved["work_folder"] = str(folder)
-        return saved, removed
+        return saved
 
-    async def commit(self, u: SettingsUpdate, saved: dict[str, Any], removed: list[str]
-                     ) -> None:
+    async def commit(self, u: SettingsUpdate, saved: dict[str, Any]) -> None:
         """Store the key, then save; on failure the keychain entry is restored."""
         key_name = None
         if u.api_key is not None:
@@ -175,9 +172,9 @@ class ModuleSettings:
             old_key = await get_stored_key(key_name)
             await store_key(key_name, u.api_key)
         try:
-            if saved or removed:
+            if saved:
                 await asyncio.to_thread(save_settings, self.data_dir, saved,
-                                        tables=("modules",), remove=removed)
+                                        tables=("modules",))
         except BaseException:
             if key_name is not None:
                 with contextlib.suppress(ValueError):

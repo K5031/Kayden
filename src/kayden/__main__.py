@@ -55,13 +55,9 @@ RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_p
 SECRET_WORDS = ("key", "token", "secret", "password")
 # The frontend each launcher falls back to: its own kind's built-in one.
 LAUNCHER_FRONTENDS = {TERMINAL: "tui", WINDOW: "desktop"}
-# "provider" is the Core id as saved before modules were chosen by id.
-SAVED_KEYS = ("modules", "provider", "model", "maintenance_model", "permissions",
+SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
               "system_prompt", "work_folder", "budget")
 BUDGET_INTS = ("max_tokens", "max_tool_calls")
-# Flags of the per-mode versions, accepted for one release with a warning.
-DEPRECATED_MODES = ("session", "continuous")
-DEPRECATED_ACTIVATIONS = ("user_controlled", "agent_controlled")
 BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
 
 
@@ -200,9 +196,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="start right away in this conversation (default: ask)")
     parser.add_argument("--autonomous", action=argparse.BooleanOptionalAction,
                         help="start right away; the conversation may continue on its own")
-    parser.add_argument("--mode", choices=DEPRECATED_MODES, help="deprecated: use --autonomous")
-    parser.add_argument("--activation", choices=DEPRECATED_ACTIVATIONS,
-                        help="deprecated: use --autonomous")
     parser.add_argument("--model", help="model id (default: the first the Core lists)")
     parser.add_argument("--maintenance-model", help="cheaper model for memory maintenance")
     parser.add_argument("--permissions", choices=[p.value for p in PermissionPolicy],
@@ -213,17 +206,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def start_options(args: argparse.Namespace) -> dict[str, Any] | None:
-    """Frontend options that start right away, or None to let the frontend ask. Maps the
-    deprecated --mode and --activation onto --autonomous, with a warning."""
+    """Frontend options that start right away, or None to let the frontend ask."""
     autonomous = args.autonomous
-    for flag, value, autonomous_value in (("--mode", args.mode, "continuous"),
-                                          ("--activation", args.activation, "agent_controlled")):
-        if value is not None:
-            print(f"kayden: {flag} is deprecated and will be removed; autonomy is now a "
-                  "setting of each conversation: use --autonomous", file=sys.stderr)
-            if value == autonomous_value and autonomous is None:
-                autonomous = True
-    if args.conversation is None and autonomous is None and args.mode is None:
+    if args.conversation is None and autonomous is None:
         return None
     options: dict[str, Any] = {"start": True}
     if args.conversation is not None:
@@ -247,16 +232,13 @@ def read_saved(path: Path) -> dict[str, Any]:
     """Settings saved by RuntimeAPI.update_settings, validated like [runtime]. A model of
     "" is the Core's first, a maintenance model of "" the main model."""
     data = read_config(path, required=False, sections=SAVED_KEYS)
-    for key in ("provider", "work_folder"):
-        if key in data and not isinstance(data[key], str):
-            raise SystemExit(f"{path}: {key} must be a string")
+    if not isinstance(data.get("work_folder", ""), str):
+        raise SystemExit(f"{path}: work_folder must be a string")
     modules = data.get("modules", {})
     if not isinstance(modules, dict) or not all(
             kind in MODULE_KINDS and isinstance(v, str) for kind, v in modules.items()):
         raise SystemExit(f"{path}: [modules] maps {', '.join(MODULE_KINDS)} to module ids")
-    if "provider" in data:
-        modules = {"core": data["provider"], **modules}
-    runtime = {k: v for k, v in data.items() if k not in ("modules", "provider", "work_folder")}
+    runtime = {k: v for k, v in data.items() if k not in ("modules", "work_folder")}
     cleared = [k for k in ("model", "maintenance_model") if runtime.get(k) == ""]
     for key in cleared:
         del runtime[key]

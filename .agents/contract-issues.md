@@ -703,7 +703,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
   existing data": "schema version 2, migrated in place".
 - **Problem:** Stores were already at version 2 (stable block tags); the owner's
   `~/.kayden/memory.db` is version 2, not 1.
-- **Assumed:** The new layout is version 3, migrated from version 2.
+- **Assumed:** The new layout is version 3.
 - **Fix:** None needed beyond the note, which now says version 3.
 
 ### A2 (C) A restarted autonomous conversation: idle or stopped

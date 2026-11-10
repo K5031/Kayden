@@ -289,13 +289,6 @@ async def test_only_changed_settings_are_saved(make, tmp_path):
                         "modules": {"frontend": "scripted-window", "memory": "sqlite"}}
 
 
-async def test_a_core_change_replaces_a_saved_provider(make):
-    h = await setup(make)
-    (h.data_dir / "settings.toml").write_text('provider = "first"\n')
-    await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
-    assert "provider" not in saved(h)
-
-
 async def test_settings_changes_are_logged_without_values_that_are_secret(make):
     h = await setup(make)
     await h.start()

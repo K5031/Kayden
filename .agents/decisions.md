@@ -44,8 +44,8 @@ exact/estimate, clamped to [0.25, 4].
 
 | File | Format |
 |------|--------|
-| `instance.lock` | `fcntl.flock` lock, taken at the first `start()`; contents: holder pid. `session.lock` and `continuous.lock`, left by the per-mode versions, are also locked when present, so an older Kayden cannot run on the folder meanwhile, and one that holds them makes `start()` fail naming its pid |
-| `usage.json` | `{"schema_version": 1, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, elapsed_s}`; written with temp file + `os.replace` at the first start, after each charge, each tool-call reservation and whenever activity drops to zero. When it does not exist, the first start sums `usage-session.json` and `usage-continuous.json` into it and leaves them in place |
+| `instance.lock` | `fcntl.flock` lock, taken at the first `start()`; contents: holder pid. |
+| `usage.json` | `{"schema_version": 1, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, elapsed_s}`; written with temp file + `os.replace` at the first start, after each charge, each tool-call reservation and whenever activity drops to zero. |
 | `events.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread. |
 | `scratch/` | `ToolContext.data_dir`, shared by all calls |
 
@@ -333,9 +333,7 @@ limit. `--model`, `--maintenance-model` and `--permissions` override the file. T
 until someone needs them. `--show-config` prints the effective config as TOML (`tomli-w`)
 and exits. `--conversation` and `--autonomous`/`--no-autonomous` start at once: they
 become the frontend options `start = true`, `conversation_id`, `autonomous`, merged over
-the configured ones. `--mode` and `--activation` are accepted for one release: each prints
-a warning naming `--autonomous` to stderr, starts at once, and `--mode continuous` or
-`--activation agent_controlled` means `--autonomous` unless `--[no-]autonomous` is given.
+the configured ones.
 The data directory defaults to `$KAYDEN_DATA_DIR` or `~/.kayden`. Without those flags the
 TUI's start screen asks. The launcher checks no API keys: each Core refuses a
 missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
@@ -419,20 +417,13 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 
 ### SqliteMemory schema 3
 
-- Version 3 (`PRAGMA user_version`). Version 2 stores are migrated in place, in the
-  transaction that opens the store; any other version is refused. A failed migration
-  rolls back and leaves version 2 as it was. The migration also drops and rebuilds
-  `messages_fts` from every message with the current `codec.searchable_text`, so erasing a
-  row repeats exactly the text it was indexed with (rows from schema 1 had been indexed
-  with call ids and raw arguments).
-- `conversations`: `autonomous`, `remember`, `archived`, `seed_from` columns. The
-  migration sets `autonomous = 1` and the title "Continuous conversation" (if it had none)
-  on the former continuous conversation, then drops the `mode` column rather than keeping
-  it unused: nothing reads it, and new rows would otherwise need a made-up value.
+- Version 3 (`PRAGMA user_version`). A store of any other version is refused; Kayden
+  carries no migration code. Erasing a row from `messages_fts` repeats the text it was
+  indexed with, so `codec.searchable_text` must not change without a new schema version.
+- `conversations`: `autonomous`, `remember`, `archived`, `seed_from` columns.
 - Long-term memory: `memory_entries` (id, source conversation or NULL for the user's,
   created_at) and `memory_revisions` (entry, text, created_at); the current text is the
-  newest revision. The migration copies `long_term` (both modes) with exact duplicates
-  collapsed into the lowest id, then drops it. `forgotten` holds SHA-256 fingerprints of
+  newest revision. `forgotten` holds SHA-256 fingerprints of
   forgotten texts (casefolded, whitespace collapsed); compaction drops a new entry whose
   fingerprint is there. A reworded fact is new to it.
 - Remember off: `assemble` and `inspect` show no long-term entries and compaction adds
@@ -471,7 +462,7 @@ Design: [Agent Note](notes/implemented/2026-11-08-swappable-modules-in-app.md).
 | Discovery | `importlib.metadata.entry_points` per group; ids read from metadata alone at launch, factories imported only for `settings()`. A failing import is logged at INFO and the entry left out |
 | Desktop entry point | `kayden.frontends.desktop` imports `qasync` and `PySide6.QtWidgets` at the top, so it loads only with the `desktop` extra |
 | `kayden.core.openai_compat:factory` | Not registered: the profiles are `deepseek_factory` and `openai_factory`. A config naming the generic factory has no id ("Custom (from config.toml)") |
-| Saved choices | `[modules]` in `settings.toml`, only the kinds changed. A legacy `provider` key is read as `modules.core` and dropped when the Core is next chosen |
+| Saved choices | `[modules]` in `settings.toml`, only the kinds changed. |
 | Options on a switch | A chosen module keeps `config.toml`'s options only when it is the module `config.toml` names; otherwise it gets none |
 | Core change | Saves `model = ""` and `maintenance_model = ""` (the new Core's first, the main model), overriding `config.toml`. Models chosen while another Core waits apply live and are not saved |
 | Restart | `RuntimeAPI.restart()` records a `Restart(frontend, frontend_kind, conversation_id)`, logs a `restart` decision and shuts down as on quit. `launch()` reloads the config and runs the next instance in the same process; the frontend gets `start = true` and the conversation unless the Memory changed |

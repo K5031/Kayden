@@ -27,9 +27,6 @@ kayden --autonomous            # a new autonomous conversation
 | `--data-dir DIR`, `--config FILE` | Use another data folder or config file |
 | `--show-config` | Print the settings Kayden would use, then exit |
 
-`--mode` and `--activation` still work for now but print a warning: use `--autonomous`
-instead.
-
 ## Talking to the agent
 
 Type a message and press Enter. While the agent works you can keep typing; your messages

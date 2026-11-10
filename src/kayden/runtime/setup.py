@@ -77,14 +77,14 @@ class SetupRuntime:
             raise ValueError("the model can be chosen once Kayden has started")
         if update.system_prompt is not None and not update.system_prompt.strip():
             raise ValueError("the system prompt is empty")
-        saved, removed = await self._modules.prepare(update)
+        saved = await self._modules.prepare(update)
         if update.budget is not None:
             saved["budget"] = {k: v for k, v in asdict(update.budget).items() if v is not None}
         if update.permissions is not None:
             saved["permissions"] = update.permissions.value
         if update.system_prompt is not None:
             saved["system_prompt"] = update.system_prompt
-        await self._modules.commit(update, saved, removed)
+        await self._modules.commit(update, saved)
         self._config = replace(self._config, budget=update.budget or self._config.budget,
                                permissions=update.permissions or self._config.permissions,
                                system_prompt=update.system_prompt or self._config.system_prompt)
