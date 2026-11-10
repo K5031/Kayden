@@ -126,12 +126,6 @@ KEY_PAGES = {
     "openai": "https://platform.openai.com/api-keys",
 }
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
-AUTONOMY_LABEL = "Autonomous mode"
-AUTONOMY_HINT = ("Give Kayden a task and let it work: it decides by itself instead of "
-                 "asking you, and carries on when its background tasks finish. It still asks "
-                 "before actions as set in Settings and stops at the spending limit.")
-AUTONOMY_LOCKED = ("Autonomous mode is chosen when a conversation starts. To change it, "
-                   "continue this conversation in a new one.")
 EMPTY_TITLE = "Start a conversation"
 EMPTY_HINT = "Ask a question or describe a task."
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
@@ -688,15 +682,10 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout(group)
         controls.setContentsMargins(10, 4, 10, 4)
         controls.setSpacing(10)
-        self.autonomy = Switch(AUTONOMY_LABEL)
-        self.autonomy.setToolTip(AUTONOMY_HINT)
-        self.autonomy.clicked.connect(self._set_autonomous)
-        self.spending_divider = QFrame(objectName="divider")
-        self.spending_divider.setFixedSize(1, 14)
         self.spending_label = _label(wrap=False, selectable=False, tone="muted")
         self.spending_label.setToolTip("What Kayden has spent so far, across all conversations.")
-        for widget in (self.autonomy, self.spending_divider, self.spending_label):
-            controls.addWidget(widget)
+        controls.addWidget(self.spending_label)
+        self.spending_group = group
         head.addWidget(self.title_label, 1)
         head.addWidget(group)
 
@@ -916,13 +905,8 @@ class MainWindow(QMainWindow):
         if conversation is not None:
             self.title_label.setText(conversation_label(
                 self._conversations.get(conversation.id, conversation)))
-        self.autonomy.setEnabled(model.can_set_autonomous)
-        self.autonomy.setChecked(model.autonomous)
-        self.autonomy.setToolTip(AUTONOMY_HINT if model.can_set_autonomous or conversation is None
-                                 else AUTONOMY_LOCKED)
         self.spending_label.setText(model.spending_text)
-        self.spending_divider.setVisible(bool(model.spending_text))
-        self.spending_label.setVisible(bool(model.spending_text))
+        self.spending_group.setVisible(bool(model.spending_text))
         self.send_button.setText("Stop" if model.busy else "Send")
         self.send_button.setToolTip("Stop (Esc)" if model.busy else "Send (Enter)")
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")
@@ -1033,11 +1017,6 @@ class MainWindow(QMainWindow):
             self.controller.stop()
         else:
             self._send()
-
-    def _set_autonomous(self, autonomous: bool) -> None:
-        # Re-read the switch afterwards: a refused change leaves it as it was.
-        task = self.controller.set_autonomous(autonomous)
-        task.add_done_callback(lambda _: self._refresh_status())
 
     def _load_earlier(self) -> None:
         self.load_earlier.setEnabled(False)

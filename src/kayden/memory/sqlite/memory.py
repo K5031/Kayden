@@ -58,7 +58,7 @@ from . import codec
 
 logger = logging.getLogger(__name__)
 # A store of another version is refused.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # Output headroom on top of the summary budget for tags and new long-term entries.
 _LONG_TERM_OUTPUT_TOKENS = 256
 _TITLE_OUTPUT_TOKENS = 20
@@ -129,7 +129,6 @@ CREATE TABLE conversations (
     title TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    autonomous INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     seed_from TEXT
 );
@@ -197,7 +196,7 @@ below. Reply with the title only: no quotes, no punctuation at the end."""
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
 _LONG_TERM_RE = re.compile(r"<long_term>(.*?)</long_term>", re.DOTALL)
 _WORD_RE = re.compile(r"\w+")
-_INFO_COLUMNS = "id, title, created_at, updated_at, autonomous, archived, seed_from"
+_INFO_COLUMNS = "id, title, created_at, updated_at, archived, seed_from"
 _CURRENT_ENTRIES = (
     "SELECT e.id, r.text, e.source_conversation_id, e.created_at FROM memory_entries e"
     " JOIN memory_revisions r ON r.id ="
@@ -239,20 +238,19 @@ class SqliteMemory(Memory):
         self,
         *,
         title: str | None = None,
-        autonomous: bool = False,
         seed_from: ConversationId | None = None,
     ) -> ConversationInfo:
         now = time.time()
         info = ConversationInfo(uuid.uuid4().hex, title or None, now, now,
-                                autonomous=autonomous, seed_from=seed_from)
+                                seed_from=seed_from)
 
         def run(conn: sqlite3.Connection) -> None:
             with _transaction(conn):
                 if seed_from is not None:
                     _require_conversation(conn, seed_from)
                 conn.execute(
-                    f"INSERT INTO conversations ({_INFO_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (info.id, info.title, now, now, autonomous, False, seed_from),
+                    f"INSERT INTO conversations ({_INFO_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+                    (info.id, info.title, now, now, False, seed_from),
                 )
 
         await self._run(run)
@@ -269,7 +267,7 @@ class SqliteMemory(Memory):
                 " ORDER BY updated_at DESC, created_at DESC",
                 (include_archived,),
             )
-            return [_conversation_info(row[:7], row[7]) for row in rows]
+            return [_conversation_info(row[:6], row[6]) for row in rows]
 
         return await self._run(run)
 
@@ -279,15 +277,12 @@ class SqliteMemory(Memory):
         *,
         title: str | None = None,
         archived: bool | None = None,
-        autonomous: bool | None = None,
     ) -> ConversationInfo:
         changes: dict[str, Any] = {}
         if title is not None:
             changes["title"] = title.strip() or None
         if archived is not None:
             changes["archived"] = archived
-        if autonomous is not None:
-            changes["autonomous"] = autonomous
 
         def run(conn: sqlite3.Connection) -> ConversationInfo:
             with _transaction(conn):
@@ -727,8 +722,8 @@ def _require_conversation(
 def _conversation_info(row: Sequence[Any], first_user_blocks: str | None = None
                        ) -> ConversationInfo:
     preview = " ".join(_text_of(first_user_blocks).split()) if first_user_blocks else ""
-    return ConversationInfo(row[0], row[1], row[2], row[3], autonomous=bool(row[4]),
-                            archived=bool(row[5]), seed_from=row[6],
+    return ConversationInfo(row[0], row[1], row[2], row[3],
+                            archived=bool(row[4]), seed_from=row[5],
                             preview=preview[:_PREVIEW_CHARS] or None)
 
 

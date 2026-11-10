@@ -94,7 +94,6 @@ from kayden.api import (
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
 from kayden.runtime.config import (
     ACTIVATION_NOTICE,
-    AUTONOMY_PROMPT,
     Restart,
     RuntimeConfig,
 )
@@ -352,9 +351,8 @@ class Runtime:
             raise RuntimeStateError(f"cannot start while {self._state()}")
         if self._ops:
             raise RuntimeStateError("operations are still outstanding")
-        if options.conversation_id is not None and (
-                options.seed_from is not None or options.autonomous is not None):
-            raise ValueError("autonomous and seed_from apply to a new conversation only")
+        if options.conversation_id is not None and options.seed_from is not None:
+            raise ValueError("seed_from applies to a new conversation only")
         self._hold_lock()
         await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
@@ -379,13 +377,12 @@ class Runtime:
         self._conversation = conversation
         self._model = model
         self._agent_config = AgentConfig(self._config.budget, self._permissions)
-        # A resumed autonomous conversation has no pending wake-up: it waits for the user.
+        # A resumed conversation has no pending wake-up: it waits for the user.
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
         self._backlog.clear()
         if resumed:
             await self._repair()
         self._log.decision("start", conversation=conversation.id, resumed=resumed,
-                           autonomous=conversation.autonomous,
                            seed_from=conversation.seed_from, model=model)
         self._set_base(AgentState.IDLE)
         return conversation
@@ -471,29 +468,6 @@ class Runtime:
         op.request_cancel()
 
     # ── Conversations and long-term memory ───────────────────────────────
-
-    async def set_autonomous(self, autonomous: bool) -> None:
-        if self._conversation is None:
-            raise RuntimeStateError("not started")
-        # The system prompt and the tools depend on it, and they stay as they are for a
-        # conversation's whole life.
-        previous = self._conversation
-        begun = bool(await self._memory.history(previous.id, limit=1))
-        if (begun or self._inbox or self._cycle_requested or self._cycle_active
-                or self._conversation.id != previous.id):
-            raise RuntimeStateError(
-                "autonomy is chosen before a conversation's first message")
-        # In memory first, so a turn that starts during the write already has it.
-        self._conversation = replace(previous, autonomous=autonomous)
-        try:
-            info = await self._memory.update_conversation(previous.id, autonomous=autonomous)
-        except BaseException:
-            if self._conversation.id == previous.id:
-                self._conversation = replace(self._conversation,
-                                             autonomous=previous.autonomous)
-            raise
-        self._log.decision("set_autonomous", conversation=info.id, autonomous=autonomous)
-        self._conversation_updated(info)
 
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
         self._hold_lock()
@@ -775,14 +749,6 @@ class Runtime:
     def _counter(self, model: str) -> TokenCounter:
         return calibrated(self._calibration.get(model, 1.0))
 
-    def _autonomous(self) -> bool:
-        return self._conversation is not None and self._conversation.autonomous
-
-    def _system_prompt(self) -> str:
-        if self._autonomous():
-            return f"{self._config.system_prompt}\n\n{AUTONOMY_PROMPT}"
-        return self._config.system_prompt
-
     def _context_request(self, info: ModelInfo, tools: Sequence[ToolSpec],
                          factor: float = 1.0) -> tuple[ContextRequest, int]:
         """The assembled context gets the window minus system prompt, tools and output."""
@@ -792,7 +758,7 @@ class Runtime:
                       window // 4)
         count = self._counter(info.id)
         tool_json = json.dumps([[t.name, t.description, t.parameters] for t in tools])
-        budget = window - reserve - count(self._system_prompt()) - count(tool_json)
+        budget = window - reserve - count(self._config.system_prompt) - count(tool_json)
         return ContextRequest(self._conversation.id, max(0, int(budget * factor)), count), reserve
 
     # ── Tools offered to the model ───────────────────────────────────────
@@ -816,7 +782,7 @@ class Runtime:
     async def _open_conversation(self, options: StartOptions) -> tuple[ConversationInfo, bool]:
         if options.conversation_id is None:
             return await self._memory.create_conversation(
-                autonomous=bool(options.autonomous), seed_from=options.seed_from), False
+                seed_from=options.seed_from), False
         return await self._find_conversation(options.conversation_id), True
 
     async def _repair(self) -> None:
@@ -988,16 +954,14 @@ class Runtime:
 
     def _enter_idle(self) -> None:
         self._base = AgentState.IDLE
-        if not self._autonomous():
-            return
         wake = set(self._ops)  # woken once everything running now has finished
         self._wake_set = wake or None
         self._immediate_wake = not wake and self._unseen
         self._log.decision("idle", wait_for=sorted(wake), immediate=self._immediate_wake)
 
     def _check_wake(self) -> None:
-        if (not self._autonomous() or self._base != AgentState.IDLE or self._cycle_active
-                or self._cycle_requested or self._stopping):
+        if (self._base != AgentState.IDLE or self._cycle_active or self._cycle_requested
+                or self._stopping):
             return
         if self._immediate_wake or (self._wake_set and not self._wake_set & set(self._ops)):
             self._request_cycle("wake-up")
@@ -1095,7 +1059,7 @@ class Runtime:
         tools = list(specs.values())
         context, reserve = self._context_request(info, tools, factor)
         assembled = await self._memory.assemble(context)
-        system = self._system_prompt()
+        system = self._config.system_prompt
         if assembled.system_addendum:
             system = f"{system}\n\n{assembled.system_addendum}"
         self._unseen = False

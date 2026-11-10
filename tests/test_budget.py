@@ -229,5 +229,5 @@ async def test_usage_persists(make: Any) -> None:
 
     await h2.close()
     h3: Harness = await make(data_dir=h.data_dir)
-    await h3.start(autonomous=True)  # one budget per data folder, whatever the conversation
+    await h3.start()  # one budget per data folder, whatever the conversation
     assert h3.runtime.snapshot().usage.usage.input_tokens == 500

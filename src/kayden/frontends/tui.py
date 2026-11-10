@@ -708,7 +708,6 @@ class ConversationsScreen(ListScreen):
             return
         self._show([
             Option(("● " if c.id == self.open_id else "  ") + conversation_label(c)
-                   + ("  · autonomous" if c.autonomous else "")
                    + ("  · archived" if c.archived else ""), id=c.id)
             for c in listed
         ])
@@ -880,9 +879,6 @@ class StartScreen(ModalScreen[StartOptions | None]):
                 [("Default", DEFAULT_MODEL)],
                 value=DEFAULT_MODEL, allow_blank=False, id="model",
             )
-            with Horizontal(classes="switch-row"):
-                yield Switch(False, id="autonomous")
-                yield Label("Autonomous mode")
             yield Label("Continue from")
             yield Select([("Nothing, start fresh", FRESH)], value=FRESH, allow_blank=False,
                          id="seed-from")
@@ -916,24 +912,19 @@ class StartScreen(ModalScreen[StartOptions | None]):
     @on(Select.Changed, "#conversation")
     def _conversation_changed(self, event: Select.Changed) -> None:
         resumed = self.conversations.get(str(event.value))
-        self.query_one("#autonomous", Switch).value = resumed is not None and resumed.autonomous
-        # Both are chosen when a conversation starts.
-        for selector in ("#autonomous", "#seed-from"):
-            self.query_one(selector).disabled = resumed is not None
+        self.query_one("#seed-from").disabled = resumed is not None
 
     @on(Button.Pressed, "#start")
     def _start(self) -> None:
         conversation = self.query_one("#conversation", Select).value
         model = self.query_one("#model", Select).value
         model_id = None if model == DEFAULT_MODEL else str(model)
-        autonomous = self.query_one("#autonomous", Switch).value
         if conversation != NEW_CONVERSATION:
             self.dismiss(StartOptions(conversation_id=str(conversation), model=model_id))
             return
         seed = self.query_one("#seed-from", Select).value
         self.dismiss(StartOptions(
             model=model_id,
-            autonomous=autonomous,
             seed_from=None if seed == FRESH else str(seed),
         ))
 
@@ -1333,8 +1324,6 @@ class KaydenApp(App[None]):
     def _render_status(self) -> None:
         state = STATE_LABELS[self.state]
         parts = [state + (f" · {self.pending_ops} running" if self.pending_ops else "")]
-        if self.conversation is not None and self.conversation.autonomous:
-            parts.append("autonomous")
         if self.model:
             parts.append(self.model)
         if self.usage is not None:
@@ -1543,16 +1532,12 @@ class KaydenApp(App[None]):
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> TuiFrontend:
-    """Options: start, conversation_id, autonomous, model. With start true the agent starts
-    right away with the others; otherwise the start screen asks."""
+    """Options: start, conversation_id, model. With start true the agent starts right away
+    with the others; otherwise the start screen asks."""
     if not options.get("start"):
         return TuiFrontend()
-    conversation_id = options.get("conversation_id")
-    return TuiFrontend(StartOptions(
-        conversation_id=conversation_id,
-        model=options.get("model"),
-        autonomous=None if conversation_id else options.get("autonomous"),
-    ))
+    return TuiFrontend(StartOptions(conversation_id=options.get("conversation_id"),
+                                    model=options.get("model")))
 
 
 factory.display_name = "Terminal (TUI)"  # type: ignore[attr-defined]

@@ -84,7 +84,7 @@ from tests.fakes.settings import settings as fake_settings
 CONVERSATION = ConversationInfo("conv-1", "Test", 0.0, 0.0)
 OTHERS = [
     ConversationInfo("conv-2", None, 0.0, 0.0, preview="What is the weather"),
-    ConversationInfo("conv-3", None, 0.0, 0.0, autonomous=True),
+    ConversationInfo("conv-3", None, 0.0, 0.0),
     ConversationInfo("conv-4", "Old plans", 0.0, 0.0, archived=True),
 ]
 MODELS = [ModelInfo("m1", "Model One", 100_000), ModelInfo("m2", "Model Two", 200_000)]
@@ -99,7 +99,6 @@ class StubRuntime:
         self,
         *,
         started: bool = True,
-        autonomous: bool = False,
         history: Sequence[Message] = (),
         operations: Sequence[OperationInfo] = (),
         pending_permissions: Sequence[PermissionRequest] = (),
@@ -108,7 +107,7 @@ class StubRuntime:
     ) -> None:
         self.seq = 0
         self.state = AgentState.IDLE if started else AgentState.NOT_STARTED
-        self.conversations = [replace(CONVERSATION, autonomous=autonomous), *OTHERS]
+        self.conversations = [CONVERSATION, *OTHERS]
         self.conversation = self.conversations[0] if started else None
         self.config = AgentConfig(Budget(), PermissionPolicy.ASK) if started else None
         self.model = "m1"
@@ -222,23 +221,14 @@ class StubRuntime:
     async def start(self, options: StartOptions) -> ConversationInfo:
         await self._record("start", options)
         if options.conversation_id is None:
-            info = ConversationInfo("conv-new", None, 0.0, 0.0,
-                                    autonomous=bool(options.autonomous),
-                                    seed_from=options.seed_from)
+            info = ConversationInfo("conv-new", None, 0.0, 0.0, seed_from=options.seed_from)
             self.conversations.insert(0, info)
         else:
             info = next(c for c in self.conversations if c.id == options.conversation_id)
-            if options.autonomous is not None:
-                info = replace(info, autonomous=options.autonomous)
         self.conversation = info
         self.config = AgentConfig(Budget(), PermissionPolicy.ASK)
         self.emit(StateChanged(AgentState.IDLE))
         return info
-
-    async def set_autonomous(self, autonomous: bool) -> None:
-        await self._record("set_autonomous", autonomous)
-        assert self.conversation is not None
-        self._update(self.conversation.id, autonomous=autonomous)
 
     async def rename_conversation(self, conversation_id: str, title: str) -> None:
         await self._record("rename_conversation", conversation_id, title)
@@ -556,12 +546,6 @@ async def test_activate_needs_only_a_started_agent():
         await pilot.press("enter")
         await until(pilot, lambda: stub.calls.count(("activate",)) == 2)
 
-    stub = StubRuntime(autonomous=True)
-    app = make(stub)
-    async with app.run_test() as pilot:
-        await caught_up(pilot, app, stub)
-        assert app.check_action("activate", ()) is True  # IDLE and autonomous: allowed
-
     stub = StubRuntime(started=False)
     app = make(stub)
     async with app.run_test(size=(120, 50)) as pilot:
@@ -618,15 +602,13 @@ async def test_start_screen_starts_a_new_conversation():
         screen = app.screen
         assert not screen.query("#mode") and not screen.query("#activation")
         await until(pilot, lambda: len(screen.query_one("#conversation", Select)._options) == 4)
-        assert screen.query_one("#autonomous", Switch).value is False
-        screen.query_one("#autonomous", Switch).value = True
+        assert not screen.query("#autonomous")
         screen.query_one("#seed-from", Select).value = "conv-2"
         await pilot.pause()
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
         [options] = [c[1] for c in stub.calls if c[0] == "start"]
-        assert options == StartOptions(autonomous=True, seed_from="conv-2")
-        await until(pilot, lambda: "autonomous" in status(app))
+        assert options == StartOptions(seed_from="conv-2")
         await until(pilot, lambda: ("history", "conv-new") in stub.calls)
 
 
@@ -644,8 +626,6 @@ async def test_start_screen_lists_titles_and_resumes_a_conversation():
                           "New chat"]
         select.value = "conv-3"
         await pilot.pause()
-        switch = screen.query_one("#autonomous", Switch)
-        assert switch.value is True and switch.disabled  # shown, set when it started
         assert screen.query_one("#seed-from", Select).disabled
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
@@ -845,27 +825,8 @@ async def test_factory_builds_start_options(tmp_path):
     assert factory({}, paths).start_options is None
     assert factory({"start": False, "model": "m1"}, paths).start_options is None
     assert factory({"start": True}, paths).start_options == StartOptions()
-    frontend = factory({"start": True, "conversation_id": "conv-1", "autonomous": True,
-                        "model": "m2"}, paths)
-    assert frontend.start_options == StartOptions("conv-1", "m2")  # keeps its own autonomy
-    assert factory({"start": True, "autonomous": True}, paths).start_options == StartOptions(
-        autonomous=True)
-
-
-# ── autonomy ─────────────────────────────────────────────────────────────
-
-
-async def test_status_shows_an_autonomous_conversation():
-    stub = StubRuntime(autonomous=True)
-    app = make(stub)
-    async with app.run_test(notifications=True) as pilot:
-        await caught_up(pilot, app, stub)
-        assert "autonomous" in status(app)
-        await type_text(pilot, "/autonomous off")  # set when a conversation starts, only
-        await pilot.press("enter")
-        await until(pilot, lambda: any("Unknown command" in n.message
-                                       for n in app._notifications))
-        assert not any(c[0] == "set_autonomous" for c in stub.calls)
+    frontend = factory({"start": True, "conversation_id": "conv-1", "model": "m2"}, paths)
+    assert frontend.start_options == StartOptions("conv-1", "m2")
 
 
 async def test_conversation_events_for_other_conversations_and_memories():
@@ -873,13 +834,12 @@ async def test_conversation_events_for_other_conversations_and_memories():
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
-        stub.emit(ConversationUpdated(replace(OTHERS[0], autonomous=True)),
+        stub.emit(ConversationUpdated(replace(OTHERS[0], title="Weather")),
                   ConversationDeleted("conv-4"), MemoriesChanged())
         stub.emit(ConversationUpdated(replace(CONVERSATION, title="Renamed")))
         await caught_up(pilot, app, stub)
         assert app.conversation is not None
         assert (app.conversation.id, app.conversation.title) == ("conv-1", "Renamed")
-        assert "autonomous" not in status(app)
 
 
 # ── conversation list ────────────────────────────────────────────────────
@@ -916,7 +876,7 @@ async def test_conversation_list_shows_titles_and_opens_one():
     async with app.run_test(size=(120, 50)) as pilot:
         screen = await open_conversations(pilot, app, stub, how="command")
         assert listed(screen) == ["● Test", "  What is the weather",
-                                  "  New chat  · autonomous"]
+                                  "  New chat"]
         screen.query_one("#show-archived", Switch).value = True
         await until(pilot, lambda: len(listed(screen)) == 4)
         assert listed(screen)[-1] == "  Old plans  · archived"

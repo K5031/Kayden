@@ -17,9 +17,9 @@ covers it. Test files live in `tests/`; fakes in `tests/fakes/`.
 |----|----------|------|
 | A | Modules are loaded from import-path factories; swapping a factory needs no runtime change | `test_a_replaceable_modules` |
 | B | Session: send, tool call, shutdown, reopen; history preserved | `test_b_session_conversation` |
-| C | Continuous agent reasons, uses a tool, idles, is woken by batch completion (agent-controlled), stays idle (user-controlled) | `test_c_continuous_autonomy` |
+| C | The agent reasons, uses a tool, ends its turn, and is woken when its background work finishes | `test_c_background_work_wakes_the_agent` |
 | D | Slow tool backgrounded with a placeholder; model inspects progress with `op_status`; outcome arrives as `OperationResult` | `test_d_long_running_tool` |
-| E | Concurrent batch: an autonomous conversation wakes once after all terminate; an ordinary one does not restart | `test_e_batch_wakeup_autonomous`, `test_e_batch_not_autonomous_retains` |
+| E | Concurrent batch: the agent is woken once after all operations terminate | `test_e_batch_wakeup`, `test_a_conversation_wakes_once_after_the_batch` |
 | F | Stop during inference and during tools: cancellation, no wake-up, state preserved | `test_f_stop_during_inference`, `test_f_stop_during_tools` |
 | G | Restart restores history, summary, archive; continuous comes back STOPPED | `test_g_restart_persistence` |
 | H | After repeated compactions `recall` retrieves original messages | `test_h_historical_recall` |
@@ -93,7 +93,7 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Read-only calls concurrent; a non-read-only call is a barrier; a backgrounded call releases it | `test_barrier_*`, `test_backgrounded_call_releases_barrier` |
 | Reserved names cannot be redeclared | `test_reserved_names_dropped` |
 | Stop commits partial text only; queued-while-stopping starts a cycle once stopped; StopStalled | `test_stop_*` |
-| Unseen results wake an autonomous conversation immediately; the same tools with and without autonomy | `test_idle_unseen_results_wake_immediately`, `test_the_same_tools_are_offered_with_and_without_autonomy` |
+| Unseen results wake the agent immediately; a finished background task wakes it | `test_idle_unseen_results_wake_immediately`, `test_a_finished_background_task_wakes_the_agent` |
 | Session may switch conversation only without outstanding ops | `test_session_switch_conversation` |
 | Background outcome appended immediately when no cycle runs | `test_background_result_appended_when_idle` |
 | Graceful shutdown ends running calls as Stop does: CANCELLED, or ABANDONED when cancel is ignored; never INTERRUPTED | `test_shutdown_cancels_calls`, `test_shutdown_abandons_calls_that_ignore_cancel` |

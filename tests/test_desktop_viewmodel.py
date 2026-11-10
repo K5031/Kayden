@@ -311,24 +311,6 @@ async def test_continue_from(make):
     assert listed[-1].id == first.id and listed[-1].preview == "plan a trip"
 
 
-async def test_autonomy_can_be_switched_until_the_first_message(make):
-    h: Harness = await make()
-    h.core.add(Step(text="hi"))
-    await h.start()
-    model, controller, _ = await attach(h)
-    assert not model.autonomous and model.can_set_autonomous
-    seen = changes(model)
-    await controller.set_autonomous(True)
-    await eventually(lambda: model.autonomous)
-    assert h.runtime.snapshot().conversation.autonomous
-    assert any(isinstance(c, ConversationListChanged) for c in seen)
-    await controller.set_autonomous(False)
-    await eventually(lambda: not model.autonomous)
-    controller.send("hello")
-    await eventually(lambda: of(model, AssistantItem) and not model.busy)
-    assert not model.can_set_autonomous
-
-
 async def test_rename_and_archive_keep_the_list_current(make):
     h: Harness = await make()
     other = await h.start()

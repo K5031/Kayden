@@ -235,7 +235,7 @@ class MemoryConformance:
         first = await memory.create_conversation(title="first")
         second = await memory.create_conversation()
         assert first.title == "first" and second.title is None
-        assert not first.autonomous and not first.archived
+        assert not first.archived
         assert first.seed_from is None
         await memory.append(first.id, [text_message("tok0001")])
         listed = await memory.list_conversations()
@@ -246,24 +246,23 @@ class MemoryConformance:
     async def test_conversation_options_are_stored(self, open_memory: MemoryFactory):
         memory = open_memory()
         source = await memory.create_conversation(title="source")
-        conv = await memory.create_conversation(autonomous=True, seed_from=source.id)
-        assert (conv.autonomous, conv.seed_from) == (True, source.id)
+        conv = await memory.create_conversation(seed_from=source.id)
+        assert conv.seed_from == source.id
         with pytest.raises(KeyError):
             await memory.create_conversation(seed_from="missing")
         await memory.aclose()
         [reopened] = [c for c in await open_memory().list_conversations() if c.id == conv.id]
-        assert (reopened.autonomous, reopened.seed_from) == (True, source.id)
+        assert reopened.seed_from == source.id
 
     async def test_update_conversation(self, memory: Memory):
         conv = await memory.create_conversation()
         renamed = await memory.update_conversation(conv.id, title="Trip")
         assert renamed.title == "Trip" and renamed.id == conv.id
-        assert (await memory.update_conversation(conv.id, autonomous=True)).autonomous
         assert (await memory.update_conversation(conv.id, title="")).title is None
         await memory.update_conversation(conv.id, title="Trip")
         assert (await memory.update_conversation(conv.id, title="  \n")).title is None
         [listed] = await memory.list_conversations()
-        assert listed.autonomous and listed.title is None
+        assert listed.title is None
         with pytest.raises(KeyError):
             await memory.update_conversation("missing", title="x")
 

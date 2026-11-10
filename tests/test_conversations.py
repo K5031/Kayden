@@ -1,4 +1,4 @@
-"""Autonomy as a conversation option, fresh starts, continuity, and conversation and
+"""Waking up after background work, fresh starts, continuity, and conversation and
 long-term memory management (Agent Note: autonomy into sessions)."""
 
 from __future__ import annotations
@@ -18,10 +18,8 @@ from kayden.api import (
     MemoriesChanged,
     RuntimeStateError,
     StartOptions,
-    ToolFinished,
     ToolStatus,
 )
-from kayden.runtime.config import AUTONOMY_PROMPT
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -41,70 +39,28 @@ async def settled(h: Harness) -> None:
     await h.rec.wait_for(lambda r: r.envelopes and r.envelopes[-1].seq >= seq)
 
 
-# ── autonomy ──
+# ── waking up ──
 
 
-async def test_autonomous_conversation_wakes_once_after_the_batch(make: Any) -> None:
+async def test_a_conversation_wakes_once_after_the_batch(make: Any) -> None:
     h: Harness = await make(core=batch_core(), tools=batch_tools())
-    conv = await h.start(autonomous=True)
-    assert conv.autonomous
+    await h.start()
     await h.runtime.send("run the batch")
     await eventually(lambda: len(h.core.requests) == 3)
-    first = h.core.requests[0]
-    assert AUTONOMY_PROMPT in first.system
     assert {o.call_id for o in op_results(h.core.requests[2].messages)} == {"a", "b", "c"}
     await asyncio.sleep(0.2)
     assert len(h.core.requests) == 3
-
-
-async def test_ordinary_conversation_never_wakes(make: Any) -> None:
-    core = ScriptedCore([
-        Step(calls=[call("a", id="a"), call("b", id="b"), call("c", id="c")]),
-        Step(text="waiting for the batch"),
-    ])
-    h: Harness = await make(core=core, tools=batch_tools())
-    conv = await h.start()
-    assert not conv.autonomous
-    await h.runtime.send("run the batch")
-    await h.rec.wait_for(lambda r: len(r.of(ToolFinished)) >= 3)
-    assert AUTONOMY_PROMPT not in core.requests[0].system
-    await asyncio.sleep(0.3)
-    assert len(core.requests) == 2
-    assert len(op_results(await h.transcript())) == 3  # results wait for the user
-
-
-async def test_autonomy_is_chosen_before_the_first_message(make: Any) -> None:
-    core = ScriptedCore([Step(text="one"), Step(text="two")])
-    h: Harness = await make(core=core)
-    conv = await h.start()
-    await h.runtime.set_autonomous(True)  # nothing said yet
-    assert h.runtime.snapshot().conversation.autonomous
-    await h.rec.wait_for(lambda r: any(e.info.autonomous for e in r.of(ConversationUpdated)))
-    await h.turn("first")
-    with pytest.raises(RuntimeStateError, match="first message"):
-        await h.runtime.set_autonomous(False)
-    assert h.runtime.snapshot().conversation.autonomous
-    assert h.store.conversations[conv.id].info.autonomous
-    await h.turn("second")
     # The agent's instructions and tools are the same for the whole conversation.
-    first, second = core.requests
-    assert first.system == second.system and first.tools == second.tools
-    assert AUTONOMY_PROMPT in second.system
-    assert any(d.get("decision") == "set_autonomous" for d in await decisions(h))
+    first, _, third = h.core.requests
+    assert first.system == third.system and first.tools == third.tools
 
 
-async def test_set_autonomous_needs_a_started_agent(make: Any) -> None:
-    h: Harness = await make()
-    with pytest.raises(RuntimeStateError):
-        await h.runtime.set_autonomous(True)
-
-
-async def test_restarted_autonomous_conversation_opens_idle_and_waits(make: Any) -> None:
+async def test_restarted_conversation_opens_idle_and_waits(make: Any) -> None:
     tools = FakeTools()
     tools.hanging("work")
     core = ScriptedCore([Step(calls=[call("work", id="w")]), Step(text="waiting")])
     h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)
-    conv = await h.start(autonomous=True)
+    conv = await h.start()
     await h.runtime.send("start the work")
     await eventually(lambda: len(core.requests) == 2
                      and h.runtime.snapshot().state == AgentState.IDLE)
@@ -113,23 +69,12 @@ async def test_restarted_autonomous_conversation_opens_idle_and_waits(make: Any)
 
     h2: Harness = await make(store=store, data_dir=h.data_dir,
                              core=ScriptedCore(default=Step(text="resumed")))
-    resumed = await h2.start(conv.id)
-    assert resumed.autonomous
+    await h2.start(conv.id)
     assert h2.runtime.snapshot().state == AgentState.IDLE
     await asyncio.sleep(0.3)
     assert h2.core.requests == []
     await h2.turn("carry on")
     assert len(h2.core.requests) == 1
-    assert AUTONOMY_PROMPT in h2.core.requests[0].system
-
-
-async def test_a_resumed_conversation_keeps_its_autonomy(make: Any) -> None:
-    h: Harness = await make()
-    conv = await h.start(autonomous=True)
-    assert (await h.start(conv.id)).autonomous
-    with pytest.raises(ValueError):
-        await h.runtime.start(StartOptions(conv.id, autonomous=False))
-    assert h.store.conversations[conv.id].info.autonomous
 
 
 # ── continue from ──

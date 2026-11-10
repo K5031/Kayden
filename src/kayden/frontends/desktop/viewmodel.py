@@ -220,7 +220,7 @@ class Closed:
 
 @dataclass(frozen=True)
 class ConversationListChanged:
-    """A conversation was renamed, archived, deleted or switched to autonomy: re-read the
+    """A conversation was renamed, archived or deleted: re-read the
     list."""
 
 
@@ -261,15 +261,6 @@ class ConversationModel:
     def busy(self) -> bool:
         """A cycle runs: Send becomes Stop and messages are queued."""
         return self.state in BUSY_STATES
-
-    @property
-    def autonomous(self) -> bool:
-        return self.conversation is not None and self.conversation.autonomous
-
-    @property
-    def can_set_autonomous(self) -> bool:
-        """Autonomy is chosen before a conversation's first message."""
-        return self.conversation is not None and not self.items and not self.has_earlier
 
     @property
     def status_text(self) -> str:
@@ -828,9 +819,6 @@ class Controller:
     async def conversations(self, *, include_archived: bool = False) -> list[ConversationInfo]:
         return newest_first(await self.runtime.list_conversations(
             include_archived=include_archived))
-
-    def set_autonomous(self, autonomous: bool) -> asyncio.Task[None]:
-        return self.command(self.runtime.set_autonomous(autonomous))
 
     def rename(self, conversation_id: str, title: str) -> asyncio.Task[None]:
         """An empty title lets Kayden name the conversation again."""

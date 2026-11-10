@@ -178,7 +178,6 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 
 QFrame#header {{ border-bottom: 1px solid {c.line}; }}
 QFrame#headerGroup {{ background: {c.card}; border-radius: 8px; }}
-QFrame#divider {{ background: {c.line}; }}
 QFrame#banner {{ background: {c.error_bg}; border-radius: 8px; }}
 QFrame#banner QLabel {{ color: {c.error_text}; }}
 QFrame#composer {{ background: {c.field}; border: 1px solid {c.line}; border-radius: 21px; }}

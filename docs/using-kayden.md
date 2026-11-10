@@ -3,24 +3,18 @@
 ## Starting
 
 `kayden` opens the start screen: pick an existing conversation or a new one, and the model,
-then press Enter. For a new conversation you can also set:
-
-| Field | Does |
-|---|---|
-| Autonomous mode | The agent works on your task without stopping to ask, and carries on when its background work finishes (see [Autonomy](concepts.md#autonomy)) |
-| Continue from | Start from where an earlier conversation left off |
+then press Enter. A new conversation can **Continue from** an earlier one, starting from
+where that one left off.
 
 To skip the screen:
 
 ```bash
 kayden --conversation ID       # continue a conversation
-kayden --autonomous            # a new autonomous conversation
 ```
 
 | Option | Does |
 |---|---|
 | `--conversation ID` | Start right away in this conversation |
-| `--autonomous`, `--no-autonomous` | Start a new conversation right away, autonomous or not; cannot be combined with `--conversation` |
 | `--model ID`, `--maintenance-model ID` | Override the models for this run |
 | `--permissions ask\|allow_read_only\|deny` | Override the [permission level](settings.md#permissions) for this run |
 | `--data-dir DIR`, `--config FILE` | Use another data folder or config file |

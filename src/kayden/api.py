@@ -54,8 +54,9 @@ Runtime guarantees to modules:
   background operations that terminated (OperationResult, in one USER message);
   queued user messages (one USER message each, in send order). A turn without tool
   calls ends the cycle, unless queued user messages are delivered at that boundary: they
-  authorize the next turn and the cycle continues. In an autonomous conversation the
-  wake set (every operation outstanding then) is computed at that boundary.
+  authorize the next turn and the cycle continues. The wake set (every operation
+  outstanding then) is computed at that boundary: when all of them have terminated, the
+  runtime starts the next cycle by itself, so the agent can report on work it started.
 - Budgets: a tool start checks every dimension and counts the call in one atomic step.
   Inference checks every dimension before it starts (nothing is reserved, since its cost
   is unknown) and is cancelled as soon as in-flight usage exhausts one.
@@ -337,7 +338,6 @@ class ConversationInfo:
     title: str | None  # None = not set yet; Memory writes one during maintain
     created_at: float
     updated_at: float
-    autonomous: bool = False  # the agent wakes when its background work ends (SPEC 4)
     archived: bool = False  # hidden from list_conversations() and recall(scope="all")
     seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
     preview: str | None = None  # start of the first user message, for display
@@ -433,7 +433,6 @@ class Memory(abc.ABC):
         self,
         *,
         title: str | None = None,
-        autonomous: bool = False,
         seed_from: ConversationId | None = None,
     ) -> ConversationInfo:
         """seed_from (KeyError if unknown) starts a conversation that continues another:
@@ -453,7 +452,6 @@ class Memory(abc.ABC):
         *,
         title: str | None = None,
         archived: bool | None = None,
-        autonomous: bool | None = None,
     ) -> ConversationInfo:
         """Change metadata; None leaves a field as it is. A title is stripped of surrounding
         whitespace; an empty one clears it, so an automatic title follows. Returns the
@@ -765,8 +763,7 @@ class Budget:
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
     """Read-only to frontends; budget and permissions come from the instance
-    configuration. The model is separate: see RuntimeSnapshot.model, and so is autonomy:
-    see ConversationInfo.autonomous."""
+    configuration. The model is separate: see RuntimeSnapshot.model."""
 
     budget: Budget
     permissions: PermissionPolicy  # effective: after clamping to any inherited ceiling
@@ -798,12 +795,11 @@ class OperationInfo:
 @dataclass(frozen=True, slots=True)
 class StartOptions:
     """conversation_id None = a new conversation, else resume that one (KeyError if
-    unknown). autonomous (None = off) and seed_from apply to a new conversation only
-    (ValueError with conversation_id); seed_from must name an existing conversation."""
+    unknown). seed_from applies to a new conversation only (ValueError with
+    conversation_id) and must name an existing conversation."""
 
     conversation_id: ConversationId | None = None
     model: str | None = None
-    autonomous: bool | None = None
     seed_from: ConversationId | None = None
 
 
@@ -997,8 +993,8 @@ class SettingsChanged:
 
 @dataclass(frozen=True, slots=True)
 class ConversationUpdated:
-    """A conversation's metadata changed: title (by the user or an automatic title),
-    archived, or autonomous. Emitted for any conversation, open or not."""
+    """A conversation's metadata changed: title (by the user or an automatic title) or
+    archived. Emitted for any conversation, open or not."""
 
     info: ConversationInfo
 
@@ -1105,7 +1101,7 @@ class RuntimeAPI(Protocol):
       FAILED            ok*    ok    ok***     no-op  ok            -
 
       *   only with no outstanding operations. One agent per process.
-      **  in an autonomous conversation this also drops a pending wake-up.
+      **  this also drops a pending wake-up.
       *** not while FAILED because a hard budget is exhausted (send raises there too).
 
     resolve_permission is first-wins; an unknown or already-resolved id raises
@@ -1116,13 +1112,13 @@ class RuntimeAPI(Protocol):
 
     Conversation and memory management (rename_conversation, archive_conversation,
     delete_conversation, memories, add_memory, edit_memory, forget_memory) is allowed in
-    any state; set_autonomous only before the open conversation's first message.
+    any state.
     Changes apply from the next turn or assemble. Each emits ConversationUpdated,
     ConversationDeleted or MemoriesChanged and is logged without any text. The memory
     commands raise NotImplementedError ("this memory module cannot ...") when the Memory
     module does not support them; frontends then hide those controls.
 
-    start() leaves the agent IDLE. A resumed autonomous conversation has no pending
+    start() leaves the agent IDLE. A resumed conversation has no pending
     wake-up, so it never runs before the user sends a message or activates it. The first
     command that reads or changes stored data (start(), list_conversations(), history(),
     deleting, ...) takes the data dir lock, held until shutdown; InstanceLockedError when
@@ -1219,12 +1215,6 @@ class RuntimeAPI(Protocol):
     async def cancel_operation(self, call_id: CallId) -> None:
         """User-initiated cancel of one running call, with Stop's grace and abandon rules."""
 
-    async def set_autonomous(self, autonomous: bool) -> None:
-        """Set the open conversation's switch while it has no message yet. Autonomy is
-        chosen when a conversation starts and kept for its whole life, so the agent's
-        system prompt and tools never change under it. RuntimeStateError before start()
-        and once the conversation has a message."""
-
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
         """An empty (or whitespace-only) title clears it, so an automatic title follows."""
 
@@ -1263,7 +1253,7 @@ class FrontendInfo:
 class Frontend(abc.ABC):
     """Owns the UI; its launcher chooses the event loop (kayden: asyncio's, the desktop
     launcher: qasync's). Launchers may pass these factory options: start (true: start right away),
-    conversation_id, autonomous, model; a frontend ignores the ones it does not use."""
+    conversation_id, model; a frontend ignores the ones it does not use."""
 
     @property
     @abc.abstractmethod

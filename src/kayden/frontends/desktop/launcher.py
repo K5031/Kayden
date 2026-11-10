@@ -32,7 +32,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--conversation", help="open this conversation first")
     args = parser.parse_args(argv)
     # load_config also reads the terminal launcher's flags; the app has none of them.
-    for name in ("autonomous", "model", "maintenance_model", "permissions"):
+    for name in ("model", "maintenance_model", "permissions"):
         setattr(args, name, None)
     return args
 

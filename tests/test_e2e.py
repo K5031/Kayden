@@ -82,7 +82,7 @@ def assert_wired(messages: list[Any], workspace: Path) -> None:
 
 def test_build_config_wires_the_real_modules(workspace, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    config = build_config(["--data-dir", str(tmp_path / "data"), "--autonomous",
+    config = build_config(["--data-dir", str(tmp_path / "data"), "--conversation", "c1",
                            "--permissions", "allow_read_only"])
     assert config.runtime.data_dir == tmp_path / "data"
     assert config.runtime.permissions == "allow_read_only"
@@ -94,7 +94,7 @@ def test_build_config_wires_the_real_modules(workspace, tmp_path, monkeypatch):
     tools = load_module(config.tools, Tools, paths)
     assert tools.root == workspace.resolve()
     frontend = load_module(config.frontend, Frontend, paths)
-    assert frontend.start_options == StartOptions(autonomous=True)
+    assert frontend.start_options == StartOptions("c1")
 
 
 DEEPSEEK_CORE = """
@@ -134,20 +134,14 @@ def test_explicit_config_file_wins_over_the_data_dir(workspace, tmp_path):
 
 def test_command_line_start_options_override_the_frontend_options(workspace, tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text('[frontend]\noptions = { autonomous = true, model = "m" }\n')
+    path.write_text('[frontend]\noptions = { conversation_id = "c0", model = "m" }\n')
     config = build_config(["--data-dir", str(tmp_path), "--config", str(path),
-                           "--no-autonomous"])
-    assert config.frontend.options == {"start": True, "autonomous": False, "model": "m"}
+                           "--conversation", "c1"])
+    assert config.frontend.options == {"start": True, "conversation_id": "c1", "model": "m"}
     assert build_config(["--data-dir", str(tmp_path / "plain")]).frontend.options == {}
 
 
-def test_autonomy_cannot_be_set_for_an_existing_conversation(workspace, tmp_path, capsys):
-    with pytest.raises(SystemExit):
-        build_config(["--data-dir", str(tmp_path), "--conversation", "c1", "--autonomous"])
-    assert "new conversation" in capsys.readouterr().err
-    (tmp_path / "config.toml").write_text("[frontend]\noptions = { autonomous = true }\n")
-    config = build_config(["--data-dir", str(tmp_path), "--conversation", "c1"])
-    assert config.frontend.options == {"start": True, "conversation_id": "c1"}
+
 
 
 RUNTIME = """

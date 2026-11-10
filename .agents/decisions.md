@@ -65,7 +65,7 @@ preview.
 Decision kinds: `start`, `cycle_requested`, `cycle_start`, `cycle_end`, `budget_check`,
 `permission`, `backgrounded`, `cancel_operation`, `abandoned`, `late_completion`, `idle`,
 `stop`, `stopped`, `resume_repair`, `reserved_tool_dropped`, `maintenance_retry`,
-`activation_notice`, `duration_exhausted`, `set_autonomous`, `rename_conversation`
+`activation_notice`, `duration_exhausted`, `rename_conversation`
 (`cleared`, never the title), `archive_conversation`, `delete_conversation`, `title` (an
 automatic title was written; not its text), `memory_added`, `memory_edited`,
 `memory_forgotten` (entry id only).
@@ -75,9 +75,8 @@ TextDelta, ReasoningDelta, ToolCallDelta and ToolProgress are not logged.
 
 `config.DEFAULT_SYSTEM_PROMPT` explains backgrounded operations, `op_status`/`op_cancel`
 and `recall` (with scope "all" for the other conversations). `[runtime] system_prompt` or
-`system_prompt_file` replaces it. An autonomous conversation appends `AUTONOMY_PROMPT`
-to either: it works on the task without asking, finished background work wakes it, and it
-ends with a reply.
+`system_prompt_file` replaces it. The system prompt is the same for a conversation's whole
+life.
 Memory's `system_addendum` follows, separated by a blank line.
 
 ## Runtime-authored texts
@@ -227,7 +226,7 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   a `reasoning_input_field`). The stock OpenAI-compatible profile never replays reasoning.
 - Anthropic thinking blocks are bound to what preceded them: the API answers 400 ("bound to
   a different conversation") when one is replayed after the system prompt, the tool set or
-  an earlier message changed (turning Autonomous mode on, editing the instructions, a
+  an earlier message changed (editing the instructions, a
   compaction). The Anthropic Core stores a fingerprint of those (`Prefix`: SHA-256 of the
   system prompt, the sorted tool definitions and every earlier turn without its thinking)
   in each block's `state["prefix"]` and replays a block only while it matches; a block
@@ -297,7 +296,7 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
 ### TUI (`kayden.frontends.tui`)
 
 - Factory: `kayden.frontends.tui:factory`. Options `start`, `conversation_id`,
-  `autonomous`, `model`: with `start` true the agent starts at once, otherwise the start
+  `model`: with `start` true the agent starts at once, otherwise the start
   screen asks. `run()` returns when the user quits or `events()` ends.
 - History is loaded `HISTORY_PAGE` (100) messages at a time; a "Load earlier messages"
   button at the top of the transcript prepends the previous page (`history(before=...)`).
@@ -323,7 +322,7 @@ applied over the config file: [Agent Note](notes/implemented/2026-11-07-settings
 ```
 export ANTHROPIC_API_KEY=...
 cd <project to work in>          # shell/file tools are rooted here
-kayden [--config FILE] [--conversation ID] [--autonomous|--no-autonomous]
+kayden [--config FILE] [--conversation ID]
     [--model MODEL_ID] [--maintenance-model MODEL_ID]
     [--permissions ask|allow_read_only|deny] [--data-dir DIR]
 ```
@@ -342,9 +341,8 @@ the usage it limits, is the point: a flag alone would let each launch pick or fo
 limit. `--model`, `--maintenance-model` and `--permissions` override the file. The other
 `RuntimeConfig` fields (retries, timeouts, ...) are tuning and stay at their defaults
 until someone needs them. `--show-config` prints the effective config as TOML (`tomli-w`)
-and exits. `--conversation` and `--autonomous`/`--no-autonomous` start at once: they
-become the frontend options `start = true`, `conversation_id`, `autonomous`, merged over
-the configured ones.
+and exits. `--conversation` starts at once: it becomes the frontend options
+`start = true` and `conversation_id`, merged over the configured ones.
 The data directory defaults to `$KAYDEN_DATA_DIR` or `~/.kayden`. Without those flags the
 TUI's start screen asks. The launcher checks no API keys: each Core refuses a
 missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
@@ -418,20 +416,20 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 
 | Choice | Value |
 |---|---|
-| `activate()` in IDLE | Allowed for every conversation; in an autonomous one it also drops a pending wake-up (a new cycle clears the wake set) |
-| `start()` | Always leaves the agent IDLE. A resumed autonomous conversation has no wake set, so nothing runs before the user acts |
+| `activate()` in IDLE | Allowed; it also drops a pending wake-up (a new cycle clears the wake set) |
+| `start()` | Always leaves the agent IDLE. A resumed conversation has no wake set, so nothing runs before the user acts |
+| Wake-up | When a cycle ends, the wake set is every outstanding operation; the agent is woken once all of them have terminated, or at once when results it has not seen exist and nothing is outstanding. A user-cancelled operation wakes it like any other outcome; Stop does not |
 | `StartOptions` validation | `seed_from` with a `conversation_id`: ValueError, before anything is opened |
-| `set_autonomous` | Refused once the conversation has a message, a queued message or a cycle. Changes the in-memory conversation first (so a turn that starts during the write has it), then Memory; reverts if Memory fails |
 | Untitled display | `ConversationInfo.preview`: the Text of the first USER message, whitespace collapsed, 100 characters |
 | `Memory.search` scope | `conversation_ids` (None = all). `recall(scope="all")` passes the open conversation plus every listed (not archived) conversation; `search_archive` without an id searches everything, archived included |
 | Memory entry ids | Strings; SqliteMemory uses its integer row ids |
 
 ### SqliteMemory schema
 
-- Version 4 (`PRAGMA user_version`). A store of any other version is refused; Kayden
+- Version 5 (`PRAGMA user_version`). A store of any other version is refused; Kayden
   carries no migration code. Erasing a row from `messages_fts` repeats the text it was
   indexed with, so `codec.searchable_text` must not change without a new schema version.
-- `conversations`: `autonomous`, `archived`, `seed_from` columns.
+- `conversations`: `archived`, `seed_from` columns.
 - Long-term memory: `memory_entries` (id, source conversation or NULL for the user's,
   created_at) and `memory_revisions` (entry, text, created_at); the current text is the
   newest revision. `forgotten` holds SHA-256 fingerprints of

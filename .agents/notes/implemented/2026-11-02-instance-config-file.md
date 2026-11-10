@@ -48,7 +48,7 @@ max_cost_usd = 5.0
 - **Precedence.** Settings saved through `RuntimeAPI.update_settings`
   (`<data dir>/settings.toml`, see [settings](2026-11-07-settings-for-non-technical-users.md)),
   module choices among them, override the file; `--model`, `--maintenance-model` and `--permissions` override both;
-  `--conversation` and `--autonomous` are merged over the frontend options.
+  `--conversation` is merged over the frontend options.
 - **Strict.** Unknown sections or keys, wrong types and negative budgets stop startup with
   a one-line message naming the file.
 - **Keys.** Not in the file: each Core reads its own environment variable, then the OS

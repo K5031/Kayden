@@ -194,32 +194,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help=f"config file (default: <data dir>/{CONFIG_FILE})")
     parser.add_argument("--conversation",
                         help="start right away in this conversation (default: ask)")
-    parser.add_argument("--autonomous", action=argparse.BooleanOptionalAction,
-                        help="start right away; the conversation may continue on its own")
     parser.add_argument("--model", help="model id (default: the first the Core lists)")
     parser.add_argument("--maintenance-model", help="cheaper model for memory maintenance")
     parser.add_argument("--permissions", choices=[p.value for p in PermissionPolicy],
                         help="tool permission policy (default: ask)")
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
-    args = parser.parse_args(argv)
-    if args.conversation is not None and args.autonomous is not None:
-        parser.error("--autonomous and --no-autonomous apply to a new conversation; "
-                     "they cannot be combined with --conversation")
-    return args
+    return parser.parse_args(argv)
 
 
 def start_options(args: argparse.Namespace) -> dict[str, Any] | None:
     """Frontend options that start right away, or None to let the frontend ask."""
-    autonomous = args.autonomous
-    if args.conversation is None and autonomous is None:
+    if args.conversation is None:
         return None
-    options: dict[str, Any] = {"start": True}
-    if args.conversation is not None:
-        options["conversation_id"] = args.conversation
-    if autonomous is not None:
-        options["autonomous"] = autonomous
-    return options
+    return {"start": True, "conversation_id": args.conversation}
 
 
 def config_path(args: argparse.Namespace) -> Path:
@@ -322,10 +310,7 @@ def load_config(args: argparse.Namespace, *, default_root: Path | None = None,
         start = start_options(args)
     if start is not None:
         frontend = modules["frontend"]
-        options = {**frontend.options, **start}
-        if "conversation_id" in options:
-            options.pop("autonomous", None)  # kept from when the conversation started
-        modules["frontend"] = ModuleSpec(frontend.factory, options)
+        modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
     state = ModuleState(running=running, chosen=chosen, work_folder=tools.options.get("root"))
     return InstanceConfig(
         runtime=RuntimeConfig(data_dir=data_dir, modules=state, **runtime),

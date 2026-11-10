@@ -2,7 +2,7 @@
 
 ## Architecture
 
-A **runtime** owns everything about how the agent runs: conversations and autonomy, permissions,
+A **runtime** owns everything about how the agent runs: conversations, waking up after background work, permissions,
 budgets, background tasks, settings and the event log. It drives four swappable
 **modules** through the contracts in `src/kayden/api.py`:
 
@@ -18,7 +18,7 @@ Modules never call each other; only the runtime talks to them. Each module is a 
 to the runtime; `config.toml` can also name one by its import path,
 `"package.module:factory"`.
 
-Runtime settings (model, budget, permissions, instructions, autonomy) are read by the
+Runtime settings (model, budget, permissions, instructions) are read by the
 runtime and apply live. Module settings (which module, the API key, the work folder, module
 options) are passed to factories, so they apply when Kayden restarts: `RuntimeAPI.restart()`
 shuts the instance down and the launcher (`kayden`, or the desktop launcher) builds it again in
@@ -41,7 +41,7 @@ for a Core (the environment variable and keychain entry of its API key, which th
 ask for), and `kind` for a frontend: `"terminal"` (started by `kayden`, the default) or
 `"window"` (run by `kayden.frontends.desktop.launcher`, inside its Qt event loop). An entry point whose
 package does not import is not listed. Launchers may pass a frontend the options `start`,
-`conversation_id`, `autonomous` and `model`.
+`conversation_id` and `model`.
 
 ## Layout
 

@@ -63,7 +63,6 @@ another reason, the Settings window opens with the message.
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **Show archived** under the list to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
-| Let Kayden keep working on its own | Turn on **Autonomous mode** above a new conversation, before its first message; it is fixed after that. See [Autonomy](concepts.md#autonomy). |
 | See what Kayden remembers | **Kayden → Memory…**: add, edit or forget what it keeps across conversations. |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |
@@ -81,7 +80,7 @@ learned from it, and cannot be undone. To only hide a conversation, choose **Arc
 conversation opens a new chat in its place, once Kayden is not working. See [Deleting](concepts.md#deleting) for what
 deletion does not reach.
 
-Next to the autonomy switch is what Kayden has spent so far, across all conversations. The
+Above the conversation is what Kayden has spent so far, across all conversations. The
 line under the message box shows what Kayden is doing, how many tasks run in the background
 and the model.
 

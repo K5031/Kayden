@@ -17,7 +17,7 @@ change the frontend from inside the app: from the TUI to the desktop app and bac
 ### Rule: runtime settings apply live, module settings at the next start
 
 A setting is a **runtime setting** if the runtime itself reads it while running: model,
-maintenance model, system prompt, budget, permissions, autonomy. These apply live. A
+maintenance model, system prompt, budget, permissions. These apply live. A
 setting is a **module setting** if it is only passed into a module's factory or read when
 the module is built: which module of each kind, the API key, the work folder (the Tools
 `root`), profiles, prices, context windows, base URLs, compaction options. These are saved

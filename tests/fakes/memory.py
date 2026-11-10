@@ -110,13 +110,12 @@ class InMemoryMemory(Memory):
     def _conv(self, conversation_id: ConversationId) -> Conversation:
         return self.store.conversations[conversation_id]  # KeyError for unknown ids
 
-    async def create_conversation(self, *, title: str | None = None, autonomous: bool = False,
+    async def create_conversation(self, *, title: str | None = None,
                                   seed_from: ConversationId | None = None) -> ConversationInfo:
         if seed_from is not None:
             self._conv(seed_from)
         now = time.time()
-        info = ConversationInfo(uuid.uuid4().hex, title, now, now, autonomous=autonomous,
-                                seed_from=seed_from)
+        info = ConversationInfo(uuid.uuid4().hex, title, now, now, seed_from=seed_from)
         self.store.conversations[info.id] = Conversation(info)
         return info
 
@@ -131,16 +130,14 @@ class InMemoryMemory(Memory):
         return replace(conv.info, preview=render(first)[:100] if first else None)
 
     async def update_conversation(self, conversation_id: ConversationId, *,
-                                  title: str | None = None, archived: bool | None = None,
-                                  autonomous: bool | None = None) -> ConversationInfo:
+                                  title: str | None = None, archived: bool | None = None
+                                  ) -> ConversationInfo:
         conv = self._conv(conversation_id)
         changes: dict[str, Any] = {}
         if title is not None:
             changes["title"] = title.strip() or None
         if archived is not None:
             changes["archived"] = archived
-        if autonomous is not None:
-            changes["autonomous"] = autonomous
         conv.info = replace(conv.info, **changes)
         return self._info(conv)
 

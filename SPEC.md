@@ -5,8 +5,8 @@ Repository: this repository is the v1 implementation; the previous Kayden reposi
 
 1. Product Vision
 Kayden is a complete, modular AI agent application, not a general-purpose framework for developers to assemble their own agent runtimes.
-It provides persistent conversations the user can start, continue, curate and delete. Any conversation can be made autonomous: the agent then continues reasoning, uses tools, voluntarily becomes idle, and resumes when its background work finishes.
-The user controls what the agent sees: fresh starts at any time, continuity when asked for, long-term memory the user can see and change, and autonomy as an option on a conversation.
+It provides persistent conversations the user can start, continue, curate and delete. In every conversation the agent reasons, uses tools, ends its turn, and resumes by itself when background work it started finishes.
+The user controls what the agent sees: fresh starts at any time, continuity when asked for, and long-term memory the user can see and change.
 Users may run multiple independent Kayden instances concurrently as separate operating-system processes, with their own configurations, memory, and budgets.
 These agents can collaborate using ordinary tools. Kayden does not implement a bespoke multi-agent organization framework.
 Core principle: The runtime owns orchestration; modules provide capabilities; frontends control presentation.
@@ -21,7 +21,7 @@ Proven solutions over speculative engineering.
 The Runtime is Kayden's built-in, non-replaceable agent orchestrator.
 It owns:
 Conversation orchestration.
-Autonomous conversations.
+Waking up when background work finishes.
 Model and tool scheduling.
 Agent lifecycle and activation.
 Execution state and cancellation.
@@ -75,19 +75,19 @@ Installed third-party modules are trusted software.
 A malicious frontend could misrepresent user actions or permission decisions.
 Python API boundaries do not inherently provide security isolation.
 The runtime should still enforce applicable permissions and execution policies.
-4. Conversations and Autonomy
+4. Conversations
 4.1 Conversations
 Every conversation behaves as a conventional AI conversation by default.
 Users initiate inference.
 Conversations have explicit boundaries; a user may have many and reopen any of them.
 The runtime manages conversation flow and tool calls.
 Conversation histories persist across application restarts.
-Inference does not autonomously restart between user-authorized turns.
+Inference restarts without a user message only when background work the agent started has finished (4.2).
 A new conversation is a fresh start: no messages and no summary, with long-term memory included. "Continue from" starts a new conversation that knows where an earlier one left off: on its first maintenance, Memory writes its initial rolling summary from the earlier conversation's summary and recent messages, and the earlier conversation is unchanged.
 Conversations get a title automatically from their first message unless the user sets one. The user can rename, archive (hide from the list and from cross-conversation recall) and delete conversations.
-4.2 Autonomy
-Autonomy is chosen for each conversation when it starts, off by default, and can be changed only until its first message; after that it stays as it is, so the agent's instructions and tools never change during a conversation.
-In an autonomous conversation the user hands over a task: the model is told to work on it until it is done or blocked, to decide by itself rather than ask, and to report its choices. Permissions and budgets apply unchanged. The model may:
+4.2 Waking Up
+There is one kind of conversation. The agent's instructions and tools are the same for a conversation's whole life.
+Within a cycle the model may:
 Continue reasoning.
 Invoke tools.
 Take permitted actions.
@@ -95,16 +95,16 @@ End its turn and be woken when its background work finishes.
 The application remains running even when the model is idle.
 The runtime does not impose an artificial maximum number of consecutive thinking cycles.
 The agent may continue until:
-It voluntarily idles.
+It ends its turn.
 The user stops it.
 A failure stops execution.
 Its configured budget is exhausted.
 The model does not need a simulated biological sleep cycle.
-An autonomous conversation also restarts when supported wake-up conditions occur. For v1, completion of a pending tool batch is the only required autonomous wake-up trigger.
+A conversation also restarts when supported wake-up conditions occur. For v1, completion of a pending tool batch is the only wake-up trigger: the agent started that work for the user, so it reports the outcome without being asked.
 No general-purpose event subscriptions, scheduled wake-ups, or arbitrary hooks are required.
-Turning autonomy off clears any pending wake-up. Background operations keep running and their results are retained until the user initiates another cycle.
+Stop clears any pending wake-up. Permissions and budgets apply to a woken cycle as to any other.
 4.3 Processes
-One process runs one agent with one open conversation. The user may open a different conversation only when the agent has no outstanding operations. To let an autonomous conversation work while chatting in another, run a second instance with its own data directory; the two do not share memory.
+One process runs one agent with one open conversation. The user may open a different conversation only when the agent has no outstanding operations. To let one conversation work while chatting in another, run a second instance with its own data directory; the two do not share memory.
 5. Idle and Stop
 5.1 Idle
 There is no tool for going idle: a model turn that ends without tool calls ends the cycle, in every conversation. (A reply followed by an idle call was returned by some models as hidden reasoning, so the user saw nothing.)
@@ -114,14 +114,14 @@ The agent enters Idle.
 Conversation context remains available.
 Pending asynchronous tools continue running.
 The runtime waits for an eligible activation event.
-If no tools are pending, the agent remains idle until user interaction, unless it is autonomous and has results it has not seen (see 5.2).
-The runtime never re-prompts on its own. An autonomous conversation waits for all outstanding operations, including ones from earlier turns. Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
+If no tools are pending, the agent remains idle until user interaction, unless it has results it has not seen (see 5.2).
+The runtime never re-prompts on its own. The agent is woken once all outstanding operations have terminated, including ones from earlier turns. Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
 5.2 Batch Wake-Up
 When the agent has outstanding operations belonging to a pending batch, the runtime waits until all operations reach a terminal outcome.
-In an autonomous conversation, batch completion may automatically reactivate the model.
-Otherwise, results are retained until user initiation.
+Batch completion reactivates the model.
+After Stop, results are retained until user initiation.
 The runtime does not need to invoke the model separately for every individual tool completion.
-The wake set is every operation outstanding when the cycle ends, including operations from earlier turns. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, an autonomous conversation starts the next cycle immediately and an ordinary one retains them. This is checked when the agent goes idle.
+The wake set is every operation outstanding when the cycle ends, including operations from earlier turns. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, the next cycle starts immediately. This is checked when the agent goes idle.
 5.3 Stop Control
 Kayden provides one user-facing Stop action.
 There is no separate Pause control in v1.
@@ -296,24 +296,24 @@ Previous conversations remain available for reopening, with their context and me
 In-flight tool processes are not required to survive application shutdown.
 Interrupted operations must not be falsely recorded as successful.
 A backgrounded operation's placeholder is recorded as backgrounded, never as successful. Its outcome is appended as soon as it terminates when no cycle is running, or at the next turn boundary.
-After a restart, an autonomous conversation opens idle with its context and memory restored and no pending wake-up. It resumes only when the user sends a message or activates it, so a crash never silently re-executes a half-finished action. Operations that were in flight are recorded as interrupted and shown to the model on its next cycle.
+After a restart, a conversation opens idle with its context and memory restored and no pending wake-up. It resumes only when the user sends a message or activates it, so a crash never silently re-executes a half-finished action. Operations that were in flight are recorded as interrupted and shown to the model on its next cycle.
 12. MVP Acceptance Scenarios
 Scenario A — Replaceable Modules
 A developer replaces a Core, Memory, Tools, or Frontend implementation without modifying the runtime.
 Scenario B — Conversation
 A user starts a conversation, exchanges messages, invokes tools, closes Kayden, and reopens the preserved conversation.
-Scenario C — Autonomy
-An agent in an autonomous conversation reasons, uses tools, decides to idle, and continues when its background work finishes.
+Scenario C — Background Work
+An agent reasons, uses tools, ends its turn, and continues when its background work finishes.
 Scenario D — Long-Running Tools
 A slow operation returns control to the model with its status. The model can inspect its progress and continue working.
 Scenario E — Idle Batch Wake-Up
 Several tools run concurrently.
 The agent enters Idle.
-In an autonomous conversation, Kayden wakes after the entire outstanding batch reaches terminal outcomes.
-In an ordinary conversation, automatic inference does not restart.
+Kayden wakes the agent after the entire outstanding batch reaches terminal outcomes.
+After Stop, automatic inference does not restart.
 Scenario F — Stop
 The user presses Stop during active inference or tool execution.
-Kayden requests cancellation, prevents further autonomous activation, and preserves persistent state.
+Kayden requests cancellation, prevents further automatic activation, and preserves persistent state.
 Scenario G — Restart Persistence
 Kayden restarts and restores conversation history, memory, rolling summaries, and archived records.
 Scenario H — Historical Recall
@@ -341,7 +341,7 @@ Module marketplace and hosted distribution.
 Cloud synchronization.
 Centralized fleet management.
 Special multi-agent messaging infrastructure.
-Scheduled autonomous wake-ups.
+Scheduled wake-ups.
 General-purpose event subscription systems.
 Reimplementation of Codex's proprietary compaction mechanisms.
 Mandatory vector databases.
@@ -403,15 +403,15 @@ The archive is append-only, full-fidelity and schema-versioned. Blocks are persi
 history returns the full transcript from the archive regardless of compaction. The runtime uses it for reopening conversations and for resume repair.
 assemble is read-only, performs no inference, and always fits the token budget. Its messages are a suffix that starts at a user message, never splits a call from its result, and includes the newest message. A single oversized message is truncated in the assembled view only.
 maintain runs only inside an authorized inference cycle, so it can never restart the agent by itself. It also writes a seeded conversation's first summary and a title for an untitled conversation (light model; a failed title call changes nothing; a title that is set is never overwritten). It receives the current context window, a metered Completion, and returns whether it acted. The Completion raises BudgetExhausted or CoreError. A maintain failure becomes a failure event without changing the agent state. Archive writes and compaction state are atomic.
-search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one list per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. update_conversation changes conversation metadata (title, archived, autonomous), which is not part of the append-only archive. Editing long-term memory (memories, remember, revise, forget) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
+search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one list per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive. Editing long-term memory (memories, remember, revise, forget) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
 
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.
 A backgrounded call gets a placeholder result with status backgrounded; its outcome is recorded later as an operation result.
 Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
-stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps an autonomous agent waiting until it ends or the user writes.
-The built-in tools (idle, op_status, op_cancel, recall) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules. idle is offered only in an autonomous conversation.
+stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps the agent waiting until it ends or the user writes.
+The built-in tools (op_status, op_cancel, recall) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules.
 Results are plain strings. Frontends may parse formats they know.
 Tools that launch subprocesses pass the environment through unmodified.
 
@@ -420,7 +420,7 @@ A Frontend implements run(runtime) and declares whether it can answer permission
 The valid commands per state are tabulated in api.py. The user can also cancel a single running operation. The runtime appends exactly one tool message per turn, directly after the assistant message. start may be called again only when no operations are outstanding.
 Recovery for a late-attaching frontend: subscribe, take the snapshot, drop events at or below its sequence number, load history, and de-duplicate by message id. Subscriber queues are bounded.
 send during a running cycle or while stopping queues the message until the next turn boundary. A queued message is held in memory until it is appended to the transcript, at the next turn boundary, when the agent reaches Stopped, or at graceful shutdown; a crash before then loses it. MessageQueued is not a durability promise: only MessageCommitted is.
-Frontends read and change user settings through settings() and update_settings(), documented in api.py. Runtime settings, which the runtime reads while running (model, maintenance model, budget, permissions, system prompt), apply live. Module settings, which are only passed to module factories (which module of each kind, the API key, the work folder), are saved at once and apply at the next start; restart() starts the instance again with them, and Restart now may bring up a frontend of another kind (terminal to window) where it can. Other module options stay in the configuration file. When the modules cannot be built, the frontend still runs and shows the settings with the error. Frontends must ask the user to confirm before loosening permissions or raising a budget limit, and before switching Memory. The model is selectable at any time. The open conversation's autonomy can be switched at any time. Conversations can be renamed, archived and deleted, and long-term memory entries added, edited and forgotten, in any state; each change emits an event. Deleting the open conversation is refused, and frontends must ask the user to confirm a deletion, saying it cannot be undone.
+Frontends read and change user settings through settings() and update_settings(), documented in api.py. Runtime settings, which the runtime reads while running (model, maintenance model, budget, permissions, system prompt), apply live. Module settings, which are only passed to module factories (which module of each kind, the API key, the work folder), are saved at once and apply at the next start; restart() starts the instance again with them, and Restart now may bring up a frontend of another kind (terminal to window) where it can. Other module options stay in the configuration file. When the modules cannot be built, the frontend still runs and shows the settings with the error. Frontends must ask the user to confirm before loosening permissions or raising a budget limit, and before switching Memory. The model is selectable at any time. Conversations can be renamed, archived and deleted, and long-term memory entries added, edited and forgotten, in any state; each change emits an event. Deleting the open conversation is refused, and frontends must ask the user to confirm a deletion, saying it cannot be undone.
 Permission policy is ask, allow read-only, or deny, with the exact meaning documented in api.py. Grants are once or per conversation, in memory only. Calls that need no prompt start immediately; while any prompt is open the state is awaiting permission and other operations keep running. Denied calls get a refused result. Resolution is first-wins. A barrier call's permission prompt opens when its turn comes, so prompts for mutating calls open one at a time in call order.
 A frontend that cannot answer prompts is never sent any; calls that would prompt are refused.
 
@@ -431,7 +431,7 @@ Each instance writes a JSONL event log of runtime decisions to its data director
 Graceful shutdown cancels running calls. Only a crash produces interrupted results.
 
 Final Product Definition
-Kayden is a modular AI agent application whose runtime provides complete conversation orchestration, with autonomy as an option of any conversation.
+Kayden is a modular AI agent application whose runtime provides complete conversation orchestration.
 Core provides model intelligence.
 Memory provides continuity.
 Tools provide executable capabilities.

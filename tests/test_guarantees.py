@@ -196,7 +196,7 @@ async def test_completion_budget_exhausted(make: Any) -> None:
 async def test_resume_repair(make: Any) -> None:
     store = MemoryStore()
     seed: Harness = await make(store=store)
-    info = await seed.memory.create_conversation(autonomous=True)
+    info = await seed.memory.create_conversation()
     await seed.memory.append(info.id, [
         Message("u1", Role.USER, (Text("start"),), 1.0),
         Message("a1", Role.ASSISTANT, (ToolCall("bg", "slow", {}),), 2.0),

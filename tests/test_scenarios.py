@@ -137,10 +137,10 @@ async def test_b_session_conversation(make: Any) -> None:
     assert [m.id for m in request.messages][: len(before)] == [m.id for m in before]
 
 
-# ── C: autonomy ──
+# ── C: background work wakes the agent ──
 
 
-async def test_c_autonomous_conversation(make: Any) -> None:
+async def test_c_background_work_wakes_the_agent(make: Any) -> None:
     tools = FakeTools()
     tools.slow("fetch", 0.4)
     core = ScriptedCore([
@@ -149,7 +149,7 @@ async def test_c_autonomous_conversation(make: Any) -> None:
         Step(text="got the result"),
     ])
     h: Harness = await make(core=core, tools=tools)
-    await h.start(autonomous=True)
+    await h.start()
     await h.runtime.send("go")
     await h.rec.wait_for(lambda r: any(
         isinstance(e, MessageCommitted) and e.message.blocks == (Text("got the result"),)
@@ -213,9 +213,9 @@ def batch_core() -> ScriptedCore:
     ])
 
 
-async def test_e_batch_wakeup_autonomous(make: Any) -> None:
+async def test_e_batch_wakeup(make: Any) -> None:
     h: Harness = await make(core=batch_core(), tools=batch_tools())
-    await h.start(autonomous=True)
+    await h.start()
     await h.runtime.send("run the batch")
     await eventually(lambda: len(h.core.requests) == 3)
     assert h.tools.max_running == 3
@@ -230,32 +230,13 @@ async def test_e_batch_wakeup_autonomous(make: Any) -> None:
     assert {o.call_id for o in op_results(woken.messages)} == {"a", "b", "c"}
 
 
-async def test_e_batch_not_autonomous_retains(make: Any) -> None:
-    core = ScriptedCore([
-        Step(calls=[call("a", id="a"), call("b", id="b"), call("c", id="c")]),
-        Step(text="waiting for the batch"),
-        Step(text="batch complete"),
-    ])
-    h: Harness = await make(core=core, tools=batch_tools())
-    await h.start()
-    await h.runtime.send("run the batch")
-    await h.rec.wait_for(lambda r: len(r.of(ToolFinished)) == 3)
-    await asyncio.sleep(0.3)
-    assert len(h.core.requests) == 2
-    assert h.runtime.snapshot().state == AgentState.IDLE
-    assert len(op_results(await h.transcript())) == 3  # retained in the transcript
-    await h.runtime.activate()
-    await eventually(lambda: len(h.core.requests) == 3)
-    assert len(op_results(h.core.requests[2].messages)) == 3
-
-
 # ── F: stop ──
 
 
 async def test_f_stop_during_inference(make: Any) -> None:
     core = ScriptedCore([Step(text="partial", hang=True)])
     h: Harness = await make(core=core)
-    await h.start(autonomous=True)
+    await h.start()
     await h.runtime.send("think hard")
     await h.rec.wait_for(lambda r: any(getattr(e, "text", None) == "partial" for e in r.events))
     await h.runtime.stop()
@@ -274,7 +255,7 @@ async def test_f_stop_during_tools(make: Any) -> None:
     tools.hanging("work", progress="halfway")
     core = ScriptedCore([Step(calls=[call("work", id="w1")])])
     h: Harness = await make(core=core, tools=tools, initial_wait_s=10)
-    await h.start(autonomous=True)
+    await h.start()
     await h.runtime.send("do work")
     await eventually(lambda: tools.started)
     await h.runtime.stop()
@@ -301,7 +282,7 @@ def summarizing_core(reply: str = "noted") -> ScriptedCore:
 
 async def test_g_restart_persistence(make: Any) -> None:
     h: Harness = await make(core=summarizing_core(), memory_kw={"compact_at": 0.002})
-    conv = await h.start(autonomous=True)
+    conv = await h.start()
     await h.turn("remember the harbour code 7731 " + "x" * 400)
     for i in range(4):
         await h.turn(f"filler message {i} " + "y" * 400)
@@ -313,7 +294,7 @@ async def test_g_restart_persistence(make: Any) -> None:
 
     h2: Harness = await make(store=h.store, data_dir=h.data_dir, core=summarizing_core())
     conv2 = await h2.start(conv.id)
-    assert conv2.id == conv.id and conv2.autonomous
+    assert conv2.id == conv.id
     assert h2.runtime.snapshot().state == AgentState.IDLE
     assert list(await h2.runtime.history(conv.id)) == before
     restored = await h2.runtime.inspect_memory(conv.id)
@@ -321,7 +302,7 @@ async def test_g_restart_persistence(make: Any) -> None:
     hits = await h2.runtime.search_archive("harbour code")
     assert hits and "7731" in render(hits[0].message)
     await asyncio.sleep(0.2)
-    assert h2.core.requests == []  # an autonomous conversation waits for the user
+    assert h2.core.requests == []  # a resumed conversation waits for the user
 
 
 # ── H: historical recall ──

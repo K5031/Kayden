@@ -147,9 +147,6 @@ class SetupRuntime:
     async def cancel_operation(self, call_id: CallId) -> None:
         self._refuse()
 
-    async def set_autonomous(self, autonomous: bool) -> None:
-        self._refuse()
-
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
         self._refuse()
 

@@ -163,7 +163,8 @@ async def test_command_state_cell(make: Any, command: str, state: Any) -> None:
 async def test_start_refused_with_outstanding_ops(make: Any) -> None:
     tools = FakeTools()
     tools.hanging("bg")
-    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="waiting")])
+    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="waiting"),
+                         Step(text="it was cancelled")])
     h: Harness = await make(core=core, tools=tools)
     await h.start()
     await h.turn("go")
@@ -172,16 +173,16 @@ async def test_start_refused_with_outstanding_ops(make: Any) -> None:
         await h.start()
     first = h.conversation
     await h.runtime.cancel_operation("bg")
-    await h.rec.wait_for(lambda r: any(getattr(e, "result", None) is not None
-                                       and e.result.call_id == "bg" for e in r.events))
+    # The agent is woken by the outcome, answers, and is idle again.
+    await eventually(lambda: len(core.requests) == 3
+                     and h.runtime.snapshot().state == AgentState.IDLE)
     other = await h.start()
     assert first is not None and other.id != first.id
 
 
-@pytest.mark.parametrize("autonomous", [False, True])
-async def test_activate_in_idle(make: Any, autonomous: bool) -> None:
+async def test_activate_in_idle(make: Any) -> None:
     h: Harness = await make()
-    await h.start(autonomous=autonomous)
+    await h.start()
     await h.rec.wait_state(AgentState.IDLE)
     await h.runtime.activate()
     await h.rec.wait_state(AgentState.THINKING)

@@ -1,6 +1,6 @@
 # Agent Note: Autonomy into sessions
 
-Status: implemented — Continuous Mode is retired; autonomy is chosen per conversation when it starts, and the user controls what the agent sees
+Status: implemented — Continuous Mode is retired; every conversation wakes when its background work finishes, and the user controls what the agent sees
 
 ## Problem
 
@@ -29,8 +29,9 @@ Separately, conversations could not be managed. Titles were always empty, and re
 deletion were out of scope. A long conversation list quickly became unusable.
 
 The guiding principle: **the user controls what the agent sees.** Fresh starts at any time,
-continuity when asked for, long-term memory the user can see and change, and autonomy as an
-option on a conversation rather than a mode of the whole instance.
+continuity when asked for, long-term memory the user can see and change, and the one useful
+part of autonomy, carrying on when background work finishes, in every conversation rather
+than in a mode of the whole instance.
 
 ## Decision
 
@@ -45,28 +46,19 @@ that took a mode lost it: `Memory.create_conversation`, `list_conversations`, `s
 `StartOptions`, `AgentConfig`, `ConversationInfo`. What was per (data folder, mode) is per
 data folder: `instance.lock`, `usage.json` and `events.jsonl`.
 
-### Autonomy is a conversation option
+### Every conversation wakes when its background work finishes
 
-`ConversationInfo.autonomous`, default off, stored by Memory.
+There is no autonomy setting. When a cycle ends, the wake set is every outstanding
+operation; once all of them have terminated the runtime starts the next cycle by itself,
+so the agent reports on work it started without the user asking whether it is done. This
+is the only time the agent acts without a user message.
 
-| | Off (default) | On |
-|---|---|---|
-| Who starts a cycle | Only the user | The user, and the end of awaited background work |
-| System prompt | The configured one | With `AUTONOMY_PROMPT` added |
-| The agent is told to | Work with the user | Work on the task until done or blocked, decide rather than ask, report its choices |
-
-Autonomy changes neither permissions nor budgets: the agent still asks as the settings
-say, so a hands-off run needs a permission level that lets it work.
-
-- Autonomy is chosen when a conversation starts and kept for its whole life, so its system
-  prompt and tools never change. `StartOptions.autonomous` sets it for a new conversation
-  (ValueError with a `conversation_id`), and `RuntimeAPI.set_autonomous(bool)` changes the
-  open conversation only while it has no message (RuntimeStateError afterwards). To go on
-  autonomously from an ordinary conversation, the user continues it in a new one.
-- `start()` always leaves the agent IDLE. A resumed autonomous conversation has no pending
-  wake-up, so it never runs before the user sends a message or activates it.
+- The system prompt and the tools are the same for a conversation's whole life.
+- `start()` always leaves the agent IDLE. A resumed conversation has no pending wake-up,
+  so it never runs before the user sends a message or activates it.
+- Stop clears a pending wake-up.
 - `activate()` is allowed in IDLE for every conversation.
-- Budgets apply to autonomous cycles exactly as to user-started ones.
+- Permissions and budgets apply to a woken cycle exactly as to a user-started one.
 
 ### Fresh starts and continuity
 
@@ -156,33 +148,41 @@ command-line flags of the per-mode versions.
 
 ### Frontends
 
-- **TUI.** The start screen has an Autonomous switch and Continue from instead of the mode
-  and activation pickers. A conversation list offers open, rename, archive and
-  delete with confirmation; a memory screen lists, adds, edits and forgets entries; the
-  status bar shows when the open conversation is autonomous.
+- **TUI.** The start screen has Continue from instead of the mode and activation pickers.
+  A conversation list offers open, rename, archive and delete with confirmation; a memory
+  screen lists, adds, edits and forgets entries.
 - **Desktop app.** The sidebar shows titles and offers rename, continue from, archive and
-  delete; the open conversation has an autonomy switch, locked after the first message,
-  with the spending next to it; a Memory window lists, adds, edits and forgets entries. See
+  delete; the spending is shown above the conversation; a Memory window lists, adds, edits and forgets entries. See
   [Desktop app](../proposed/2026-11-07-desktop-app.md).
 
 ## Alternatives considered
 
+- **An Autonomous mode per conversation** (a switch that woke the agent after background
+  work and told it to work without asking). Built and removed. Once waking up applied to
+  every conversation, the switch changed one paragraph of instructions; the user can say
+  the same in the chat or in the instructions in Settings. Two variants were dropped on
+  the way: switching at any time (each switch changed the system prompt and the tools
+  mid-conversation, so Claude rejected its earlier thinking blocks and the prompt cache
+  was lost) and choosing only before the first message (a lock to explain for no
+  behavior).
+- **Holding background results until the user's next message.** The agent then never
+  acts unprompted, but a user who asked for something slow has to ask "is it done?", which
+  reads as the agent forgetting. A wake-up only follows work started in that conversation
+  and is bounded by the spending limit.
 - **An `idle()` tool for the agent to end its cycle**, optionally naming the operations to
   wait for. Claude Opus 5.5 returns text that precedes a tool call as a hidden progress
   note, so an agent that replied and then called `idle()` appeared to say nothing; told
   not to, it still did. Ending a turn without tool calls already ends the cycle. The cost
-  is that an autonomous agent waits for all of its background work, never a part of it.
-- **Autonomy that also loosens permissions** (read freely, or anything inside the work
-  folder). It would make hands-off runs work with no other setting, but the shell tool is
-  not a sandbox, and a switch on a chat should not quietly widen what the agent may do.
-  The permission level stays one setting, in Settings.
+  is that the agent waits for all of its background work, never a part of it.
+- **A goal loop** (the runtime checks after each turn whether a stated goal is met and
+  sends the agent back to work). The one thing that would make an autonomous mode differ
+  in behavior without touching permissions; not built, to be judged on real use.
+- **Loosening permissions for hands-off runs** (read freely, or anything inside the work
+  folder). The shell tool is not a sandbox, and the permission level stays one setting, in
+  Settings.
 - **Timed wake-ups with no message from the user** (an agent that looks around and acts
   under standing instructions). A different product, closer to a scheduled assistant;
   open-ended spending and no task to finish.
-- **Switching autonomy at any time.** More flexible, but each switch changes the system
-  prompt and the tools mid-conversation: Claude then rejects its earlier thinking blocks,
-  the provider's prompt cache is lost, and the runtime needs rules for a switch in every
-  state (mid-turn, idle with work running, a wake-up pending).
 - **A Remember switch per conversation** (off = a private chat that neither uses nor adds
   to long-term memory and cannot search other conversations). The owner did not ask for
   it; forgetting an entry and deleting a conversation already cover what the agent keeps.
@@ -191,15 +191,9 @@ command-line flags of the per-mode versions.
   two-mode concepts in place, which are the problem.
 - **Keep Continuous Mode with a "start over" command.** A reset would be a new
   conversation under another name, plus a mode picker, separate stores and
-  `peek_other_mode`. Autonomy per conversation gives the same thing with fewer concepts.
-- **Autonomy as an instance setting instead of per conversation.** Simpler storage, but
-  then every chat in the instance may wake itself, which is the wrong default for a quick
-  question asked next to a long-running task.
-- **Keep both activation policies per conversation.** User-Controlled autonomy differs
-  from a normal conversation only by `idle()`, which without wake-ups does what ending a
-  turn already does. One switch is easier to explain.
+  `peek_other_mode`. One kind of conversation gives the same thing with fewer concepts.
 - **Several conversations running at once in one process, or one lock per conversation so
-  two processes share a data folder.** This would let an autonomous conversation work
+  two processes share a data folder.** This would let one conversation work
   while the user chats in another, which the two-process setup allowed. A multi-agent
   runtime contradicts "one agent per process" and changes every `RuntimeAPI` command.
   Per-conversation locks need the budget file to be shared safely between processes. Both
@@ -235,8 +229,9 @@ command-line flags of the per-mode versions.
 - **Forgetting is by wording.** A forgotten fact does not come back in the same words; a
   reworded one can, and the user forgets it again. Forgetting a fact does not delete the
   messages it came from.
-- **Autonomy without supervision spends money.** Budgets still apply and the switch is off
-  by default; the desktop app shows spending next to it.
+- **The agent can spend without a new message.** A wake-up costs a cycle the user did not
+  start by hand. It follows only work the user asked for, budgets apply, and the desktop
+  app shows spending above the conversation.
 - **The side-by-side setup is gone.** A user who ran a continuous agent next to a session
   in one data folder now runs two data folders, without shared memory.
 - **Titles cost a call.** Each new conversation spends one small light-model call, metered

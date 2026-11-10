@@ -122,7 +122,7 @@ allowed only while idle with no outstanding operations. Otherwise the sidebar is
 with the reason shown. A Model menu lists `list_models()` with prices and calls
 `select_model`. Search over the archive (`search_archive`) is in a later version.
 
-The conversation controls of the autonomy note (rename, archive, the Autonomous switch,
+The conversation controls of the autonomy note (rename, archive,
 Continue from, the memory window) are added to the sidebar and Settings as each
 lands in the runtime. v1 does not wait for them, and none of them needs a mode.
 

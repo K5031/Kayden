@@ -15,35 +15,17 @@ conversation after its first message; you can rename it.
   bring it back.
 - **Delete** erases a conversation for good. See [Deleting](#deleting).
 
-## Autonomy
-
-A conversation is either ordinary (the default) or autonomous. You choose when it starts,
-and can still change your mind until you send its first message; after that it stays as it
-is. To carry on an ordinary conversation autonomously, continue it in a new one
-(**Continue from**) and turn autonomy on there.
-
-| | Ordinary | Autonomous |
-|---|---|---|
-| Meant for | Working together, step by step | Handing over a task and coming back to the result |
-| When it is unsure | Asks you | Decides by itself and tells you what it chose; asks only when a wrong guess would be costly |
-| Results of background tasks | Wait for your next message | Wake the agent, which carries on |
-
-An autonomous agent does not act out of nowhere: it works on what you gave it, then
-waits until its background tasks finish or you write again. After Kayden restarts, it waits
-for you before doing anything.
-
-Autonomy does not change what the agent may do. It still asks before actions as your
-[permissions](settings.md#permissions) say, and a question nobody answers stops the work.
-For a hands-off run, choose "Read freely, ask before changes" or review what it asks for
-before you leave. Spending limits apply as always, so watch the costs of a conversation
-left to work on its own.
-
 ## Background tasks
 
 A tool that runs longer than about 10 seconds moves to the background. The agent gets on
-with other work and receives the result when the task ends. It can check on a task or
-cancel it, and so can you (Ctrl+K). A task that runs over an hour (unless the tool allows
-longer) ends as timed out.
+with other work, or tells you it is waiting. When the tasks it started have all ended, the
+agent is woken with the results and carries on by itself, so you don't have to ask whether
+it is done. It can check on a task or cancel it, and so can you (Ctrl+K). A task that runs
+over an hour (unless the tool allows longer) ends as timed out.
+
+That is the only time the agent acts without a message from you. Permissions and the
+spending limit apply as always, and after Kayden restarts it waits for you before doing
+anything.
 
 When you stop the agent or quit, running tasks are cancelled. If one does not stop in time,
 it is marked as abandoned: it may still be running, and the agent is told to check before

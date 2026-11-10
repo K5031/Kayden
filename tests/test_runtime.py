@@ -406,7 +406,7 @@ async def test_stop_in_idle_with_background_ops(make: Any) -> None:
     tools.hanging("bg")
     core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="waiting")])
     h: Harness = await make(core=core, tools=tools)
-    await h.start(autonomous=True)
+    await h.start()
     await h.turn("go")
     assert h.runtime.snapshot().state == AgentState.IDLE
     await h.runtime.stop()
@@ -420,36 +420,20 @@ async def test_stop_in_idle_with_background_ops(make: Any) -> None:
 # ── Idle ──
 
 
-async def test_the_same_tools_are_offered_with_and_without_autonomy(make: Any) -> None:
-    """The agent ends a turn with a reply; there is no tool for going idle."""
-    offered = []
-    for autonomous in (False, True):
-        h: Harness = await make()
-        await h.start(autonomous=autonomous)
-        await h.turn("hi")
-        names = {t.name for t in h.core.requests[0].tools}
-        assert names == {t.name for t in await h.runtime.list_tools()}
-        offered.append(names)
-    assert offered[0] == offered[1] and {"op_status", "op_cancel", "recall"} <= offered[0]
-    assert "idle" not in offered[0]
-
-
 async def test_idle_unseen_results_wake_immediately(make: Any) -> None:
     tools = FakeTools()
     tools.slow("job", 0.25)
-    for autonomous, expected in ((True, 3), (False, 2)):
-        core = ScriptedCore([
-            Step(calls=[call("job", id="j")]),
-            Step(text="musing", chunks=4, delay=0.1),  # job ends mid-inference
-            Step(text="saw the job result"),
-        ])
-        h: Harness = await make(core=core, tools=tools)
-        await h.start(autonomous=autonomous)
-        await h.runtime.send("go")
-        await eventually(lambda core=core: len(core.requests) >= 2)
-        await asyncio.sleep(0.8)
-        assert len(core.requests) == expected, autonomous
-        await h.close()
+    core = ScriptedCore([
+        Step(calls=[call("job", id="j")]),
+        Step(text="musing", chunks=4, delay=0.1),  # job ends mid-inference
+        Step(text="saw the job result"),
+    ])
+    h: Harness = await make(core=core, tools=tools)
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: len(core.requests) >= 2)
+    await asyncio.sleep(0.8)
+    assert len(core.requests) == 3
 
 
 
@@ -467,19 +451,25 @@ async def test_session_switch_conversation(make: Any) -> None:
         await h.runtime.start(StartOptions(conversation_id="missing"))
 
 
-async def test_background_result_appended_when_idle(make: Any) -> None:
+async def test_a_finished_background_task_wakes_the_agent(make: Any) -> None:
+    """The agent started the work for the user, so it reports when the work is done
+    without waiting to be asked."""
     tools = FakeTools()
     tools.slow("bg", 0.4)
-    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="started it")])
+    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="started it"),
+                         Step(text="it finished")])
     h: Harness = await make(core=core, tools=tools)
     await h.start()
     await h.turn("go")
-    await h.rec.wait_for(lambda r: any(e.result.call_id == "bg" for e in r.of(ToolFinished)))
-    last = (await h.transcript())[-1]
-    assert last.role == Role.USER and last.blocks == (
+    await eventually(lambda: len(core.requests) == 3)
+    woken = core.requests[2].messages[-1]
+    assert woken.role == Role.USER and woken.blocks == (
         OperationResult("bg", ToolStatus.OK, "bg finished"),)
-    await asyncio.sleep(0.1)
-    assert len(core.requests) == 2  # an ordinary conversation never restarts on its own
+    await h.rec.wait_for(lambda r: any(
+        isinstance(e, MessageCommitted) and e.message.blocks == (Text("it finished"),)
+        for e in r.events))
+    await asyncio.sleep(0.2)
+    assert len(core.requests) == 3  # woken once
 
 
 async def test_shutdown_cancels_calls(make: Any) -> None:
@@ -621,8 +611,7 @@ async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
     assert asked == [1_000, 300]
 
 
-@pytest.mark.parametrize("autonomous", [False, True])
-async def test_only_completion_requests_are_maintenance(make: Any, autonomous: bool) -> None:
+async def test_only_completion_requests_are_maintenance(make: Any) -> None:
     """Requests made through Memory's Completion are marked maintenance; turns, retries and
     overflow recovery are not, whatever tools they carry."""
     from kayden.api import Completion, Message
@@ -638,7 +627,7 @@ async def test_only_completion_requests_are_maintenance(make: Any, autonomous: b
         return False
 
     h.memory.maintain_override = maintain
-    await h.start(autonomous=autonomous)
+    await h.start()
     await h.turn("go")
     await h.runtime.activate()
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
