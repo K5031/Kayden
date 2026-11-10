@@ -1158,7 +1158,7 @@ async def test_steps_fold_into_one_group_with_the_thinking_before_them():
         stub.emit(ToolCallDelta("c1", "look", json.dumps(a.arguments)))
         await caught_up(pilot, app, stub)
         [group] = entries(app, StepGroup)
-        assert group.collapsed and group.title == "Search the web · starting"
+        assert group.collapsed and group.title == "Search the web · waiting"
         assert [e.reasoning for e in group.query(AssistantEntry)] == ["Let me look."]
         stub.emit(MessageCommitted(msg("a1", Role.ASSISTANT, Reasoning("Let me look."), a)))
         stub.emit(ToolStarted(a), ToolFinished(ToolResult("c1", ToolStatus.OK, "found"), 0.1))
@@ -1191,4 +1191,4 @@ async def test_a_lone_step_shows_its_sentence_and_text_starts_a_new_group():
         await caught_up(pilot, app, stub)
         first, second = entries(app, StepGroup)
         assert first.title == "Searched the web"
-        assert second.title == "Search again · starting"
+        assert second.title == "Search again · waiting"

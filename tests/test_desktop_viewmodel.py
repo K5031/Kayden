@@ -120,6 +120,9 @@ async def test_permission_prompt_is_answered_and_removed(make):
     assert model.status_text == "Waiting for you"
     (request,) = model.prompts.values()
     assert request.call.name == "write" and not request.read_only
+    (waiting,) = of(model, ToolItem)  # nothing runs until the user answers
+    assert waiting.phase is Phase.WAITING and waiting.state_label == "waiting"
+    assert not waiting.cancellable
     controller.resolve(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: not model.prompts and not model.busy)
     (tool,) = of(model, ToolItem)

@@ -533,3 +533,26 @@ async def test_only_the_newest_summary_is_kept(open_store, db: Path):
         assert len(rows) == 1 and rows[0][0] == conv.id
         assert rows[0][1] > 40  # the second summary's
         assert conn.execute("SELECT count(*) FROM messages").fetchone()[0] == 80
+
+
+async def test_long_tool_output_is_shortened_for_the_summary_not_the_archive(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    log = "BUILDSTART " + "x" * 50_000 + " BUILDEND"
+    body = "PAGESTART " + "y" * 50_000
+    exchange = [
+        Message("call", Role.ASSISTANT, (ToolCall("c1", "write_file",
+                                                  {"path": "a", "content": body}),), time.time()),
+        Message("res", Role.TOOL, (ToolResult("c1", ToolStatus.OK, log),), time.time()),
+    ]
+    await fill(memory, conv.id, tokens(0, 2))
+    await memory.append(conv.id, exchange)
+    await fill(memory, conv.id, tokens(2, 40))
+    completion = FakeCompletion(render=tagged)
+    await maintain(memory, conv.id, completion)
+    [summarized] = completion.calls
+    sent = summarized["messages"][0].blocks[0].text
+    assert "BUILDSTART" in sent and "BUILDEND" in sent and "PAGESTART" in sent
+    assert "characters left out" in sent and len(sent) < 20_000
+    stored = await memory.history(conv.id)
+    assert ToolResult("c1", ToolStatus.OK, log) in [b for m in stored for b in m.blocks]

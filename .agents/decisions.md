@@ -176,6 +176,10 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   and requested output fit `max_input_tokens(light=True)`: the cut moves earlier if needed,
   and a single oversized exchange is shown truncated (the archive keeps it whole). If not
   even that fits, maintain does nothing and returns False.
+- The light model reads each tool call's arguments and each result cut to 2 000
+  characters (`_SUMMARY_TOOL_CHARS`: the first and last 1 000, with a note that recall finds
+  the rest). Command output and page text rarely belong in a summary; cutting them makes
+  summaries cheaper and leaves room for the conversation. The archive keeps them whole.
 - `assemble` priority: the newest exchange (from the last USER message on, truncated in
   view if it alone is too big), then the summary, then the newest long-term entries (at
   most 5% of the budget), then older verbatim messages as far back as fits.
@@ -579,3 +583,10 @@ Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
 | Ended title | One step: its sentence and its problem; several: "N steps" and problems counted by label ("1 failed, 1 declined") |
 | Cancel | The desktop group line has Cancel for its live step; each step keeps its own |
 | Step rows | No box; "done" is not shown, its duration is in the tooltip; other states stay visible |
+
+## Waiting steps
+
+| Choice | Value |
+|---|---|
+| Desktop | A committed call is `Phase.WAITING` ("waiting", no Cancel) until `ToolStarted`: it may wait for a permission prompt, the automatic review, or earlier calls |
+| TUI | The group line shows "waiting" for a requested call, as the desktop app does |

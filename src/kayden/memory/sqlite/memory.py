@@ -65,6 +65,9 @@ _TITLE_OUTPUT_TOKENS = 20
 _TITLE_INPUT_CHARS = 2000
 _TITLE_MAX_CHARS = 80
 _PREVIEW_CHARS = 100
+# Tool input and output beyond this is cut from what the summary model reads (start and end
+# kept); the archive keeps it whole for recall.
+_SUMMARY_TOOL_CHARS = 2_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -875,14 +878,25 @@ def _render_transcript(messages: Sequence[Message]) -> str:
                 case Reasoning():
                     continue
                 case ToolCall(_, name, arguments, raw):
-                    lines.append(f"[{stamp} {message.role} calls {name}] {raw or arguments}")
+                    shown = _shortened(raw or str(arguments))
+                    lines.append(f"[{stamp} {message.role} calls {name}] {shown}")
                 case ToolResult(_, status, content):
-                    lines.append(f"[{stamp} tool result, {status}] {content}")
+                    lines.append(f"[{stamp} tool result, {status}] {_shortened(content)}")
                 case OperationResult(call_id, status, content):
-                    lines.append(f"[{stamp} background operation {call_id}, {status}] {content}")
+                    lines.append(f"[{stamp} background operation {call_id}, {status}] "
+                                 f"{_shortened(content)}")
                 case _:
                     lines.append(f"[{stamp} {message.role}] {block}")
     return "\n".join(lines)
+
+
+def _shortened(text: str) -> str:
+    """Tool input or output as the summary model reads it: its start and end."""
+    if len(text) <= _SUMMARY_TOOL_CHARS:
+        return text
+    half = _SUMMARY_TOOL_CHARS // 2
+    return (f"{text[:half]} [... {len(text) - 2 * half} characters left out; recall finds "
+            f"them ...] {text[-half:]}")
 
 
 def _parse_output(output: str, summary_tokens: int, count: TokenCounter) -> tuple[str, list[str]]:

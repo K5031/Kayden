@@ -150,7 +150,7 @@ UNTITLED = "New chat"
 # States in which runtime.start() may switch conversations (given no outstanding call).
 SWITCHABLE = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 HISTORY_PAGE = 100  # messages loaded per history page
-UNDERWAY = {"requested": "starting", "running": "running", "background": "in the background"}
+UNDERWAY = {"requested": "waiting", "running": "running", "background": "in the background"}
 MAX_ARGS_CHARS = 300
 MAX_RESULT_LINES = 6
 MAX_RESULT_CHARS = 600

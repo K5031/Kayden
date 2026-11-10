@@ -48,6 +48,7 @@ RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
 def qapp() -> QApplication:
     """Styled as the launcher styles it: sizes and layout depend on the style sheet."""
     app = QApplication.instance() or QApplication([])
+    app.setQuitOnLastWindowClosed(False)  # the launcher's setting: the runtime ends the loop
     theme.apply(app, dark=False)
     return app
 

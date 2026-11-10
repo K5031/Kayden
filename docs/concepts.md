@@ -36,7 +36,8 @@ assuming anything.
 Kayden keeps every message of every conversation until you delete the conversation.
 
 - When a conversation gets long, older messages are **summarized** so the recent part fits
-  the model's context. The originals stay saved.
+  the model's context. Long tool output (command output, web pages) is shortened for the
+  summary, so summaries stay cheap. The originals stay saved, in full.
 - The agent can **search** a conversation's full history, including summarized parts, and
   your other conversations that are not archived.
 - **Long-term memory** is one list of lasting facts (about you, your setup) shared by all

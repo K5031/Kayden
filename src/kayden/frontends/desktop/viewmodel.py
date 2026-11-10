@@ -105,6 +105,7 @@ def clip(text: str, limit: int) -> str:
 
 class Phase(StrEnum):
     PREPARING = "preparing"  # the model is still writing the call
+    WAITING = "waiting"  # written, not started: a permission prompt or review, earlier calls
     RUNNING = "running"
     BACKGROUND = "in the background"
     DONE = "done"
@@ -135,7 +136,7 @@ class ToolItem:
     call_id: str
     name: str
     arguments: str = ""  # JSON text, or raw chunks while streaming
-    phase: Phase = Phase.RUNNING
+    phase: Phase = Phase.WAITING
     progress: str = ""
     status: ToolStatus | None = None
     content: str = ""
