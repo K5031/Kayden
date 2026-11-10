@@ -18,7 +18,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QPushButton
 
 from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
-from kayden.frontends.desktop import theme
+from kayden.frontends.desktop import app_menu, theme
 from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
 from kayden.frontends.desktop.window import (
     DATE_ROLE,
@@ -248,6 +248,7 @@ async def test_choosing_the_tui_says_when_it_is_used(make, installed, qapp):
 async def test_kayden_can_be_added_to_the_app_menu(make, qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(app_menu, "_reload_icons", lambda: None)  # not the real session
     h: Harness = await make()
     await h.start()
     window, controller, _ = await open_window(h)

@@ -5,7 +5,9 @@ themselves. The entry starts the desktop launcher with this install's Python: a 
 no terminal for `kayden` to run a terminal frontend in.
 
 The icon's name carries a hash of its content: desktops cache icons by name (KDE keeps
-showing a replaced file), so a new icon gets a new name and older ones are removed.
+showing a replaced file), so a new icon gets a new name and older ones are removed. KDE's
+running programs (the app launcher) also keep the icons they looked up, so installing
+tells them to reload, as `kiconloader` does after an icon change.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -77,3 +80,16 @@ def install() -> None:
             old.unlink()
     shutil.copyfile(ICON, _icon_path())
     _entry_path().write_text(_entry())
+    _reload_icons()
+
+
+def _reload_icons() -> None:
+    """Best effort: desktops other than KDE ignore the signal."""
+    if (dbus_send := shutil.which("dbus-send")) is None:
+        return
+    try:
+        subprocess.run([dbus_send, "--session", "--type=signal", "/KIconLoader",
+                        "org.kde.KIconLoader.iconChanged", "int32:0"],
+                       check=False, capture_output=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass

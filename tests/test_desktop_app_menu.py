@@ -15,6 +15,7 @@ from kayden.frontends.desktop import app_menu
 def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(app_menu, "_reload_icons", lambda: None)  # not the real session
     return tmp_path
 
 
@@ -69,4 +70,25 @@ def test_a_new_icon_gets_a_new_name_and_replaces_the_old_one(data_home: Path) ->
     app_menu.install()
     assert sorted(p.name for p in apps.iterdir()) == [f"{app_menu.ICON_NAME}.svg",
                                                       "other-app.svg"]
+    assert app_menu.is_current()
+
+
+def test_install_tells_running_programs_to_reload_icons(data_home: Path,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """KDE's app launcher keeps icons it has looked up until it is told they changed."""
+    ran: list[list[str]] = []
+    monkeypatch.undo()  # the real _reload_icons, with which and run replaced below
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.setattr(app_menu.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(app_menu.subprocess, "run", lambda args, **kw: ran.append(args))
+    app_menu.install()
+    assert ran == [["/usr/bin/dbus-send", "--session", "--type=signal", "/KIconLoader",
+                    "org.kde.KIconLoader.iconChanged", "int32:0"]]
+
+
+def test_install_works_without_dbus_send(data_home: Path,
+                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_menu.shutil, "which", lambda name: None)
+    app_menu.install()
     assert app_menu.is_current()
