@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import replace
+from typing import Any
 
 import httpx2
 import pytest
@@ -20,13 +22,15 @@ from kayden.api import (
     Usage,
 )
 from kayden.core._common import ModelConfig
-from kayden.core.anthropic import AnthropicCore, factory
+from kayden.core.anthropic import AnthropicCore, Prefix, factory, to_messages
 from tests.conformance.core_suite import (
     WEATHER_TOOL,
     CoreDriver,
     CoreSuite,
     Expect,
     Sent,
+    check_expect,
+    check_stream,
     collect,
     user,
 )
@@ -134,9 +138,11 @@ class AnthropicDriver(CoreDriver):
                   *text_block(2, ["Done."]),
                   *finish("end_turn")]
         self.stub.queue(Reply(events=events))
-        expected = Reasoning("Let me think.", {"provider": "anthropic", "signature": "sig-abc"},
-                             MODEL)
-        return self.request([user("Think first")]), Expect(reasoning=expected)
+        request = self.request([user("Think first")])
+        _, bound = to_messages(request.messages, MODEL, request.system, request.tools)
+        expected = Reasoning("Let me think.", {"provider": "anthropic", "signature": "sig-abc",
+                                               "prefix": bound}, MODEL)
+        return request, Expect(reasoning=expected)
 
     def queue_error(self, status, retry_after=None):
         headers = {} if retry_after is None else {"retry-after": str(retry_after)}
@@ -174,18 +180,22 @@ class AnthropicDriver(CoreDriver):
 
     def last_sent(self) -> Sent:
         sent = Sent()
-        for message in self.stub.bodies[-1]["messages"]:
+        body = self.stub.bodies[-1]
+        for i, message in enumerate(body["messages"]):
             content = message["content"]
+            # What reasoning in this turn is bound to: everything sent before it.
+            bound = Prefix(body.get("system", ""), body.get("tools", [])).of(body["messages"][:i])
             for b in content if isinstance(content, list) else []:
                 match b["type"]:
                     case "text" if message["role"] == "user":
                         sent.user_texts.append(b["text"])
                     case "thinking":
                         sent.reasoning_states.append(
-                            {"provider": "anthropic", "signature": b["signature"]})
+                            {"provider": "anthropic", "signature": b["signature"],
+                             "prefix": bound})
                     case "redacted_thinking":
                         sent.reasoning_states.append(
-                            {"provider": "anthropic", "redacted": b["data"]})
+                            {"provider": "anthropic", "redacted": b["data"], "prefix": bound})
                     case "tool_use":
                         sent.tool_call_ids.append(b["id"])
                     case "tool_result":
@@ -257,6 +267,51 @@ async def test_default_max_tokens_and_empty_system(anthropic: AnthropicDriver) -
     body = anthropic.stub.bodies[-1]
     assert "system" not in body and "tools" not in body
     assert body["max_tokens"] == 8192
+
+
+def thinking_sent(driver: AnthropicDriver) -> list[str]:
+    return [b["signature"] for m in driver.stub.bodies[-1]["messages"] for b in m["content"]
+            if b["type"] == "thinking"]
+
+
+async def test_reasoning_is_replayed_only_while_everything_before_it_is_unchanged(
+        anthropic: AnthropicDriver) -> None:
+    """The API rejects a thinking block once the system prompt, the tools or an earlier
+    message differ from when it was produced."""
+    request, _ = anthropic.reasoning_turn()
+    answer = check_stream(await collect(anthropic.core, request)).message
+    history = [*request.messages, answer, user("And now?")]
+
+    async def sent(**changes: Any) -> list[str]:
+        anthropic.queue_text()
+        follow_up = replace(anthropic.request(history), **changes)
+        check_stream(await collect(anthropic.core, follow_up))
+        return thinking_sent(anthropic)
+
+    assert await sent() == ["sig-abc"]
+    assert await sent(system="You are a terse assistant.\n\nYou work autonomously.") == []
+    assert await sent(tools=[WEATHER_TOOL, replace(WEATHER_TOOL, name="idle")]) == []
+    assert await sent(messages=[user("Think again"), answer, user("And now?")]) == []
+    assert await sent(messages=[*history, answer, user("Once more")]) == ["sig-abc"]
+    unbound = Message("a", Role.ASSISTANT, (
+        Reasoning("old", {"provider": "anthropic", "signature": "sig-old"}, MODEL), Text("Done.")),
+        time.time())
+    assert await sent(messages=[*request.messages, unbound, user("And now?")]) == []
+
+
+async def test_rejected_reasoning_is_left_out_on_a_second_try(anthropic: AnthropicDriver) -> None:
+    request, _ = anthropic.reasoning_turn()
+    answer = check_stream(await collect(anthropic.core, request)).message
+    anthropic.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
+        "type": "invalid_request_error",
+        "message": "messages.1.content.0: Invalid `signature` in `thinking` block. The block "
+                   "is bound to a different conversation. Remove the block."}}))
+    expect = anthropic.queue_text()
+    done = check_stream(await collect(
+        anthropic.core, anthropic.request([*request.messages, answer, user("And now?")])))
+    check_expect(done, expect)
+    assert thinking_sent(anthropic) == []
+    assert [b["type"] for b in anthropic.stub.bodies[-1]["messages"][1]["content"]] == ["text"]
 
 
 async def test_truncated_stream_is_transient(anthropic: AnthropicDriver) -> None:

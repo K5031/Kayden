@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -54,6 +57,10 @@ from kayden.core._common import (
 )
 
 PROVIDER = "anthropic"
+logger = logging.getLogger(__name__)
+_THINKING = ("thinking", "redacted_thinking")
+# The 400 for a thinking block replayed after something before it changed.
+_BINDING_ERROR = "bound to a different conversation"
 _INVALID_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")  # ids from other providers may break the API
 _TRANSIENT_ERROR_TYPES = {"rate_limit_error", "overloaded_error", "api_error", "timeout_error"}
 _STOP_REASONS = {
@@ -140,8 +147,8 @@ class AnthropicCore(Core):
             raise _map_error(e) from e
 
     async def count_tokens(self, request: InferenceRequest) -> int:
-        params: dict[str, Any] = {"model": request.model,
-                                  "messages": to_messages(request.messages, request.model)}
+        turns, _ = to_messages(request.messages, request.model, request.system, request.tools)
+        params: dict[str, Any] = {"model": request.model, "messages": turns}
         if request.system:
             params["system"] = request.system
         if request.tools:
@@ -153,9 +160,11 @@ class AnthropicCore(Core):
         return result.input_tokens
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
+        turns, bound = to_messages(request.messages, request.model, request.system,
+                                   request.tools)
         params: dict[str, Any] = {
             "model": request.model,
-            "messages": to_messages(request.messages, request.model),
+            "messages": turns,
             "max_tokens": request.max_output_tokens or self._default_max_tokens,
             "extra_body": request_options(self._options, self._models.get(request.model)),
         }
@@ -164,9 +173,19 @@ class AnthropicCore(Core):
         if request.tools:
             params["tools"] = [to_tool(t) for t in request.tools]
 
-        turn = _Turn(request.model)
+        turn = _Turn(request.model, bound)
         try:
-            async with await self._client.messages.create(**params, stream=True) as events:
+            try:
+                response = await self._client.messages.create(**params, stream=True)
+            except anthropic.BadRequestError as e:
+                if _BINDING_ERROR not in str(e):
+                    raise
+                # The API saw a change that Prefix did not: answer without earlier reasoning.
+                logger.warning("thinking blocks rejected, sending the request without them: %s", e)
+                params["messages"], _ = to_messages(
+                    request.messages, request.model, request.system, request.tools, replay=False)
+                response = await self._client.messages.create(**params, stream=True)
+            async with response as events:
                 async for event in events:
                     for out in turn.feed(event):
                         yield out
@@ -193,8 +212,9 @@ class _Block:
 class _Turn:
     """Accumulates raw stream events into Kayden events and the final message."""
 
-    def __init__(self, model: str) -> None:
+    def __init__(self, model: str, bound: str) -> None:
         self.model = model
+        self.bound = bound  # Prefix of the request: what this turn's reasoning is bound to
         self.blocks: dict[int, _Block] = {}
         self.counts = {"input_tokens": 0, "output_tokens": 0,
                        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
@@ -270,10 +290,11 @@ class _Turn:
                 case "text":
                     blocks.append(Text("".join(b.parts)))
                 case "thinking":
-                    state = {"provider": PROVIDER, "signature": b.signature}
+                    state = {"provider": PROVIDER, "signature": b.signature,
+                             "prefix": self.bound}
                     blocks.append(Reasoning("".join(b.parts), state, self.model))
                 case "redacted_thinking":
-                    state = {"provider": PROVIDER, "redacted": b.data}
+                    state = {"provider": PROVIDER, "redacted": b.data, "prefix": self.bound}
                     blocks.append(Reasoning("", state, self.model))
                 case "tool_use":
                     arguments, raw = parse_arguments("".join(b.parts))
@@ -286,14 +307,39 @@ def to_tool(spec: ToolSpec) -> JSON:
     return {"name": spec.name, "description": spec.description, "input_schema": spec.parameters}
 
 
-def to_messages(messages: Sequence[Message], model: str) -> list[JSON]:
-    """Kayden messages to Anthropic turns: tool results ride in user turns, and adjacent
-    same-role turns are merged with tool results first, as the API requires. Reasoning is
-    replayed only to the model that produced it."""
+class Prefix:
+    """Fingerprint of what a thinking block is bound to: the system prompt, the tools and
+    every turn before it, earlier thinking excepted. The API rejects a block replayed after
+    any of them changed, so its fingerprint is kept with it and compared before replaying."""
+
+    def __init__(self, system: str, tools: Sequence[JSON]) -> None:
+        definitions = sorted(json.dumps(t, sort_keys=True) for t in tools)
+        self._hash = hashlib.sha256(json.dumps([system, definitions]).encode())
+        self._turns = 0
+
+    def of(self, turns: Sequence[JSON]) -> str:
+        """The fingerprint before the turn that follows `turns`; takes a growing list."""
+        for turn in turns[self._turns:]:
+            content = [c for c in turn["content"] if c["type"] not in _THINKING]
+            self._hash.update(json.dumps([turn["role"], content], sort_keys=True).encode())
+        self._turns = len(turns)
+        return self._hash.hexdigest()[:16]
+
+
+def to_messages(messages: Sequence[Message], model: str, system: str = "",
+                tools: Sequence[ToolSpec] = (), *, replay: bool = True
+                ) -> tuple[list[JSON], str]:
+    """Kayden messages to Anthropic turns, and the Prefix the answer's reasoning is bound
+    to. Tool results ride in user turns, and adjacent same-role turns are merged with tool
+    results first, as the API requires. Reasoning is replayed only to the model that
+    produced it and while its Prefix is unchanged; never with `replay` off."""
     out: list[JSON] = []
+    prefix = Prefix(system, [to_tool(t) for t in tools])
     for message in messages:
         role = "assistant" if message.role is Role.ASSISTANT else "user"
-        content = [c for b in message.blocks if (c := _to_content(b, model)) is not None]
+        bound = prefix.of(out) if replay and role == "assistant" else None
+        content = [c for b in message.blocks
+                   if (c := _to_content(b, model, bound)) is not None]
         if not content:
             continue
         if out and out[-1]["role"] == role:
@@ -302,15 +348,17 @@ def to_messages(messages: Sequence[Message], model: str) -> list[JSON]:
             out.append({"role": role, "content": content})
         if role == "user":
             out[-1]["content"].sort(key=lambda c: c["type"] != "tool_result")
-    return out
+    return out, prefix.of(out)
 
 
-def _to_content(block: Block, model: str) -> JSON | None:
+def _to_content(block: Block, model: str, bound: str | None) -> JSON | None:
     match block:
         case Text(text=text):
             return {"type": "text", "text": text} if text else None
         case Reasoning(model=produced_by) if produced_by != model:
             return None  # another model's signature would be rejected
+        case Reasoning(state=state) if bound is None or (state or {}).get("prefix") != bound:
+            return None  # so would one bound to a different system prompt, tools or history
         case Reasoning(text=text, state={"provider": "anthropic", "signature": signature}):
             return {"type": "thinking", "thinking": text, "signature": signature}
         case Reasoning(state={"provider": "anthropic", "redacted": data}):

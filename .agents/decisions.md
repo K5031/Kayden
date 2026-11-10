@@ -224,6 +224,18 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 - Reasoning: produced blocks carry `model=request.model`; only blocks whose `model`
   equals the request's model are replayed (Anthropic, and OpenAI-compatible profiles with
   a `reasoning_input_field`). The stock OpenAI-compatible profile never replays reasoning.
+- Anthropic thinking blocks are bound to what preceded them: the API answers 400 ("bound to
+  a different conversation") when one is replayed after the system prompt, the tool set or
+  an earlier message changed (turning Autonomous mode on, editing the instructions, a
+  compaction). The Anthropic Core stores a fingerprint of those (`Prefix`: SHA-256 of the
+  system prompt, the sorted tool definitions and every earlier turn without its thinking)
+  in each block's `state["prefix"]` and replays a block only while it matches; a block
+  without one is not replayed. Should the API still reject a request for that reason, the
+  Core sends it once more without any thinking and logs a warning. The API's own
+  `prefix_mismatch_behavior: "drop_block"` (beta `thinking-binding-controls-2026-08-01`) was
+  not used: it drops every block after the first mismatch on each request unless the
+  failing blocks are removed from the history, which the Core cannot do, and it is only
+  accepted with adaptive thinking.
 - Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL.
 
 ### OpenAI-compatible profiles (`profile` option of `kayden.core.openai_compat:factory`)
