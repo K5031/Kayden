@@ -7,13 +7,15 @@ import contextlib
 import importlib
 import logging
 import os
+import re
+import shlex
 import sys
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
 
-from kayden.api import MODULE_KINDS, ModuleChoice, ModuleInfo, SettingsUpdate
+from kayden.api import MODULE_KINDS, McpServer, ModuleChoice, ModuleInfo, SettingsUpdate
 from kayden.runtime.config import ModuleState, Restart
 from kayden.runtime.settings import get_stored_key, has_key, save_settings, store_key
 
@@ -23,6 +25,23 @@ GROUPS = {"core": "kayden.cores", "memory": "kayden.memories", "tools": "kayden.
           "frontend": "kayden.frontends"}
 LABELS = {"core": "AI provider", "memory": "memory", "tools": "tools", "frontend": "frontend"}
 TERMINAL, WINDOW = "terminal", "window"
+MCP_FACTORY = "kayden.tools.mcp:factory"
+_SERVER_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
+_VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def mcp_key(server: str, variable: str) -> str:
+    """The keychain entry of an MCP server's variable."""
+    return f"mcp/{server}/{variable}"
+
+
+def mcp_saved(server: McpServer) -> dict[str, object]:
+    """How a server is written to the settings file: its variables by name only."""
+    entry: dict[str, object] = {"name": server.name}
+    entry.update({"command": server.command} if server.command else {"url": server.url})
+    if server.env:
+        entry["env"] = list(server.env)
+    return entry
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +113,8 @@ class ModuleSettings:
         self.already_open = already_open
         self.work_folder = state.work_folder  # for new conversations; applies live
         self.key_saved = False
+        self.mcp_running = tuple(state.mcp_servers)  # values ""; built for this run
+        self.mcp_servers = self.mcp_running  # saved for the next start
 
     async def fields(self) -> dict[str, Any]:
         """The module part of Settings."""
@@ -103,9 +124,10 @@ class ModuleSettings:
             infos = [ModuleInfo(m.id, m.name, m.key_name, await has_key(m.key_name), m.kind)
                      for m in found[kind]]
             modules[kind] = ModuleChoice(self.running[kind], self.chosen[kind], infos)
-        restart_needed = self.key_saved or any(self.chosen[k] != self.running[k]
-                                               for k in MODULE_KINDS)
+        restart_needed = (self.key_saved or self.mcp_servers != self.mcp_running
+                          or any(self.chosen[k] != self.running[k] for k in MODULE_KINDS))
         return {"modules": modules, "work_folder": self.work_folder,
+                "mcp_servers": self.mcp_servers,
                 "restart_needed": restart_needed,
                 "restart_frontend": self._restart_frontend(found["frontend"]),
                 "startup_error": self.startup_error, "already_open": self.already_open}
@@ -152,6 +174,10 @@ class ModuleSettings:
                 raise ValueError(f"{name} takes no API key")
             if not u.api_key.strip():
                 raise ValueError("the API key is empty")
+        if u.mcp_servers is not None:
+            await self._check_servers(u.mcp_servers)
+            if [mcp_saved(s) for s in u.mcp_servers] != [mcp_saved(s) for s in self.mcp_servers]:
+                saved["mcp_servers"] = [mcp_saved(s) for s in u.mcp_servers]
         if u.work_folder is not None:
             if self.work_folder is None:
                 raise ValueError("the work folder of these tools cannot be changed")
@@ -161,6 +187,49 @@ class ModuleSettings:
             if str(folder) != self.work_folder:
                 saved["work_folder"] = str(folder)
         return saved
+
+    async def _check_servers(self, servers: list[McpServer] | tuple[McpServer, ...]) -> None:
+        names = [s.name for s in servers]
+        for server in servers:
+            if not _SERVER_NAME.fullmatch(server.name):
+                raise ValueError(f"MCP server name {server.name!r}: use letters, digits, - "
+                                 "and _ (at most 32)")
+            if names.count(server.name) > 1:
+                raise ValueError(f"the MCP server {server.name!r} is listed twice")
+            if bool(server.command) == bool(server.url):
+                raise ValueError(f"the MCP server {server.name!r} needs a command or a URL, "
+                                 "not both")
+            if server.url and not server.url.startswith(("http://", "https://")):
+                raise ValueError(f"the URL of {server.name!r} must start with http:// or "
+                                 "https://")
+            if server.command:
+                try:
+                    if not shlex.split(server.command):
+                        raise ValueError
+                except ValueError:
+                    raise ValueError(f"the command of {server.name!r} cannot be read "
+                                     "(check its quotes)") from None
+            for variable, value in server.env.items():
+                if not _VARIABLE.fullmatch(variable):
+                    raise ValueError(f"{variable!r} is not a variable name")
+                if not value and await get_stored_key(mcp_key(server.name, variable)) is None:
+                    raise ValueError(f"give a value for {variable} of {server.name!r}")
+
+    async def _store_server_keys(self, servers: list[McpServer] | tuple[McpServer, ...]
+                                 ) -> None:
+        """Values given now go to the keychain; variables no longer listed leave it."""
+        for server in servers:
+            for variable, value in server.env.items():
+                if value:
+                    await store_key(mcp_key(server.name, variable), value)
+                    self.key_saved = True
+        kept = {mcp_key(s.name, v) for s in servers for v in s.env}
+        for server in self.mcp_servers:
+            for variable in server.env:
+                if (key := mcp_key(server.name, variable)) not in kept:
+                    await store_key(key, None)
+        self.mcp_servers = tuple(
+            McpServer(s.name, s.command, s.url, dict.fromkeys(s.env, "")) for s in servers)
 
     async def commit(self, u: SettingsUpdate, saved: dict[str, Any]) -> None:
         """Store the key, then save; on failure the keychain entry is restored."""
@@ -184,3 +253,5 @@ class ModuleSettings:
         self.chosen.update(saved.get("modules", {}))
         self.work_folder = saved.get("work_folder", self.work_folder)
         self.key_saved = self.key_saved or key_name is not None
+        if u.mcp_servers is not None:
+            await self._store_server_keys(u.mcp_servers)

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kayden.api import Budget, PermissionPolicy
+from kayden.api import Budget, McpServer, PermissionPolicy
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are Kayden, an AI agent. Use the available tools to accomplish the user's goals.\n"
@@ -40,6 +40,8 @@ class ModuleState:
     running: Mapping[str, str | None] = field(default_factory=dict)  # built for this run
     chosen: Mapping[str, str | None] = field(default_factory=dict)  # saved for the next start
     work_folder: str | None = None  # the Tools root this run; None = not settable
+    # Saved MCP servers, their variable values "" (api.McpServer); the next start builds them.
+    mcp_servers: tuple[McpServer, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +82,7 @@ class InstanceConfig:
     memory: ModuleSpec
     tools: ModuleSpec
     frontend: ModuleSpec
+    extra_tools: tuple[ModuleSpec, ...] = ()  # more Tools modules: the MCP servers
     # Why the modules cannot be built (a saved module that is not installed); the frontend
     # then opens on a setup runtime that shows it.
     startup_error: str | None = None

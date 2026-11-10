@@ -29,6 +29,14 @@ def read_key(name: str) -> str | None:
         return None
 
 
+def read_secret(name: str) -> str | None:
+    """A keychain entry only (no environment variable has such a name). Blocks."""
+    try:
+        return keyring.get_password(KEYCHAIN_SERVICE, name)
+    except keyring.errors.KeyringError:
+        return None
+
+
 async def has_key(name: str | None) -> bool:
     return name is not None and await asyncio.to_thread(read_key, name) is not None
 

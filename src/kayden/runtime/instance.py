@@ -108,7 +108,8 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
             # Before any module: no Memory access without the data directory.
             lock = InstanceLock.acquire(runtime_config.data_dir)
             for spec, kind in ((config.core, Core), (config.memory, Memory),
-                               (config.tools, Tools)):
+                               (config.tools, Tools),
+                               *((extra, Tools) for extra in config.extra_tools)):
                 built.append(await asyncio.to_thread(load_module, spec, kind, paths))
         except (InstanceLockedError, ModuleLoadError) as e:
             error, already_open = str(e), isinstance(e, InstanceLockedError)
@@ -118,8 +119,8 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
                 lock.release()
     runtime: Runtime | SetupRuntime
     if error is None:
-        core, memory, tools = built
-        runtime = Runtime(core=core, memory=memory, tools=[tools], frontend=frontend.info,
+        core, memory, *tools = built
+        runtime = Runtime(core=core, memory=memory, tools=tools, frontend=frontend.info,
                           config=runtime_config, lock=lock)
     else:
         runtime = SetupRuntime(runtime_config, frontend.info.kind, error,

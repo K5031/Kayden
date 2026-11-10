@@ -881,6 +881,20 @@ class ModuleChoice:
 
 
 @dataclass(frozen=True, slots=True)
+class McpServer:
+    """An MCP server whose tools Kayden offers: exactly one of `command` (a command line
+    Kayden starts) and `url`. `name` (letters, digits, - and _) names its tools
+    (mcp__<name>__<tool>). `env` maps the variables the server gets to their values,
+    which the OS keychain keeps, never a file: in Settings every value is "" (never
+    returned); in SettingsUpdate a value replaces the saved one and "" keeps it."""
+
+    name: str
+    command: str | None = None
+    url: str | None = None
+    env: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     """The user settings, in the terms a settings screen shows. Models come from
     list_models(), spending so far from snapshot().usage.
@@ -911,6 +925,8 @@ class Settings:
     # With startup_error: another process holds the data directory, so closing it, not
     # changing settings, is the fix.
     already_open: bool = False
+    # Module settings: saved at once, started at the next start (one more Tools module).
+    mcp_servers: Sequence[McpServer] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -918,7 +934,7 @@ class SettingsUpdate:
     """A partial change: None leaves a setting as it is. maintenance_model "" clears it.
     budget replaces the whole budget. modules maps kinds to installed ids. api_key is stored
     for the chosen Core (modules["core"] in this update, else the saved choice) and never
-    returned."""
+    returned. mcp_servers, like modules and api_key, applies at the next start."""
 
     modules: Mapping[str, str] | None = None
     api_key: str | None = None
@@ -928,6 +944,7 @@ class SettingsUpdate:
     permissions: PermissionPolicy | None = None
     system_prompt: str | None = None
     work_folder: str | None = None
+    mcp_servers: Sequence[McpServer] | None = None  # replaces the whole list
 
 
 @dataclass(frozen=True, slots=True)
@@ -1236,7 +1253,7 @@ class RuntimeAPI(Protocol):
         Model, maintenance model, budget, permissions and system prompt apply in any state,
         from the next inference; the work folder from the next new conversation.
         Permissions are clamped to any inherited ceiling. Module settings (modules,
-        api_key) are saved in any state and build nothing:
+        api_key, mcp_servers) are saved in any state and build nothing:
         they apply at the next start. A Core change also clears the saved model and
         maintenance model, so the new Core starts on its first model. Keys go to the OS
         keychain under key_name, never to a file.

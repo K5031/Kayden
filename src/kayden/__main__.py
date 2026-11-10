@@ -29,7 +29,7 @@ from typing import Any
 
 import tomli_w
 
-from kayden.api import MODULE_KINDS, Budget, PermissionPolicy
+from kayden.api import MODULE_KINDS, Budget, McpServer, PermissionPolicy
 from kayden.runtime import (
     InstanceConfig,
     ModuleLoadError,
@@ -39,8 +39,17 @@ from kayden.runtime import (
     RuntimeConfig,
     run_instance,
 )
-from kayden.runtime.modules import LABELS, TERMINAL, WINDOW, find, has_display, targets
-from kayden.runtime.settings import SETTINGS_FILE
+from kayden.runtime.modules import (
+    LABELS,
+    MCP_FACTORY,
+    TERMINAL,
+    WINDOW,
+    find,
+    has_display,
+    mcp_key,
+    targets,
+)
+from kayden.runtime.settings import SETTINGS_FILE, read_secret
 
 DEFAULT_DATA_DIR = Path("~/.kayden")
 CONFIG_FILE = "config.toml"
@@ -56,7 +65,7 @@ SECRET_WORDS = ("key", "token", "secret", "password")
 # The frontend each launcher falls back to: its own kind's built-in one.
 LAUNCHER_FRONTENDS = {TERMINAL: "tui", WINDOW: "desktop"}
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
-              "system_prompt", "work_folder", "budget")
+              "system_prompt", "work_folder", "budget", "mcp_servers")
 BUDGET_INTS = ("max_tokens", "max_tool_calls")
 BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
 
@@ -226,7 +235,15 @@ def read_saved(path: Path) -> dict[str, Any]:
     if not isinstance(modules, dict) or not all(
             kind in MODULE_KINDS and isinstance(v, str) for kind, v in modules.items()):
         raise SystemExit(f"{path}: [modules] maps {', '.join(MODULE_KINDS)} to module ids")
-    runtime = {k: v for k, v in data.items() if k not in ("modules", "work_folder")}
+    servers = data.get("mcp_servers", [])
+    try:
+        servers = tuple(McpServer(s["name"], s.get("command"), s.get("url"),
+                                  dict.fromkeys(s.get("env", []), "")) for s in servers)
+    except (TypeError, KeyError, AttributeError):
+        raise SystemExit(f"{path}: each [[mcp_servers]] has a name, a command or url, and "
+                         "env, a list of variable names") from None
+    runtime = {k: v for k, v in data.items()
+               if k not in ("modules", "work_folder", "mcp_servers")}
     cleared = [k for k in ("model", "maintenance_model") if runtime.get(k) == ""]
     for key in cleared:
         del runtime[key]
@@ -236,6 +253,7 @@ def read_saved(path: Path) -> dict[str, Any]:
         saved["modules"] = modules
     if "work_folder" in data:
         saved["work_folder"] = data["work_folder"]
+    saved["mcp_servers"] = servers
     return saved
 
 
@@ -293,6 +311,9 @@ def load_config(args: argparse.Namespace, *, default_root: Path | None = None,
         tools = ModuleSpec(tools.factory, {**tools.options, "root": saved["work_folder"]})
     saved.pop("work_folder", None)
     modules["tools"] = tools
+    servers = saved.pop("mcp_servers")
+    extra = (ModuleSpec(MCP_FACTORY, {"servers": [mcp_options(s) for s in servers]}),
+             ) if servers else ()
     runtime.update(saved)
     for key in ("model", "maintenance_model"):
         if getattr(args, key):
@@ -307,12 +328,21 @@ def load_config(args: argparse.Namespace, *, default_root: Path | None = None,
     if start is not None:
         frontend = modules["frontend"]
         modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
-    state = ModuleState(running=running, chosen=chosen, work_folder=tools.options.get("root"))
+    state = ModuleState(running=running, chosen=chosen, work_folder=tools.options.get("root"),
+                        mcp_servers=servers)
     return InstanceConfig(
         runtime=RuntimeConfig(data_dir=data_dir, modules=state, **runtime),
         startup_error="; ".join(problems) or None,
+        extra_tools=extra,
         **modules,
     )
+
+
+def mcp_options(server: McpServer) -> dict[str, Any]:
+    """A server as the MCP Tools module takes it, its variables read from the keychain."""
+    target = {"command": server.command} if server.command else {"url": server.url}
+    env = {v: value for v in server.env if (value := read_secret(mcp_key(server.name, v)))}
+    return {"name": server.name, **target, "env": env}
 
 
 async def launch(args: argparse.Namespace, launcher: str, *, default_root: Path | None = None

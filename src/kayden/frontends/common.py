@@ -219,8 +219,9 @@ def delete_details(is_open: bool) -> str:
 
 
 def needs_restart(update: SettingsUpdate) -> bool:
-    """Whether `update` holds module settings, which apply at the next start."""
-    return bool(update.modules) or update.api_key is not None
+    """Whether `update` holds module settings (modules, the key, MCP servers), which apply
+    at the next start."""
+    return bool(update.modules) or update.api_key is not None or update.mcp_servers is not None
 
 
 def restart_notice(settings: Settings) -> str | None:
