@@ -468,26 +468,32 @@ class SqliteMemory(Memory):
         *,
         before: str | None = None,
         limit: int | None = None,
+        after: str | None = None,
     ) -> Sequence[Message]:
+        def seq_of(conn: sqlite3.Connection, message_id: str | None) -> int | None:
+            if message_id is None:
+                return None
+            row = conn.execute(
+                "SELECT seq FROM messages WHERE conversation_id = ? AND id = ?",
+                (conversation_id, message_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown message {message_id} in {conversation_id}")
+            return int(row[0])
+
         def run(conn: sqlite3.Connection) -> list[Message]:
             with _transaction(conn, "DEFERRED"):
                 _require_conversation(conn, conversation_id)
-                upper = None
-                if before is not None:
-                    row = conn.execute(
-                        "SELECT seq FROM messages WHERE conversation_id = ? AND id = ?",
-                        (conversation_id, before),
-                    ).fetchone()
-                    if row is None:
-                        raise KeyError(f"unknown message {before} in {conversation_id}")
-                    upper = row[0]
+                upper, lower = seq_of(conn, before), seq_of(conn, after)
                 rows = conn.execute(
                     "SELECT id, role, created_at, blocks FROM messages"
                     " WHERE conversation_id = ? AND (? IS NULL OR seq < ?)"
-                    " ORDER BY seq DESC LIMIT ?",
-                    (conversation_id, upper, upper, -1 if limit is None else limit),
+                    " AND (? IS NULL OR seq > ?)"
+                    f" ORDER BY seq {'ASC' if after is not None else 'DESC'} LIMIT ?",
+                    (conversation_id, upper, upper, lower, lower,
+                     -1 if limit is None else limit),
                 ).fetchall()
-            return [_message(row) for row in reversed(rows)]
+            return [_message(row) for row in (rows if after is not None else reversed(rows))]
 
         return await self._run(run)
 

@@ -247,12 +247,21 @@ class InMemoryMemory(Memory):
             self.mutating -= 1
 
     async def history(self, conversation_id: ConversationId, *, before: str | None = None,
-                      limit: int | None = None) -> Sequence[Message]:
+                      limit: int | None = None, after: str | None = None
+                      ) -> Sequence[Message]:
         msgs = list(self._conv(conversation_id).messages)
-        if before is not None:
-            msgs = msgs[: next(i for i, m in enumerate(msgs) if m.id == before)]
+
+        def at(message_id: str) -> int:
+            index = next((i for i, m in enumerate(msgs) if m.id == message_id), None)
+            if index is None:
+                raise KeyError(f"unknown message {message_id}")
+            return index
+
+        start = at(after) + 1 if after is not None else 0
+        end = at(before) if before is not None else len(msgs)
+        msgs = msgs[start:end]
         if limit is not None:
-            msgs = msgs[-limit:] if limit else []
+            msgs = (msgs[:limit] if after is not None else msgs[-limit:]) if limit else []
         return msgs
 
     def _addendum(self, conv: Conversation) -> str:

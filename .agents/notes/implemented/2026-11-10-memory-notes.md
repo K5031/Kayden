@@ -39,7 +39,8 @@ texts are not loaded.
 
 ### Tools
 
-Memory's tools (`kayden.memory.tools`): `recall` (the archive, as before), `read_note`,
+Memory's tools (`kayden.memory.tools`): `recall` (the archive, as before), `read_around`
+(a recall hit with the messages before and after it), `read_note`,
 `save_note` (creates, or replaces the note with that title, case ignored; the model reads
 a note before changing it) and `forget_note`.
 

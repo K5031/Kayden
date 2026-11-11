@@ -25,9 +25,9 @@ Only two places offered tools: the one Tools module, and the runtime's built-ins
 - **The runtime** offers only `op_status` and `op_cancel` (`api.BUILTIN_TOOLS`), which are
   about its own operations. Their names are reserved.
 - **Memory** may offer tools: optional `Memory.list_tools()` and `Memory.execute(call,
-  ctx)`. `kayden.memory.tools` has `recall` and the note tools (`read_note`, `save_note`,
+  ctx)`. `kayden.memory.tools` has `recall`, `read_around` and the note tools (`read_note`, `save_note`,
   `forget_note`, see [memory as notes](2026-11-10-memory-notes.md)), built only on the
-  Memory contract, with their wording and title matching; the SQLite Memory offers them. A module that cannot edit long-term memory offers `recall` only, and one
+  Memory contract, with their wording and title matching; the SQLite Memory offers them. A module that cannot edit long-term memory offers `recall` and `read_around` only, and one
   that offers nothing gets no memory tools.
 - **Tools modules**, any number of them, in configured order.
 

@@ -429,6 +429,13 @@ class MemoryConformance:
         assert await memory.history(conv.id, before=messages[10].id, limit=4) == messages[6:10]
         assert await memory.history(conv.id, before=messages[0].id) == []
         assert await memory.history(conv.id, limit=0) == []
+        assert await memory.history(conv.id, after=messages[10].id) == messages[11:]
+        assert await memory.history(conv.id, after=messages[10].id, limit=3) == messages[11:14]
+        assert await memory.history(conv.id, after=messages[-1].id) == []
+        assert await memory.history(conv.id, after=messages[3].id,
+                                    before=messages[8].id) == messages[4:8]
+        with pytest.raises(KeyError):
+            await memory.history(conv.id, after="no-such-message")
 
     # ── Assemble ──────────────────────────────────────────────────────────
 

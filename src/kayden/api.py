@@ -569,11 +569,13 @@ class Memory(abc.ABC):
         *,
         before: str | None = None,
         limit: int | None = None,
+        after: str | None = None,
     ) -> Sequence[Message]:
         """Full transcript from the archive, in append order, regardless of compaction.
 
-        With `before` (a message id), only messages preceding it (KeyError for an
-        unknown id); with `limit`, only the last `limit` of those."""
+        With `before` (a message id), only messages preceding it; with `after`, only
+        messages following it (KeyError for an unknown id). With `limit`, only the last
+        `limit` of those, or with `after` the first: reading on from a message."""
 
     @abc.abstractmethod
     async def assemble(self, request: ContextRequest) -> AssembledContext:

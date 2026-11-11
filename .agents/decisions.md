@@ -803,3 +803,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Stored | On first use: the first append (a message, an activation notice), a duty or plan, a rename or an archive. The runtime calls `Memory.create_conversation(conversation_id=…)` with the draft's id and emits `ConversationUpdated`, which refreshes lists |
 | Continue from | Stored at once: Memory needs the source to seed the summary, and the chat is not blank anyway |
 | Leaving | A draft left for another chat is dropped with nothing to delete; so is one open when the instance stops |
+
+## read_around
+
+| Choice | Decision |
+|---|---|
+| Contract | `Memory.history(after=…)` reads on from a message: with `limit`, the first `limit` after it. With `before` too, the messages between |
+| Tool | `read_around(message_id, conversation_id?, before=3, after=3)`, up to 20 a side: the message marked `→`, in order with its neighbours, each line as a recall hit's (1000 characters at most). Found by reading on from the message and back from the next one, so no lookup by id is needed beyond `history` |
+| Offered | With `recall`, also by a Memory that keeps no notes |
+| Next | Segment summaries ([proposed note](notes/proposed/2026-11-11-segment-summaries.md)) build on it |

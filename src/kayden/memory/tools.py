@@ -1,4 +1,5 @@
-"""recall, read_note, save_note and forget_note: the tools a Memory module offers the model
+"""recall, read_around, read_note, save_note and forget_note: the tools a Memory module
+offers the model
 (Memory.list_tools, Memory.execute), built only on the Memory contract, so any module can use
 them as they are or offer its own.
 
@@ -29,12 +30,15 @@ from kayden.api import (
 )
 
 HIT_PREVIEW_CHARS = 1000
+AROUND_MAX = 20  # read_around: messages on either side at most
 _TITLE = {"type": "string", "minLength": 1}
+_SIDE = {"type": "integer", "minimum": 0, "maximum": AROUND_MAX, "default": 3}
 
 RECALL = ToolSpec(
     "recall",
     "Search the archive of this conversation, including messages no longer in context. "
-    'With scope "all", search the user\'s other conversations too.',
+    'With scope "all", search the user\'s other conversations too. Each hit is one message; '
+    "use read_around to see it with the messages around it.",
     {
         "type": "object",
         "properties": {
@@ -44,6 +48,24 @@ RECALL = ToolSpec(
                       "default": "conversation"},
         },
         "required": ["query"],
+    },
+    read_only=True,
+)
+READ_AROUND = ToolSpec(
+    "read_around",
+    "Read a message from the archive with the messages before and after it, in order: "
+    "what a recall hit was answering, or what came of it. Give the hit's message id, and "
+    "its conversation id when it is from another conversation.",
+    {
+        "type": "object",
+        "properties": {
+            "message_id": {"type": "string", "minLength": 1},
+            "conversation_id": {"type": "string",
+                                "description": "Default: this conversation."},
+            "before": _SIDE,
+            "after": _SIDE,
+        },
+        "required": ["message_id"],
     },
     read_only=True,
 )
@@ -76,8 +98,9 @@ FORGET_NOTE = ToolSpec(
 
 
 def memory_tools(*, editable: bool) -> tuple[ToolSpec, ...]:
-    """recall, plus the note tools when the module keeps notes."""
-    return (RECALL, READ_NOTE, SAVE_NOTE, FORGET_NOTE) if editable else (RECALL,)
+    """recall and read_around, plus the note tools when the module keeps notes."""
+    return ((RECALL, READ_AROUND, READ_NOTE, SAVE_NOTE, FORGET_NOTE) if editable
+            else (RECALL, READ_AROUND))
 
 
 async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> ToolOutput:
@@ -91,6 +114,10 @@ async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> T
             hits = await memory.search(args["query"], conversation_ids=scope,
                                        limit=args.get("limit", 5))
             return ToolOutput(_format_hits(hits))
+        case "read_around":
+            return await _read_around(memory, args.get("conversation_id") or ctx.conversation_id,
+                                      args["message_id"], args.get("before", 3),
+                                      args.get("after", 3))
         case "read_note":
             note = await _titled(memory, args["title"])
             if note is None:
@@ -125,16 +152,34 @@ async def _missing(memory: Memory, title: str) -> ToolOutput:
     return ToolOutput(f"No note is titled {title!r}. Notes:\n{listed}", is_error=True)
 
 
+async def _read_around(memory: Memory, conversation_id: str, message_id: str, before: int,
+                       after: int) -> ToolOutput:
+    try:
+        # Read on from the message, then back from the first one after it: the message
+        # itself is the last of those, and the history needs no lookup by id.
+        later = await memory.history(conversation_id, after=message_id, limit=max(after, 1))
+        upto = (await memory.history(conversation_id, before=later[0].id, limit=before + 1)
+                if later else await memory.history(conversation_id, limit=before + 1))
+    except KeyError:
+        return ToolOutput(f"No message {message_id} in conversation {conversation_id}.",
+                          is_error=True)
+    if not upto or upto[-1].id != message_id:
+        return ToolOutput(f"No message {message_id} in conversation {conversation_id}.",
+                          is_error=True)
+    return ToolOutput("\n".join(_line(conversation_id, m, mark=m.id == message_id)
+                                for m in [*upto, *later[:after]]))
+
+
 def _format_hits(hits: Sequence[ArchiveHit]) -> str:
     if not hits:
         return "No matches."
-    lines = []
-    for hit in hits:
-        m = hit.message
-        when = datetime.fromtimestamp(m.created_at, UTC).isoformat(timespec="seconds")
-        lines.append(f"[{hit.conversation_id}/{m.id} {m.role} {when}] "
-                     f"{_render(m)[:HIT_PREVIEW_CHARS]}")
-    return "\n".join(lines)
+    return "\n".join(_line(hit.conversation_id, hit.message) for hit in hits)
+
+
+def _line(conversation_id: str, m: Message, *, mark: bool = False) -> str:
+    when = datetime.fromtimestamp(m.created_at, UTC).isoformat(timespec="seconds")
+    return (f"{'→ ' if mark else ''}[{conversation_id}/{m.id} {m.role} {when}] "
+            f"{_render(m)[:HIT_PREVIEW_CHARS]}")
 
 
 def _render(message: Message) -> str:

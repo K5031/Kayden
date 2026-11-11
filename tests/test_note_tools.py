@@ -6,6 +6,7 @@ from typing import Any
 
 from kayden.api import BUILTIN_TOOLS, PROFILE, MemoriesChanged, PermissionPolicy, ToolStatus
 from kayden.memory.tools import SAVE_NOTE
+from tests.conformance.memory_suite import text_message
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step, call
 
@@ -57,7 +58,8 @@ async def test_only_recall_when_the_memory_module_keeps_no_notes(make: Any) -> N
     h = await harness(make, editable=False)
     await h.start()
     names = {spec.name for spec in await h.runtime.list_tools()}
-    assert "recall" in names and not names & {"read_note", "save_note", "forget_note"}
+    assert {"recall", "read_around"} <= names
+    assert not names & {"read_note", "save_note", "forget_note"}
 
 
 def test_they_come_from_memory_not_the_runtime() -> None:
@@ -75,3 +77,26 @@ async def test_a_memory_without_tools_gets_none(make: Any) -> None:
     await h.start()
     names = {spec.name for spec in await h.runtime.list_tools()}
     assert not names & {"recall", "save_note"} and "op_status" in names
+
+
+async def test_read_around_shows_a_hit_with_the_messages_before_and_after(make: Any) -> None:
+    h: Harness = await make(core=ScriptedCore([]), permissions=PermissionPolicy.DENY)
+    first = await h.chat()
+    for text in ("We need a name.", "How about Kayden?", "Yes, do that.", "Done."):
+        await h.memory.append(first.id, [text_message(text)])
+    messages = await h.memory.history(first.id)
+    hit = messages[2]  # "Yes, do that.": meaningless without what came before
+    h.core.add(Step(calls=[call("read_around", {"message_id": hit.id, "before": 1,
+                                                "after": 1}, id="a"),
+                           call("read_around", {"message_id": messages[0].id}, id="b"),
+                           call("read_around", {"message_id": "nope"}, id="c")]),
+               Step(text="ok"))
+    await h.turn("what did we call it?")
+    results = await h.results()
+    around = results["a"].content
+    assert around.index("How about Kayden?") < around.index("Yes, do that.") < around.index(
+        "Done.")
+    assert "We need a name." not in around  # one before, one after
+    assert around.count("→") == 1 and "→ [" in around.split("Yes, do that.")[0].splitlines()[-1]
+    assert "We need a name." in results["b"].content  # the first message: nothing before
+    assert results["c"].status == ToolStatus.ERROR

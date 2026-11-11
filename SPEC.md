@@ -249,7 +249,7 @@ Avoid cyclic orchestration dependencies.
 Memory maintenance must never independently restart LLM inference after the agent has gone idle.
 Consolidation may occur during an authorized inference cycle or be deferred until the next one.
 8.8 Cross-Conversation Retrieval
-The recall tool, offered by the Memory module, searches the current conversation's archive, or with scope "all" every conversation that is not archived. It is read-only and never merges conversation histories.
+The recall tool, offered by the Memory module, searches the current conversation's archive, or with scope "all" every conversation that is not archived. Each hit is one message; the read_around tool shows a message with the messages before and after it, so the agent can see what a hit was answering. Both are read-only and never merge conversation histories.
 9. Budgets
 Budget management belongs to the runtime.
 Each Kayden instance has independent configuration and resource limits.
@@ -414,7 +414,7 @@ Requests made through Memory's Completion carry maintenance=True; turns never do
 
 16.3 Memory
 The archive is append-only, full-fidelity and schema-versioned. Blocks are persisted generically so new block types need no migration.
-history returns the full transcript from the archive regardless of compaction. The runtime uses it for reopening conversations and for resume repair.
+history returns the full transcript from the archive regardless of compaction, or the part before or after a message. The runtime uses it for reopening conversations and for resume repair.
 assemble is read-only, performs no inference, and always fits the token budget. Its messages are a suffix that starts at a user message, never splits a call from its result, and includes the newest message. A single oversized message is truncated in the assembled view only.
 maintain runs only inside an authorized inference cycle, so it can never restart the agent by itself. It also writes a seeded conversation's first summary and a title for an untitled conversation (light model; a failed title call changes nothing; a title that is set is never overwritten). It receives the current context window, a metered Completion, and returns whether it acted. The Completion raises BudgetExhausted or CoreError. A maintain failure becomes a failure event without changing the agent state. Archive writes and compaction state are atomic.
 search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one set of notes per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. A Memory module may offer tools of its own (recall, read_note, save_note and forget_note come with the built-in SQLite Memory); they run without prompts and outside the tool-call budget, since they touch only Kayden's memory. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive; save_duty, optional, stores a conversation's duty and plan the same way. Editing long-term memory (notes, save_note, delete_note) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
