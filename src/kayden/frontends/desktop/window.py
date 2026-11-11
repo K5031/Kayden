@@ -959,6 +959,7 @@ class MessageBox(QPlainTextEdit):
 
     submitted = Signal()
     focus_changed = Signal(bool)
+    MIN_LINES = 2  # room to write, as other chat apps leave
     MAX_LINES = 6
 
     def __init__(self) -> None:
@@ -968,7 +969,7 @@ class MessageBox(QPlainTextEdit):
         self._fit()
 
     def _fit(self, *_: object) -> None:
-        lines = min(max(1, int(self.document().size().height())), self.MAX_LINES)
+        lines = min(max(self.MIN_LINES, int(self.document().size().height())), self.MAX_LINES)
         margins = self.contentsMargins()
         height = (lines * self.fontMetrics().lineSpacing() + 2 * self.document().documentMargin()
                   + margins.top() + margins.bottom() + 2)
@@ -1164,9 +1165,9 @@ class MainWindow(QMainWindow):
         self.prompts = QVBoxLayout()
         self.prompts.setContentsMargins(0, 0, 0, 8)
         self.composer = QFrame(objectName="composer")
-        composer = QHBoxLayout(self.composer)
-        composer.setContentsMargins(16, 10, 8, 8)
-        composer.setSpacing(8)
+        composer = QVBoxLayout(self.composer)
+        composer.setContentsMargins(16, 12, 10, 8)
+        composer.setSpacing(4)
         self.input = MessageBox()
         self.input.setPlaceholderText("Message Kayden")
         self.input.setToolTip("Enter sends. Shift+Enter starts a new line.")
@@ -1178,14 +1179,20 @@ class MainWindow(QMainWindow):
         self.send_button.setIconSize(QSize(16, 16))
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_button.clicked.connect(self._send_or_stop)
-        composer.addWidget(self.input, 1, Qt.AlignmentFlag.AlignVCenter)
-        composer.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
+        composer.addWidget(self.input)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        actions.addWidget(self.send_button)
+        composer.addLayout(actions)
         self.status_label = _label(wrap=False, selectable=False, role="small")
-        self.usage_label = _label(wrap=False, selectable=False, role="small")
+        self.model_button = QToolButton(objectName="modelPicker")
+        self.model_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.model_button.setToolTip("Change the model")
+        self.model_button.setAccessibleName("Model")
         footer = QHBoxLayout()
-        footer.setContentsMargins(10, 4, 10, 0)
+        footer.setContentsMargins(10, 4, 4, 0)
         footer.addWidget(self.status_label, 1)
-        footer.addWidget(self.usage_label)
+        footer.addWidget(self.model_button)
         bottom_column = QWidget()
         bottom_column.setMaximumWidth(COLUMN_WIDTH)
         bottom = QVBoxLayout(bottom_column)
@@ -1218,7 +1225,7 @@ class MainWindow(QMainWindow):
     def _paint_icons(self) -> None:
         colors = theme.current()
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
-                                            colors.on_accent))
+                                            colors.text))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
         maximized = self.isMaximized()
         for name, button in self.window_buttons.items():
@@ -1302,6 +1309,7 @@ class MainWindow(QMainWindow):
         self.model_menu = main_menu.addMenu("&Model")
         self.model_menu.aboutToShow.connect(self._fill_model_menu)
         self._fill_model_menu()
+        self.model_button.setMenu(self.model_menu)
 
         profile_menu = QMenu(self)
         self.profile_button.setMenu(profile_menu)
@@ -1501,8 +1509,10 @@ class MainWindow(QMainWindow):
         if self.sessions is not None and model.conversation is not None and (
                 working := working_text(self.sessions.of(model.conversation.id))):
             status = f"{status} · {working}"
-        self.status_label.setText(status)
-        self.usage_label.setText(model.model or "")
+        self.status_label.setText("" if status == "Ready" else status)  # say only news
+        known = () if self._models is None or isinstance(self._models, str) else self._models
+        names = {m.id: m.name for m in known}
+        self.model_button.setText(names.get(model.model or "", model.model or ""))
         conversation = model.conversation
         if conversation is not None:
             self.title_label.setText(conversation_label(
@@ -1845,6 +1855,7 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 - e.g. no key yet
             self._models = user_message(e)
         self._fill_model_menu()
+        self._refresh_status()  # the model's name, now that it is known
 
     def _fill_model_menu(self) -> None:
         """From the models already loaded: a menu that is empty when clicked does not

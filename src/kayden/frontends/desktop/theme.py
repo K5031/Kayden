@@ -51,6 +51,7 @@ class Palette:
     error_text: str
     bubble: str  # your messages
     select: str  # the open conversation in the sidebar
+    composer: str  # the message box
 
 
 LIGHT = Palette(
@@ -58,13 +59,13 @@ LIGHT = Palette(
     line="#E3E3E8", track="#C9C9D2", text="#1B1B1F", muted="#6C6C78", accent="#5B5BD6",
     accent_hover="#4C4CC4", accent_soft="#EDEDFC", accent_text="#3E3EA8", on_accent="#FFFFFF",
     ok="#1F8A5B", warning="#9A5B00", error="#C62828", error_bg="#FDECEC",
-    error_text="#8E1B1B", bubble="#EFEFF3", select="#E7E7EC")
+    error_text="#8E1B1B", bubble="#EFEFF3", select="#E7E7EC", composer="#F4F4F7")
 DARK = Palette(
     dark=True, bg="#1A1A1E", side="#131316", card="#232328", field="#202025",
     line="#2F2F36", track="#4A4A55", text="#ECECF0", muted="#9A9AA6", accent="#8C8CF5",
     accent_hover="#A3A3F8", accent_soft="#2A2A48", accent_text="#C9C9FF", on_accent="#14142B",
     ok="#4CC38A", warning="#F3C773", error="#F28B82", error_bg="#3B1F22",
-    error_text="#F7B4AE", bubble="#2B2B31", select="#26262C")
+    error_text="#F7B4AE", bubble="#2B2B31", select="#26262C", composer="#26262C")
 
 ICONS = Path(__file__).parent / "icons"
 
@@ -172,8 +173,11 @@ QPushButton[danger="true"] {{ background: {c.error}; color: {c.bg}; border-color
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px;
     color: {c.muted}; }}
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
-QToolButton#send {{ background: {c.accent}; border-radius: 16px; padding: 0; }}
-QToolButton#send:hover {{ background: {c.accent_hover}; }}
+QToolButton#send {{ background: transparent; border-radius: 8px; padding: 0; }}
+QToolButton#send:hover {{ background: {c.select}; }}
+QToolButton#modelPicker {{ color: {c.muted}; padding: 2px 6px; font-size: {small}; }}
+QToolButton#modelPicker:hover {{ background: {c.select}; color: {c.text}; }}
+QToolButton#modelPicker::menu-indicator {{ image: none; width: 0; }}
 QToolButton#folder {{ padding: 0 4px; }}
 QToolButton#folder:hover {{ background: {c.line}; color: {c.text}; }}
 
@@ -224,8 +228,8 @@ QToolButton#menu::menu-indicator {{ image: none; width: 0; }}
 QFrame#headerGroup {{ background: {c.card}; border-radius: 8px; }}
 QFrame#banner {{ background: {c.error_bg}; border-radius: 8px; }}
 QFrame#banner QLabel {{ color: {c.error_text}; }}
-QFrame#composer {{ background: {c.field}; border: 1px solid {c.line}; border-radius: 16px; }}
-QFrame#composer[focused="true"] {{ border-color: {c.accent}; }}
+QFrame#composer {{ background: {c.composer}; border: 1px solid {c.line}; border-radius: 14px; }}
+QFrame#composer[focused="true"] {{ border-color: {c.track}; }}
 QFrame#composer QPlainTextEdit {{ background: transparent; border: none; padding: 0; }}
 QFrame#user {{ background: {c.bubble}; border-radius: 14px; }}
 QFrame#user QLabel {{ color: {c.text}; }}

@@ -76,7 +76,7 @@ another reason, the Settings window opens with the message.
 | Open work Kayden handed off | Its sub-sessions are listed under the conversation, with a dot while they work: click one to open it there, talk to it, approve its steps or stop it. Click the conversation to go back. Right-click one to resume, change its spending limit, rename, archive or delete it; the limit for new ones is in **Settings**. See [Sub-sessions](concepts.md#sub-sessions). |
 | Fold a project | Conversations are grouped by their folder; click a folder's name to fold or unfold it. |
 | Give a conversation standing work | **☰ → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
-| Change the model | **☰ → Model**. |
+| Change the model | Click the model's name under the message box, or **☰ → Model**. |
 | Change settings | the gear at the bottom left, or **Ctrl+,**. |
 | Make everything larger or smaller | **Ctrl +** and **Ctrl −** (also in **☰ → View**); **Ctrl+0** goes back to normal. Kayden remembers the size. |
 
@@ -95,8 +95,8 @@ deletion does not reach.
 
 Hover the conversation's title to see its folder. What Kayden has spent, across all
 conversations, is at the top of the menu under your name; when you pass 80% of your
-spending limit, a notice in the conversation says so. The line under the message box shows what Kayden is doing, how many tasks run in the background,
-when a duty checks in next, and the model.
+spending limit, a notice in the conversation says so. Under the message box are what Kayden is doing (when it is doing something), how many tasks run
+in the background, when a duty checks in next, and the model.
 
 At start the app reopens your most recent conversation, or the one you were in when you
 switched from the terminal app.

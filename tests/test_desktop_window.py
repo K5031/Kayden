@@ -93,7 +93,7 @@ async def test_a_turn_is_rendered(make, qapp):
     assert tool.state.text().startswith("done") and not tool.cancel.isVisibleTo(tool)
     (reply,) = widgets(window, AssistantBubble)
     assert "Title" in reply.body.toPlainText()
-    assert window.status_label.text() == "Ready" and window.send_button.text() == "Send"
+    assert window.status_label.text() == "" and window.send_button.text() == "Send"
 
 
 async def test_permission_card_buttons_answer_the_prompt(make, qapp):
@@ -1050,3 +1050,13 @@ async def test_the_window_draws_its_own_title_bar(make, qapp):
     assert not edges(window.mapToGlobal(QPoint(2, 300)))  # maximized: nothing to resize
     window.window_buttons["maximize"].click()
     await eventually(lambda: not window.isMaximized())
+
+
+async def test_the_model_picker_under_the_message_box_shows_the_models_name(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    await window.refresh_models()
+    assert window.model_button.text() == "Fake One"  # its name, not its id
+    assert window.model_button.menu() is window.model_menu
+    assert window.input.height() >= 2 * window.input.fontMetrics().lineSpacing()
