@@ -22,11 +22,13 @@ from kayden.api import (
     ConversationId,
     ConversationInfo,
     CoreError,
+    Duty,
     Memory,
     MemoryNote,
     MemoryView,
     Message,
     OperationResult,
+    PlanItem,
     Role,
     ServerToolUse,
     Text,
@@ -177,6 +179,12 @@ class InMemoryMemory(Memory):
         if archived is not None:
             changes["archived"] = archived
         conv.info = replace(conv.info, **changes)
+        return self._info(conv)
+
+    async def save_duty(self, conversation_id: ConversationId, duty: Duty | None,
+                        plan: Sequence[PlanItem]) -> ConversationInfo:
+        conv = self._conv(conversation_id)
+        conv.info = replace(conv.info, duty=duty, plan=tuple(plan))
         return self._info(conv)
 
     async def delete_conversation(self, conversation_id: ConversationId) -> None:

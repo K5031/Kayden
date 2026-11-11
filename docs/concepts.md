@@ -23,13 +23,40 @@ agent is woken with the results and carries on by itself, so you don't have to a
 it is done. It can check on a task or cancel it, and so can you (Ctrl+K). A task that runs
 over an hour (unless the tool allows longer) ends as timed out.
 
-That is the only time the agent acts without a message from you. Permissions and the
-spending limit apply as always, and after Kayden restarts it waits for you before doing
-anything.
+Apart from a [duty](#duties), that is the only time the agent acts without a message from
+you. Permissions and the spending limit apply as always, and after Kayden restarts it
+waits for you before doing anything.
 
 When you stop the agent or quit, running tasks are cancelled. If one does not stop in time,
 it is marked as abandoned: it may still be running, and the agent is told to check before
 assuming anything.
+
+## Duties
+
+A duty is standing work you give a conversation, such as "keep my inbox answered". The
+agent then carries it on by itself: it keeps a plan of steps, works through them, and
+checks in again on its own. You can give any conversation a duty at any time, change it,
+or turn it off; the conversation keeps everything said so far.
+
+- **Keep doing it** runs until you turn it off. **Until it is done** also ends when the
+  agent says the goal is reached, with a short report.
+- **The plan** is a list of steps, each to do, doing, done or dropped, with an optional
+  due time and note. Every request shows it to the agent, and you can edit it.
+- **When it wakes:** when a background task finishes (the first one, not all of them),
+  when a step falls due, when you write, and otherwise at least every so often (an hour
+  unless you change it). It never checks in more often than the minimum you set (a
+  minute unless you change it); a finished task or your message wakes it at once.
+  To react to the outside world, the agent starts a tool that waits for something, for
+  example new mail through a tool server; when it finishes, the agent wakes.
+- **It needs a spending limit**, which caps what an agent working for days can cost.
+- **It pauses** when you press Stop, when the limit is reached, after an error, and after
+  Kayden restarts, so a crash never quietly repeats an action. Send a message or activate
+  the conversation (Ctrl+R) to resume it.
+- **Permissions still apply.** An action that would ask you waits for you, so a duty that
+  runs unattended needs permissions that cover what it does.
+- **Continue from** does not copy a duty.
+
+The status line says when the duty checks in next, or that it is paused.
 
 ## Memory
 

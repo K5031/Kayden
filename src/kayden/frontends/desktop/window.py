@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -69,6 +70,7 @@ from kayden.api import (
     PROFILE,
     ConversationInfo,
     Decision,
+    Duty,
     McpServer,
     MemoryNote,
     ModelInfo,
@@ -81,10 +83,13 @@ from kayden.api import (
 )
 from kayden.frontends.common import (
     AT_RESTART,
+    DUTY_HINT,
+    DUTY_KIND_LABELS,
     MCP_VARIABLES_HINT,
     MCP_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
+    PLAN_HINT,
     call_parts,
     delete_details,
     dollars,
@@ -96,6 +101,8 @@ from kayden.frontends.common import (
     model_label,
     module_options,
     needs_restart,
+    parse_plan_text,
+    plan_text,
     request_note,
     restart_notice,
 )
@@ -982,13 +989,17 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         self.memory_action = QAction("&Memory…", self)
         self.memory_action.triggered.connect(self.open_memory)
+        self.duty_action = QAction("&Duty…", self)
+        self.duty_action.setStatusTip("Give this conversation standing work it carries on "
+                                      "by itself.")
+        self.duty_action.triggered.connect(self.open_duty)
         servers = QAction("&Tool servers (MCP)…", self)
         servers.triggered.connect(self.open_tool_servers)
         self.app_menu_action = QAction("&Add to App Menu", self)
         self.app_menu_action.setStatusTip("Start Kayden from your app menu, with its own icon.")
         self.app_menu_action.triggered.connect(self._add_to_app_menu)
         self.app_menu_action.setVisible(app_menu.supported() and not app_menu.is_current())
-        for action in (self.new_action, None, self.memory_action, servers,
+        for action in (self.new_action, self.duty_action, None, self.memory_action, servers,
                        settings, self.app_menu_action, None, stop, quit_action):
             if action is None:
                 file_menu.addSeparator()
@@ -1304,6 +1315,12 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def open_duty(self) -> None:
+        if self.model.conversation is None:
+            self.model.notify("Open a conversation first.")
+            return
+        DutyDialog(self, self.controller, self.model.conversation).open()
+
     def open_tool_servers(self) -> None:
         if self.mcp_dialog is None:
             self.mcp_dialog = McpDialog(self, self.runtime, self.controller)
@@ -1494,6 +1511,75 @@ class NoteDialog(QDialog):
             self.title.text(), self.description.text(), self.text.toPlainText(),
             self.note.id if self.note else None, failed=failed,
             done=lambda _: self.accept())
+
+
+class DutyDialog(QDialog):
+    """The open conversation's duty and plan."""
+
+    def __init__(self, parent: QWidget, controller: Controller, info: ConversationInfo) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        duty = info.duty or Duty("")
+        self.setWindowTitle("Duty")
+        self.setMinimumSize(600, 520)
+        form = QFormLayout(self)
+        form.setContentsMargins(20, 18, 20, 16)
+        form.addRow(_label("Duty", selectable=False, role="heading"))
+        form.addRow(_label(DUTY_HINT, tone="muted"))
+        self.instruction = QPlainTextEdit(duty.instruction)
+        self.instruction.setPlaceholderText("e.g. Keep my inbox answered")
+        self.instruction.setMaximumHeight(90)
+        self.kind = QComboBox()
+        for kind, label in DUTY_KIND_LABELS.items():
+            self.kind.addItem(label, kind)
+        self.kind.setCurrentIndex(self.kind.findData(duty.kind))
+        self.max_minutes, self.min_minutes = QDoubleSpinBox(), QDoubleSpinBox()
+        for box, seconds in ((self.max_minutes, duty.max_interval_s),
+                             (self.min_minutes, duty.min_interval_s)):
+            box.setRange(0.1, 7 * 24 * 60)
+            box.setDecimals(1)
+            box.setSuffix(" minutes")
+            box.setValue(seconds / 60)
+        self.plan = QPlainTextEdit(plan_text(info.plan))
+        self.plan.setPlaceholderText("[todo] A step | due 2026-11-12 09:00 | a note")
+        self.error = _label()
+        theme.mark(self.error, "tone", "error")
+        self.error.hide()
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        self.save_button = _primary(buttons.addButton(
+            "Save" if info.duty else "Turn on", QDialogButtonBox.ButtonRole.AcceptRole))
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        if info.duty is not None:
+            off = buttons.addButton("Turn off", QDialogButtonBox.ButtonRole.DestructiveRole)
+            off.clicked.connect(lambda: self._apply(None))
+        form.addRow("What to do", self.instruction)
+        form.addRow("How long", self.kind)
+        form.addRow("Check in at least every", self.max_minutes)
+        form.addRow("and at most every", self.min_minutes)
+        form.addRow(_label(PLAN_HINT, tone="muted"))
+        form.addRow("Plan", self.plan)
+        form.addRow(self.error)
+        form.addRow(buttons)
+
+    def _save(self) -> None:
+        instruction = self.instruction.toPlainText().strip()
+        self._apply(Duty(instruction, self.kind.currentData(), self.min_minutes.value() * 60,
+                         self.max_minutes.value() * 60) if instruction else None)
+
+    def _fail(self, error: Exception) -> None:
+        self.save_button.setEnabled(True)
+        self.error.setText(user_message(error))
+        self.error.show()
+
+    def _apply(self, duty: Duty | None) -> None:
+        try:
+            plan = parse_plan_text(self.plan.toPlainText())
+        except ValueError as e:
+            self._fail(e)
+            return
+        self.save_button.setEnabled(False)
+        self.controller.save_duty(duty, plan, failed=self._fail, done=lambda _: self.accept())
 
 
 class McpDialog(QDialog):

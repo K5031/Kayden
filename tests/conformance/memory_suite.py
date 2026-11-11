@@ -29,10 +29,14 @@ from kayden.api import (
     BudgetExhausted,
     ContextRequest,
     CoreError,
+    Duty,
+    DutyKind,
     Memory,
     Message,
     OpaqueBlock,
     OperationResult,
+    PlanItem,
+    PlanStatus,
     Reasoning,
     Role,
     Text,
@@ -267,6 +271,26 @@ class MemoryConformance:
         assert listed.title is None
         with pytest.raises(KeyError):
             await memory.update_conversation("missing", title="x")
+
+    async def test_a_duty_and_plan_are_stored_and_not_copied(self, open_memory: MemoryFactory):
+        memory = open_memory()
+        conv = await memory.create_conversation()
+        assert conv.duty is None and conv.plan == ()
+        duty = Duty("Answer the inbox", DutyKind.GOAL, min_interval_s=30, max_interval_s=600)
+        plan = (PlanItem("Read new mail", PlanStatus.DOING, due=1_800_000_000.5, note="hourly"),
+                PlanItem("Draft replies"))
+        info = await memory.save_duty(conv.id, duty, plan)
+        assert (info.duty, tuple(info.plan)) == (duty, plan)
+        seeded = await memory.create_conversation(seed_from=conv.id)
+        assert seeded.duty is None and seeded.plan == ()
+        await memory.aclose()
+        reopened = open_memory()
+        [stored] = [c for c in await reopened.list_conversations() if c.id == conv.id]
+        assert (stored.duty, tuple(stored.plan)) == (duty, plan)
+        ended = await reopened.save_duty(conv.id, None, plan)
+        assert ended.duty is None and tuple(ended.plan) == plan
+        with pytest.raises(KeyError):
+            await reopened.save_duty("missing", None, ())
 
     async def test_archived_conversations_are_hidden_from_the_list(self, memory: Memory):
         kept = await memory.create_conversation(title="kept")

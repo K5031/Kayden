@@ -70,6 +70,7 @@ another reason, the Settings window opens with the message.
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
 | See what Kayden remembers | **Kayden → Memory…**: About you and the notes it keeps across conversations; add, edit or delete them. |
 | Give Kayden more tools | **Kayden → Tool servers (MCP)…**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
+| Give a conversation standing work | **Kayden → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |
 | Make everything larger or smaller | **Ctrl +** and **Ctrl −** (also in the **View** menu); **Ctrl+0** goes back to normal. Kayden remembers the size. |
@@ -89,8 +90,8 @@ deletion does not reach.
 
 Above the conversation are the conversation's folder and what Kayden has spent so far,
 across all conversations. The
-line under the message box shows what Kayden is doing, how many tasks run in the background
-and the model.
+line under the message box shows what Kayden is doing, how many tasks run in the background,
+when a duty checks in next, and the model.
 
 At start the app reopens your most recent conversation, or the one you were in when you
 switched from the terminal app.

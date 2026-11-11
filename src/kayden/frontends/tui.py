@@ -48,6 +48,9 @@ from kayden.api import (
     ConversationInfo,
     ConversationUpdated,
     Decision,
+    Duty,
+    DutyKind,
+    DutyScheduled,
     EventEnvelope,
     Failure,
     Frontend,
@@ -69,6 +72,7 @@ from kayden.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
+    PlanItem,
     Reasoning,
     ReasoningDelta,
     Role,
@@ -97,13 +101,17 @@ from kayden.api import (
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
     AT_RESTART,
+    DUTY_HINT,
+    DUTY_KIND_LABELS,
     MCP_VARIABLES_HINT,
     MCP_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
+    PLAN_HINT,
     RESULT_LABELS,
     call_parts,
     delete_details,
+    duty_status,
     folder_path,
     group_title,
     loosening,
@@ -113,7 +121,9 @@ from kayden.frontends.common import (
     model_label,
     module_options,
     needs_restart,
+    parse_plan_text,
     past_tense,
+    plan_text,
     provider_step,
     request_note,
     restart_notice,
@@ -152,6 +162,7 @@ DECISION_ALIASES = {
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
     "/conversations (F3), /memory (F4), /mcp (tool servers), /folder [path], "
+    "/duty [instruction|off] (F5), /goal [instruction], "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -1082,6 +1093,77 @@ FRESH = "__fresh__"
 DEFAULT_MODEL = "__default__"
 
 
+type DutyChoice = tuple[Duty | None, list[PlanItem]]
+
+
+class DutyScreen(ModalScreen[DutyChoice | None]):
+    """The open conversation's duty and plan: (duty or None to end it, plan)."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, info: ConversationInfo) -> None:
+        super().__init__()
+        self.info = info
+
+    def compose(self) -> ComposeResult:
+        duty = self.info.duty or Duty("")
+        with VerticalScroll(classes="dialog"):
+            yield Label("Duty", classes="title")
+            yield Static(DUTY_HINT, classes="hint")
+            yield Label("What should Kayden keep doing?")
+            yield Input(duty.instruction, placeholder="e.g. Keep my inbox answered",
+                        id="duty-instruction")
+            yield Select([(label, kind) for kind, label in DUTY_KIND_LABELS.items()],
+                         value=duty.kind, allow_blank=False, id="duty-kind")
+            yield Label("Check in at least every … minutes")
+            yield Input(f"{duty.max_interval_s / 60:g}", id="duty-max")
+            yield Label("and at most every … minutes")
+            yield Input(f"{duty.min_interval_s / 60:g}", id="duty-min")
+            yield Label("Plan")
+            yield Static(PLAN_HINT, classes="hint")
+            yield TextArea(plan_text(self.info.plan), id="duty-plan")
+            yield Label("", id="duty-error", classes="error")
+            with Horizontal(classes="buttons"):
+                yield Button("Save" if self.info.duty else "Turn on", variant="primary",
+                             id="save")
+                if self.info.duty is not None:
+                    yield Button("Turn off", id="turn-off")
+                yield Button("Cancel", id="cancel")
+
+    def _plan(self) -> list[PlanItem] | None:
+        try:
+            return parse_plan_text(self.query_one("#duty-plan", TextArea).text)
+        except ValueError as e:
+            self.query_one("#duty-error", Label).update(str(e))
+            return None
+
+    @on(Button.Pressed, "#save")
+    def _save(self) -> None:
+        if (plan := self._plan()) is None:
+            return
+        instruction = self.query_one("#duty-instruction", Input).value.strip()
+        if not instruction:
+            self.dismiss((None, plan))
+            return
+        try:
+            low, high = (60 * float(self.query_one(f"#duty-{n}", Input).value)
+                         for n in ("min", "max"))
+        except ValueError:
+            self.query_one("#duty-error", Label).update("Write the minutes as numbers.")
+            return
+        kind = self.query_one("#duty-kind", Select).value
+        self.dismiss((Duty(instruction, kind, low, high), plan))
+
+    @on(Button.Pressed, "#turn-off")
+    def _turn_off(self) -> None:
+        if (plan := self._plan()) is not None:
+            self.dismiss((None, plan))
+
+    @on(Button.Pressed, "#cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
+
+
 class StartScreen(ModalScreen[StartOptions | None]):
     """Chooses the conversation and model, and how a new conversation starts."""
 
@@ -1233,6 +1315,7 @@ class KaydenApp(App[None]):
         Binding("f2", "settings", "Settings", priority=True),
         Binding("f3", "conversations", "Conversations", priority=True),
         Binding("f4", "memory", "Memory", priority=True),
+        Binding("f5", "duty", "Duty", priority=True),
         Binding("ctrl+k", "operations", "Cancel task", priority=True),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
@@ -1248,6 +1331,7 @@ class KaydenApp(App[None]):
         self.conversation: ConversationInfo | None = None
         self.model: str | None = None
         self.usage: UsageSnapshot | None = None
+        self.duty_wake_at: float | None = None
         self.notice = ""
         self._inbox: asyncio.Queue[EventEnvelope | _Resync | None] = asyncio.Queue()
         self._tool_entries: dict[str, ToolEntry] = {}
@@ -1341,6 +1425,7 @@ class KaydenApp(App[None]):
         self.conversation = snap.conversation
         self.model = snap.model
         self.usage = snap.usage
+        self.duty_wake_at = snap.duty_wake_at
         self._oldest_id = history[0].id if history else None
         if len(history) == HISTORY_PAGE:
             await self._mount(LoadEarlier())
@@ -1443,6 +1528,8 @@ class KaydenApp(App[None]):
                     await self._mount(SystemEntry(
                         f"Memory updated: {', '.join(saved)} (F4 to see it)"))
                 self._reload(MemoryScreen)
+            case DutyScheduled(wake_at=wake_at):
+                self.duty_wake_at = wake_at
             case MaintenanceStarted():
                 self.notice = "Tidying up memory…"
             case MaintenanceFinished():
@@ -1631,6 +1718,9 @@ class KaydenApp(App[None]):
                     "left: "
                     + ", ".join(f"{k} {v:g}" for k, v in self.usage.budget_remaining.items())
                 )
+        if self.conversation is not None and (duty := duty_status(
+                self.conversation.duty, self.duty_wake_at, self.state)):
+            parts.append(duty)
         if self.notice:
             parts.append(self.notice)
         style = {
@@ -1700,6 +1790,15 @@ class KaydenApp(App[None]):
                 self.action_memory()
             case "mcp":
                 self.push_screen(McpScreen(self.runtime))
+            case "duty" | "goal" if arg == "off":
+                self._call(self.runtime.set_duty(None))
+            case "duty" | "goal" if arg:
+                current = self.conversation.duty if self.conversation is not None else None
+                kind = DutyKind.GOAL if name == "goal" else DutyKind.DUTY
+                duty = replace(current, instruction=arg, kind=kind) if current else Duty(arg, kind)
+                self._call(self.runtime.set_duty(duty))
+            case "duty" | "goal" | "plan":
+                self.action_duty()
             case "folder" if arg:
                 self.new_in_folder(str(Path(arg).expanduser()))
             case "folder":
@@ -1780,6 +1879,24 @@ class KaydenApp(App[None]):
             self.push_screen(MemoryScreen(self.runtime))
 
         self._call(open_screen())
+
+    def action_duty(self) -> None:
+        if self.conversation is None:
+            self.notify("Open a conversation first.", severity="warning")
+            return
+        self.push_screen(DutyScreen(self.conversation), self._on_duty_chosen)
+
+    def _on_duty_chosen(self, choice: DutyChoice | None) -> None:
+        if choice is None:
+            return
+        duty, plan = choice
+
+        async def apply() -> None:
+            await self.runtime.set_plan(plan)
+            if duty is not None or (self.conversation and self.conversation.duty):
+                await self.runtime.set_duty(duty)
+
+        self._call(apply())
 
     def action_operations(self) -> None:
         self.push_screen(OperationsScreen(self.runtime.snapshot().operations),

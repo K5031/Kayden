@@ -562,7 +562,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offere
 
 | Choice | Value |
 |---|---|
-| Store | Schema 7: `notes` (note 1 is the profile, "About you", created with the store), `note_revisions` (title, description, text, writing conversation, time; the latest is current), `saved_exchanges` (per conversation, the last message the save pass read). `memory_entries`, `memory_revisions` and `forgotten` are gone |
+| Store | Schema 7 (8 adds duties): `notes` (note 1 is the profile, "About you", created with the store), `note_revisions` (title, description, text, writing conversation, time; the latest is current), `saved_exchanges` (per conversation, the last message the save pass read). `memory_entries`, `memory_revisions` and `forgotten` are gone |
 | Titles | Unique with case ignored; saving by a title that exists writes that note and keeps its own title; leading `#` stripped from a title the save pass writes; the profile keeps its title and cannot be deleted |
 | Prompt | Profile in full, then "title: description" of the other notes, most recently written first, within `long_term_fraction` (5 %) of the context budget |
 | Tools | `read_note(title)`, `save_note(title, description, text)` (replaces the whole text; an empty description keeps the old one), `forget_note(title)`; a missing title answers ERROR listing the notes |
@@ -641,3 +641,20 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 | No answer | The terminal app has the folder (or a crash left it locked): one message, "Kayden is already open, probably in a terminal…", then the app closes |
 | Terminal app | With `already_open` it exits at once (return code 1) with the error and what to do, instead of opening Settings |
 | Raising | Desktops may refuse to give a background program's window focus (KDE's focus-stealing prevention); the window then asks for attention in the task bar instead |
+
+## Duties
+
+Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
+
+| Choice | Value |
+|---|---|
+| Intervals | Default minimum 1 minute, maximum 1 hour (`Duty.min_interval_s`, `max_interval_s`); the frontends take minutes |
+| Spending limit | `Budget.max_cost_usd` must be set: `set_duty` refuses without it; a duty whose limit was removed later pauses when the cycle ends, with `Failure(BUDGET)` |
+| Prompt | Appended to the system prompt after Memory's addendum: "## Your duty" (instruction, how it is woken, finish_goal for a goal) and "## Plan" (one line per item: status, text, due in local ISO time, note). A plan without a duty is shown alone. The current time is not in the system prompt, which would change every request and void the provider's prompt cache; wake-up notices and update_plan's result give it |
+| Notice | A cycle the runtime starts for a duty begins with a USER message "[Runtime notice] It is <local time>. You were woken for your duty: <cause>…"; causes: the duty was turned on, a plan item is due, scheduled check-in, background work finished. User-message cycles get none |
+| update_plan | Replaces the whole list; `due` is ISO 8601 (local time without an offset) or `due_in_minutes`; an unreadable time is an ERROR result and changes nothing. Offered while the conversation has a duty or a plan; finish_goal only with a goal |
+| Schedule | Computed when a cycle ends idle (an asyncio timer); cancelled by any cycle request, Stop, start, failure, ending the duty and shutdown; recomputed when the duty or plan changes while idle. Overdue items wake at the minimum interval |
+| Events | `ConversationUpdated` for duty and plan changes; `DutyScheduled(wake_at)` and `RuntimeSnapshot.duty_wake_at` for the next wake; the event log records `duty`, `plan` (item count), `duty_scheduled` (delay, cause), `duty_paused`, `goal_finished` and each `cycle_requested` reason ("duty: <cause>") |
+| Store | SQLite schema 8: `conversations.duty` (JSON or NULL) and `conversations.plan` (JSON list, default `[]`) |
+| Plan text | The TUI and desktop edit the plan as lines: `[status] step \| due YYYY-MM-DD HH:MM \| note` (`frontends.common.plan_text`, `parse_plan_text`) |
+| Commands | TUI: `/duty <instruction>`, `/goal <instruction>`, `/duty off`, `/duty` or `/plan` or F5 for the screen. Desktop: **Kayden → Duty…** |

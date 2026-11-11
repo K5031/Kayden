@@ -58,8 +58,9 @@ Runtime guarantees to modules:
   queued user messages (one USER message each, in send order). A turn without tool
   calls ends the cycle, unless queued user messages are delivered at that boundary: they
   authorize the next turn and the cycle continues. The wake set (every operation
-  outstanding then) is computed at that boundary: when all of them have terminated, the
-  runtime starts the next cycle by itself, so the agent can report on work it started.
+  outstanding then) is computed at that boundary: when all of them have terminated (with
+  a duty, the first of them), the runtime starts the next cycle by itself, so the agent can
+  report on work it started. A duty also wakes it on its schedule (see Duty).
 - Budgets: a tool start checks every dimension and counts the call in one atomic step.
   Inference checks every dimension before it starts (nothing is reserved, since its cost
   is unknown) and is cancelled as soon as in-flight usage exhausts one.
@@ -377,6 +378,45 @@ class ConversationInfo:
     seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
     preview: str | None = None  # start of the first user message, for display
     folder: str | None = None  # work folder, an absolute path; None = the Tools' default
+    duty: Duty | None = None  # standing work the conversation does by itself
+    plan: Sequence[PlanItem] = ()  # kept when the duty ends
+
+
+class DutyKind(StrEnum):
+    DUTY = "duty"  # runs until a person turns it off
+    GOAL = "goal"  # also ends when the agent declares it reached (finish_goal)
+
+
+@dataclass(frozen=True, slots=True)
+class Duty:
+    """Standing work: a conversation with a duty continues by itself. Only a person sets
+    one (RuntimeAPI.set_duty). While the agent is idle it wakes on the first operation to
+    finish (not the whole batch), on a message, and at the earliest due open plan item,
+    held between min_interval_s and max_interval_s after the cycle ends; with nothing due,
+    at max_interval_s."""
+
+    instruction: str
+    kind: DutyKind = DutyKind.DUTY
+    min_interval_s: float = 60.0
+    max_interval_s: float = 3600.0
+
+
+class PlanStatus(StrEnum):
+    TODO = "todo"
+    DOING = "doing"
+    DONE = "done"
+    DROPPED = "dropped"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanItem:
+    """One step of a conversation's plan, which the agent keeps with update_plan and the
+    user edits (RuntimeAPI.set_plan). Every request shows the whole plan."""
+
+    text: str
+    status: PlanStatus = PlanStatus.TODO
+    due: float | None = None  # Unix time; an open item due wakes a duty
+    note: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -617,6 +657,13 @@ class Memory(abc.ABC):
         emptied."""
         raise NotImplementedError
 
+    async def save_duty(self, conversation_id: ConversationId, duty: Duty | None,
+                        plan: Sequence[PlanItem]) -> ConversationInfo:
+        """Optional. Replace the conversation's duty and plan (ConversationInfo.duty, plan),
+        stored as metadata. KeyError if unknown. create_conversation never copies them from
+        seed_from."""
+        raise NotImplementedError
+
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
         """Optional. Erase a conversation: messages, summaries, search index entries,
         and metadata. Notes it wrote stay, with no source conversation: they are managed in
@@ -660,8 +707,42 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     ),
 }
 
+_PLAN_ITEM = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "enum": [s.value for s in PlanStatus], "default": "todo"},
+        "due": {"type": "string", "description":
+                "When it falls due, ISO 8601 (e.g. 2026-11-12T09:00), local time unless an "
+                "offset is given."},
+        "due_in_minutes": {"type": "number", "minimum": 0,
+                           "description": "Instead of due: minutes from now."},
+        "note": {"type": "string"},
+    },
+    "required": ["text"],
+}
+
+# Runtime built-ins offered while the open conversation has a duty or a plan
+# (update_plan), or a goal (finish_goal). Like BUILTIN_TOOLS, never gated and not counted.
+DUTY_TOOLS: Mapping[str, ToolSpec] = {
+    "update_plan": ToolSpec(
+        "update_plan",
+        "Replace your plan with this whole list. Every request shows it; an open item that "
+        "falls due wakes you.",
+        {"type": "object",
+         "properties": {"items": {"type": "array", "items": _PLAN_ITEM}},
+         "required": ["items"]},
+    ),
+    "finish_goal": ToolSpec(
+        "finish_goal",
+        "Declare your goal reached, with a short report for the user. Your duty then ends.",
+        {"type": "object", "properties": {"report": {"type": "string", "minLength": 1}},
+         "required": ["report"]},
+    ),
+}
+
 # No module may declare these names.
-RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS)
+RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
 
 # Every tool the runtime offers takes an optional argument under this name: a few plain
 # words the model writes about what the call does, which frontends show in place of the
@@ -1003,6 +1084,7 @@ class RuntimeSnapshot:
     operations: Sequence[OperationInfo]  # every running call, foreground included
     pending_permissions: Sequence[PermissionRequest]
     queued_messages: Sequence[MessageQueued]
+    duty_wake_at: float | None = None  # see DutyScheduled
 
 
 # Runtime events. TextDelta / ReasoningDelta / ToolCallDelta are reused from Core's stream.
@@ -1126,6 +1208,15 @@ class MemoriesChanged:
     saved: Sequence[str] = ()
 
 @dataclass(frozen=True, slots=True)
+class DutyScheduled:
+    """When the open conversation's duty wakes next by itself (Unix time). None: it does
+    not, because the agent is working, has no duty, or the duty is paused (Stop, a failure,
+    a restart, no spending limit) until a person sends a message or activates it."""
+
+    wake_at: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceStarted:
     """Emitted when Memory first uses inference during maintain()."""
 
@@ -1184,6 +1275,7 @@ type RuntimeEvent = (
     | ConversationUpdated
     | ConversationDeleted
     | MemoriesChanged
+    | DutyScheduled
     | MaintenanceStarted
     | MaintenanceFinished
     | StopStalled
@@ -1353,6 +1445,16 @@ class RuntimeAPI(Protocol):
     async def delete_note(self, note_id: str) -> None:
         """Erase the note with its revisions. The messages it came from stay until their
         conversation is deleted."""
+
+    async def set_duty(self, duty: Duty | None) -> None:
+        """Give the open conversation a duty, change it, or end it (None); the plan stays.
+        Allowed in any state after start(); a change during a cycle applies when it ends.
+        Turning a duty on in IDLE, STOPPED or FAILED (not by budget) starts a cycle.
+        ValueError for an empty instruction, intervals that are not 0 < min <= max, or
+        no cost limit (Budget.max_cost_usd). Emits ConversationUpdated."""
+
+    async def set_plan(self, plan: Sequence[PlanItem]) -> None:
+        """Replace the open conversation's plan as the user. Emits ConversationUpdated."""
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None: ...
 

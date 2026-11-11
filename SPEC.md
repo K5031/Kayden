@@ -8,7 +8,8 @@ Kayden is a complete, modular AI agent application, not a general-purpose framew
 It provides persistent conversations the user can start, continue, curate and delete. In every conversation the agent reasons, uses tools, ends its turn, and resumes by itself when background work it started finishes.
 The user controls what the agent sees: fresh starts at any time, continuity when asked for, and long-term memory the user can see and change.
 Users may run multiple independent Kayden instances concurrently as separate operating-system processes, with their own configurations, memory, and budgets.
-These agents can collaborate using ordinary tools. Kayden does not implement a bespoke multi-agent organization framework.
+A conversation can be given a duty: standing work it plans and carries on by itself until a person ends it (4.4).
+These agents can collaborate using ordinary tools. Kayden does not implement a bespoke multi-agent organization framework: PHILOSOPHY.md describes the fleet manager (KFM) meant to be built on Kayden instances as a separate program, and duties are what a Kayden instance provides toward it.
 Core principle: The runtime owns orchestration; modules provide capabilities; frontends control presentation.
 Engineering priorities:
 User-visible utility.
@@ -82,7 +83,7 @@ Users initiate inference.
 Conversations have explicit boundaries; a user may have many and reopen any of them.
 The runtime manages conversation flow and tool calls.
 Conversation histories persist across application restarts.
-Inference restarts without a user message only when background work the agent started has finished (4.2).
+Inference restarts without a user message only when background work the agent started has finished (4.2), or for a duty (4.4).
 A new conversation is a fresh start: no messages and no summary, with long-term memory included. "Continue from" starts a new conversation that knows where an earlier one left off: on its first maintenance, Memory writes its initial rolling summary from the earlier conversation's summary and recent messages, and the earlier conversation is unchanged.
 Conversations get a title automatically from their first message unless the user sets one. The user can rename, archive (hide from the list and from cross-conversation recall) and delete conversations.
 Each conversation has its own work folder, chosen when it starts (by default the folder set in the settings; "Continue from" keeps the earlier conversation's). The runtime hands it to the Tools whenever the conversation is opened, so reopening a conversation puts the agent back in the same folder.
@@ -101,11 +102,16 @@ The user stops it.
 A failure stops execution.
 Its configured budget is exhausted.
 The model does not need a simulated biological sleep cycle.
-A conversation also restarts when supported wake-up conditions occur. For v1, completion of a pending tool batch is the only wake-up trigger: the agent started that work for the user, so it reports the outcome without being asked.
-No general-purpose event subscriptions, scheduled wake-ups, or arbitrary hooks are required.
-Stop clears any pending wake-up. Permissions and budgets apply to a woken cycle as to any other.
+A conversation also restarts when supported wake-up conditions occur: completion of a pending tool batch, since the agent started that work for the user and reports the outcome without being asked, and a duty's wake-ups (4.4).
+No general-purpose event subscriptions or arbitrary hooks are required.
+Stop clears any pending wake-up, a duty's included. Permissions and budgets apply to a woken cycle as to any other.
 4.3 Processes
 One process runs one agent with one open conversation. The user may open a different conversation only when the agent has no outstanding operations. To let one conversation work while chatting in another, run a second instance with its own data directory; the two do not share memory.
+4.4 Duties
+A person may give any conversation a duty at any time, change it, or end it: an instruction for standing work, either kept up until a person ends it or a goal that also ends when the agent declares it reached, with a report. The model cannot start a duty. A duty needs a cost budget.
+The conversation keeps a plan: steps with a status (todo, doing, done, dropped), an optional due time and an optional note. The agent replaces it with a runtime built-in tool; the user edits it. Every request shows the duty's instruction and the whole plan, so compaction never loses them. The duty and plan are conversation metadata that Memory stores; "Continue from" copies neither. Ending a duty keeps the plan.
+While the agent of a conversation with a duty is idle, it wakes on the first outstanding operation to terminate (not the whole batch), on a user message, and on its schedule: the earliest due open plan item, held between the duty's minimum and maximum interval after the cycle ends, or the maximum interval when nothing is due. External events reach it through tools that wait for them in the background. Each wake the runtime starts by itself begins with a notice giving the time and the cause; each is logged.
+Stop, a failure, an exhausted budget and a restart pause the duty: it wakes on its own again only after the user sends a message or activates the conversation. Permissions apply as always; a call that would prompt waits for the user.
 5. Idle and Stop
 5.1 Idle
 There is no tool for going idle: a model turn that ends without tool calls ends the cycle, in every conversation. (A reply followed by an idle call was returned by some models as hidden reasoning, so the user saw nothing.)
@@ -116,12 +122,12 @@ Conversation context remains available.
 Pending asynchronous tools continue running.
 The runtime waits for an eligible activation event.
 If no tools are pending, the agent remains idle until user interaction, unless it has results it has not seen (see 5.2).
-The runtime never re-prompts on its own. The agent is woken once all outstanding operations have terminated, including ones from earlier turns. Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
+The runtime never re-prompts on its own, except on a duty's schedule (4.4). The agent is woken once all outstanding operations have terminated, including ones from earlier turns (with a duty, once the first has). Activating an agent whose transcript is empty or ends on an assistant message appends a short runtime notice as a user message, so a request never ends on an assistant message.
 5.2 Batch Wake-Up
 When the agent has outstanding operations belonging to a pending batch, the runtime waits until all operations reach a terminal outcome.
 Batch completion reactivates the model.
 After Stop, results are retained until user initiation.
-The runtime does not need to invoke the model separately for every individual tool completion.
+The runtime does not need to invoke the model separately for every individual tool completion. A conversation with a duty is the exception: it wakes on the first completion, so a tool waiting for an outside event can wake it while other work runs (4.4).
 The wake set is every operation outstanding when the cycle ends, including operations from earlier turns. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, the next cycle starts immediately. This is checked when the agent goes idle.
 5.3 Stop Control
 Kayden provides one user-facing Stop action.
@@ -342,7 +348,7 @@ Module marketplace and hosted distribution.
 Cloud synchronization.
 Centralized fleet management.
 Special multi-agent messaging infrastructure.
-Scheduled wake-ups.
+Scheduled wake-ups other than a duty's.
 General-purpose event subscription systems.
 Reimplementation of Codex's proprietary compaction mechanisms.
 Mandatory vector databases.
@@ -404,7 +410,7 @@ The archive is append-only, full-fidelity and schema-versioned. Blocks are persi
 history returns the full transcript from the archive regardless of compaction. The runtime uses it for reopening conversations and for resume repair.
 assemble is read-only, performs no inference, and always fits the token budget. Its messages are a suffix that starts at a user message, never splits a call from its result, and includes the newest message. A single oversized message is truncated in the assembled view only.
 maintain runs only inside an authorized inference cycle, so it can never restart the agent by itself. It also writes a seeded conversation's first summary and a title for an untitled conversation (light model; a failed title call changes nothing; a title that is set is never overwritten). It receives the current context window, a metered Completion, and returns whether it acted. The Completion raises BudgetExhausted or CoreError. A maintain failure becomes a failure event without changing the agent state. Archive writes and compaction state are atomic.
-search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one set of notes per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. A Memory module may offer tools of its own (recall, read_note, save_note and forget_note come with the built-in SQLite Memory); they run without prompts and outside the tool-call budget, since they touch only Kayden's memory. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive. Editing long-term memory (notes, save_note, delete_note) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
+search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one set of notes per store, shared by every conversation. append is idempotent by message id. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. A Memory module may offer tools of its own (recall, read_note, save_note and forget_note come with the built-in SQLite Memory); they run without prompts and outside the tool-call budget, since they touch only Kayden's memory. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive; save_duty, optional, stores a conversation's duty and plan the same way. Editing long-term memory (notes, save_note, delete_note) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
 
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.
@@ -412,7 +418,7 @@ A backgrounded call gets a placeholder result with status backgrounded; its outc
 Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
 stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps the agent waiting until it ends or the user writes.
-Every tool the runtime offers takes an optional step_summary argument: a few plain words the model writes about the call, which frontends show in place of the tool and its input. The runtime adds it to each schema and removes it before the Tools module sees the call; the transcript keeps it. The runtime's own tools (op_status, op_cancel) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules. Several Tools modules may run at once; MCP servers the user adds in the settings run as one more (each a command Kayden starts or a URL, their tools named mcp__<server>__<tool>, never confined, started with the next start, their variable values kept in the keychain). A Core may offer tools its provider runs during the request (Claude's web search); the runtime never runs, gates or counts them, and each use is recorded in the answer. Tools are offered in order: the runtime's, then Memory's, then the Core's, then each Tools module's; a name already offered is dropped from a later module, and each call goes to the module that offered it.
+Every tool the runtime offers takes an optional step_summary argument: a few plain words the model writes about the call, which frontends show in place of the tool and its input. The runtime adds it to each schema and removes it before the Tools module sees the call; the transcript keeps it. The runtime's own tools (op_status, op_cancel, and with a duty or plan update_plan and finish_goal) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules. Several Tools modules may run at once; MCP servers the user adds in the settings run as one more (each a command Kayden starts or a URL, their tools named mcp__<server>__<tool>, never confined, started with the next start, their variable values kept in the keychain). A Core may offer tools its provider runs during the request (Claude's web search); the runtime never runs, gates or counts them, and each use is recorded in the answer. Tools are offered in order: the runtime's, then Memory's, then the Core's, then each Tools module's; a name already offered is dropped from a later module, and each call goes to the module that offered it.
 Results are plain strings. Frontends may parse formats they know.
 Tools that launch subprocesses pass the permission ceiling variable through unmodified; they may leave out other variables, such as secrets from sandboxed commands.
 use_folder is optional: the runtime calls it whenever it opens a conversation, with that conversation's work folder, before any of its calls. A module without it has one fixed folder, and conversations cannot choose another.

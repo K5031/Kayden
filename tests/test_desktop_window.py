@@ -797,3 +797,50 @@ async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
     await eventually(lambda: window.memory_dialog is not None
                      and window.memory_dialog.isVisible())
     window.close()
+
+
+async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
+    from kayden.api import Duty, DutyKind, PlanStatus
+    from kayden.frontends.desktop.window import DutyDialog
+
+    h: Harness = await make(budget=Budget(max_cost_usd=5))
+    h.core.add(Step(text="on it"))
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    window.show()
+    window.duty_action.trigger()
+    [dialog] = window.findChildren(DutyDialog)
+    assert dialog.save_button.text() == "Turn on"
+    dialog.instruction.setPlainText("Keep the inbox answered")
+    dialog.kind.setCurrentIndex(dialog.kind.findData(DutyKind.GOAL))
+    dialog.max_minutes.setValue(30)
+    dialog.plan.setPlainText("[doing] Read mail\nReply | due 2030-01-07 09:00")
+    dialog.save_button.click()
+    await eventually(lambda: h.runtime.snapshot().conversation.duty is not None)
+    info = h.runtime.snapshot().conversation
+    assert info.duty == Duty("Keep the inbox answered", DutyKind.GOAL, 60, 1800)
+    assert [(i.text, i.status) for i in info.plan] == [
+        ("Read mail", PlanStatus.DOING), ("Reply", PlanStatus.TODO)]
+    await eventually(lambda: "Duty" in window.status_label.text())
+    window.open_duty()
+    dialog = [d for d in window.findChildren(DutyDialog) if d.isVisible()][-1]
+    [off] = buttons(dialog, "Turn off")
+    off.click()
+    await eventually(lambda: h.runtime.snapshot().conversation.duty is None)
+    assert len(h.runtime.snapshot().conversation.plan) == 2  # the plan stays
+
+
+async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
+    from kayden.frontends.desktop.window import DutyDialog
+
+    h: Harness = await make()  # no spending limit
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    window.show()
+    window.open_duty()
+    [dialog] = window.findChildren(DutyDialog)
+    dialog.instruction.setPlainText("Watch")
+    dialog.save_button.click()
+    await eventually(lambda: dialog.error.isVisible())
+    assert "spending limit" in dialog.error.text()
+    assert dialog.isVisible() and dialog.save_button.isEnabled()

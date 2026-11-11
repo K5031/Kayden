@@ -271,6 +271,14 @@ class StubRuntime:
         self.entries = [n for n in self._memories() if n.id != note_id]
         self.emit(MemoriesChanged())
 
+    async def set_duty(self, duty) -> None:
+        await self._record("set_duty", duty)
+        self._update(self.conversation.id, duty=duty)
+
+    async def set_plan(self, plan) -> None:
+        await self._record("set_plan", list(plan))
+        self._update(self.conversation.id, plan=tuple(plan))
+
     async def select_model(self, model_id: str) -> None:
         await self._record("select_model", model_id)
         self.model = model_id

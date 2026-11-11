@@ -6,18 +6,25 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from kayden.api import (
     DESCRIPTION_ARG,
+    AgentState,
+    Duty,
+    DutyKind,
     McpServer,
     ModelInfo,
     ModuleChoice,
     PermissionPolicy,
     PermissionRequest,
+    PlanItem,
+    PlanStatus,
     ServerToolUse,
     Settings,
     SettingsUpdate,
@@ -286,3 +293,77 @@ def provider_step(use: ServerToolUse) -> tuple[ToolCall, ToolResult]:
     call = ToolCall(use.id, use.name, {**use.input, DESCRIPTION_ARG: use.summary})
     status = ToolStatus.ERROR if use.is_error else ToolStatus.OK
     return call, ToolResult(use.id, status, use.content)
+
+
+# ── Duties ──
+
+DUTY_KIND_LABELS = {
+    DutyKind.DUTY: "Keep doing it until I turn it off",
+    DutyKind.GOAL: "Until it is done",
+}
+DUTY_HINT = ("Kayden carries this on by itself: it keeps a plan, works on it, and checks in "
+             "again on its own. It needs a spending limit, and pauses when you press Stop, "
+             "when Kayden restarts, or when the limit is reached.")
+PLAN_HINT = ("One step per line: [todo], [doing], [done] or [dropped], the step, then "
+             "optionally | due YYYY-MM-DD HH:MM and | a note.")
+_PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")
+
+
+def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState) -> str | None:
+    """The duty's state for a status line, None without a duty."""
+    if duty is None:
+        return None
+    if wake_at is not None:
+        return f"Duty: next check-in {_when(wake_at)}"
+    if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
+        return "Duty paused: activate to resume"
+    return "Duty: working"
+
+
+def _when(t: float) -> str:
+    when = datetime.fromtimestamp(t)
+    return when.strftime("%H:%M" if when.date() == datetime.now().date() else "%Y-%m-%d %H:%M")
+
+
+def plan_text(plan: Sequence[PlanItem]) -> str:
+    """The plan as editable lines (PLAN_HINT)."""
+    lines = []
+    for item in plan:
+        line = f"[{item.status}] {item.text}"
+        if item.due is not None:
+            line += f" | due {datetime.fromtimestamp(item.due).strftime('%Y-%m-%d %H:%M')}"
+        if item.note:
+            line += f" | {item.note}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def parse_plan_text(text: str) -> list[PlanItem]:
+    """plan_text's lines back to a plan; ValueError naming the line that cannot be read."""
+    plan = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        status, rest = PlanStatus.TODO, line.strip()
+        if match := _PLAN_LINE.fullmatch(rest):
+            try:
+                status = PlanStatus(match[1].lower())
+            except ValueError:
+                raise ValueError(f"Line {number}: the status must be todo, doing, done or "
+                                 "dropped.") from None
+            rest = match[2]
+        step, *extras = (part.strip() for part in rest.split("|"))
+        if not step:
+            raise ValueError(f"Line {number} has no step.")
+        due, notes = None, []
+        for extra in extras:
+            if extra.lower().startswith("due "):
+                try:
+                    due = datetime.strptime(extra[4:].strip(), "%Y-%m-%d %H:%M").timestamp()
+                except ValueError:
+                    raise ValueError(f"Line {number}: write the due time as YYYY-MM-DD "
+                                     "HH:MM.") from None
+            elif extra:
+                notes.append(extra)
+        plan.append(PlanItem(step, status, due, " | ".join(notes)))
+    return plan

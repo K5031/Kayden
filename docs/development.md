@@ -50,7 +50,7 @@ package does not import is not listed. Launchers may pass a frontend the options
 
 ```
 src/kayden/api.py         module contracts (normative)
-src/kayden/runtime/       orchestration, budgets, operations, settings, event log, lock
+src/kayden/runtime/       orchestration, duties, budgets, operations, settings, event log, lock
 src/kayden/core/          Cores
 src/kayden/memory/        SQLite Memory
 src/kayden/tools/         shell and file Tools

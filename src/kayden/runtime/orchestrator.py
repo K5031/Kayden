@@ -20,6 +20,7 @@ import jsonschema
 from kayden.api import (
     BUILTIN_TOOLS,
     DESCRIPTION_ARG,
+    DUTY_TOOLS,
     PERMISSION_CEILING_ENV,
     AgentConfig,
     AgentState,
@@ -37,6 +38,9 @@ from kayden.api import (
     Core,
     CoreError,
     Decision,
+    Duty,
+    DutyKind,
+    DutyScheduled,
     EventEnvelope,
     Failure,
     FailureKind,
@@ -60,6 +64,7 @@ from kayden.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
+    PlanItem,
     ReasoningDelta,
     Role,
     RuntimeEvent,
@@ -91,6 +96,7 @@ from kayden.api import (
     UsageReport,
     UsageUpdated,
 )
+from kayden.runtime import duty as duties
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
 from kayden.runtime.config import (
     ACTIVATION_NOTICE,
@@ -127,6 +133,8 @@ USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
 _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
+_NO_DUTIES = "this memory module cannot keep duties"
+_RUNTIME_TOOLS = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
 
 
 def _new_id() -> str:
@@ -287,6 +295,9 @@ class Runtime:
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
         self._unseen = False
+        self._duty_timer: asyncio.Task[None] | None = None
+        self._duty_wake_at: float | None = None
+        self._duty_cause: str | None = None  # why the next cycle was requested for a duty
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._duration_task: asyncio.Task[None] | None = None
         self._inbox_before_stop = 0
@@ -311,6 +322,7 @@ class Runtime:
                         for op in self._ops.values()],
             pending_permissions=[req for req, _ in self._prompts.values()],
             queued_messages=list(self._inbox),
+            duty_wake_at=self._duty_wake_at,
         )
 
     async def list_models(self) -> Sequence[ModelInfo]:
@@ -388,6 +400,7 @@ class Runtime:
         self._agent_config = AgentConfig(self._config.budget, self._permissions)
         # A resumed conversation has no pending wake-up: it waits for the user.
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
+        self._cancel_duty()
         self._backlog.clear()
         if resumed:
             await self._repair()
@@ -450,7 +463,10 @@ class Runtime:
 
     async def stop(self) -> None:
         state = self._state()
-        if state in (AgentState.NOT_STARTED, AgentState.STOPPING, AgentState.STOPPED):
+        if state == AgentState.NOT_STARTED:
+            return
+        self._cancel_duty()  # a duty is paused until the user resumes it
+        if state in (AgentState.STOPPING, AgentState.STOPPED):
             return
         if state in (AgentState.IDLE, AgentState.FAILED) and not self._ops:
             return
@@ -536,6 +552,42 @@ class Runtime:
                 return info
         raise KeyError(conversation_id)
 
+    async def set_duty(self, duty: Duty | None) -> None:
+        if self._conversation is None:
+            raise RuntimeStateError("no conversation is open")
+        if duty is not None:
+            duty = duties.check(duty)
+            if self._config.budget.max_cost_usd is None:
+                raise ValueError("a duty needs a spending limit: set one in the settings")
+        turned_on = duty is not None and self._conversation.duty is None
+        await self._save_duty(duty, self._conversation.plan)
+        self._log.decision("duty", on=duty is not None,
+                           kind=duty.kind if duty is not None else None)
+        state = self._state()
+        if duty is None:
+            self._cancel_duty()
+        elif turned_on and (state in (AgentState.IDLE, AgentState.STOPPED) or (
+                state == AgentState.FAILED and not self._budget.exhausted())):
+            self._request_cycle(f"duty: {duties.TURNED_ON}", duties.TURNED_ON)
+        elif self._duty_timer is not None:
+            self._schedule_duty()  # a changed interval applies at once
+
+    async def set_plan(self, plan: Sequence[PlanItem]) -> None:
+        if self._conversation is None:
+            raise RuntimeStateError("no conversation is open")
+        await self._save_duty(self._conversation.duty, plan)
+        self._log.decision("plan", items=len(plan), by="user")
+        if self._duty_timer is not None:
+            self._schedule_duty()
+
+    async def _save_duty(self, duty: Duty | None, plan: Sequence[PlanItem]) -> None:
+        assert self._conversation is not None
+        try:
+            info = await self._memory.save_duty(self._conversation.id, duty, tuple(plan))
+        except NotImplementedError:
+            raise NotImplementedError(_NO_DUTIES) from None
+        self._conversation_updated(info)
+
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:
         if self._state() != AgentState.AWAITING_PERMISSION:
             raise RuntimeStateError("no permission prompt is open")
@@ -559,6 +611,7 @@ class Runtime:
 
     async def _shut_down(self) -> None:
         self._cycle_requested = False
+        self._cancel_duty()
         await self.stop()
         if self._stop_task is not None:
             await self._stop_task
@@ -625,11 +678,14 @@ class Runtime:
     def _fail(self, kind: FailureKind, message: str) -> None:
         self._failure(kind, message)
         self._base = AgentState.FAILED
+        self._cancel_duty()
 
-    def _request_cycle(self, reason: str) -> None:
+    def _request_cycle(self, reason: str, duty_cause: str | None = None) -> None:
         if self._closed or self._stopping:
             return
         self._log.decision("cycle_requested", reason=reason)
+        self._cancel_duty()
+        self._duty_cause = duty_cause
         self._cycle_requested = True
         self._wake_set, self._immediate_wake = None, False
         self._phase = AgentState.THINKING
@@ -769,6 +825,11 @@ class Runtime:
         them), then each Tools module's; a name offered already is dropped from the later
         module."""
         specs = dict(BUILTIN_TOOLS)
+        conversation = self._conversation
+        if conversation is not None and (conversation.duty is not None or conversation.plan):
+            specs["update_plan"] = DUTY_TOOLS["update_plan"]
+            if conversation.duty is not None and conversation.duty.kind == DutyKind.GOAL:
+                specs["finish_goal"] = DUTY_TOOLS["finish_goal"]
         self._memory_tools, self._tool_owner = set(), {}
         for module in (self._memory, self._core, *self._tools):
             try:
@@ -968,6 +1029,8 @@ class Runtime:
             self._log.decision("cycle_end", state=self._base)
             if not self._stopping:
                 await self._flush_outside_cycle()
+            if self._waiting():
+                self._schedule_duty()
             self._update_state()
 
     async def _cycle_body(self) -> None:
@@ -975,7 +1038,12 @@ class Runtime:
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
-        await self._ensure_user_last()
+        if self._duty_cause is not None:
+            cause, self._duty_cause = self._duty_cause, None
+            await self._append(Message(_new_id(), Role.USER,
+                                       (Text(duties.notice(cause, time.time())),), time.time()))
+        else:
+            await self._ensure_user_last()
         while True:
             if self._stopping:
                 return
@@ -1030,12 +1098,59 @@ class Runtime:
         self._immediate_wake = not wake and self._unseen
         self._log.decision("idle", wait_for=sorted(wake), immediate=self._immediate_wake)
 
+    def _waiting(self) -> bool:
+        return (self._base == AgentState.IDLE and not self._cycle_active
+                and not self._cycle_requested and not self._stopping and not self._closed)
+
     def _check_wake(self) -> None:
-        if (self._base != AgentState.IDLE or self._cycle_active or self._cycle_requested
-                or self._stopping):
+        if not self._waiting():
             return
-        if self._immediate_wake or (self._wake_set and not self._wake_set & set(self._ops)):
+        if self._immediate_wake:
             self._request_cycle("wake-up")
+        elif self._wake_set:
+            running = self._wake_set & set(self._ops)
+            if self._duty_running() and running != self._wake_set:
+                self._request_cycle(f"duty: {duties.FINISHED}", duties.FINISHED)
+            elif not running:
+                self._request_cycle("wake-up")
+
+    # ── Duties ───────────────────────────────────────────────────────────
+
+    def _duty_running(self) -> bool:
+        return (self._conversation is not None and self._conversation.duty is not None
+                and self._config.budget.max_cost_usd is not None)
+
+    def _schedule_duty(self) -> None:
+        """While idle, wake the duty at its next time (duties.next_wake)."""
+        self._cancel_duty()
+        duty = self._conversation.duty if self._conversation is not None else None
+        if duty is None or not self._waiting():
+            return
+        if self._config.budget.max_cost_usd is None:
+            self._log.decision("duty_paused", reason="no spending limit")
+            self._failure(FailureKind.BUDGET,
+                          "The duty is paused: it needs a spending limit. Set one in the "
+                          "settings, then activate the conversation.")
+            return
+        delay, cause = duties.next_wake(duty, self._conversation.plan)
+        self._duty_timer = asyncio.create_task(self._duty_due(delay, cause))
+        self._duty_wake_at = time.time() + delay
+        self._log.decision("duty_scheduled", in_s=round(delay, 3), cause=cause)
+        self._emit(DutyScheduled(self._duty_wake_at))
+
+    def _cancel_duty(self) -> None:
+        if self._duty_timer is not None:
+            self._duty_timer.cancel()
+            self._duty_timer = None
+        if self._duty_wake_at is not None:
+            self._duty_wake_at = None
+            self._emit(DutyScheduled(None))
+
+    async def _duty_due(self, delay: float, cause: str) -> None:
+        await asyncio.sleep(delay)
+        self._duty_timer = None
+        if self._waiting():
+            self._request_cycle(f"duty: {cause}", cause)
 
     # ── Budgets ──────────────────────────────────────────────────────────
 
@@ -1146,6 +1261,9 @@ class Runtime:
         system = self._config.system_prompt
         if assembled.system_addendum:
             system = f"{system}\n\n{assembled.system_addendum}"
+        assert self._conversation is not None
+        if section := duties.prompt(self._conversation.duty, self._conversation.plan):
+            system = f"{system}\n\n{section}"
         self._unseen = False
         return InferenceRequest(info.id, system, list(assembled.messages), tools, reserve)
 
@@ -1343,7 +1461,7 @@ class Runtime:
         if after:
             await asyncio.wait(after)
         try:
-            if call.name in BUILTIN_TOOLS or call.name in self._memory_tools:
+            if call.name in _RUNTIME_TOOLS or call.name in self._memory_tools:
                 return await self._run_builtin(call, spec)
             return await self._run_module_call(call, spec)
         except Exception as e:
@@ -1520,7 +1638,7 @@ class Runtime:
         """A built-in or a Memory tool: never gated, not counted, cancelled by Stop."""
         started = time.monotonic()
         self._emit(ToolStarted(call))
-        task = asyncio.ensure_future(self._builtin(call) if call.name in BUILTIN_TOOLS
+        task = asyncio.ensure_future(self._builtin(call) if call.name in _RUNTIME_TOOLS
                                      else self._memory_call(call))
         if await self._race_stop(task) or task.cancelled():
             return ToolResult(call.id, ToolStatus.CANCELLED, "Cancelled."), 0.0
@@ -1561,6 +1679,22 @@ class Runtime:
                 await asyncio.wait({op.supervisor})
                 return ToolStatus.OK, (f"Cancellation requested; operation {op.call.id} ended "
                                        f"as {op.supervisor.result().status}.")
+            case "update_plan":
+                now = time.time()
+                try:
+                    plan = duties.parse_plan(args["items"], now)
+                except ValueError as e:
+                    return ToolStatus.ERROR, str(e)
+                await self._save_duty(self._conversation.duty, plan)
+                self._log.decision("plan", items=len(plan), by="model")
+                return ToolStatus.OK, f"Plan saved. It is now {duties.local(now)}."
+            case "finish_goal":
+                duty = self._conversation.duty
+                if duty is None or duty.kind != DutyKind.GOAL:
+                    return ToolStatus.ERROR, "There is no goal to finish."
+                await self._save_duty(None, self._conversation.plan)
+                self._log.decision("goal_finished")
+                return ToolStatus.OK, "Goal reached; the duty has ended."
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."
 
     def _describe(self, op: Operation) -> str:

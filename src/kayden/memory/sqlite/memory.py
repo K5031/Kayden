@@ -13,6 +13,7 @@ write-ahead log afterwards so no copy stays there.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import sqlite3
@@ -22,7 +23,7 @@ from collections import defaultdict
 from collections.abc import Callable, Collection, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from itertools import accumulate
@@ -40,12 +41,16 @@ from kayden.api import (
     ConversationId,
     ConversationInfo,
     CoreError,
+    Duty,
+    DutyKind,
     InstancePaths,
     Memory,
     MemoryNote,
     MemoryView,
     Message,
     OperationResult,
+    PlanItem,
+    PlanStatus,
     Reasoning,
     Role,
     ServerToolUse,
@@ -63,7 +68,7 @@ from . import codec
 
 logger = logging.getLogger(__name__)
 # A store of another version is refused.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 # Output headroom on top of the summary budget, for its tags.
 _SUMMARY_TAG_TOKENS = 64
 _SAVE_OUTPUT_TOKENS = 1024  # the pass after an answer: the changes it writes
@@ -153,7 +158,9 @@ CREATE TABLE conversations (
     updated_at REAL NOT NULL,
     archived INTEGER NOT NULL DEFAULT 0,
     seed_from TEXT,
-    folder TEXT
+    folder TEXT,
+    duty TEXT,
+    plan TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE messages (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -240,7 +247,8 @@ _SAVE_RE = re.compile(r'<save title="([^"]*)"(?: description="([^"]*)")?>(.*?)</
                       re.DOTALL)
 _APPEND_RE = re.compile(r'<append title="([^"]*)">(.*?)</append>', re.DOTALL)
 _WORD_RE = re.compile(r"\w+")
-_INFO_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder"
+_INFO_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder, duty, plan"
+_NEW_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder"
 _CURRENT_NOTES = (
     "SELECT n.id, r.title, r.description, r.text, r.source_conversation_id, r.created_at"
     " FROM notes n JOIN note_revisions r ON r.id ="
@@ -296,7 +304,7 @@ class SqliteMemory(Memory):
                 if seed_from is not None:
                     _require_conversation(conn, seed_from)
                 conn.execute(
-                    f"INSERT INTO conversations ({_INFO_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    f"INSERT INTO conversations ({_NEW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (info.id, info.title, now, now, False, seed_from, folder),
                 )
 
@@ -314,7 +322,7 @@ class SqliteMemory(Memory):
                 " ORDER BY updated_at DESC, created_at DESC",
                 (include_archived,),
             )
-            return [_conversation_info(row[:7], row[7]) for row in rows]
+            return [_conversation_info(row[:9], row[9]) for row in rows]
 
         return await self._run(run)
 
@@ -340,6 +348,20 @@ class SqliteMemory(Memory):
                         " WHERE id = ?",
                         (*changes.values(), conversation_id),
                     )
+                return _require_conversation(conn, conversation_id)
+
+        return await self._run(run)
+
+    async def save_duty(self, conversation_id: ConversationId, duty: Duty | None,
+                        plan: Sequence[PlanItem]) -> ConversationInfo:
+        encoded = None if duty is None else json.dumps(asdict(duty))
+        items = json.dumps([asdict(i) for i in plan], ensure_ascii=False)
+
+        def run(conn: sqlite3.Connection) -> ConversationInfo:
+            with _transaction(conn):
+                _require_conversation(conn, conversation_id)
+                conn.execute("UPDATE conversations SET duty = ?, plan = ? WHERE id = ?",
+                             (encoded, items, conversation_id))
                 return _require_conversation(conn, conversation_id)
 
         return await self._run(run)
@@ -803,9 +825,17 @@ def _require_conversation(
 def _conversation_info(row: Sequence[Any], first_user_blocks: str | None = None
                        ) -> ConversationInfo:
     preview = " ".join(_text_of(first_user_blocks).split()) if first_user_blocks else ""
+    duty = None
+    if row[7] is not None:
+        d = json.loads(row[7])
+        duty = Duty(d["instruction"], DutyKind(d["kind"]), d["min_interval_s"],
+                    d["max_interval_s"])
+    plan = tuple(PlanItem(i["text"], PlanStatus(i["status"]), i["due"], i["note"])
+                 for i in json.loads(row[8]))
     return ConversationInfo(row[0], row[1], row[2], row[3],
                             archived=bool(row[4]), seed_from=row[5],
-                            preview=preview[:_PREVIEW_CHARS] or None, folder=row[6])
+                            preview=preview[:_PREVIEW_CHARS] or None, folder=row[6],
+                            duty=duty, plan=plan)
 
 
 def _text_of(blocks: str) -> str:

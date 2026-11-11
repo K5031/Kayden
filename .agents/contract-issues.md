@@ -816,7 +816,8 @@ was used.
 ## 14. Found while proposing duties
 
 ### D1 (C) PHILOSOPHY.md and the spec's scope for fleets
-- **Status:** Open.
+- **Status:** Resolved for duties (SPEC 1, 4.4, 5, 13); the headless frontend is still to
+  come.
 - **Where:** `PHILOSOPHY.md` (Kayden as the base agent of a fleet manager with ranks,
   supervisors and duties) against SPEC 1 ("Kayden does not implement a bespoke multi-agent
   organization framework"), 10.2 (no centralized fleet management, no hardcoded hierarchy)
@@ -826,7 +827,7 @@ was used.
 - **Assumed:** Both hold if the fleet manager is a separate program: the spec stays about
   one Kayden instance, and ranks and teams stay out of it. What a unit needs is added to
   the spec as it is built: duties
-  ([proposed note](notes/proposed/2026-11-11-duties.md), which lists the spec changes),
+  ([note](notes/implemented/2026-11-11-duties.md)),
   then a headless frontend.
 - **Fix:** SPEC 1 and 13 point to PHILOSOPHY.md for the fleet and name what Kayden
   provides toward it.

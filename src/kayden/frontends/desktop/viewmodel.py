@@ -26,6 +26,8 @@ from kayden.api import (
     ConversationInfo,
     ConversationUpdated,
     Decision,
+    Duty,
+    DutyScheduled,
     EventEnvelope,
     Failure,
     FailureKind,
@@ -44,6 +46,7 @@ from kayden.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
+    PlanItem,
     Reasoning,
     ReasoningDelta,
     Role,
@@ -76,6 +79,7 @@ from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
     RESULT_LABELS,
     call_parts,
+    duty_status,
     group_title,
     money,
     past_tense,
@@ -298,6 +302,7 @@ class ConversationModel:
         self.conversation: ConversationInfo | None = None
         self.model: str | None = None
         self.usage: UsageSnapshot | None = None
+        self.duty_wake_at: float | None = None
         self.notice = ""  # transient status text: retries, maintenance, stop stalled
         self.failure: Failure | None = None  # shown as a banner until the next cycle
         self.has_earlier = False
@@ -323,6 +328,9 @@ class ConversationModel:
                              if t.phase is Phase.BACKGROUND and t.status is None):
             parts.append(f"{background} task{'s' if background != 1 else ''} running in the "
                          "background")
+        if self.conversation is not None and (duty := duty_status(
+                self.conversation.duty, self.duty_wake_at, self.state)):
+            parts.append(duty)
         if self.notice:
             parts.append(self.notice)
         return " · ".join(parts)
@@ -355,6 +363,7 @@ class ConversationModel:
         self.conversation = snapshot.conversation
         self.model = snapshot.model
         self.usage = snapshot.usage
+        self.duty_wake_at = snapshot.duty_wake_at
         self.notice = ""
         self.failure = None
         self.has_earlier = len(history) >= page
@@ -462,7 +471,11 @@ class ConversationModel:
             case ConversationUpdated(info=info):
                 if self.conversation is not None and info.id == self.conversation.id:
                     self.conversation = info
+                    self.on_change(StatusChanged())
                 self.on_change(ConversationListChanged())
+            case DutyScheduled(wake_at=wake_at):
+                self.duty_wake_at = wake_at
+                self.on_change(StatusChanged())
             case ConversationDeleted():
                 self.on_change(ConversationListChanged())
             case MemoriesChanged(saved=saved):
@@ -939,6 +952,18 @@ class Controller:
 
     def delete_note(self, note_id: str) -> asyncio.Task[None]:
         return self.command(self.runtime.delete_note(note_id))
+
+    def save_duty(self, duty: Duty | None, plan: Sequence[PlanItem],
+                  failed: Callable[[Exception], None] | None = None,
+                  done: Callable[[Any], None] | None = None) -> asyncio.Task[None]:
+        """Save the plan, then the duty: None ends a duty, if there is one."""
+        async def save() -> None:
+            await self.runtime.set_plan(plan)
+            conversation = self.model.conversation
+            if duty is not None or (conversation is not None and conversation.duty):
+                await self.runtime.set_duty(duty)
+
+        return self.command(save(), done=done, failed=failed)
 
     def can_switch(self) -> str | None:
         """Why the conversation cannot change right now, or None."""

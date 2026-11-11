@@ -167,3 +167,35 @@ def test_mcp_servers_from_the_form_and_back():
     assert mcp_target(saved) == "npx s" and mcp_variables(saved) == "GITHUB_TOKEN="
     with pytest.raises(ValueError, match="NAME=value"):
         mcp_server("x", "cmd", "just-a-name")
+
+
+def test_plan_text_round_trips_and_reports_bad_lines():
+    from datetime import datetime
+
+    import pytest
+
+    from kayden.api import PlanItem, PlanStatus
+    from kayden.frontends.common import parse_plan_text, plan_text
+
+    due = datetime(2030, 1, 7, 9, 0).timestamp()
+    plan = [PlanItem("Read mail", PlanStatus.DOING, due, "VIPs first"), PlanItem("Reply")]
+    assert plan_text(plan) == ("[doing] Read mail | due 2030-01-07 09:00 | VIPs first\n"
+                               "[todo] Reply")
+    assert parse_plan_text(plan_text(plan) + "\n\n") == plan
+    assert parse_plan_text("Call Sam") == [PlanItem("Call Sam")]
+    with pytest.raises(ValueError, match="Line 2"):
+        parse_plan_text("ok\n[todo] x | due tomorrow")
+
+
+def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
+    import time
+
+    from kayden.api import AgentState, Duty
+    from kayden.frontends.common import duty_status
+
+    duty = Duty("x")
+    assert duty_status(None, None, AgentState.IDLE) is None
+    assert duty_status(duty, None, AgentState.STOPPED) == "Duty paused: activate to resume"
+    assert duty_status(duty, None, AgentState.THINKING) == "Duty: working"
+    assert duty_status(duty, time.time() + 60, AgentState.IDLE).startswith(
+        "Duty: next check-in ")

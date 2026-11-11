@@ -316,3 +316,56 @@ async def test_tool_servers_are_added_and_removed():
         app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: len(updates(stub)) == 2)
         assert updates(stub)[-1] == SettingsUpdate(mcp_servers=[])
+
+
+async def test_duty_commands_turn_a_duty_on_and_off():
+    from kayden.api import Duty, DutyKind
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        await type_text(pilot, "/goal Launch the campaign")
+        await pilot.press("enter")
+        await until(pilot, lambda: ("set_duty", Duty("Launch the campaign", DutyKind.GOAL))
+                    in stub.calls)
+        await type_text(pilot, "/duty off")
+        await pilot.press("enter")
+        await until(pilot, lambda: ("set_duty", None) in stub.calls)
+
+
+async def test_the_duty_screen_saves_the_duty_and_plan():
+    from kayden.api import Duty, DutyKind, PlanItem, PlanStatus
+    from kayden.frontends.tui import DutyScreen
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await caught_up(pilot, app, stub)
+        await pilot.press("f5")
+        await until(pilot, lambda: isinstance(app.screen, DutyScreen))
+        screen = app.screen
+        screen.query_one("#duty-instruction", Input).value = "Answer the inbox"
+        screen.query_one("#duty-max", Input).value = "30"
+        screen.query_one("#duty-plan", TextArea).text = "[doing] Read mail | check VIPs\nReply"
+        await save(pilot, app)
+        await until(pilot, lambda: any(c[0] == "set_duty" for c in stub.calls))
+        assert ("set_plan", [PlanItem("Read mail", PlanStatus.DOING, note="check VIPs"),
+                             PlanItem("Reply")]) in stub.calls
+        assert ("set_duty", Duty("Answer the inbox", DutyKind.DUTY, 60, 1800)) in stub.calls
+
+
+async def test_an_unreadable_plan_is_shown_and_nothing_is_saved():
+    from kayden.frontends.tui import DutyScreen
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await caught_up(pilot, app, stub)
+        await type_text(pilot, "/duty")
+        await pilot.press("enter")
+        await until(pilot, lambda: isinstance(app.screen, DutyScreen))
+        app.screen.query_one("#duty-plan", TextArea).text = "[later] someday"
+        await save(pilot, app)
+        assert "status must be" in str(app.screen.query_one("#duty-error").render())
+        assert not any(c[0] in ("set_duty", "set_plan") for c in stub.calls)
