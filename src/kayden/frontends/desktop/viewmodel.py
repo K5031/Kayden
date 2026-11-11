@@ -331,6 +331,7 @@ class ConversationModel:
         self.closed = False
         self._tools: dict[str, ToolItem] = {}
         self._stream: list[AssistantItem | ToolItem] = []  # not yet committed
+        self._model_next = True  # the cycle's next step is the model's (waiting)
         self._queued: dict[str, UserItem] = {}
         self._seen: set[str] = set()  # message ids rendered
         self._oldest_id: str | None = None
@@ -349,7 +350,7 @@ class ConversationModel:
     def waiting(self) -> bool:
         """The model works on its next step and nothing of it shows yet: before the first
         token, which a thinking model can take long to send."""
-        return self.state is AgentState.THINKING and not self._stream
+        return self.state is AgentState.THINKING and self._model_next and not self._stream
 
     @property
     def status_text(self) -> str:
@@ -451,6 +452,7 @@ class ConversationModel:
             case StateChanged(state=state, pending_ops=pending_ops):
                 if state is AgentState.THINKING and self.state is not AgentState.THINKING:
                     self.failure = None
+                    self._model_next = True
                 self.state, self.pending_ops = state, pending_ops
                 if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
                     self._end_stream()
@@ -474,6 +476,9 @@ class ConversationModel:
             case MessageQueued():
                 self._queue(event)
             case MessageCommitted(message=message, stop=stop):
+                # After an answer without calls the cycle only tidies up (Memory's upkeep).
+                self._model_next = message.role is not Role.ASSISTANT or any(
+                    isinstance(b, ToolCall) for b in message.blocks)
                 self._commit(message, stop)
             case ToolStarted(call=call):
                 item = self._tools.get(call.id) or self._add_tool(call)

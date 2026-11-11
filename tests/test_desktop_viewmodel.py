@@ -18,8 +18,11 @@ from kayden.api import (
     Failure,
     FailureKind,
     InstanceLockedError,
+    MaintenanceFinished,
+    MaintenanceStarted,
     MemoryNote,
     Message,
+    MessageCommitted,
     ModuleChoice,
     ModuleInfo,
     PermissionPolicy,
@@ -32,8 +35,11 @@ from kayden.api import (
     SettingsUpdate,
     ShuttingDown,
     StateChanged,
+    StopReason,
     Text,
     TextDelta,
+    ToolCall,
+    ToolResult,
     ToolStatus,
     TransientCoreError,
     Usage,
@@ -420,6 +426,32 @@ def test_waiting_until_something_of_the_next_step_shows():
     assert not model.waiting
     model.apply(StateChanged(AgentState.IDLE))
     assert not model.waiting
+
+
+def test_not_waiting_while_memory_tidies_up_after_the_answer():
+    """The cycle stays THINKING for Memory's upkeep, but nothing more is coming."""
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    model.apply(StateChanged(AgentState.THINKING))
+    model.apply(MessageCommitted(Message("u", Role.USER, (Text("hi"),), 0.0)))
+    assert model.waiting
+    model.apply(MessageCommitted(Message("a", Role.ASSISTANT, (Text("Hello."),), 0.0),
+                                 StopReason.END_TURN))
+    model.apply(MaintenanceStarted(CONVERSATION.id))
+    assert not model.waiting
+    model.apply(MaintenanceFinished(CONVERSATION.id))
+    model.apply(StateChanged(AgentState.IDLE))
+    model.apply(StateChanged(AgentState.THINKING))  # the next cycle
+    assert model.waiting
+    call = ToolCall("c", "look", {})
+    model.apply(MessageCommitted(Message("b", Role.ASSISTANT, (call,), 0.0),
+                                 StopReason.TOOL_USE))
+    model.apply(StateChanged(AgentState.RUNNING_TOOLS))
+    assert not model.waiting  # the step shows
+    model.apply(MessageCommitted(Message(
+        "r", Role.TOOL, (ToolResult("c", ToolStatus.OK, "found"),), 0.0)))
+    model.apply(StateChanged(AgentState.THINKING))
+    assert model.waiting  # the model reads the result
 
 
 def test_failure_banner_until_the_next_cycle():
