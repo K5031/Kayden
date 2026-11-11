@@ -812,3 +812,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Tool | `read_around(message_id, conversation_id?, before=3, after=3)`, up to 20 a side: the message marked `→`, in order with its neighbours, each line as a recall hit's (1000 characters at most). Found by reading on from the message and back from the next one, so no lookup by id is needed beyond `history` |
 | Offered | With `recall`, also by a Memory that keeps no notes |
 | Next | Segment summaries ([proposed note](notes/proposed/2026-11-11-segment-summaries.md)) build on it |
+
+## The plan as a checklist
+
+| Choice | Decision |
+|---|---|
+| Offered | `update_plan` with every open conversation, not only with a duty or a plan; its description says when to keep one (several steps) and when not (a quick answer) |
+| Shown | While a step is todo or doing (`common.checklist`): desktop `PlanCard` above the other cards, ✓ ◐ ○ and struck-through dropped steps as drawn icons; terminal `PlanPanel` at the top of the prompts. Gone once every step is done or dropped |
+| Steps | `update_plan` and `wrap_up` calls are not shown as steps (`common.CARD_TOOLS`): the checklist and the card show them |
+| Caching | The plan is in the system prompt, as with duties and the Memory summary, so a plan change starts a new prompt prefix |

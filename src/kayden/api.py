@@ -797,14 +797,17 @@ _PLAN_ITEM = {
     "required": ["text"],
 }
 
-# Runtime built-ins offered while the open conversation has a duty or a plan
-# (update_plan), a duty (ask_for_help) or a goal (finish_goal). Like BUILTIN_TOOLS, never
-# gated and not counted.
+# Runtime built-ins offered with an open conversation (update_plan), while it has a duty
+# (ask_for_help) or a goal (finish_goal). Like BUILTIN_TOOLS, never gated and not counted.
 DUTY_TOOLS: Mapping[str, ToolSpec] = {
     "update_plan": ToolSpec(
         "update_plan",
-        "Replace your plan with this whole list. Every request shows it; an open item that "
-        "falls due wakes you.",
+        "Replace your plan with this whole list; the user sees it as a checklist. For a task "
+        "with several steps, write the plan before you start, then mark each step doing and "
+        "done as you go, in the same call as other work where you can. Skip it for a quick "
+        "answer or a single step. When a new task starts, replace the old plan; when the "
+        "task ends, every step is done or dropped. Every request shows the plan; with a "
+        "duty, an open item that falls due wakes you.",
         {"type": "object",
          "properties": {"items": {"type": "array", "items": _PLAN_ITEM}},
          "required": ["items"]},

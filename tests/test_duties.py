@@ -98,10 +98,23 @@ async def test_turning_a_duty_on_starts_work_and_shows_it(make):
     assert h.store.conversations[h.conversation.id].info.duty == QUIET
 
 
-async def test_an_ordinary_conversation_has_no_duty_tools(make):
-    h = await duty_harness(make)
-    await h.turn("hi")
-    assert {"update_plan", "finish_goal"}.isdisjoint(t.name for t in h.core.requests[0].tools)
+async def test_an_ordinary_conversation_keeps_a_plan_but_has_no_duty_tools(make):
+    h = await duty_harness(make, [
+        Step(calls=[call("update_plan", {"items": [
+            {"text": "Read the code", "status": "done"},
+            {"text": "Fix the bug", "status": "doing"},
+            {"text": "Run the tests"}]}, id="p")]),
+        Step(text="Working on it.")])
+    await h.turn("fix the bug")
+    names = {t.name for t in h.core.requests[0].tools}
+    assert "update_plan" in names  # a plan for any task with steps
+    assert names.isdisjoint({"finish_goal", "ask_for_help"})
+    plan = h.runtime.snapshot().conversation.plan
+    assert [(i.text, i.status) for i in plan] == [
+        ("Read the code", PlanStatus.DONE), ("Fix the bug", PlanStatus.DOING),
+        ("Run the tests", PlanStatus.TODO)]
+    assert h.runtime.snapshot().conversation.duty is None
+    assert "Fix the bug" in h.core.requests[1].system  # every request shows it
 
 
 async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
@@ -369,3 +382,23 @@ async def test_the_task_stays_in_view_after_the_goal_is_finished(make):
     assert "New goal: Launch the campaign" in notices(first)[0]
     assert "Launch the campaign" not in after.system  # the goal has ended
     assert any("Launch the campaign" in text for text in notices(after))  # still in view
+
+
+async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
+    from kayden.frontends.tui import KaydenApp, PlanPanel
+    from tests.test_tui import type_text, until
+
+    h = await duty_harness(make, [
+        Step(calls=[call("update_plan", {"items": [
+            {"text": "Read the code", "status": "done"},
+            {"text": "Fix the bug", "status": "doing"},
+            {"text": "Run the tests"}]})]),
+        Step(text="Working on it.")])
+    app = KaydenApp(h.runtime)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await until(pilot, lambda: app.conversation is not None)
+        await type_text(pilot, "fix the bug")
+        await pilot.press("enter")
+        await until(pilot, lambda: app.query(PlanPanel), timeout=10)
+        assert app.query_one(PlanPanel).lines() == [
+            "✓ Read the code", "◐ Fix the bug", "○ Run the tests"]

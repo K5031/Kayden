@@ -908,7 +908,7 @@ class Runtime:
         module."""
         specs = dict(BUILTIN_TOOLS)
         conversation = self._conversation
-        if conversation is not None and (conversation.duty is not None or conversation.plan):
+        if conversation is not None:
             specs["update_plan"] = DUTY_TOOLS["update_plan"]
             if conversation.duty is not None:
                 specs["ask_for_help"] = DUTY_TOOLS["ask_for_help"]

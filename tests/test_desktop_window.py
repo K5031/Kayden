@@ -1434,3 +1434,29 @@ async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
     [mascot] = [w for w in window.empty_state.findChildren(QLabel)
                 if w.objectName() == "mascot"]
     assert not mascot.pixmap().isNull() and mascot.accessibleName() == "Kayden"
+
+
+async def test_the_plan_shows_as_a_checklist_while_steps_are_open(make, qapp):
+    from kayden.frontends.desktop.window import PlanCard
+
+    h: Harness = await make()
+    h.core.add(Step(calls=[call("update_plan", {"items": [
+                   {"text": "Read the code", "status": "done"},
+                   {"text": "Fix the bug", "status": "doing"},
+                   {"text": "Run the tests"}]})]),
+               Step(text="Fixing it."),
+               Step(calls=[call("update_plan", {"items": [
+                   {"text": "Read the code", "status": "done"},
+                   {"text": "Fix the bug", "status": "done"},
+                   {"text": "Run the tests", "status": "done"}]})]),
+               Step(text="All done."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("fix the bug")
+    await eventually(lambda: controller.model.checklist and not controller.model.busy)
+    card = window.findChildren(PlanCard)[-1]
+    assert card.rows() == [("done", "Read the code"), ("doing", "Fix the bug"),
+                           ("todo", "Run the tests")]
+    controller.send("carry on")
+    await eventually(lambda: not controller.model.busy and len(h.core.requests) >= 4)
+    await eventually(lambda: controller.model.checklist == ())  # all done: it goes

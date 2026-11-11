@@ -54,6 +54,13 @@ carries on meanwhile. Approve runs exactly that step, without asking again, and 
 told the result; Dismiss tells it you said no. Proposals still open when you quit, stop the
 agent or switch conversations are withdrawn.
 
+### The plan
+
+For a task with several steps, the agent writes a plan first and ticks the steps off as it
+works. You see it as a checklist above the message box: ✓ done, ◐ under way, ○ still to
+do, and struck through for steps it dropped. It goes away once every step is done. A quick
+question gets no plan.
+
 ### The wrap-up card
 
 When the agent needs you to decide something, it ends its turn with a card above the message

@@ -82,12 +82,14 @@ from kayden.api import (
 )
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
+    CARD_TOOLS,
     COMPACTED,
     COMPACTING,
     RESULT_LABELS,
     Card,
     call_parts,
     card_of,
+    checklist,
     duty_status,
     group_title,
     help_text,
@@ -535,8 +537,11 @@ class ConversationModel:
                                          "Settings.", "warning"))
             case ConversationUpdated(info=info):
                 if self.conversation is not None and info.id == self.conversation.id:
+                    before = self.checklist
                     self.conversation = info
                     self.on_change(StatusChanged())
+                    if self.checklist != before:
+                        self.on_change(PromptsChanged())
                 self.on_change(ConversationListChanged())
             case DutyScheduled(wake_at=wake_at):
                 self.duty_wake_at = wake_at
@@ -588,7 +593,7 @@ class ConversationModel:
     def _add_tool(self, call: ToolCall, *, streaming: bool = False) -> ToolItem:
         arguments = "" if streaming else json.dumps(call.arguments, ensure_ascii=False)
         item = ToolItem(call.id, call.name, arguments)
-        if call.name != "wrap_up":  # shown as the card instead
+        if call.name not in CARD_TOOLS:  # shown as a card instead
             self._add(item)
         self._tools[call.id] = item
         return item
@@ -599,6 +604,11 @@ class ConversationModel:
         if card != self.card:
             self.card = card
             self.on_change(PromptsChanged())
+
+    @property
+    def checklist(self) -> tuple[PlanItem, ...]:
+        """The open conversation's plan while a step is open (common.checklist)."""
+        return checklist(self.conversation.plan) if self.conversation is not None else ()
 
     def close_card(self) -> None:
         """The user put the card away; typing an answer still works."""

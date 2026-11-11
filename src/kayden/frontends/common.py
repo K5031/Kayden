@@ -407,6 +407,17 @@ def _when(t: float) -> str:
     return when.strftime("%H:%M" if when.date() == datetime.now().date() else "%Y-%m-%d %H:%M")
 
 
+# Calls not shown as steps: the wrap-up card and the plan's checklist show them instead.
+CARD_TOOLS = frozenset({"wrap_up", "update_plan"})
+
+
+def checklist(plan: Sequence[PlanItem]) -> tuple[PlanItem, ...]:
+    """The plan as frontends show it, a checklist while a step is open; empty once every
+    step is done or dropped."""
+    open_ = any(i.status in (PlanStatus.TODO, PlanStatus.DOING) for i in plan)
+    return tuple(plan) if open_ else ()
+
+
 def plan_text(plan: Sequence[PlanItem]) -> str:
     """The plan as editable lines (PLAN_HINT)."""
     lines = []

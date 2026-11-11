@@ -82,6 +82,7 @@ from kayden.api import (
     ModelInfo,
     PermissionPolicy,
     PermissionRequest,
+    PlanItem,
     Proposal,
     RuntimeAPI,
     Settings,
@@ -1015,6 +1016,41 @@ class ProposalCard(QFrame):
         self.resolve(proposal_id, accept)
 
 
+class PlanCard(QFrame):
+    """The agent's plan as a checklist: done steps ticked, the one under way marked, the
+    rest open; dropped ones struck through."""
+
+    def __init__(self, plan: Sequence[PlanItem]) -> None:
+        super().__init__()
+        self.setObjectName("plan")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(6)
+        colors = theme.current()
+        self._rows: list[tuple[str, str]] = []
+        for item in plan:
+            mark = str(item.status)  # done, doing, todo or dropped: an icon of that name
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            icon = QLabel()
+            icon.setPixmap(theme.icon(mark, colors.accent if mark == "doing" else
+                                      colors.muted, 16).pixmap(16, 16))
+            text = _label(item.text, tone=None if mark in ("doing", "todo") else "muted")
+            if mark == "dropped":
+                font = text.font()
+                font.setStrikeOut(True)
+                text.setFont(font)
+            row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+            row.addWidget(text, 1)
+            layout.addLayout(row)
+            self._rows.append((mark, item.text))
+        self.setAccessibleName("Plan")
+
+    def rows(self) -> list[tuple[str, str]]:
+        """(mark, text) per step, for tests and accessibility checks."""
+        return list(self._rows)
+
+
 class WrapUpCard(QFrame):
     """The card that ends the agent's turn: its recap, its question and the options, its pick
     first. A click sends an option as the user's message, or runs its call while that is
@@ -1734,6 +1770,8 @@ class MainWindow(QMainWindow):
         while (child := self.prompts.takeAt(0)) is not None:
             if child.widget() is not None:
                 _discard(child.widget())
+        if steps := self.model.checklist:
+            self.prompts.addWidget(PlanCard(steps))
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
         for proposal in self.model.proposals.values():

@@ -259,7 +259,7 @@ QFrame#stepsHeader {{ border-radius: 6px; }}
 QFrame#stepsHeader:hover {{ background: {c.card}; }}
 QFrame#stepsBody {{ border-left: 2px solid {c.line}; margin-left: 9px; }}
 QFrame#tool QPlainTextEdit {{ background: {c.bg}; }}
-QFrame#prompt {{ background: {c.bg}; border: 1px solid {c.line};
+QFrame#prompt, QFrame#plan {{ background: {c.bg}; border: 1px solid {c.line};
     border-left: 3px solid {c.accent}; }}
 QTextBrowser#reply {{ background: transparent; border: none; padding: 0; }}
 """
@@ -275,7 +275,8 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
     """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", "menu" (three
-    lines), "plus", or a window control: "minimize", "maximize", "restore", "close"."""
+    lines), "plus", a plan step's "done", "doing", "todo" or "dropped", or a window control:
+    "minimize", "maximize", "restore", "close"."""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.setDevicePixelRatio(scale)
@@ -331,6 +332,21 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
                                 Qt.PenCapStyle.RoundCap))
             painter.drawLine(QPointF(s * 0.5, s * 0.22), QPointF(s * 0.5, s * 0.78))
             painter.drawLine(QPointF(s * 0.22, s * 0.5), QPointF(s * 0.78, s * 0.5))
+        case "done":  # a ticked circle
+            painter.setPen(QPen(QColor(color), size / 12))
+            painter.drawEllipse(QPointF(s / 2, s / 2), s * 0.4, s * 0.4)
+            path = QPainterPath(QPointF(s * 0.32, s * 0.52))
+            path.lineTo(s * 0.45, s * 0.64)
+            path.lineTo(s * 0.68, s * 0.38)
+            painter.drawPath(path)
+        case "doing":  # a ring half filled
+            painter.setPen(QPen(QColor(color), size / 12))
+            painter.drawEllipse(QPointF(s / 2, s / 2), s * 0.4, s * 0.4)
+            painter.setBrush(QColor(color))
+            painter.drawPie(QRectF(s * 0.2, s * 0.2, s * 0.6, s * 0.6), 90 * 16, -180 * 16)
+        case "todo" | "dropped":  # a dashed circle
+            painter.setPen(QPen(QColor(color), size / 12, Qt.PenStyle.DashLine))
+            painter.drawEllipse(QPointF(s / 2, s / 2), s * 0.4, s * 0.4)
         case "minimize":
             painter.drawLine(QPointF(s * 0.25, s * 0.5), QPointF(s * 0.75, s * 0.5))
         case "maximize":

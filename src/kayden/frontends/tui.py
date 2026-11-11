@@ -78,6 +78,7 @@ from kayden.api import (
     PermissionRequested,
     PermissionResolved,
     PlanItem,
+    PlanStatus,
     Proposal,
     ProposalMade,
     ProposalResolved,
@@ -110,6 +111,7 @@ from kayden.api import (
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
     AT_RESTART,
+    CARD_TOOLS,
     COMPACTED,
     COMPACTING,
     DUTY_HINT,
@@ -123,6 +125,7 @@ from kayden.frontends.common import (
     Card,
     call_parts,
     card_of,
+    checklist,
     delete_details,
     duty_status,
     folder_path,
@@ -454,6 +457,23 @@ class ProposalPrompt(Vertical):
         for button in self.query(Button):
             button.disabled = True
         self.app.resolve_proposal(self.proposal.id, event.button.id == "approve")  # type: ignore[attr-defined]
+
+
+class PlanPanel(Static):
+    """The agent's plan as a checklist: ✓ done, ◐ under way, ○ open, – dropped."""
+
+    MARKS: ClassVar = {PlanStatus.DONE: ("✓", "dim"), PlanStatus.DOING: ("◐", "bold"),
+                       PlanStatus.TODO: ("○", ""), PlanStatus.DROPPED: ("–", "dim strike")}
+
+    def __init__(self, plan: Sequence[PlanItem]) -> None:
+        self.plan = tuple(plan)
+        super().__init__(Text("\n").join(
+            Text.assemble((f"{self.MARKS[i.status][0]} ", "cyan" if i.status ==
+                           PlanStatus.DOING else "dim"), (i.text, self.MARKS[i.status][1]))
+            for i in self.plan))
+
+    def lines(self) -> list[str]:
+        return [f"{self.MARKS[i.status][0]} {i.text}" for i in self.plan]
 
 
 class WrapUpPrompt(Vertical):
@@ -1538,6 +1558,7 @@ class KaydenApp(App[None]):
     PermissionPrompt { height: auto; border: round $warning; padding: 0 1; }
     PermissionPrompt .buttons { height: auto; }
     WrapUpPrompt { height: auto; border: round $primary; padding: 0 1; }
+    PlanPanel { height: auto; border: round $panel; padding: 0 1; }
     WrapUpPrompt .buttons { height: auto; }
     WrapUpPrompt Button { margin-right: 1; }
     PermissionPrompt Button { margin-right: 1; }
@@ -1590,6 +1611,7 @@ class KaydenApp(App[None]):
         self._inbox: asyncio.Queue[EventEnvelope | _Resync | None] = asyncio.Queue()
         self._tool_entries: dict[str, ToolEntry] = {}
         self._card: WrapUpPrompt | None = None
+        self._plan: PlanPanel | None = None
         self._card_proposals: set[str] = set()  # wrap_up options pending, shown on the card
         self._closed_card: str | None = None  # the card the user put away
         self._stream: list[AssistantEntry | ToolEntry] = []
@@ -1714,6 +1736,7 @@ class KaydenApp(App[None]):
         self._prompts.clear()
         self._proposals.clear()
         self._card = None
+        self._plan = None
         self._card_proposals.clear()
         self.last_seq = snap.seq
         self.state = snap.state
@@ -1724,6 +1747,7 @@ class KaydenApp(App[None]):
         self.usage = snap.usage
         self.duty_wake_at = snap.duty_wake_at
         self.help_needed = snap.help_needed
+        await self._set_checklist()
         self._oldest_id = history[0].id if history else None
         if len(history) == HISTORY_PAGE:
             await self._mount(LoadEarlier())
@@ -1828,6 +1852,7 @@ class KaydenApp(App[None]):
             case ConversationUpdated(info=info):
                 if self.conversation is not None and info.id == self.conversation.id:
                     self.conversation = info
+                    await self._set_checklist()
                 self._reload(ConversationsScreen)
             case ConversationDeleted():
                 self._reload(ConversationsScreen)
@@ -1899,7 +1924,7 @@ class KaydenApp(App[None]):
     async def _mount_step(self, entry: ToolEntry) -> ToolEntry:
         """Add a step to the group just before it, or start one, taking along the thinking
         that came right before the step."""
-        if entry.tool_name == "wrap_up":  # shown as the card instead
+        if entry.tool_name in CARD_TOOLS:  # shown as a card instead
             entry.display = False
             return await self._mount(entry)
         transcript = self.query_one("#transcript", VerticalScroll)
@@ -2038,6 +2063,19 @@ class KaydenApp(App[None]):
         prompt = ProposalPrompt(proposal)
         self._proposals[proposal.id] = prompt
         await self.query_one("#permissions", Vertical).mount(prompt)
+
+    async def _set_checklist(self) -> None:
+        """The plan, while a step is open, at the top of the prompts."""
+        steps = checklist(self.conversation.plan) if self.conversation is not None else ()
+        if self._plan is not None and self._plan.plan == steps:
+            return
+        if self._plan is not None:
+            await self._plan.remove()
+            self._plan = None
+        if steps:
+            self._plan = PlanPanel(steps)
+            permissions = self.query_one("#permissions", Vertical)
+            await permissions.mount(self._plan, before=0 if permissions.children else None)
 
     async def _set_card(self, card: Card | None) -> None:
         if card is not None and card.call_id == self._closed_card:
