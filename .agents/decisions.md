@@ -821,7 +821,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Choice | Decision |
 |---|---|
 | Offered | `update_plan` with every open conversation, not only with a duty or a plan; its description says when to keep one (several steps) and when not (a quick answer) |
-| Shown | While a step is todo or doing (`common.checklist`): desktop `PlanCard` above the other cards, ✓ ◐ ○ and struck-through dropped steps as drawn icons; terminal `PlanPanel` at the top of the prompts. Gone once every step is done or dropped |
+| Shown | While a step is todo or doing (`common.checklist`): desktop `PlanCard` above the other cards, a rounded card as in Claude's app: a filled tick for done (dimmed), a turning arc for the step under way (`Spinner`), a dashed circle for the rest, dropped steps struck through; terminal `PlanPanel` at the top of the prompts. Gone once every step is done or dropped |
 | Steps | `update_plan` and `wrap_up` calls are not shown as steps (`common.CARD_TOOLS`): the checklist and the card show them |
 | Caching | The plan is in the system prompt, as with duties and the Memory summary, so a plan change starts a new prompt prefix |
 

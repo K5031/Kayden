@@ -1081,31 +1081,67 @@ class ProposalCard(QFrame):
         self.resolve(proposal_id, accept)
 
 
+class Spinner(QWidget):
+    """A turning arc: the step under way."""
+
+    SIZE, STEP_MS, STEP_DEGREES, ARC_DEGREES = 16, 60, 30, 100
+
+    def __init__(self, color: str) -> None:
+        super().__init__()
+        self._color, self._angle = QColor(color), 0
+        self.setFixedSize(self.SIZE, self.SIZE)
+        timer = QTimer(self)
+        timer.timeout.connect(self._turn)
+        timer.start(self.STEP_MS)
+
+    def _turn(self) -> None:
+        self._angle = (self._angle + self.STEP_DEGREES) % 360
+        self.update()
+
+    def paintEvent(self, event: object) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(self._color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        inset = self.SIZE * 0.1
+        painter.drawArc(QRectF(inset, inset, self.SIZE - 2 * inset, self.SIZE - 2 * inset),
+                        (90 - self._angle) * 16, self.ARC_DEGREES * 16)
+
+
 class PlanCard(QFrame):
-    """The agent's plan as a checklist: done steps ticked, the one under way marked, the
-    rest open; dropped ones struck through."""
+    """The agent's plan as a checklist: done steps ticked and dimmed, the one under way with
+    a turning arc, the rest open; dropped ones struck through."""
 
     def __init__(self, plan: Sequence[PlanItem]) -> None:
         super().__init__()
         self.setObjectName("plan")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
         colors = theme.current()
         self._rows: list[tuple[str, str]] = []
         for item in plan:
-            mark = str(item.status)  # done, doing, todo or dropped: an icon of that name
+            mark = str(item.status)  # done, doing, todo or dropped
             row = QHBoxLayout()
-            row.setSpacing(10)
-            icon = QLabel()
-            icon.setPixmap(theme.icon(mark, colors.accent if mark == "doing" else
-                                      colors.muted, 16).pixmap(16, 16))
+            row.setSpacing(8)
+            icon: QWidget
+            if mark == "doing":
+                icon = Spinner(colors.muted)
+            else:
+                icon = QLabel()
+                icon.setPixmap(theme.icon(mark, colors.muted, 16).pixmap(16, 16))
             text = _label(item.text, tone=None if mark in ("doing", "todo") else "muted")
             if mark == "dropped":
                 font = text.font()
                 font.setStrikeOut(True)
                 text.setFont(font)
-            row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+            # Beside the first line of the step's text, also when the text wraps.
+            icon.setFixedSize(16, 16)
+            lead = max(0, (text.fontMetrics().height() - 16) // 2)
+            holder = QVBoxLayout()
+            holder.setContentsMargins(0, lead, 0, 0)
+            holder.addWidget(icon)
+            holder.addStretch()
+            row.addLayout(holder)
             row.addWidget(text, 1)
             layout.addLayout(row)
             self._rows.append((mark, item.text))
