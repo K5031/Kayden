@@ -1005,6 +1005,7 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self.sessions = sessions  # the sub-sessions this window hosts
         self.home = controller  # this window's own runtime; `controller` is the one shown
+        controller.sessions = sessions
         self._viewing: tuple[SubSession, RemoteRuntime, asyncio.Task[None]] | None = None
         self._collapsed: set[str] = set()  # sidebar groups the user folded
         self.zoom_file = zoom_file  # where the zoom is remembered; None: not remembered
@@ -1692,7 +1693,8 @@ class MainWindow(QMainWindow):
     def delete_conversation(self, info: ConversationInfo) -> None:
         box = QMessageBox(QMessageBox.Icon.NoIcon, "Delete conversation",
                           f"Delete “{conversation_label(info)}”?", parent=self)
-        box.setInformativeText(delete_details(self.home.is_open(info.id)))
+        children = len(self.sessions.of(info.id, include_archived=True)) if self.sessions else 0
+        box.setInformativeText(delete_details(self.home.is_open(info.id), children))
         cancel = box.addButton(QMessageBox.StandardButton.Cancel)
         delete = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
         delete.setProperty("danger", True)

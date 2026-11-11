@@ -278,6 +278,11 @@ class SubSessions(Tools):
     def archive(self, session: SubSession, archived: bool) -> None:
         self._set(session, archived=archived)
 
+    async def delete_of(self, conversation_id: str) -> None:
+        """Delete every sub-session of a conversation: it is being deleted."""
+        for session in self.of(conversation_id, include_archived=True):
+            await self.delete(session)
+
     async def delete(self, session: SubSession) -> None:
         """Stop it and erase its folder for good."""
         channel = self._channels.pop(session.id, None)

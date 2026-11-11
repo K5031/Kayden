@@ -249,10 +249,14 @@ def module_name(choice: ModuleChoice, module_id: str | None) -> str:
     return next((m.name for m in choice.installed if m.id == module_id), module_id or "custom")
 
 
-def delete_details(is_open: bool) -> str:
+def delete_details(is_open: bool, sub_sessions: int = 0) -> str:
     """What deleting a conversation does, for its confirmation."""
     details = ("This permanently deletes the conversation. What Kayden remembered from it "
                "stays in Memory.")
+    if sub_sessions == 1:
+        details += " Its sub-session stops and is deleted too."
+    elif sub_sessions:
+        details += f" Its {sub_sessions} sub-sessions stop and are deleted too."
     return details + (" A new chat will open." if is_open else "")
 
 

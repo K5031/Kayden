@@ -96,6 +96,8 @@ step. Several can run at once.
   restart, so a crash cannot quietly repeat an action. Opening one that is not running
   starts it again on its own conversation. Their work is in `sessions/` in the data folder.
 - **Right-click one** to open, resume, stop, rename, archive or delete it.
+- **They go with their conversation.** Deleting a conversation stops and deletes its
+  sub-sessions too; archiving it hides them with it.
 
 ## Memory
 

@@ -199,3 +199,11 @@ def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
     assert duty_status(duty, None, AgentState.THINKING) == "Duty: working"
     assert duty_status(duty, time.time() + 60, AgentState.IDLE).startswith(
         "Duty: next check-in ")
+
+
+def test_delete_details_name_the_sub_sessions():
+    from kayden.frontends.common import delete_details
+
+    assert "sub-session" not in delete_details(False)
+    assert "Its sub-session stops and is deleted too." in delete_details(False, 1)
+    assert "Its 3 sub-sessions stop and are deleted too." in delete_details(True, 3)

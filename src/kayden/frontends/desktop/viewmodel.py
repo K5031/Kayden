@@ -91,6 +91,7 @@ from kayden.frontends.common import (
     past_tense,
     provider_step,
 )
+from kayden.frontends.sessions import SubSessions
 
 HISTORY_PAGE = 100
 MAX_ARGS_CHARS = 120
@@ -836,6 +837,7 @@ class Controller:
             asyncio.Queue())
         self._tasks: set[asyncio.Task[Any]] = set()
         self.can_delete = True  # False once Memory said it cannot delete conversations
+        self.sessions: SubSessions | None = None  # deleted with their conversation
 
     async def run(self) -> None:
         """Until the event stream ends or ShuttingDown arrives."""
@@ -989,6 +991,8 @@ class Controller:
                 await self.runtime.start(StartOptions())
                 await self._inbox.put(self.recover)
             await self.runtime.delete_conversation(conversation_id)
+            if self.sessions is not None:
+                await self.sessions.delete_of(conversation_id)
 
         return self.command(erase(), failed=failed)
 

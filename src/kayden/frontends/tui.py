@@ -888,9 +888,11 @@ class ConversationsScreen(ListScreen):
             if yes:
                 self._run(self._erase(selected.id), unsupported="#delete")
 
+        sessions = getattr(self.app, "sessions", None)
+        children = len(sessions.of(selected.id, include_archived=True)) if sessions else 0
         self.app.push_screen(ConfirmScreen(
             f'Delete "{conversation_label(selected)}"? '
-            + delete_details(selected.id == self.open_id),
+            + delete_details(selected.id == self.open_id, children),
             yes="Delete", no="Cancel", danger=True), confirmed)
 
     async def _erase(self, conversation_id: ConversationId) -> None:
@@ -900,6 +902,8 @@ class ConversationsScreen(ListScreen):
             await self.app.start_conversation(StartOptions())
             self.open_id = self.app.conversation.id
         await self.runtime.delete_conversation(conversation_id)
+        if (sessions := getattr(self.app, "sessions", None)) is not None:
+            await sessions.delete_of(conversation_id)
 
 
 class MemoryScreen(ListScreen):

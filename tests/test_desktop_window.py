@@ -1078,3 +1078,29 @@ async def test_the_permission_picker_tightens_at_once_and_asks_before_loosening(
     allow.click()
     await eventually(lambda: window.permissions_button.text() == "Auto")
     assert window.permission_actions[PermissionPolicy.AUTO].isChecked()
+
+
+async def test_deleting_a_conversation_deletes_its_sub_sessions(make, qapp, tmp_path, child_env):
+    from tests.test_sub_sessions import finish, parent
+
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(text="Started."), Step(text="Got it.")],
+        [finish("Haiku written."), {"text": "Done."}])
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, sessions=sessions)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.show()
+    await h.turn("Go")
+    [child] = sessions.sessions
+    await eventually(lambda: child.state == "done", timeout=30)
+    parent_info = h.conversation
+    await window.fill_sidebar()
+    window.delete_conversation(window.conversation_info(parent_info.id))
+    box = message_box(window)
+    assert "Its sub-session stops and is deleted too." in box.informativeText()
+    [delete] = [b for b in box.buttons() if b.text() == "Delete"]
+    delete.click()
+    await eventually(lambda: not sessions.sessions, timeout=20)
+    assert not child.data_dir.exists()
