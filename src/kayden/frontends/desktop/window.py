@@ -34,6 +34,7 @@ from PySide6.QtGui import (
     QPixmap,
     QShortcut,
     QTextBlockFormat,
+    QTextCharFormat,
     QTextCursor,
 )
 from PySide6.QtWidgets import (
@@ -152,7 +153,8 @@ from kayden.frontends.desktop.viewmodel import (
 from kayden.frontends.remote import RemoteRuntime
 from kayden.frontends.sessions import SubSession, SubSessions
 
-LINE_HEIGHT_PERCENT = 145  # reply text, of the font's line spacing
+LINE_HEIGHT_PERCENT = 118  # reply text, of the font's line spacing (itself ~1.35 em)
+CODE_SCALE = 0.88  # inline code, of the text size: monospace looks larger at the same size
 PARAGRAPH_SPACING = 10  # px below a reply paragraph
 LIST_ITEM_SPACING = 4  # px below a list item
 ZOOM_SAVE_DELAY_S = 0.4
@@ -478,10 +480,27 @@ class MarkdownView(QTextBrowser):
 
     def setMarkdown(self, markdown: str) -> None:
         """Markdown with room to breathe: taller lines, space between paragraphs and list
-        items, more above headings."""
+        items, more above headings; inline code a little smaller, on a soft background."""
         super().setMarkdown(markdown)
+        code = QTextCharFormat()
+        code.setFontPointSize(self.font().pointSizeF() * CODE_SCALE)
+        inline = QTextCharFormat(code)
+        inline.setBackground(QColor(theme.current().select))
         block = self.document().begin()
         while block.isValid():
+            fragments = block.begin()
+            spans = []
+            while not fragments.atEnd():
+                fragment = fragments.fragment()
+                if fragment.charFormat().fontFixedPitch():
+                    spans.append((fragment.position(), fragment.length()))
+                fragments += 1
+            for start, length in spans:
+                cursor = QTextCursor(self.document())
+                cursor.setPosition(start)
+                cursor.setPosition(start + length, QTextCursor.MoveMode.KeepAnchor)
+                cursor.mergeCharFormat(code if block.blockFormat().nonBreakableLines()
+                                       else inline)
             fmt = block.blockFormat()
             fmt.setLineHeight(LINE_HEIGHT_PERCENT,
                               QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)

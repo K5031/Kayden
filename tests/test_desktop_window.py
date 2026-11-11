@@ -561,12 +561,25 @@ async def test_a_finished_step_is_in_the_past_tense_without_a_permission_line(ma
     assert not hasattr(card, "notes")
 
 
-def test_replies_have_no_avatar_and_roomy_lines(qapp):
+def test_replies_have_no_avatar_and_comfortable_lines(qapp):
     bubble = AssistantBubble(AssistantItem(text="One.\n\n- a\n- b\n\nTwo.", final=True))
     assert not [w for w in bubble.findChildren(QLabel) if w.objectName() == "avatar"]
     block = bubble.body.document().begin()
-    assert block.blockFormat().lineHeight() >= 140  # percent of the font's line
+    # percent of the font's line spacing, itself about 1.35 em: about 1.6 em, not double
+    assert 110 <= block.blockFormat().lineHeight() <= 125
     assert block.blockFormat().bottomMargin() >= 8
+
+
+def test_inline_code_is_smaller_on_a_soft_background(qapp):
+    bubble = AssistantBubble(AssistantItem(text="Run `uv run pytest` now.", final=True))
+    fragments = bubble.body.document().begin().begin()
+    formats = []
+    while not fragments.atEnd():
+        formats.append(fragments.fragment().charFormat())
+        fragments += 1
+    [code] = [f for f in formats if f.fontFixedPitch()]
+    assert code.fontPointSize() < bubble.body.font().pointSizeF()
+    assert code.background().style() != Qt.BrushStyle.NoBrush
 
 
 @pytest.fixture
