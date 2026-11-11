@@ -18,6 +18,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
 
 from kayden.api import (
+    AgentState,
     Budget,
     ConversationInfo,
     PermissionPolicy,
@@ -1094,6 +1095,9 @@ async def test_deleting_a_conversation_deletes_its_sub_sessions(make, qapp, tmp_
     await h.turn("Go")
     [child] = sessions.sessions
     await eventually(lambda: child.state == "done", timeout=30)
+    # the parent answers the child's report; a busy conversation cannot be deleted
+    await eventually(lambda: len(h.core.requests) == 3
+                     and h.runtime.snapshot().state == AgentState.IDLE, timeout=10)
     parent_info = h.conversation
     await window.fill_sidebar()
     window.delete_conversation(window.conversation_info(parent_info.id))

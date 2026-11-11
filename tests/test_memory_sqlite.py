@@ -4,6 +4,7 @@ import re
 import sqlite3
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -130,6 +131,59 @@ async def test_trigger_is_a_fraction_of_the_window(open_store):
         completion = FakeCompletion(render=tagged)
         assert await maintain(memory, conv.id, completion, window) is compacts
         assert bool(completion.calls) is compacts
+
+
+async def test_compaction_starts_at_ninety_percent_by_default(open_store):
+    """The context is used nearly to the full; a margin covers token-count estimates."""
+    conv_messages = [text_message(t) for t in tokens(0, 40)]
+    size = count_tokens(conv_messages)
+    for window, compacts in ((int(size / 0.88), False), (int(size / 0.92), True)):
+        memory = open_store(CompactionConfig())
+        conv = await memory.create_conversation(title="test")
+        await memory.append(conv.id, conv_messages)
+        assert await maintain(memory, conv.id, FakeCompletion(render=tagged), window) is compacts
+
+
+def with_topics(*topics: str) -> Callable[[list[str], str], str]:
+    def render(kept: list[str], text: str) -> str:
+        listed = "\n".join(f"- {t}" for t in topics)
+        return f"<summary>\nSummary: {' '.join(kept)}\n</summary>\n<topics>\n{listed}\n</topics>"
+    return render
+
+
+async def test_the_summary_ends_with_the_topics_covered(open_store):
+    """One line per topic survives every rewrite, so the agent knows what to search for."""
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await fill(memory, conv.id, tokens(0, 40))
+    assert await maintain(memory, conv.id, FakeCompletion(
+        render=with_topics("Backup script (Nov 3)")))
+    summary = await addendum(memory, conv.id)
+    assert "Topics so far" in summary and "- Backup script (Nov 3)" in summary
+    assert summary.index("Summary:") < summary.index("Topics so far")
+
+    await fill(memory, conv.id, tokens(40, 80))
+    completion = FakeCompletion(render=with_topics("Backup script (Nov 3)",
+                                                   "Hosting (Nov 4)"))
+    assert await maintain(memory, conv.id, completion)
+    prompt = completion.calls[0]["system"]
+    assert "every topic" in prompt and "- Backup script (Nov 3)" in prompt
+    assert "- Hosting (Nov 4)" in await addendum(memory, conv.id)
+
+
+async def test_an_overlong_summary_loses_prose_before_topics(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await fill(memory, conv.id, tokens(0, 40))
+    words = " ".join(f"word{i}" for i in range(int(SUMMARY_TOKENS) * 2))
+
+    def render(kept: list[str], text: str) -> str:
+        return f"<summary>{words}</summary><topics>\n- Postgres backup script\n</topics>"
+
+    assert await maintain(memory, conv.id, FakeCompletion(render=render))
+    state = await memory.inspect(conv.id)
+    assert state is not None and state.summary.endswith("- Postgres backup script")
+    assert count_tokens(state.summary) <= SUMMARY_TOKENS
 
 
 async def test_compaction_uses_light_model_and_summary_budget(open_store):

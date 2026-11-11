@@ -168,8 +168,9 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 - Factory: `kayden.memory.sqlite:factory`. Options: `path` (default
   `<data_dir>/memory.db`) plus any
   `CompactionConfig` field; an unknown option raises TypeError.
-- `CompactionConfig` is all fractions of `ContextRequest.max_tokens`: trigger 0.75
-  (summary plus active verbatim context), remove 0.5 (cut-half), summary 0.05, long-term
+- `CompactionConfig` is all fractions of `ContextRequest.max_tokens`: trigger 0.9
+  (summary plus active verbatim context; compaction runs before every request, so a big
+  step is compacted before it is sent, and the 10% covers token-count estimates), remove 0.5 (cut-half), summary 0.05, long-term
   rendering 0.05. All token figures use the runtime's `TokenCounter`.
 - Compaction cuts only before a USER message that splits no call from its result (or
   pending call). The request to the light model is sized so that system prompt, transcript
@@ -180,6 +181,12 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   characters (`_SUMMARY_TOOL_CHARS`: the first and last 1 000, with a note that recall finds
   the rest). Command output and page text rarely belong in a summary; cutting them makes
   summaries cheaper and leaves room for the conversation. The archive keeps them whole.
+- The summary ends with a topics list (`<topics>` in the reply, stored in the summary under
+  "Topics so far (search the history for details):"), one line per topic with its date. The
+  prompt says to carry every topic over and merge related ones as the list grows. Over the
+  summary budget, the prose is cut first; the topics get up to half the budget, keeping
+  whole lines from the top (the oldest, which the prose has lost). Kept in the one summary
+  string, so the store's schema is unchanged.
 - `assemble` priority: the newest exchange (from the last USER message on, truncated in
   view if it alone is too big), then the summary, then the newest long-term entries (at
   most 5% of the budget), then older verbatim messages as far back as fits.

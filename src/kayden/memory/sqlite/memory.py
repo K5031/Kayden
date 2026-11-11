@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 # A store of another version is refused.
 SCHEMA_VERSION = 8
 # Output headroom on top of the summary budget, for its tags.
-_SUMMARY_TAG_TOKENS = 64
+_SUMMARY_TAG_TOKENS = 64  # the summary and topics tags
 _SAVE_OUTPUT_TOKENS = 1024  # the pass after an answer: the changes it writes
 _SAVE_NOTES_FRACTION = 0.05  # of its window: note texts shown to it, newest first
 _TITLE_OUTPUT_TOKENS = 20
@@ -86,7 +86,7 @@ _SUMMARY_TOOL_CHARS = 2_000
 class CompactionConfig:
     """Every value is a fraction of the context window (`ContextRequest.max_tokens`)."""
 
-    trigger_fraction: float = 0.75  # compact once summary + active verbatim context exceed this
+    trigger_fraction: float = 0.9  # compact once summary + active verbatim context exceed this
     remove_fraction: float = 0.5  # share of active tokens moved into the summary; 0.5 = cut-half
     summary_fraction: float = 0.05  # rolling-summary budget
     long_term_fraction: float = 0.05  # budget for the profile and the notes' index
@@ -200,10 +200,18 @@ summary of at most {summary_tokens} tokens. Keep what is needed to continue the 
 goals, decisions, facts, open tasks and their status. Drop details that no longer
 matter; the original messages stay searchable in an archive.
 
+Then list the topics covered so far, one short line each with its date: every topic
+from the previous summary's list, then the new ones. Never drop a topic; when the list
+grows long, merge closely related ones into one line. The list tells the agent what it
+can search the archive for.
+
 Reply exactly in this format:
 <summary>
 updated summary
 </summary>
+<topics>
+- topic (date)
+</topics>
 
 Previous summary:
 {summary}
@@ -243,6 +251,8 @@ Write a title of at most six words for a conversation that starts with the user'
 below. Reply with the title only: no quotes, no punctuation at the end."""
 
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
+_TOPICS_RE = re.compile(r"<topics>(.*?)</topics>", re.DOTALL)
+TOPICS_HEADING = "Topics so far (search the history for details):"
 _SAVE_RE = re.compile(r'<save title="([^"]*)"(?: description="([^"]*)")?>(.*?)</save>',
                       re.DOTALL)
 _APPEND_RE = re.compile(r'<append title="([^"]*)">(.*?)</append>', re.DOTALL)
@@ -1073,12 +1083,26 @@ def _shortened(text: str) -> str:
 
 
 def _parse_output(output: str, summary_tokens: int, count: TokenCounter) -> str:
-    summary_match = _SUMMARY_RE.search(output)
-    summary = (summary_match.group(1) if summary_match else output).strip()
-    if count(summary) > summary_tokens:
-        cut = summary[: _max_true(len(summary), lambda n: count(summary[:n]) <= summary_tokens)]
+    """The summary, then the topics list under TOPICS_HEADING. Over budget, the prose is
+    cut first: the topics get up to half the budget, whole lines from the top."""
+    summary_match, topics_match = _SUMMARY_RE.search(output), _TOPICS_RE.search(output)
+    summary = (summary_match.group(1) if summary_match else
+               _TOPICS_RE.sub("", output) if topics_match else output).strip()
+    lines = [line.strip() for line in (topics_match.group(1) if topics_match else "")
+             .splitlines() if line.strip()]
+    if not summary:
+        return ""
+    keep = _max_true(len(lines), lambda k: count(_topics(lines[:k])) <= summary_tokens // 2)
+    topics = _topics(lines[:keep])
+    room = summary_tokens - (count(topics) if topics else 0)
+    if count(summary) > room:
+        cut = summary[: _max_true(len(summary), lambda n: count(summary[:n]) <= room)]
         summary = cut.rsplit(None, 1)[0] if " " in cut.strip() else cut
-    return summary
+    return f"{summary}\n\n{topics}" if topics else summary
+
+
+def _topics(lines: Sequence[str]) -> str:
+    return "\n".join([TOPICS_HEADING, *lines]) if lines else ""
 
 
 def _render_addendum(summary: str, profile: str, index: Sequence[str]) -> str:

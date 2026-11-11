@@ -103,9 +103,12 @@ step. Several can run at once.
 
 Kayden keeps every message of every conversation until you delete the conversation.
 
-- When a conversation gets long, older messages are **summarized** so the recent part fits
-  the model's context. Long tool output (command output, web pages) is shortened for the
-  summary, so summaries stay cheap. The originals stay saved, in full. The chat shows
+- When a conversation fills about 90% of the model's context, its older half is
+  **summarized** so the recent part fits. Long tool output (command output, web pages) is
+  shortened for the summary, so summaries stay cheap. The originals stay saved, in full.
+- The summary ends with a list of the **topics covered so far**, one line each. Details
+  fade from the summary as it is rewritten, but the list keeps every topic, so the agent
+  knows what it can search for. The chat shows
   "Compacting conversation…" while this runs, then "Conversation compacted".
 - The agent can **search** a conversation's full history, including summarized parts, and
   your other conversations that are not archived.
