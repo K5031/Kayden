@@ -682,3 +682,16 @@ async def test_long_tool_output_is_shortened_for_the_summary_not_the_archive(ope
     assert "characters left out" in sent and len(sent) < 20_000
     stored = await memory.history(conv.id)
     assert ToolResult("c1", ToolStatus.OK, log) in [b for m in stored for b in m.blocks]
+
+
+async def test_the_saving_pass_is_told_what_not_to_keep(open_store):
+    """Notes hold what stays true and cannot be found again: not news of recent work, not
+    what the files or the history already say, and a stale note is rewritten."""
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.append(conv.id, [text_message("remember: likes jazz"), answer()])
+    completion = FakeCompletion(render=tagged)
+    await maintain(memory, conv.id, completion)
+    prompt = " ".join(completion.calls[0]["system"].split())
+    for rule in ("news", "recent work", "files", "history", "no longer true"):
+        assert rule in prompt, rule

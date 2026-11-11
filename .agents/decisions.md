@@ -833,3 +833,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Configured | Any `thinking` in the Core's or the model's options is sent as it is |
 | Not `updates` | `display: "updates"` (a beta) would show only the notes between tool calls; `summarized` also shows the reasoning, which the Thinking section already holds |
 | Desktop | The Thinking button reads "Thinking…" while the reply has no text and is not final |
+
+## What the saving pass keeps
+
+| Choice | Decision |
+|---|---|
+| Keep | What stays true and the agent cannot find again: the user, how they want answers, their decisions and why, lasting facts about their work or setup |
+| Skip | News (recent work, the state of a task), what files, code, docs or git history already say, small talk, one-off requests, what is saved |
+| Upkeep | A note shown in full that holds news or something no longer true is saved again without it, so memory stays current without the user |
+| Limit | Notes listed by title only are not reviewed; cleaning them needs them shown, which costs the light model's input |

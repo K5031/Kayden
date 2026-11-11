@@ -220,11 +220,20 @@ Previous summary:
 _SAVE_PROMPT = """\
 You keep the long-term memory of an AI agent that works for a user. Read their latest
 exchange, which follows, and save what will matter in later conversations: who the user
-is and how they want answers, their projects, the people in them, decisions and plans,
-lasting facts about their work or setup. Save what the user said or decided, not what
-the agent suggested, and nothing the exchange does not state. Skip passing remarks, small
-talk, one-off requests and anything already saved. Never save passwords, keys or other
-secrets.
+is and how they want answers, their projects, the people in them, decisions and plans and
+why, lasting facts about their work or setup. Save what the user said or decided, not what
+the agent suggested, and nothing the exchange does not state. Never save passwords, keys
+or other secrets.
+
+Save only what stays true and the agent could not find again. Skip:
+- news: recent work, what was just built, fixed or tried, the state of a task;
+- what the files, code, docs or git history of a project already say, such as how it is
+  built or what a tool does: the agent can read them again;
+- passing remarks, small talk, one-off requests, and anything already saved.
+
+Keep notes current: when a note shown in full holds news or something that is no longer
+true, save it again without that. A note you would write for this exchange alone is often
+better not written at all.
 
 Memory is a profile, titled "{profile_title}", and notes, one per project, person or
 topic, each with a one-line description.
