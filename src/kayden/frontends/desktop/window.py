@@ -1198,24 +1198,29 @@ class MainWindow(QMainWindow):
 
         header = DragArea(objectName="header")
         head = QHBoxLayout(header)
-        head.setContentsMargins(18, 8, 8, 8)
+        head.setContentsMargins(18, 0, 0, 0)  # the window buttons reach the top and right
         head.setSpacing(4)
         self.title_label = ElidedLabel()
         self.title_label.setProperty("role", "title")
         self.duty_label = _label(wrap=False, selectable=False, role="small")
         self.duty_label.hide()  # only with a duty: when it checks in next, or paused
-        head.addWidget(self.title_label, 1)
-        head.addWidget(self.duty_label)
+        titles = QHBoxLayout()
+        titles.setContentsMargins(0, 14, 0, 14)  # the header's height; the buttons fill it
+        titles.setSpacing(4)
+        titles.addWidget(self.title_label, 1)
+        titles.addWidget(self.duty_label)
+        head.addLayout(titles, 1)
         head.addSpacing(8)
         self.window_buttons: dict[str, QToolButton] = {}
         for name, tip, command in (("minimize", "Minimize", self.showMinimized),
                                    ("maximize", "Maximize", self._toggle_maximized),
                                    ("close", "Close", self.close)):
-            button = QToolButton(objectName="windowClose" if name == "close"
-                                 else "windowControl")
+            button = QToolButton(objectName="titleClose" if name == "close"
+                                 else "titleControl")
             button.setToolTip(tip)
             button.setAccessibleName(tip)
             button.setIconSize(QSize(16, 16))
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
             button.clicked.connect(command)
             head.addWidget(button)
             self.window_buttons[name] = button

@@ -1138,3 +1138,19 @@ async def test_the_sidebar_starts_wide_enough_to_read_titles(make, qapp):
     sidebar = window.findChild(QSplitter).sizes()[0]
     assert sidebar >= 320 * theme.zoom()
     window.close()
+
+
+async def test_the_close_button_reaches_the_top_right_corner(make, qapp):
+    from PySide6.QtCore import QPoint
+
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    window.resize(1000, 700)
+    window.show()
+    await asyncio.sleep(0.05)
+    corner = QPoint(window.width() - 1, 0)  # where a cursor pushed to the corner lands
+    assert window.childAt(corner) is window.window_buttons["close"]
+    for name, button in window.window_buttons.items():
+        assert button.mapTo(window, QPoint(0, 0)).y() == 0, name  # each reaches the top
+    window.close()
