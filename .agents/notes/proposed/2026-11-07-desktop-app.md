@@ -165,9 +165,8 @@ installs nothing else. Briefcase supports PySide6 apps and produces the formats 
 | Linux | Flatpak (main) and AppImage | The Flatpak needs D-Bus access to `org.freedesktop.secrets` for the keychain. |
 | Windows | `.msi` | Deferred, see Scope. |
 
-The bundled Python is chosen at build time and is 3.13: every test file passes on qasync
-there, while 3.15 has a hang and a crash on qasync and breaks lazy imports under PySide6
-(`.agents/decisions.md`, Desktop app).
+The bundled Python is chosen at build time and is 3.13. On 3.15, PySide6 breaks lazy
+imports and qasync needs the fixes in `QtEventLoop` (`.agents/decisions.md`, Desktop app).
 
 **First run.** First run happens when `settings()` shows no provider with `has_key`. It is a
 three-page welcome window, shown before `start()`:

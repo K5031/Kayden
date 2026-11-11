@@ -41,14 +41,15 @@ FAST: dict[str, Any] = {
 
 if os.environ.get("KAYDEN_TEST_LOOP") == "qasync":
     def pytest_asyncio_loop_factories(config: pytest.Config, item: pytest.Item) -> Any:
-        """KAYDEN_TEST_LOOP=qasync runs every async test on qasync's QEventLoop, the loop
-        the desktop app runs on."""
-        import qasync
+        """KAYDEN_TEST_LOOP=qasync runs every async test on the desktop app's loop,
+        loop.QtEventLoop (qasync)."""
         from PySide6.QtWidgets import QApplication
+
+        from kayden.frontends.desktop.loop import QtEventLoop
 
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         app = QApplication.instance() or QApplication([])
-        return {"qasync": lambda: qasync.QEventLoop(app)}
+        return {"qasync": lambda: QtEventLoop(app)}
 
 
 async def eventually(predicate: Callable[[], Any], timeout: float = 5.0) -> Any:
