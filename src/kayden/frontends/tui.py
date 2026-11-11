@@ -45,6 +45,8 @@ from kayden.api import (
     PROFILE,
     AgentConfig,
     AgentState,
+    CompactionFinished,
+    CompactionStarted,
     ConversationDeleted,
     ConversationId,
     ConversationInfo,
@@ -108,6 +110,8 @@ from kayden.api import (
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
     AT_RESTART,
+    COMPACTED,
+    COMPACTING,
     DUTY_HINT,
     DUTY_KIND_LABELS,
     MCP_VARIABLES_HINT,
@@ -1558,6 +1562,7 @@ class KaydenApp(App[None]):
         self._prompts: dict[str, PermissionPrompt] = {}
         self._proposals: dict[str, ProposalPrompt] = {}
         self._oldest_id: str | None = None  # oldest history message loaded
+        self._compaction: SystemEntry | None = None  # the line of a running compaction
         self._insert_before: Widget | None = None  # mount point while loading older pages
 
     def compose(self) -> ComposeResult:
@@ -1800,6 +1805,16 @@ class KaydenApp(App[None]):
                 self.notice = "Tidying up memory…"
             case MaintenanceFinished():
                 self.notice = ""
+            case CompactionStarted():
+                self._compaction = SystemEntry(COMPACTING)
+                await self._mount(self._compaction)
+            case CompactionFinished(compacted=compacted):
+                if (line := self._compaction) is not None and line.is_mounted:
+                    if compacted:
+                        line.update(Text(COMPACTED))
+                    else:
+                        await line.remove()
+                self._compaction = None
             case StopStalled(call_ids=call_ids):
                 self.notice = "Some tasks did not stop in time"
                 await self._mount(

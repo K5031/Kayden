@@ -607,7 +607,8 @@ class SqliteMemory(Memory):
             return False
         cut, transcript = selection
         output = await complete(
-            system, [_user_message(transcript)], max_tokens=output_tokens, light=True
+            system, [_user_message(transcript)], max_tokens=output_tokens, light=True,
+            compacting=True,
         )
         summary = _parse_output(output, summary_tokens, count)
         if not summary:  # e.g. reasoning used the whole output limit: keep the context

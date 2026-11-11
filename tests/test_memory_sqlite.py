@@ -241,7 +241,8 @@ async def test_a_failed_pass_reads_the_exchange_after_the_next_answer(open_store
     from kayden.api import CoreError
 
     class Failing(FakeCompletion):
-        async def __call__(self, system, messages, *, max_tokens, light=False):
+        async def __call__(self, system, messages, *, max_tokens, light=False,
+                       compacting=False):
             raise CoreError("overloaded")
 
     memory = open_store()
@@ -395,7 +396,8 @@ class Complete:
     def max_input_tokens(self, *, light=False):
         return 10**9
 
-    async def __call__(self, system, messages, *, max_tokens, light=False):
+    async def __call__(self, system, messages, *, max_tokens, light=False,
+                       compacting=False):
         def arm(conn):
             # Die as the compaction transaction starts to commit, after its writes ran.
             conn.set_trace_callback(lambda sql: sql == "COMMIT" and os._exit(17))

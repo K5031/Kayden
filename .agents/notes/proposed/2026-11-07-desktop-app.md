@@ -98,7 +98,8 @@ inside the runtime's loop.
 | `PermissionRequested`, `PermissionResolved` | An inline card says what the agent wants to do and whether it only reads, with **Allow once**, **Allow for this conversation** and **Deny**. Clicks are first-wins, and the card is removed on `PermissionResolved`. Runtime-side outcomes are noted on the tool card. |
 | `StateChanged` | Status line: Ready, Thinking, Working, Waiting for you, Stopping, Stopped. It also shows "*n* tasks running in the background" from `pending_ops`. The Send button becomes Stop while a cycle runs. Messages typed meanwhile are queued. |
 | `UsageUpdated`, `ModelSelected` | Status line: model name and "$1.20 of $10 spent". |
-| `MaintenanceStarted`, `MaintenanceFinished`, `StopStalled` | Status notices. Abandoned calls also get a warning in the transcript. |
+| `CompactionStarted`, `CompactionFinished` | A line in the transcript: "Compacting conversation…", then "Conversation compacted", or removed if nothing was compacted. |
+| `StopStalled` | A warning in the transcript. |
 | `Failure` | A banner. A budget failure points to Settings. |
 | `ShuttingDown` | A final notice, then the window closes. |
 

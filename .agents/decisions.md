@@ -754,3 +754,11 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Settings window | Frameless, its own title and ✕ (dragged by its title row); sections down the left (General, Spending, Permissions, Instructions, Memory, Tool servers) and rows with a name and a one-line explanation on the left and the control on the right. Memory and Tool servers are the old dialogs embedded as pages; the profile menu's Memory and Tool servers open Settings at them. Save and Cancel stay |
 | Status | No status line under the message box: Stop is the send button, working sub-sessions are dots in the sidebar, notices say the rest. A duty's next check-in (or that it is paused) is a small note beside the title |
 | Start | The window opens maximized |
+
+## Compaction lines
+
+| Choice | Decision |
+|---|---|
+| Signal | Memory marks its summarizing Completion call with `compacting=True`; the runtime emits `CompactionStarted` on it and `CompactionFinished` when maintain returns. `MaintenanceStarted` alone could not be used: upkeep runs after every answer. |
+| "Compacted" | maintain succeeded and returned True, and the compacting call's output was not empty. A summary Memory then rejects while saving something else counts as compacted; that needs a reply that parses to nothing, and it only mislabels one line. |
+| Look | A notice line in the transcript, "Compacting conversation…", changed to "Conversation compacted", or removed when nothing was compacted. Desktop and terminal app alike. Lines are not kept across restarts. |

@@ -417,6 +417,21 @@ def test_failure_banner_until_the_next_cycle():
     assert model.failure is None
 
 
+def test_a_compaction_shows_a_line_that_says_how_it_ended():
+    from kayden.api import CompactionFinished, CompactionStarted
+
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    model.apply(CompactionStarted(CONVERSATION.id))
+    [line] = of(model, NoticeItem)
+    assert line.text == "Compacting conversation…"
+    model.apply(CompactionFinished(CONVERSATION.id, True))
+    assert of(model, NoticeItem) == [line] and line.text == "Conversation compacted"
+    model.apply(CompactionStarted(CONVERSATION.id))
+    model.apply(CompactionFinished(CONVERSATION.id, False))  # nothing was compacted
+    assert of(model, NoticeItem) == [line]
+
+
 def test_stream_cut_off_by_stop_is_marked_interrupted():
     model = ConversationModel()
     model.load(_snapshot(), ())

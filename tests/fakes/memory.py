@@ -351,7 +351,7 @@ class InMemoryMemory(Memory):
         )
         summary = await complete(
             "Summarize the conversation.", [prompt], max_tokens=self.summary_tokens,
-            light=True,
+            light=True, compacting=True,
         )
         # Atomic: summary and compaction point change together, after inference.
         conv.summary, conv.active_from = summary, conv.active_from + j

@@ -30,6 +30,8 @@ from kayden.api import (
     Budget,
     BudgetExhausted,
     CallId,
+    CompactionFinished,
+    CompactionStarted,
     Completed,
     ContextOverflowError,
     ContextRequest,
@@ -218,19 +220,31 @@ class _Completion:
     def __init__(self, runtime: Runtime):
         self._rt = runtime
         self.started = False
+        self.compacting: bool | None = None  # whether the compacting call returned a summary
 
     def max_input_tokens(self, *, light: bool = False) -> int:
         return self._rt._window(self._rt._maintenance_info() if light else self._rt._info())
 
     async def __call__(self, system: str, messages: Sequence[Message], *, max_tokens: int,
-                       light: bool = False) -> str:
+                       light: bool = False, compacting: bool = False) -> str:
         rt = self._rt
         if reason := rt._check_budget("maintenance"):
             raise BudgetExhausted(reason)
+        assert rt._conversation is not None
         if not self.started:
             self.started = True
-            assert rt._conversation is not None
             rt._emit(MaintenanceStarted(rt._conversation.id))
+        if compacting and self.compacting is None:
+            self.compacting = False
+            rt._emit(CompactionStarted(rt._conversation.id))
+        output = await self._request(system, messages, max_tokens, light)
+        if compacting and output:
+            self.compacting = True
+        return output
+
+    async def _request(self, system: str, messages: Sequence[Message], max_tokens: int,
+                       light: bool) -> str:
+        rt = self._rt
         info = rt._maintenance_info() if light else rt._info()
         if info.max_output_tokens is not None:
             max_tokens = min(max_tokens, info.max_output_tokens)
@@ -1258,9 +1272,13 @@ class Runtime:
                 return False
         if complete.started:
             self._emit(MaintenanceFinished(self._conversation.id))
+        exc = None if task.cancelled() else task.exception()
+        if complete.compacting is not None:
+            compacted = (complete.compacting and not task.cancelled() and exc is None
+                         and bool(task.result()))
+            self._emit(CompactionFinished(self._conversation.id, compacted))
         if task.cancelled():
             return False
-        exc = task.exception()
         if exc is None and task.result() and self._conversation.title is None:
             info = await self._find_conversation(self._conversation.id)
             if info.title is not None:  # Memory wrote an automatic title

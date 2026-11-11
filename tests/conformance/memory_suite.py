@@ -84,11 +84,13 @@ class FakeCompletion:
         return self.input_tokens
 
     async def __call__(
-        self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False
+        self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False,
+        compacting: bool = False,
     ) -> str:
         text = system + "\n" + repr(list(messages))
         self.calls.append(
-            {"system": system, "messages": messages, "light": light, "max_tokens": max_tokens}
+            {"system": system, "messages": messages, "light": light, "max_tokens": max_tokens,
+             "compacting": compacting}
         )
         seen = list(dict.fromkeys(reversed(TOKEN_RE.findall(text))))
         self.kept = list(reversed(seen[: self.keep]))
@@ -107,11 +109,13 @@ class Hanging:
         return self.inner.max_input_tokens(light=light)
 
     async def __call__(
-        self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False
+        self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False,
+        compacting: bool = False,
     ) -> str:
         self.entered.set()
         await self.release.wait()
-        return await self.inner(system, messages, max_tokens=max_tokens, light=light)
+        return await self.inner(system, messages, max_tokens=max_tokens, light=light,
+                                compacting=compacting)
 
     async def wait_entered(self, task: asyncio.Task) -> None:
         """Fail instead of hanging if maintain() finishes without calling the completion."""
@@ -132,7 +136,8 @@ class Failing:
         return UNLIMITED
 
     async def __call__(
-        self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False
+        self, system: str, messages: Sequence[Message], *, max_tokens: int, light: bool = False,
+        compacting: bool = False,
     ) -> str:
         raise self.error
 
@@ -508,6 +513,7 @@ class MemoryConformance:
 
         tail = await active(memory, conv.id)
         assert completion.calls, "maintain should have compacted"
+        assert completion.calls[0]["compacting"] is True  # frontends say so
         assert 0 < len(tail) < len(messages)
         assert tail == messages[len(messages) - len(tail):]
         assert tail[0].role is Role.USER

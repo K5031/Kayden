@@ -514,6 +514,26 @@ async def test_send_while_running_is_queued_then_committed():
         assert [e.queued for e in entries(app, UserEntry)] == [False, False]
 
 
+async def test_a_compaction_shows_a_line_that_says_how_it_ended():
+    from kayden.api import CompactionFinished, CompactionStarted
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        conversation_id = stub.snapshot().conversation.id
+        stub.emit(CompactionStarted(conversation_id))
+        await caught_up(pilot, app, stub)
+        [line] = entries(app, SystemEntry)
+        assert plain(line) == "Compacting conversation…"
+        stub.emit(CompactionFinished(conversation_id, True))
+        await caught_up(pilot, app, stub)
+        assert entries(app, SystemEntry) == [line] and plain(line) == "Conversation compacted"
+        stub.emit(CompactionStarted(conversation_id),
+                  CompactionFinished(conversation_id, False))  # nothing was compacted
+        await caught_up(pilot, app, stub)
+        assert entries(app, SystemEntry) == [line]
+
+
 async def test_stop_keeps_ui_responsive_and_reports_progress():
     stub = StubRuntime()
     stub.command_delay = 30.0  # a runtime whose stop() hangs

@@ -422,7 +422,8 @@ in section 9.
 - **Status:** **Resolved** (2026-11-07). Stated in `Completion` docstring and api.py module docstring.
 - **Assumed:** Transient errors are retried with the same backoff but emit no ModelRetry
   (nothing was streamed to frontends); MaintenanceStarted on first use, MaintenanceFinished
-  after maintain returns. The request has no tools. A maintain failure is Failure(MODEL)
+  after maintain returns. A call with compacting=True also emits CompactionStarted, and
+  CompactionFinished follows when maintain returns. The request has no tools. A maintain failure is Failure(MODEL)
   for CoreError, Failure(INTERNAL) otherwise; BudgetExhausted yields no maintain Failure, the
   budget re-check reports it.
 

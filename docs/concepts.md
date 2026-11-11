@@ -105,7 +105,8 @@ Kayden keeps every message of every conversation until you delete the conversati
 
 - When a conversation gets long, older messages are **summarized** so the recent part fits
   the model's context. Long tool output (command output, web pages) is shortened for the
-  summary, so summaries stay cheap. The originals stay saved, in full.
+  summary, so summaries stay cheap. The originals stay saved, in full. The chat shows
+  "Compacting conversation…" while this runs, then "Conversation compacted".
 - The agent can **search** a conversation's full history, including summarized parts, and
   your other conversations that are not archived.
 - **Long-term memory** is a set of notes shared by all your conversations: **About you**

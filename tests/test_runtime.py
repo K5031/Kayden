@@ -594,6 +594,34 @@ async def test_maintenance_model(make: Any) -> None:
     assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 2
 
 
+@pytest.mark.parametrize("summary", ["SUMMARY: short", ""])
+async def test_compaction_is_announced(make: Any, summary: str) -> None:
+    """Frontends show a compaction while it runs; other maintenance stays quiet."""
+    from kayden.api import CompactionFinished, CompactionStarted, Completion, Message
+
+    def step(request: Any) -> Step:
+        return Step(text=summary if request.maintenance else "ok")
+
+    h: Harness = await make(core=ScriptedCore(default=step))
+    first = Message("m", Role.USER, (Text("x"),), 0.0)
+    passes = 0
+
+    async def maintain(complete: Completion) -> bool:
+        nonlocal passes
+        passes += 1
+        await complete("Save.", [first], max_tokens=20, light=True)
+        if passes == 1:
+            return bool(await complete("Summarize.", [first], max_tokens=20, light=True,
+                                       compacting=True))
+        return False
+
+    h.memory.maintain_override = maintain
+    conv = await h.start()
+    await h.turn("go")
+    assert h.rec.of(CompactionStarted) == [CompactionStarted(conv.id)]
+    assert h.rec.of(CompactionFinished) == [CompactionFinished(conv.id, bool(summary))]
+
+
 async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
     from kayden.api import Completion, Message
 

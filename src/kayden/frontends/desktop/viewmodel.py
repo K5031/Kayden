@@ -22,6 +22,8 @@ from typing import Any
 from kayden.api import (
     AgentState,
     Budget,
+    CompactionFinished,
+    CompactionStarted,
     ConversationDeleted,
     ConversationInfo,
     ConversationUpdated,
@@ -81,6 +83,8 @@ from kayden.api import (
 )
 from kayden.api import Text as TextBlock
 from kayden.frontends.common import (
+    COMPACTED,
+    COMPACTING,
     RESULT_LABELS,
     call_parts,
     duty_status,
@@ -326,6 +330,7 @@ class ConversationModel:
         self._seen: set[str] = set()  # message ids rendered
         self._oldest_id: str | None = None
         self._insert_at: int | None = None  # set while prepending an earlier page
+        self._compaction: NoticeItem | None = None  # the line of a running compaction
 
     # ── status ────────────────────────────────────────────────────────────
 
@@ -498,6 +503,16 @@ class ConversationModel:
                 self.notice = "Tidying up memory…"
             case MaintenanceFinished():
                 self.notice = ""
+            case CompactionStarted():
+                self._compaction = self._add(NoticeItem(COMPACTING))
+            case CompactionFinished(compacted=compacted):
+                if (line := self._compaction) is not None and line in self.items:
+                    if compacted:
+                        line.text = COMPACTED
+                        self.on_change(Updated(line))
+                    else:
+                        self._remove(line)
+                self._compaction = None
             case StopStalled(call_ids=call_ids):
                 self.notice = "Some tasks did not stop in time"
                 self._add(NoticeItem(
