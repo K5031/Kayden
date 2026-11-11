@@ -1181,3 +1181,37 @@ async def test_leaving_an_unused_chat_leaves_nothing(make, qapp):
     window.open_conversation(talked.id)
     await eventually(lambda: controller.model.conversation.id == talked.id)
     assert [c.id for c in await h.runtime.list_conversations()] == [talked.id]
+
+
+async def test_the_clicked_conversation_stays_highlighted_while_it_opens(make, qapp):
+    h: Harness = await make()
+    target = await h.chat("Target")
+    await h.chat("Current")
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    history = h.runtime.history
+
+    async def slow_history(*args: Any, **kwargs: Any) -> Any:  # as SQLite, in a thread
+        await asyncio.sleep(0.1)
+        return await history(*args, **kwargs)
+
+    h.runtime.history = slow_history  # type: ignore[method-assign]
+    window.open_conversation(target.id)
+    await asyncio.sleep(0.03)
+    assert controller.model.conversation.id != target.id  # still opening
+    window._render_sidebar()  # any refresh meanwhile: sub-sessions, a rename
+    assert window.conversation_list.currentItem().text() == "Target"
+    await eventually(lambda: controller.model.conversation.id == target.id)
+    await window.fill_sidebar()
+    assert window.conversation_list.currentItem().text() == "Target"
+
+
+async def test_nothing_is_highlighted_while_a_new_chat_opens(make, qapp):
+    h: Harness = await make()
+    await h.chat("Current")
+    window, _controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    assert window.conversation_list.currentItem().text() == "Current"
+    window.open_conversation(None)
+    window._render_sidebar()
+    assert window.conversation_list.currentItem() is None

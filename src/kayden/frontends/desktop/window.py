@@ -1105,6 +1105,8 @@ class MainWindow(QMainWindow):
         self.memory_dialog: MemoryDialog | None = None
         self.mcp_dialog: McpDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
+        # While a conversation opens: its id (None for a new chat, which is not listed).
+        self._opening: tuple[str | None] | None = None
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
         self.setWindowTitle("Kayden")
         # No title bar from the desktop: the header and the sidebar's top row move the
@@ -1512,9 +1514,15 @@ class MainWindow(QMainWindow):
             self.model.notify(reason)
             _spawn(self.fill_sidebar())  # select the open conversation again
             return
+        self._opening = (conversation_id,)
         task = self.controller.open_conversation(conversation_id, seed_from=seed_from)
-        task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar()),
-                                          self._deliver_notes()))
+        task.add_done_callback(lambda _: self._opened())
+
+    def _opened(self) -> None:
+        self._opening = None
+        self.input.setFocus()
+        _spawn(self.fill_sidebar())
+        self._deliver_notes()
 
     # ── view model changes ────────────────────────────────────────────────
 
@@ -1698,6 +1706,9 @@ class MainWindow(QMainWindow):
         """Conversations grouped by project (their folder), newest first, each with its
         sub-sessions under it. A folded group shows only its heading."""
         own = self.home.model.conversation
+        # While a conversation opens, the one clicked stays highlighted, not the old one.
+        current = (self._opening[0] if self._opening is not None
+                   else own.id if own is not None else None)
         viewing = self._viewing[0].id if self._viewing is not None else None
         archived = self.show_archived.isChecked()
         groups: dict[str | None, list[ConversationInfo]] = {}
@@ -1729,7 +1740,7 @@ class MainWindow(QMainWindow):
                 entry.setToolTip("\n".join(p for p in (title, conversation_preview(info),
                                                        relative_date(info.updated_at)) if p))
                 self.conversation_list.addItem(entry)
-                if viewing is None and own is not None and info.id == own.id:
+                if viewing is None and info.id == current:
                     self.conversation_list.setCurrentItem(entry)
                 children = (self.sessions.of(info.id, include_archived=archived)
                             if self.sessions else ())
