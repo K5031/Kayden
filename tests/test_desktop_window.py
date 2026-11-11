@@ -933,7 +933,8 @@ async def test_child_rows_have_a_menu(make, qapp, tmp_path, child_env):
     await eventually(lambda: child.state == "done", timeout=30)
     await window.fill_sidebar()
     menu = window.session_menu(child)
-    assert [a.text() for a in menu.actions()] == ["Open", "Rename…", "Archive", "Delete…"]
+    assert [a.text() for a in menu.actions()] == [
+        "Open", "Change spending limit…", "Rename…", "Archive", "Delete…"]
     sessions.rename(child, "Notes")
     assert any(window.conversation_list.item(i).text() == "Notes"
                and window.conversation_list.item(i).data(KIND_ROLE) == "session"
@@ -972,3 +973,24 @@ def test_long_call_details_are_clipped_until_shown(qapp):
     assert "Line 5" not in detail.label.text()
     short = Detail("ls -la")
     assert short.label.text() == "ls -la" and not short.toggle.isVisibleTo(short)
+
+
+async def test_settings_set_the_limit_per_sub_session(make, qapp, tmp_path):
+    from kayden.frontends.sessions import SubSessions
+
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    window.show()
+    sessions = SubSessions(tmp_path)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0,
+                            sessions)
+    assert dialog.child_limit.text() == "1"
+    dialog.child_limit.setText("4")
+    dialog.save_button.click()  # raising asks first
+    box = message_box(dialog)
+    assert "raises the limit per sub-session" in box.informativeText()
+    [save] = [b for b in box.buttons() if b.text() == "Save"]
+    save.click()
+    await eventually(lambda: sessions.limit_usd == 4)
+    assert SubSessions(tmp_path).limit_usd == 4

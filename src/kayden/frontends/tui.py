@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar
@@ -1221,9 +1221,12 @@ class SessionsScreen(ModalScreen[str | None]):
                 yield Button("Resume", id="resume-session")
                 yield Button("Stop", id="stop-session", variant="error")
             with Horizontal(classes="buttons"):
+                yield Button("Limit", id="limit-session")
                 yield Button("Rename", id="rename-session")
                 yield Button("Archive", id="archive-session")
                 yield Button("Delete", id="delete-session", variant="error")
+            with Horizontal(classes="buttons"):
+                yield Button("", id="default-limit")
                 yield Button("Close", id="close")
 
     def on_mount(self) -> None:
@@ -1269,6 +1272,7 @@ class SessionsScreen(ModalScreen[str | None]):
             "#open-session": session is not None,
             "#resume-session": session is not None and session.resumable,
             "#stop-session": session is not None and session.running,
+            "#limit-session": session is not None,
             "#rename-session": session is not None,
             "#archive-session": session is not None,
             "#delete-session": session is not None}
@@ -1277,6 +1281,41 @@ class SessionsScreen(ModalScreen[str | None]):
         if session is not None:
             self.query_one("#archive-session", Button).label = (
                 "Unarchive" if session.archived else "Archive")
+        self.query_one("#default-limit", Button).label = (
+            f"Limit per sub-session: ${self.sessions.limit_usd:g}")
+
+    def _ask_limit(self, title: str, current: float,
+                   then: Callable[[float], Awaitable[None]]) -> None:
+        """Asks for dollars; raising is confirmed first."""
+        def chosen(text: str | None) -> None:
+            if text is None:
+                return
+            try:
+                usd = float(text.strip().lstrip("$"))
+            except ValueError:
+                self.notify("Write the limit as a number of dollars.", severity="error")
+                return
+            if usd > current:
+                self.app.push_screen(
+                    ConfirmScreen(f"Raise it to ${usd:g}?", yes="Raise"),
+                    lambda yes: yes and self._run(then(usd)))
+            else:
+                self._run(then(usd))
+
+        self.app.push_screen(TextPromptScreen(title, f"{current:g}",
+                                              hint="US dollars."), chosen)
+
+    @on(Button.Pressed, "#limit-session")
+    def _limit(self) -> None:
+        if (session := self._selected()) is not None:
+            self._ask_limit(f"Most “{session.name[:40]}” may spend "
+                            f"(${session.spent:.2f} spent so far)", session.budget_usd,
+                            lambda usd: self.sessions.set_child_limit(session, usd))
+
+    @on(Button.Pressed, "#default-limit")
+    def _default_limit(self) -> None:
+        self._ask_limit("Most a new sub-session may spend, unless the agent gives it less",
+                        self.sessions.limit_usd, self.sessions.set_limit)
 
     def _run(self, awaitable: Awaitable[Any]) -> None:
         async def run() -> None:

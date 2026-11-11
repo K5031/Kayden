@@ -1542,11 +1542,37 @@ class MainWindow(QMainWindow):
             menu.addAction("Resume", lambda: self.home.command(sessions.resume(session)))
         if session.running:
             menu.addAction("Stop", lambda: sessions.stop(session))
+        menu.addAction("Change spending limit…", lambda: self.change_session_limit(session))
         menu.addAction("Rename…", lambda: self.rename_session(session))
         menu.addAction("Unarchive" if session.archived else "Archive",
                        lambda: sessions.archive(session, not session.archived))
         menu.addAction("Delete…", lambda: self.delete_session(session))
         return menu
+
+    def change_session_limit(self, session: SubSession) -> None:
+        assert self.sessions is not None
+        sessions = self.sessions
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Sub-session spending limit")
+        dialog.setLabelText(f"Most “{clip(session.name, 60)}” may spend, in US dollars "
+                            f"(${session.spent:.2f} spent so far):")
+        dialog.setInputMode(QInputDialog.InputMode.DoubleInput)
+        dialog.setDoubleDecimals(2)
+        dialog.setDoubleRange(0.01, 1_000_000)
+        dialog.setDoubleValue(session.budget_usd)
+
+        def chosen(usd: float) -> None:
+            def apply() -> None:
+                self.home.command(sessions.set_child_limit(session, usd))
+
+            if usd > session.budget_usd:
+                confirm(self, "Raise this sub-session's limit?", apply, yes="Raise",
+                        details=f"It may then spend up to ${usd:g}.")
+            else:
+                apply()
+
+        dialog.doubleValueSelected.connect(chosen)
+        dialog.open()
 
     def rename_session(self, session: SubSession) -> None:
         assert self.sessions is not None
@@ -1665,8 +1691,8 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001 - e.g. no key yet; the provider can still change
                 models = []
             spent = self.runtime.snapshot().usage.usage.cost_usd or 0.0
-            self._dialog = SettingsDialog(self, self.runtime, self.controller, settings, models,
-                                          spent)
+            self._dialog = SettingsDialog(self, self.runtime, self.home, settings, models,
+                                          spent, self.sessions)
             self._dialog.open()
 
         self.controller.command(load())
@@ -2064,9 +2090,11 @@ class SettingsDialog(QDialog):
     Module settings wait for a restart, which Restart now starts."""
 
     def __init__(self, parent: QWidget, runtime: RuntimeAPI, controller: Controller,
-                 settings: Settings, models: Sequence[ModelInfo], spent: float) -> None:
+                 settings: Settings, models: Sequence[ModelInfo], spent: float,
+                 sessions: SubSessions | None = None) -> None:
         super().__init__(parent)
         self.runtime, self.controller, self.settings = runtime, controller, settings
+        self.sessions = sessions
         self.setWindowTitle("Settings")
         self.setMinimumWidth(560)
         form = QFormLayout(self)
@@ -2104,6 +2132,9 @@ class SettingsDialog(QDialog):
         self.limit = QLineEdit("" if settings.budget.max_cost_usd is None
                                else f"{settings.budget.max_cost_usd:g}")
         self.limit.setPlaceholderText("No limit")
+        self.child_limit = QLineEdit(f"{sessions.limit_usd:g}" if sessions else "")
+        self.child_limit.setToolTip("What a sub-session may spend unless the agent gives it "
+                                    "less. It is not part of your own limit.")
         self.permissions = QComboBox()
         for policy, label in PERMISSION_LABELS.items():
             self.permissions.addItem(label, policy)
@@ -2143,6 +2174,8 @@ class SettingsDialog(QDialog):
         form.addRow("", self.model_note)
         form.addRow("Spending limit (US$)", self.limit)
         form.addRow("", _label(f"{dollars(spent)} spent so far", selectable=False, role="small"))
+        if sessions is not None:
+            form.addRow("Limit per sub-session (US$)", self.child_limit)
         form.addRow("What the agent may do", self.permissions)
         form.addRow("Instructions", self.instructions)
         form.addRow("Folder for new chats", folder_row)
@@ -2184,27 +2217,44 @@ class SettingsDialog(QDialog):
     def _save(self, *, restart: bool = False) -> None:
         try:
             update = settings_update(self.settings, self.form())
+            child_limit = self._child_limit()
         except ValueError as e:
             self._show_error(str(e))
             return
-        if update == SettingsUpdate() and not restart:
+        if update == SettingsUpdate() and child_limit is None and not restart:
             self.accept()
             return
-        text = ""
-        if reasons := loosening(self.settings, update):
-            text = "This change " + " and ".join(reasons) + ". "
-        if text:
-            confirm(self, "Save these changes?", lambda: self._apply(update, restart),
-                    yes="Save", details=text.strip())
+        reasons = loosening(self.settings, update)
+        if self.sessions is not None and child_limit and child_limit > self.sessions.limit_usd:
+            reasons.append("raises the limit per sub-session")
+        if reasons:
+            confirm(self, "Save these changes?",
+                    lambda: self._apply(update, restart, child_limit),
+                    yes="Save", details="This change " + " and ".join(reasons) + ".")
         else:
-            self._apply(update, restart)
+            self._apply(update, restart, child_limit)
 
-    def _apply(self, update: SettingsUpdate, restart: bool) -> None:
+    def _child_limit(self) -> float | None:
+        """The new limit per sub-session, None when unchanged."""
+        if self.sessions is None:
+            return None
+        try:
+            usd = float(self.child_limit.text().strip().lstrip("$"))
+        except ValueError:
+            raise ValueError("Write the limit per sub-session as a number of dollars.") from None
+        if usd <= 0:
+            raise ValueError("The limit per sub-session must be more than $0.")
+        return None if usd == self.sessions.limit_usd else usd
+
+    def _apply(self, update: SettingsUpdate, restart: bool,
+               child_limit: float | None = None) -> None:
         self.save_button.setEnabled(False)
         self.error.hide()
 
         async def apply() -> Settings:
             settings = self.settings
+            if child_limit is not None and self.sessions is not None:
+                await self.sessions.set_limit(child_limit)
             if update != SettingsUpdate():
                 settings = await self.runtime.update_settings(update)
             if restart:

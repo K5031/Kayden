@@ -7,6 +7,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import pytest
 import tomli_w
 
 from kayden.api import OperationResult, PermissionPolicy, ToolResult, ToolStatus
@@ -297,3 +298,46 @@ async def test_cancelling_while_a_child_starts_stops_it(tmp_path):
     [child] = sessions.sessions
     await eventually(lambda: child.returncode is not None, timeout=20)
     assert child.state == "stopped"
+
+
+async def test_the_users_limit_is_the_default_and_the_most_a_child_gets(
+        make, tmp_path, child_env):
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Small"}, id="a"),
+                    call("start_session", {"task": "Greedy", "budget_usd": 50}, id="b"),
+                    call("start_session", {"task": "Frugal", "budget_usd": 0.2}, id="c")]),
+        Step(text="Started.")],
+        [{"hang": True}])
+    await sessions.set_limit(3)
+    assert "up to $3" in (await sessions.list_tools())[0].description
+    await h.turn("Go")
+    await eventually(lambda: len(sessions.sessions) == 3, timeout=30)
+    assert {s.task: s.budget_usd for s in sessions.sessions} == {
+        "Small": 3, "Greedy": 3, "Frugal": 0.2}
+    for child in sessions.sessions:
+        assert tomllib.loads((child.data_dir / "settings.toml").read_text())["budget"] == {
+            "max_cost_usd": child.budget_usd}
+    assert SubSessions(h.data_dir).limit_usd == 3  # kept
+    for child in sessions.sessions:
+        sessions.stop(child)
+
+
+async def test_a_childs_limit_changes_while_it_runs_and_after(make, tmp_path, child_env):
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Keep at it"}, id="s")]),
+        Step(text="Started.")],
+        [{"hang": True}])
+    await h.turn("Go")
+    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state
+                             == "working" and sessions.sessions[0], timeout=30)
+    await eventually(lambda: child.child_conversation_id, timeout=30)
+    await sessions.set_child_limit(child, 7.5)
+    settings = await sessions._channels[child.id].request("settings")
+    assert settings["budget"]["max_cost_usd"] == 7.5 and child.budget_usd == 7.5
+    sessions.stop(child)
+    await eventually(lambda: child.returncode is not None, timeout=20)
+    await sessions.set_child_limit(child, 2)
+    assert tomllib.loads((child.data_dir / "settings.toml").read_text())["budget"] == {
+        "max_cost_usd": 2}
+    with pytest.raises(ValueError):
+        await sessions.set_child_limit(child, 0)

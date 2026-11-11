@@ -425,3 +425,40 @@ async def test_a_child_opens_in_place_to_approve_and_talk_to(make, tmp_path, chi
         await until(pilot, lambda: app.viewing is None and app.runtime is h.runtime)
         assert app.conversation.id == h.conversation.id
     await sessions.aclose()
+
+
+async def test_the_sessions_screen_sets_limits(tmp_path):
+    from kayden.frontends.sessions import SubSession, SubSessions
+    from kayden.frontends.tui import ConfirmScreen, SessionsScreen, TextPromptScreen
+    from tests.test_tui import CONVERSATION
+
+    stub = StubRuntime()
+    sessions = SubSessions(tmp_path)
+    child = SubSession("1", "Write a haiku", CONVERSATION.id, tmp_path / "s1", state="done",
+                       budget_usd=0.5)
+    sessions.sessions.append(child)
+    changed: list[float] = []
+
+    async def set_child_limit(session, usd):
+        changed.append(usd)
+
+    sessions.set_child_limit = set_child_limit
+    app = make(stub, sessions=sessions)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await caught_up(pilot, app, stub)
+        app.push_screen(SessionsScreen(sessions, CONVERSATION.id))
+        await until(pilot, lambda: isinstance(app.screen, SessionsScreen))
+        await pilot.pause()
+        assert "$1" in str(app.screen.query_one("#default-limit", Button).label)
+        app.screen.query_one("#limit-session", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
+        app.screen.query_one(Input).value = "5"
+        await pilot.press("enter")
+        await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))  # raising
+        app.screen.query_one("#confirm-yes", Button).press()
+        await until(pilot, lambda: changed == [5.0])
+        app.screen.query_one("#default-limit", Button).press()
+        await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
+        app.screen.query_one(Input).value = "0.5"
+        await pilot.press("enter")  # lowering: no question
+        await until(pilot, lambda: sessions.limit_usd == 0.5)

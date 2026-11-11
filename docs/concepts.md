@@ -80,8 +80,10 @@ step. Several can run at once.
   or answered you) and the agent was not already waiting for it, the agent gets a short
   notice in its conversation, which wakes it.
 
-- **Each has its own spending limit,** which the agent sets when it starts one (a dollar
-  unless it says otherwise). It is not counted in your own limit.
+- **Each has its own spending limit,** not counted in your own. You set the limit per
+  sub-session in Settings (a dollar unless you change it): a sub-session gets that much
+  unless the agent gives it less, and never more. To change one sub-session's limit, even
+  after it ran out, right-click it: **Change spending limit…**, then **Resume** it.
 - **It asks you for approvals.** A step that needs your OK waits for you, as in your own
   conversation; the sidebar says the sub-session needs your approval. If it needs a
   decision, its question comes back to the agent, which can answer it or ask you.

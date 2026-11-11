@@ -22,7 +22,7 @@ import shutil
 import sys
 import tomllib
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ from kayden.api import (
     DESCRIPTION_ARG,
     NOTICE_PREFIX,
     AgentState,
+    Budget,
     ConversationUpdated,
     EventEnvelope,
     Failure,
@@ -43,6 +44,7 @@ from kayden.api import (
     ReasoningDelta,
     Role,
     RuntimeStateError,
+    SettingsUpdate,
     StateChanged,
     Text,
     TextDelta,
@@ -65,6 +67,7 @@ DEFAULT_BUDGET_USD = 1.0
 CHECK_IN_S = (5.0, 120.0)  # a child's duty intervals: it continues soon after a turn ends
 STOP_GRACE_S = 10.0  # after stdin closes, before the child is killed
 RECORD = "session.json"
+LIMIT_FILE = "limit.json"  # in <data dir>/sessions: the user's limit per sub-session
 _SESSION = {"type": "string", "description": "The sub-session's id."}
 _ACTIVE = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
 _QUIET = (TextDelta, ReasoningDelta, ToolCallDelta, ToolProgress)
@@ -82,8 +85,9 @@ START = ToolSpec(
      "properties": {
          "task": {"type": "string", "minLength": 1},
          "budget_usd": {"type": "number", "exclusiveMinimum": 0,
-                        "default": DEFAULT_BUDGET_USD,
-                        "description": "The most it may spend, in US dollars."}},
+                        "description": "The most it may spend, in US dollars; at most the "
+                                       "user's limit per sub-session, which is also the "
+                                       "default."}},
      "required": ["task"]},
     timeout=math.inf,
 )
@@ -188,7 +192,7 @@ class SubSession:
             parts.append(self.step)
         if self.state == "failed" and self.failure:
             parts.append(self.failure)
-        parts.append(f"${self.spent:.2f}")
+        parts.append(f"${self.spent:.2f} of ${self.budget_usd:g}")
         return " · ".join(parts)
 
     def lines(self) -> list[tuple[str, str]]:
@@ -214,6 +218,7 @@ class SubSessions(Tools):
         self._viewers: dict[str, int] = {}
         self._folder: Path | None = None
         self._next = max((int(s.id) for s in self.sessions if s.id.isdigit()), default=0) + 1
+        self.limit_usd = self._read_limit()
         self._closing: set[asyncio.Task[None]] = set()
         self._saved: dict[str, dict[str, Any]] = {s.id: s.record() for s in self.sessions}
         self._write: asyncio.Future[None] | None = None
@@ -287,7 +292,47 @@ class SubSessions(Tools):
     # ── Tools ─────────────────────────────────────────────────────────────
 
     async def list_tools(self) -> Sequence[ToolSpec]:
-        return (START, MESSAGE, STOP)
+        start = replace(START, description=(
+            f"{START.description} Each may spend up to ${self.limit_usd:g} unless you give "
+            "it less."))
+        return (start, MESSAGE, STOP)
+
+    async def set_limit(self, usd: float) -> None:
+        """The user's limit per sub-session: what one gets unless the agent gives it less."""
+        if not usd > 0:
+            raise ValueError("the limit per sub-session must be more than $0")
+        self.limit_usd = usd
+        path = self.data_dir / "sessions" / LIMIT_FILE
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_text, json.dumps({"usd": usd}))
+        self._notify()
+
+    async def set_child_limit(self, session: SubSession, usd: float) -> None:
+        """Change one child's spending limit, while it runs or not. A child stopped by its
+        limit can then be resumed."""
+        if not usd > 0:
+            raise ValueError("the limit must be more than $0")
+        channel = self._channels.get(session.id)
+        if channel is not None:
+            await channel.request("update_settings",
+                                  update=SettingsUpdate(budget=Budget(max_cost_usd=usd)))
+        else:
+            await asyncio.to_thread(self._write_limit, session.data_dir, usd)
+        self._set(session, budget_usd=usd)
+
+    def _read_limit(self) -> float:
+        try:
+            usd = float(json.loads((self.data_dir / "sessions" / LIMIT_FILE).read_text())["usd"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return DEFAULT_BUDGET_USD
+        return usd if usd > 0 else DEFAULT_BUDGET_USD
+
+    @staticmethod
+    def _write_limit(folder: Path, usd: float) -> None:
+        settings_file = folder / "settings.toml"
+        settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
+        settings["budget"] = {**settings.get("budget", {}), "max_cost_usd": usd}
+        settings_file.write_text(tomli_w.dumps(settings))
 
     async def use_folder(self, folder: Path | None) -> None:
         self._folder = folder
@@ -295,8 +340,8 @@ class SubSessions(Tools):
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         args = call.arguments
         if call.name == START.name:
-            session = await self._new(args["task"], args.get("budget_usd", DEFAULT_BUDGET_USD),
-                                      ctx.conversation_id)
+            budget = min(args.get("budget_usd", self.limit_usd), self.limit_usd)
+            session = await self._new(args["task"], budget, ctx.conversation_id)
             try:
                 await self._launch(session)
             except asyncio.CancelledError:  # stopped while it was starting
@@ -370,7 +415,7 @@ class SubSessions(Tools):
             shutil.copyfile(config, folder / "config.toml")
         settings_file = self.data_dir / "settings.toml"
         settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
-        settings["budget"] = {"max_cost_usd": budget}
+        settings["budget"] = {"max_cost_usd": budget}  # only this: not the parent's others
         if self._folder is not None:
             settings["work_folder"] = str(self._folder)
         (folder / "settings.toml").write_text(tomli_w.dumps(settings))

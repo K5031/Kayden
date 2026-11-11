@@ -70,7 +70,7 @@ agent or switch conversations are withdrawn.
 | F5 | `/duty`, `/plan` | Open the duty and plan of this conversation ([Duties](concepts.md#duties)) |
 | | `/duty <what to do>`, `/goal <what to do>` | Give this conversation a duty that keeps going, or one that ends when done |
 | | `/duty off` | End the duty; the plan stays |
-| | `/sessions` | This conversation's [sub-sessions](concepts.md#sub-sessions): open one in place, start or dismiss a proposal, resume, stop, rename, archive or delete |
+| | `/sessions` | This conversation's [sub-sessions](concepts.md#sub-sessions): open one in place, resume, stop, change its spending limit (or the limit per sub-session), rename, archive or delete |
 | | `/back` | Leave the sub-session you opened, back to your conversation |
 | | `/approve`, `/dismiss` | Answer the agent's open [proposal](#proposals) |
 | | `/folder [path]` | Show the work folder, or start a chat in another one |
