@@ -46,9 +46,9 @@ chats".
 ### Frontends
 
 - **Desktop app.** The header shows the folder's name as a button, with the full path in
-  its tooltip. Clicking it opens a folder picker: an open chat with no messages is
-  replaced by one in the chosen folder (the empty one is deleted, so the list gets no
-  blank entries); otherwise a new chat starts there (`Controller.new_in_folder`).
+  its tooltip. Clicking it opens a folder picker, and a new chat starts there
+  (`Controller.new_in_folder`); a blank chat left behind is deleted, as when leaving it any
+  other way (`.agents/decisions.md`, Blank chats).
 - **TUI.** The start screen has a folder field (empty: the default); `/folder` shows the
   folder and `/folder PATH` behaves like the desktop button; the status line shows the
   folder.
@@ -78,5 +78,5 @@ chats".
   Kayden carries no migration code.
 - **A deleted folder is recreated empty** when its conversation reopens; the agent may be
   confused that its files are gone. The folder is shown, so the user can see why.
-- An empty chat replaced by the folder button is deleted for real, which needs a Memory
-  that can delete; with one that cannot, it stays in the list.
+- A blank chat left for another folder is deleted for real, which needs a Memory that can
+  delete; with one that cannot, it stays stored, hidden from the list.

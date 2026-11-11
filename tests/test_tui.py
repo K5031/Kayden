@@ -646,7 +646,7 @@ async def test_start_screen_starts_a_new_conversation():
         await until(pilot, lambda: isinstance(app.screen, StartScreen))
         screen = app.screen
         assert not screen.query("#mode") and not screen.query("#activation")
-        await until(pilot, lambda: len(screen.query_one("#conversation", Select)._options) == 4)
+        await until(pilot, lambda: len(screen.query_one("#conversation", Select)._options) == 3)
         assert not screen.query("#autonomous")
         screen.query_one("#seed-from", Select).value = "conv-2"
         await pilot.pause()
@@ -675,6 +675,7 @@ async def test_start_screen_starts_a_new_conversation_in_another_folder():
 
 async def test_folder_command_moves_an_empty_chat_and_keeps_one_with_messages():
     stub = StubRuntime()
+    stub.conversation = stub.conversations[0] = replace(CONVERSATION, title=None)
     app = make(stub)
     async with app.run_test(size=(120, 50), notifications=True) as pilot:
         await until(pilot, lambda: ("history", "conv-1") in stub.calls)
@@ -701,19 +702,18 @@ async def test_start_screen_lists_titles_and_resumes_a_conversation():
         await until(pilot, lambda: isinstance(app.screen, StartScreen))
         screen = app.screen
         select = screen.query_one("#conversation", Select)
-        await until(pilot, lambda: len(select._options) == 4)
+        await until(pilot, lambda: len(select._options) == 3)
         labels = [str(prompt) for prompt, _ in select._options]
-        # Archived conversations are left out; untitled ones show their preview.
-        assert labels == ["New conversation", "Test", "What is the weather",
-                          "New chat"]
-        select.value = "conv-3"
+        # Archived and blank conversations are left out; untitled ones show their preview.
+        assert labels == ["New conversation", "Test", "What is the weather"]
+        select.value = "conv-2"
         await pilot.pause()
         assert screen.query_one("#seed-from", Select).disabled
         assert screen.query_one("#folder", Input).disabled
         await pilot.click("#start")
         await until(pilot, lambda: any(c[0] == "start" for c in stub.calls))
         [options] = [c[1] for c in stub.calls if c[0] == "start"]
-        assert options == StartOptions(conversation_id="conv-3")
+        assert options == StartOptions(conversation_id="conv-2")
 
 
 async def test_start_screen_fits_a_small_terminal():
@@ -958,10 +958,9 @@ async def test_conversation_list_shows_titles_and_opens_one():
     app = make(stub)
     async with app.run_test(size=(120, 50)) as pilot:
         screen = await open_conversations(pilot, app, stub, how="command")
-        assert listed(screen) == ["● Test", "  What is the weather",
-                                  "  New chat"]
+        assert listed(screen) == ["● Test", "  What is the weather"]  # no blank chat
         screen.query_one("#show-archived", Switch).value = True
-        await until(pilot, lambda: len(listed(screen)) == 4)
+        await until(pilot, lambda: len(listed(screen)) == 3)
         assert listed(screen)[-1] == "  Old plans  · archived"
 
         highlight(screen, "conv-2")

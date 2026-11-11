@@ -464,7 +464,10 @@ class ConversationModel:
             case MessageQueued():
                 self._queue(event)
             case MessageCommitted(message=message, stop=stop):
+                first = not self.items and not self.has_earlier
                 self._commit(message, stop)
+                if first:  # a new chat joins the list with its first message
+                    self.on_change(ConversationListChanged())
             case ToolStarted(call=call):
                 item = self._tools.get(call.id) or self._add_tool(call)
                 item.arguments = json.dumps(call.arguments, ensure_ascii=False)
@@ -974,28 +977,35 @@ class Controller:
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> asyncio.Task[None]:
         """Resume a conversation, or start a new one (None), continuing where `seed_from`
-        left off when set."""
-
-        async def start() -> None:
-            await self.runtime.start(StartOptions(conversation_id, seed_from=seed_from))
-            await self._inbox.put(self.recover)
-
-        return self.command(start())
+        left off when set. A new chat while one is open and blank is that chat."""
+        if conversation_id is None and seed_from is None and self._blank() is not None:
+            return self.command(asyncio.sleep(0))
+        return self._switch(StartOptions(conversation_id, seed_from=seed_from))
 
     def new_in_folder(self, folder: str) -> asyncio.Task[None]:
-        """Start a new chat in `folder`. An open chat with no messages is replaced: it is
-        deleted, so the list gets no blank entries."""
-        model = self.model
-        empty = model.conversation if not model.items and not model.has_earlier else None
+        """Start a new chat in `folder`."""
+        return self._switch(StartOptions(folder=folder))
+
+    def _switch(self, options: StartOptions) -> asyncio.Task[None]:
+        """Open another chat. A blank one left behind is deleted, so the list never fills
+        with chats nobody wrote in."""
+        blank = self._blank()
 
         async def start() -> None:
-            await self.runtime.start(StartOptions(folder=folder))
+            info = await self.runtime.start(options)
             await self._inbox.put(self.recover)
-            if empty is not None:
+            if blank is not None and blank.id != info.id:
                 with contextlib.suppress(NotImplementedError):
-                    await self.runtime.delete_conversation(empty.id)
+                    await self.runtime.delete_conversation(blank.id)
 
         return self.command(start())
+
+    def _blank(self) -> ConversationInfo | None:
+        """The open chat, if nothing has happened in it yet."""
+        model, info = self.model, self.model.conversation
+        if info is None or model.items or model.has_earlier:
+            return None
+        return info if info.duty is None and info.seed_from is None and not info.title else None
 
     async def conversations(self, *, include_archived: bool = False) -> list[ConversationInfo]:
         return newest_first(await self.runtime.list_conversations(

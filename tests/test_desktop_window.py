@@ -328,8 +328,8 @@ async def test_sidebar_labels_rename_and_archive(make, qapp):
     await h.start()
     window, _controller, _ = await open_window(h)
     await window.fill_sidebar()
-    assert "What should I pack for Oslo?" in entries(window)
-    window.conversation_list.setCurrentRow(1)
+    assert entries(window) == ["What should I pack for Oslo?"]  # the new chat is not listed
+    window.conversation_list.setCurrentRow(0)
     QApplication.sendEvent(window.conversation_list.viewport(), QContextMenuEvent(
         QContextMenuEvent.Reason.Keyboard, QPoint(0, 0), QPoint(0, 0)))
     menu = visible(window, QMenu)
@@ -363,7 +363,7 @@ async def test_sidebar_rows_show_a_preview_and_a_date(make, qapp):
     await window.fill_sidebar()
     rows = {window.conversation_list.item(i).text(): window.conversation_list.item(i)
             for i in range(window.conversation_list.count())}
-    assert set(rows) == {"New chat", "Tidy my invoices folder", "Oslo trip"}
+    assert set(rows) == {"Tidy my invoices folder", "Oslo trip"}
     assert rows["Oslo trip"].data(PREVIEW_ROLE) == "What should I pack for Oslo?"
     assert rows["Tidy my invoices folder"].data(PREVIEW_ROLE) == ""  # the label already is
     assert ":" in rows["Oslo trip"].data(DATE_ROLE)  # updated today: the time
@@ -1154,3 +1154,33 @@ async def test_the_close_button_reaches_the_top_right_corner(make, qapp):
     for name, button in window.window_buttons.items():
         assert button.mapTo(window, QPoint(0, 0)).y() == 0, name  # each reaches the top
     window.close()
+
+
+async def test_a_new_chat_stays_out_of_the_sidebar_until_its_first_message(make, qapp):
+    h: Harness = await make()
+    h.core.add(Step(text="hi"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    assert entries(window) == []
+    controller.send("hello there")
+    await eventually(lambda: entries(window) == ["hello there"])
+
+
+async def test_leaving_an_empty_chat_deletes_it(make, qapp):
+    h: Harness = await make()
+    talked = await h.start()
+    await h.turn("Pack for Oslo")
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    window.new_action.trigger()
+    await eventually(lambda: controller.model.conversation.id != talked.id)
+    empty = controller.model.conversation.id
+    window.new_action.trigger()  # already in a new chat: nothing else is created
+    await asyncio.sleep(0.1)
+    assert controller.model.conversation.id == empty
+    assert len(await h.runtime.list_conversations()) == 2
+    window.open_conversation(talked.id)
+    await eventually(lambda: controller.model.conversation.id == talked.id)
+    await eventually(lambda: empty not in h.store.conversations)
+    assert [c.id for c in await h.runtime.list_conversations()] == [talked.id]

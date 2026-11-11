@@ -783,3 +783,13 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Withdrawal | A user message cancels a pending card proposal before it is appended; the cancelled outcome goes in first and no wake-up of its own follows |
 | Close | ✕ clears the card in that window's model only; nothing is saved, so reopening shows it again |
 | Stale action | After a restart the card proposal is gone; its option then sends its label as a message |
+
+## Blank chats
+
+| Choice | Decision |
+|---|---|
+| Blank | A conversation with no message (no preview), no title, no duty and no earlier chat it continues (`common.is_blank`); for the open chat, nothing rendered either |
+| Lists | The desktop sidebar and the TUI's lists leave blank conversations out; the desktop sidebar refreshes when a chat's first message is committed, so it joins then |
+| Leaving | Opening another chat (New chat, a folder, the list, Continue from) deletes the blank one left behind, after the new one is open; with a Memory that cannot delete it stays stored, hidden |
+| New chat on a blank chat | Does nothing but focus the message box: the open chat already is new |
+| Runtime | Unchanged: `start` still creates the conversation at once, so a duty, model or folder can be set before the first message. Blank conversations left by a crash stay stored, hidden |
