@@ -45,6 +45,15 @@ doesn't match the input, trust the input.
 
 The permission level is set in [Settings](settings.md#permissions).
 
+### Proposals
+
+When the agent has an idea of its own (tidying a folder, handing a side task to a
+sub-session), it proposes it instead of doing it. A card shows what it would do and why,
+with **Approve** and **Dismiss** (`/approve` and `/dismiss` in the terminal app). The agent
+carries on meanwhile. Approve runs exactly that step, without asking again, and the agent is
+told the result; Dismiss tells it you said no. Proposals still open when you quit, stop the
+agent or switch conversations are withdrawn.
+
 ## Keys and commands
 
 | Key | Command | Does |
@@ -63,6 +72,7 @@ The permission level is set in [Settings](settings.md#permissions).
 | | `/duty off` | End the duty; the plan stays |
 | | `/sessions` | This conversation's [sub-sessions](concepts.md#sub-sessions): open one in place, start or dismiss a proposal, resume, stop, rename, archive or delete |
 | | `/back` | Leave the sub-session you opened, back to your conversation |
+| | `/approve`, `/dismiss` | Answer the agent's open [proposal](#proposals) |
 | | `/folder [path]` | Show the work folder, or start a chat in another one |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
 | Ctrl+Q | `/quit` | Quit |

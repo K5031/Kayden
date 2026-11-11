@@ -702,8 +702,32 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     ),
     "op_cancel": ToolSpec(
         "op_cancel",
-        "Request cancellation of a backgrounded call.",
+        "Request cancellation of a backgrounded call, or withdraw a proposal.",
         {"type": "object", "properties": {"call_id": _CALL_ID}, "required": ["call_id"]},
+    ),
+    # A proposal is an operation with the propose call's id; see Proposal.
+    "propose": ToolSpec(
+        "propose",
+        "Propose a tool call that is your own idea, not something the user asked for: the "
+        "user sees it with your reason and approves or dismisses it. It returns at once; "
+        "carry on or end your turn. If approved, exactly this call runs and you are woken "
+        "with its result; if dismissed, you are woken with that. Call tools the user asked "
+        "for directly instead.",
+        {
+            "type": "object",
+            "properties": {
+                "call": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"},
+                                   "arguments": {"type": "object", "default": {}}},
+                    "required": ["name"],
+                    "description": "The tool call to run if the user approves.",
+                },
+                "reason": {"type": "string", "minLength": 1,
+                           "description": "One line: why it is worth doing."},
+            },
+            "required": ["call", "reason"],
+        },
     ),
 }
 
@@ -1094,6 +1118,7 @@ class RuntimeSnapshot:
     pending_permissions: Sequence[PermissionRequest]
     queued_messages: Sequence[MessageQueued]
     duty_wake_at: float | None = None  # see DutyScheduled
+    proposals: Sequence[Proposal] = ()  # waiting for the user
     help_needed: str | None = None  # see HelpNeeded
 
 
@@ -1227,6 +1252,32 @@ class DutyScheduled:
 
 
 @dataclass(frozen=True, slots=True)
+class Proposal:
+    """A tool call the agent proposed (the propose built-in). Nothing runs until the user
+    approves it (RuntimeAPI.resolve_proposal); then exactly `call` runs, ungated, as the
+    operation `id` (the propose call's id), and its result wakes the agent like any
+    backgrounded call. A pending proposal is left out of the wake set. op_cancel, Stop and
+    a restart end it."""
+
+    id: CallId
+    call: ToolCall
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalMade:
+    proposal: Proposal
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalResolved:
+    """accepted: True approved, False dismissed, None withdrawn (op_cancel, Stop)."""
+
+    proposal_id: CallId
+    accepted: bool | None
+
+
+@dataclass(frozen=True, slots=True)
 class HelpNeeded:
     """The agent asked its supervisor (the user, or whoever drives this instance) for help
     with ask_for_help: the duty's check-ins pause until a message, an activation or a change
@@ -1297,6 +1348,8 @@ type RuntimeEvent = (
     | MemoriesChanged
     | DutyScheduled
     | HelpNeeded
+    | ProposalMade
+    | ProposalResolved
     | MaintenanceStarted
     | MaintenanceFinished
     | StopStalled
@@ -1466,6 +1519,10 @@ class RuntimeAPI(Protocol):
     async def delete_note(self, note_id: str) -> None:
         """Erase the note with its revisions. The messages it came from stay until their
         conversation is deleted."""
+
+    async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
+        """Approve or dismiss a pending proposal, in any state; RuntimeStateError when it is
+        not pending."""
 
     async def set_duty(self, duty: Duty | None) -> None:
         """Give the open conversation a duty, change it, or end it (None); the plan stays.

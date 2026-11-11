@@ -76,6 +76,9 @@ from kayden.api import (
     PermissionRequested,
     PermissionResolved,
     PlanItem,
+    Proposal,
+    ProposalMade,
+    ProposalResolved,
     Reasoning,
     ReasoningDelta,
     Role,
@@ -129,6 +132,7 @@ from kayden.frontends.common import (
     parse_plan_text,
     past_tense,
     plan_text,
+    proposal_parts,
     provider_step,
     request_note,
     restart_notice,
@@ -170,6 +174,7 @@ HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
     "/conversations (F3), /memory (F4), /mcp (tool servers), /folder [path], "
     "/duty [instruction|off] (F5), /goal [instruction], /sessions, /back, "
+    "/approve, /dismiss (a proposal), "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -418,6 +423,30 @@ class PermissionPrompt(Vertical):
         event.stop()
         assert event.button.id is not None
         self.app.resolve_permission(self.request.id, Decision(event.button.id))  # type: ignore[attr-defined]
+
+
+class ProposalPrompt(Vertical):
+    """A call the agent proposed: it runs only if the user approves it."""
+
+    def __init__(self, proposal: Proposal) -> None:
+        super().__init__()
+        self.proposal = proposal
+
+    def compose(self) -> ComposeResult:
+        headline, detail = proposal_parts(self.proposal)
+        yield Label(Text.assemble((headline, "bold"), f"\n{self.proposal.reason}",
+                                  (f"\n{_clip(detail, MAX_ARGS_CHARS)}" if detail else "",
+                                   "dim")))
+        with Horizontal(classes="buttons"):
+            yield Button("Approve", id="approve", variant="primary")
+            yield Button("Dismiss", id="dismiss")
+
+    @on(Button.Pressed)
+    def _pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        for button in self.query(Button):
+            button.disabled = True
+        self.app.resolve_proposal(self.proposal.id, event.button.id == "approve")  # type: ignore[attr-defined]
 
 
 # ── modal screens ────────────────────────────────────────────────────────
@@ -1188,8 +1217,6 @@ class SessionsScreen(ModalScreen[str | None]):
             yield Checkbox("Show archived", id="show-archived")
             with Horizontal(classes="buttons"):
                 yield Button("Open", id="open-session", variant="primary")
-                yield Button("Start", id="start-session", variant="primary")
-                yield Button("Dismiss", id="dismiss-session")
                 yield Button("Resume", id="resume-session")
                 yield Button("Stop", id="stop-session", variant="error")
             with Horizontal(classes="buttons"):
@@ -1233,15 +1260,13 @@ class SessionsScreen(ModalScreen[str | None]):
     @on(OptionList.OptionHighlighted)
     def _buttons(self) -> None:
         session = self._selected()
-        proposed = session is not None and session.state == "proposed"
         shown = {
-            "#open-session": session is not None and not proposed,
-            "#start-session": proposed, "#dismiss-session": proposed,
+            "#open-session": session is not None,
             "#resume-session": session is not None and session.resumable,
             "#stop-session": session is not None and session.running,
-            "#rename-session": session is not None and not proposed,
-            "#archive-session": session is not None and not proposed,
-            "#delete-session": session is not None and not proposed}
+            "#rename-session": session is not None,
+            "#archive-session": session is not None,
+            "#delete-session": session is not None}
         for selector, visible in shown.items():
             self.query_one(selector, Button).display = visible
         if session is not None:
@@ -1260,18 +1285,8 @@ class SessionsScreen(ModalScreen[str | None]):
     @on(OptionList.OptionSelected)
     @on(Button.Pressed, "#open-session")
     def _open(self) -> None:
-        if (session := self._selected()) is not None and session.state != "proposed":
+        if (session := self._selected()) is not None:
             self.dismiss(session.id)
-
-    @on(Button.Pressed, "#start-session")
-    def _start(self) -> None:
-        if (session := self._selected()) is not None:
-            self._run(self.sessions.start(session))
-
-    @on(Button.Pressed, "#dismiss-session")
-    def _dismiss_proposal(self) -> None:
-        if (session := self._selected()) is not None:
-            self.sessions.dismiss(session)
 
     @on(Button.Pressed, "#resume-session")
     def _resume(self) -> None:
@@ -1493,6 +1508,7 @@ class KaydenApp(App[None]):
         self._queued: dict[str, UserEntry] = {}
         self._rendered_ids: set[str] = set()
         self._prompts: dict[str, PermissionPrompt] = {}
+        self._proposals: dict[str, ProposalPrompt] = {}
         self._oldest_id: str | None = None  # oldest history message loaded
         self._insert_before: Widget | None = None  # mount point while loading older pages
 
@@ -1606,6 +1622,7 @@ class KaydenApp(App[None]):
         self._queued.clear()
         self._rendered_ids.clear()
         self._prompts.clear()
+        self._proposals.clear()
         self.last_seq = snap.seq
         self.state = snap.state
         self.pending_ops = len(snap.operations)
@@ -1629,6 +1646,8 @@ class KaydenApp(App[None]):
             await self._apply(queued)
         for request in snap.pending_permissions:
             await self._add_prompt(request)
+        for proposal in snap.proposals:
+            await self._add_proposal(proposal)
         self._render_status()
 
     @on(Button.Pressed, "#load-earlier")
@@ -1700,6 +1719,11 @@ class KaydenApp(App[None]):
             case PermissionResolved(request_id=request_id):
                 if (prompt := self._prompts.pop(request_id, None)) is not None:
                     await prompt.remove()
+            case ProposalMade(proposal=proposal):
+                await self._add_proposal(proposal)
+            case ProposalResolved(proposal_id=proposal_id):
+                if (card := self._proposals.pop(proposal_id, None)) is not None:
+                    await card.remove()
             case ModelRetry(attempt=attempt, max_attempts=max_attempts, delay_s=delay, error=err):
                 self.notice = f"Retrying ({attempt} of {max_attempts}) in {delay:.0f}s: {err}"
                 await self._discard_stream()  # the retried request streams from scratch
@@ -1886,6 +1910,16 @@ class KaydenApp(App[None]):
             self._tool_entries[result.call_id] = entry
         entry.finish(result, duration)
 
+    async def _add_proposal(self, proposal: Proposal) -> None:
+        if proposal.id in self._proposals:
+            return
+        prompt = ProposalPrompt(proposal)
+        self._proposals[proposal.id] = prompt
+        await self.query_one("#permissions", Vertical).mount(prompt)
+
+    def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
+        self._call(self.runtime.resolve_proposal(proposal_id, accept))
+
     async def _add_prompt(self, request: PermissionRequest) -> None:
         if request.id in self._prompts:
             return
@@ -1994,6 +2028,11 @@ class KaydenApp(App[None]):
                 self.action_memory()
             case "back":
                 self._leave_session()
+            case "approve" | "dismiss":
+                if not self._proposals:
+                    self.notify("Nothing is proposed.", severity="warning")
+                else:
+                    self.resolve_proposal(next(iter(self._proposals)), name == "approve")
             case "mcp":
                 self._leave_session()
                 self.push_screen(McpScreen(self.runtime))

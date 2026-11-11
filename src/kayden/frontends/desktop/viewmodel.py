@@ -48,6 +48,9 @@ from kayden.api import (
     PermissionRequested,
     PermissionResolved,
     PlanItem,
+    Proposal,
+    ProposalMade,
+    ProposalResolved,
     Reasoning,
     ReasoningDelta,
     Role,
@@ -298,6 +301,7 @@ class ConversationModel:
         self.on_change = on_change
         self.items: list[Item] = []
         self.prompts: dict[str, PermissionRequest] = {}
+        self.proposals: dict[str, Proposal] = {}  # shown with the prompts
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
         self.pending_ops = 0
@@ -356,6 +360,7 @@ class ConversationModel:
         caller subscribed first and drops envelopes at or below snapshot.seq)."""
         self.items.clear()
         self.prompts.clear()
+        self.proposals.clear()
         self._tools.clear()
         self._stream.clear()
         self._queued.clear()
@@ -382,6 +387,8 @@ class ConversationModel:
             self._queue(queued)
         for request in snapshot.pending_permissions:
             self.prompts[request.id] = request
+        for proposal in snapshot.proposals:
+            self.proposals[proposal.id] = proposal
         self.on_change(Reset())
 
     @property
@@ -453,6 +460,12 @@ class ConversationModel:
                 self.on_change(PromptsChanged())
             case PermissionResolved(request_id=request_id):
                 if self.prompts.pop(request_id, None) is not None:
+                    self.on_change(PromptsChanged())
+            case ProposalMade(proposal=proposal):
+                self.proposals[proposal.id] = proposal
+                self.on_change(PromptsChanged())
+            case ProposalResolved(proposal_id=proposal_id):
+                if self.proposals.pop(proposal_id, None) is not None:
                     self.on_change(PromptsChanged())
             case ModelRetry(attempt=attempt, max_attempts=max_attempts):
                 self.notice = f"Retrying ({attempt + 1} of {max_attempts})…"
@@ -881,6 +894,9 @@ class Controller:
 
     def resolve(self, request_id: str, decision: Decision) -> None:
         self.command(self.runtime.resolve_permission(request_id, decision))
+
+    def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
+        self.command(self.runtime.resolve_proposal(proposal_id, accept))
 
     def select_model(self, model_id: str) -> None:
         self.command(self.runtime.select_model(model_id))

@@ -60,6 +60,7 @@ another reason, the Settings window opens with the message.
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
 | Stop Kayden | Press the round button in the message box (it shows a square while Kayden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |
+| Answer a proposal | When Kayden proposes something of its own, a card above the message box says what and why: **Approve** runs it, **Dismiss** declines. See [Proposals](using-kayden.md#proposals). |
 | Cancel one task | Press **Cancel** on its card. |
 | See what a tool did | Steps between two replies fold into one line: the step under way while Kayden works ("Search the web for flights to Oslo"), then how many steps there were and any that failed ("4 steps · 1 failed"). Click it to see each step and the thinking between them; point at a step to see the tool and its exact input, and press its arrow for the result. A step without a sentence shows the tool and its input. |
 | See the model's reasoning | Open **Thinking** above a reply. |
@@ -70,7 +71,7 @@ another reason, the Settings window opens with the message.
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
 | See what Kayden remembers | **Kayden → Memory…**: About you and the notes it keeps across conversations; add, edit or delete them. |
 | Give Kayden more tools | **Kayden → Tool servers (MCP)…**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
-| Open work Kayden handed off | Its sub-sessions are listed under the conversation, with a dot while they work: click one to open it there, talk to it, approve its steps or stop it. Click the conversation to go back. Right-click one to resume, rename, archive or delete it; click a proposal to start or dismiss it. See [Sub-sessions](concepts.md#sub-sessions). |
+| Open work Kayden handed off | Its sub-sessions are listed under the conversation, with a dot while they work: click one to open it there, talk to it, approve its steps or stop it. Click the conversation to go back. Right-click one to resume, rename, archive or delete it. See [Sub-sessions](concepts.md#sub-sessions). |
 | Fold a project | Conversations are grouped by their folder; click a folder's name to fold or unfold it. |
 | Give a conversation standing work | **Kayden → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
 | Change the model | The **Model** menu. |

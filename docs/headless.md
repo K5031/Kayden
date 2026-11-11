@@ -39,6 +39,7 @@ and the terminal app drive their sub-sessions this way:
 | `set_duty` | `duty`: `{instruction, kind ("duty" or "goal"), min_interval_s, max_interval_s}` or `null` to end it |
 | `set_plan` | `plan`: a list of `{text, status, due, note}` |
 | `resolve_permission` | `request_id`, `decision` (`allow_once`, `allow_conversation`, `deny`) |
+| `resolve_proposal` | `proposal_id`, `accept` (true or false) |
 | `snapshot` | none |
 | `history` | `conversation_id`, optional `before`, `limit` |
 | `list_conversations` | optional `include_archived` |
@@ -60,7 +61,8 @@ under `"type"`, such as `MessageCommitted`, `StateChanged`, `PermissionRequested
 `snapshot`, ignore events up to its `seq`, and read `history`.
 
 **Prompts reach the program.** A tool call that needs approval comes as
-`PermissionRequested`: answer it with `resolve_permission`. A question the agent asks
+`PermissionRequested`: answer it with `resolve_permission`. A call the agent proposes
+comes as `ProposalMade`: answer it with `resolve_proposal`. A question the agent asks
 with its duty paused comes as `HelpNeeded`: answer it with `send`.
 
 ## Example

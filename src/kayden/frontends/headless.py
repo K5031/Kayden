@@ -74,6 +74,8 @@ REQUESTS: dict[str, Handler] = {
     "select_model": lambda r, p: r.select_model(_arg(p, "model_id"), **p),
     "set_duty": lambda r, p: r.set_duty(_duty(_arg(p, "duty")), **p),
     "set_plan": lambda r, p: r.set_plan(_plan(_arg(p, "plan")), **p),
+    "resolve_proposal": lambda r, p: r.resolve_proposal(
+        _arg(p, "proposal_id"), _arg(p, "accept"), **p),
     "resolve_permission": lambda r, p: r.resolve_permission(
         _arg(p, "request_id"), Decision(_arg(p, "decision")), **p),
     "snapshot": lambda r, p: _now(r.snapshot(**p)),

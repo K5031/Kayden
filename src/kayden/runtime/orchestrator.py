@@ -6,11 +6,12 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime
 from pathlib import Path
@@ -67,6 +68,9 @@ from kayden.api import (
     PermissionRequested,
     PermissionResolved,
     PlanItem,
+    Proposal,
+    ProposalMade,
+    ProposalResolved,
     ReasoningDelta,
     Role,
     RuntimeEvent,
@@ -87,6 +91,7 @@ from kayden.api import (
     ToolCall,
     ToolCallDelta,
     ToolFinished,
+    ToolOutput,
     ToolProgress,
     ToolResult,
     Tools,
@@ -315,6 +320,12 @@ class Runtime:
         self._duty_wake_at: float | None = None
         self._duty_cause: str | None = None  # why the next cycle was requested for a duty
         self._help: str | None = None  # the agent's open question (ask_for_help)
+        # Proposals waiting for the user, by the propose call's id (also their operation's).
+        self._proposals: dict[CallId, tuple[Proposal, asyncio.Future[bool]]] = {}
+        self._proposal_ops: set[CallId] = set()  # operations that are proposals
+        self._proposal_done = False  # a proposal's outcome the model has not seen
+        self._uncounted: set[CallId] = set()  # operations not counted as activity yet
+        self._specs: dict[str, ToolSpec] = {}  # offered in the latest request
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._duration_task: asyncio.Task[None] | None = None
         self._inbox_before_stop = 0
@@ -336,11 +347,12 @@ class Runtime:
             model=self._model,
             usage=self._budget.snapshot(),
             operations=[OperationInfo(op.call, op.started_at, op.last_progress, op.backgrounded)
-                        for op in self._ops.values()],
+                        for op in self._ops.values() if op.call.id not in self._proposals],
             pending_permissions=[req for req, _ in self._prompts.values()],
             queued_messages=list(self._inbox),
             duty_wake_at=self._duty_wake_at,
             help_needed=self._help,
+            proposals=tuple(p for p, _ in self._proposals.values()),
         )
 
     async def list_models(self) -> Sequence[ModelInfo]:
@@ -385,6 +397,7 @@ class Runtime:
         if self._state() not in (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED,
                                  AgentState.FAILED):
             raise RuntimeStateError(f"cannot start while {self._state()}")
+        await self._withdraw_proposals()  # a proposal belongs to its conversation
         if self._ops:
             raise RuntimeStateError("operations are still outstanding")
         if options.conversation_id is not None and (options.seed_from is not None
@@ -678,7 +691,7 @@ class Runtime:
         return self._base
 
     def _update_state(self) -> None:
-        current = (self._state(), len(self._ops))
+        current = (self._state(), len(self._ops) - len(self._proposals))
         if current != self._emitted:
             self._emitted = current
             self._emit(StateChanged(current[0], current[1]))
@@ -1117,7 +1130,8 @@ class Runtime:
 
     def _enter_idle(self) -> None:
         self._base = AgentState.IDLE
-        wake = set(self._ops)  # woken once everything running now has finished
+        # Woken once everything running now has finished; a proposal wakes it by itself.
+        wake = set(self._ops) - self._proposal_ops
         self._wake_set = wake or None
         self._immediate_wake = not wake and self._unseen
         self._log.decision("idle", wait_for=sorted(wake), immediate=self._immediate_wake)
@@ -1131,6 +1145,8 @@ class Runtime:
             return
         if self._immediate_wake:
             self._request_cycle("wake-up")
+        elif self._proposal_done:
+            self._request_cycle("proposal resolved")
         elif self._wake_set:
             running = self._wake_set & set(self._ops)
             if self._duty_running() and running != self._wake_set:
@@ -1296,7 +1312,7 @@ class Runtime:
         assert self._conversation is not None
         if section := duties.prompt(self._conversation.duty, self._conversation.plan):
             system = f"{system}\n\n{section}"
-        self._unseen = False
+        self._unseen = self._proposal_done = False
         messages = [_stamped(m) for m in assembled.messages]
         return InferenceRequest(info.id, system, messages, tools, reserve)
 
@@ -1464,6 +1480,7 @@ class Runtime:
         every earlier call has finished or been backgrounded, and later calls wait for it.
         Returns results in emission order and the ToolFinished events to emit after the
         TOOL message is appended."""
+        self._specs = specs
         results: dict[CallId, tuple[ToolResult, float]] = {}
         tasks: dict[CallId, asyncio.Task[tuple[ToolResult, float]]] = {}
         barrier: asyncio.Task[Any] | None = None
@@ -1494,6 +1511,8 @@ class Runtime:
         if after:
             await asyncio.wait(after)
         try:
+            if call.name == "propose":
+                return self._propose(call), 0.0
             if call.name in _RUNTIME_TOOLS or call.name in self._memory_tools:
                 return await self._run_builtin(call, spec)
             return await self._run_module_call(call, spec)
@@ -1618,30 +1637,124 @@ class Runtime:
         self._log.decision("permission_review", call_id=call.id, allow=verdict.allow)
         return verdict
 
-    def _launch(self, call: ToolCall, spec: ToolSpec) -> Operation:
+    # ── Proposals ────────────────────────────────────────────────────────
+
+    def _propose(self, call: ToolCall) -> ToolResult:
+        """Put the proposed call before the user as an operation that returns at once."""
+        raw = call.arguments["call"]
+        proposed = ToolCall(f"{call.id}-call", raw["name"], dict(raw.get("arguments") or {}))
+        if proposed.name not in self._tool_owner:
+            what = ("is not a tool you can call" if proposed.name not in self._specs
+                    else "needs no approval: call it directly")
+            return ToolResult(call.id, ToolStatus.ERROR,
+                              f"{proposed.name!r} {what}. Propose a call of an action tool.")
+        if error := self._validate(proposed, self._specs):
+            return ToolResult(call.id, ToolStatus.ERROR, f"The proposed call: {error}")
+        proposal = Proposal(call.id, proposed, call.arguments["reason"])
+        decided: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._proposals[call.id] = (proposal, decided)
+        self._proposal_ops.add(call.id)
+        spec = self._specs[proposed.name]
+        # Waiting for the user is not activity (the duration budget), as a prompt is not.
+        self._uncounted.add(call.id)
+        op = self._launch(call, replace(BUILTIN_TOOLS["propose"], timeout=math.inf),
+                          execute=lambda ctx: self._proposal_outcome(proposal, decided, spec,
+                                                                     ctx))
+        op.backgrounded = True
+        self._log.decision("proposal", call_id=call.id, tool=proposed.name)
+        self._emit(ProposalMade(proposal))
+        self._emit(ToolBackgrounded(call.id))
+        return ToolResult(call.id, ToolStatus.BACKGROUNDED,
+                          f"Proposed to the user as {call.id}. You are woken with the outcome: "
+                          "the call's result if they approve it, or that they dismissed it. "
+                          "Carry on, or end your turn.")
+
+    async def _proposal_outcome(self, proposal: Proposal, decided: asyncio.Future[bool],
+                                spec: ToolSpec, ctx: Context) -> ToolOutput:
+        try:
+            accepted = await decided
+        except asyncio.CancelledError:
+            if self._proposals.pop(proposal.id, None) is not None:
+                self._log.decision("proposal_withdrawn", call_id=proposal.id)
+                self._emit(ProposalResolved(proposal.id, None))
+            raise
+        if not accepted:
+            return ToolOutput("The user dismissed the proposal; it did not run.")
+        if reason := self._budget.reserve_tool_call():
+            return ToolOutput(f"Approved, but refused: budget {reason}.", is_error=True)
+        self._uncounted.discard(proposal.id)
+        self._budget.begin_activity()
+        self._emit(UsageUpdated(self._budget.snapshot()))
+        owner = self._tool_owner.get(proposal.call.name)
+        if owner is None:
+            return ToolOutput(f"Approved, but {proposal.call.name!r} is no longer offered.",
+                              is_error=True)
+        timeout = spec.timeout or self._config.default_tool_timeout_s
+        try:
+            async with asyncio.timeout(None if math.isinf(timeout) else timeout):
+                return await owner.execute(self._bare(proposal.call), ctx)
+        except TimeoutError:
+            return ToolOutput(f"Approved, but it timed out after {timeout:g} s.",
+                              is_error=True)
+
+    async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
+        entry = self._proposals.pop(proposal_id, None)
+        if entry is None:
+            raise RuntimeStateError(f"no proposal {proposal_id} is pending")
+        proposal, decided = entry
+        self._log.decision("permission", call_id=proposal.call.id, by="proposal",
+                           outcome=Decision.ALLOW_ONCE if accept else Decision.DENY)
+        self._emit(ProposalResolved(proposal_id, accept))
+        decided.set_result(accept)
+        self._update_state()
+
+    async def _withdraw_proposals(self) -> None:
+        pending = [self._ops[i] for i in self._proposals if i in self._ops]
+        for op in pending:
+            op.request_cancel()
+        supervisors = {op.supervisor for op in pending if op.supervisor is not None}
+        if supervisors:
+            await asyncio.wait(supervisors)
+        if self._flush_tasks:
+            await asyncio.wait(self._flush_tasks)
+
+    def _launch(self, call: ToolCall, spec: ToolSpec,
+                execute: Callable[[Context], Awaitable[ToolOutput]] | None = None) -> Operation:
         op = Operation(call, spec, default_timeout=self._config.default_tool_timeout_s,
                        grace=self._config.cancel_grace_s, on_progress=self._on_progress,
                        on_late=self._on_late)
         self._ops[call.id] = op
         self._known_ops[call.id] = op
-        self._budget.begin_activity()
+        if call.id not in self._uncounted:
+            self._budget.begin_activity()
         self._watch_duration()
         assert self._conversation is not None
         ctx = Context(op, self._conversation.id)
         self._emit(ToolStarted(call))
-        op.supervisor = asyncio.create_task(self._supervise(op, ctx))
+        op.supervisor = asyncio.create_task(self._supervise(op, ctx, execute))
         self._update_state()
         return op
 
-    async def _supervise(self, op: Operation, ctx: Context) -> ToolResult:
+    async def _supervise(self, op: Operation, ctx: Context,
+                         execute: Callable[[Context], Awaitable[ToolOutput]] | None = None
+                         ) -> ToolResult:
         try:
-            owner = self._tool_owner[op.call.name]
-            result = await op.run(lambda: owner.execute(self._bare(op.call), ctx))
+            if execute is None:
+                owner = self._tool_owner[op.call.name]
+                result = await op.run(lambda: owner.execute(self._bare(op.call), ctx))
+            else:
+                result = await op.run(lambda: execute(ctx))
         except Exception as e:  # noqa: BLE001 - module calls are wrapped
             result = ToolResult(op.call.id, ToolStatus.ERROR, f"Runtime error: {e}")
         op.result = result
-        self._budget.end_activity()
+        if op.call.id in self._uncounted:
+            self._uncounted.discard(op.call.id)
+        else:
+            self._budget.end_activity()
         del self._ops[op.call.id]
+        if op.call.id in self._proposal_ops:
+            self._proposal_ops.discard(op.call.id)
+            self._proposal_done = True
         if op.abandoned:
             self._log.decision("abandoned", call_id=op.call.id)
             if self._stopping:

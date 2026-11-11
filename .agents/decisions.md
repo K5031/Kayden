@@ -697,8 +697,22 @@ Design: [Agent Note](notes/implemented/2026-11-11-sub-sessions.md).
 | Process | Closed (stdin, then killed after 10 s) when it is done or stopped and no view has it open; cancelling the call, `stop_session`, Stop and closing the manager stop it |
 | Proxy | `kayden.frontends.remote.RemoteRuntime` over `Channel` (JSON-RPC client): every RuntimeAPI command but `restart`; `snapshot()` is read once and kept current from the events (state, conversation, model, usage, duty wake, help, operations, prompts, queue). A reply to a cancelled request is ignored. `kayden.frontends.wire` encodes and decodes the values |
 | Desktop | The sidebar groups conversations by folder (a heading with the folder's name, folded by a click; "Other" for none) and lists each conversation's children under it (indented, a tree line, a dot while working, the summary as second line). Clicking a child shows it in the conversation area through its own Controller and model; clicking a conversation returns. Memory, tool servers and settings stay the window's own |
-| Initiation | `start_session(initiation)`: "user_asked" starts at once; "own_initiative" makes a proposal (state "proposed", its folder and record made, nothing started) the user starts or dismisses; the call waits meanwhile ("Waiting for the user to start it") and answers that a dismissed one did not start. Cancelling the call dismisses it |
+| Initiation | The agent starts a child when the user asked for the work, and proposes `start_session` (Proposals) when it is its own idea |
 | Notices | When a child's agent goes from working to not working, its state is not "working" (a goal between check-ins is), and no parent call waits on it: `[Runtime notice] Sub-session <id> (<name>) ended a turn: <state>.` with its question, report, or last reply (first 400 characters). Kept per parent conversation; the frontend sends them with `send` to its own runtime when that conversation is open (on each change, and after opening a conversation) |
 | Resume | No automatic resume after a restart (SPEC 11). `resume`: start it again on its conversation, then `activate`; offered when it is stopped, failed or idle with its goal not reached. `message_session` starts a stopped child again too |
 | Row actions | Rename (`title`, empty shows the task), Archive (hidden unless Show archived), Delete (stop, then the folder is erased after confirmation). Recorded in `session.json` with `has_goal` and `budget_usd` |
 | TUI | Opening a child shows it in place: the app's runtime is swapped for the child's `RemoteRuntime` (a new event pump, then a resync); `/back`, `/sessions`, `/conversations`, settings, memory, `/mcp` and `/folder` return to the app's own first. The status line starts with "Sub-session: <name> (/back returns)". `/sessions`: the list with Open, Start, Dismiss, Resume, Stop, Rename, Archive, Delete and Show archived |
+
+## Proposals
+
+Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
+
+| Choice | Value |
+|---|---|
+| Tool | `propose(call: {name, arguments}, reason)`, a runtime built-in (`BUILTIN_TOOLS`), offered in every request. Only a Tools module's or the frontend's tool can be proposed; another name is an ERROR result saying it is not a tool, or needs no approval. The proposed call is validated like a call |
+| Operation | The proposal is an operation with the `propose` call's id, backgrounded at once (no initial wait), spec timeout none while it waits. The proposed call gets the id `<propose id>-call`. On approval its tool's own timeout (else the default) applies |
+| Approval | The click is the permission: no gate, logged as a `permission` decision `by="proposal"`. A tool call is reserved from the budget only on approval. Waiting is not activity for the duration budget |
+| Wake-up | Pending proposals are left out of the wake set; a finished proposal operation sets a flag that wakes an idle agent, cleared when the next request is built |
+| Withdrawn | `op_cancel` on its id, Stop, and `start()` (switching conversations) cancel pending proposals: `ProposalResolved(id, None)`. Pending proposals are not in `RuntimeSnapshot.operations` nor counted in `StateChanged.pending_ops` |
+| Results | Approved: the call's own output. Dismissed: "The user dismissed the proposal; it did not run." (OK status) |
+| Cards | Desktop: `ProposalCard` with the permission cards ("Kayden proposes: <step sentence>", the reason, other arguments; a `start_session` shows its task), Approve and Dismiss. TUI: `ProposalPrompt`, `/approve` and `/dismiss` answer the first open one |

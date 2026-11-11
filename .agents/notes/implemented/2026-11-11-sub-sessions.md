@@ -29,12 +29,12 @@ listing and peeking are trivial. In Kayden the user-facing host is the frontend.
 `kayden.frontends.sessions.SubSessions`, a Tools module with no UI code, which the
 desktop app and the TUI create and offer. It offers:
 
-- `start_session(task, initiation, budget_usd)`: starts a child, a separate Kayden agent
-  with its own context, in the conversation's work folder, on the task as a goal. With
-  `user_asked` it starts at once; with `own_initiative` it is a proposal the user starts or
-  dismisses, as the Claude app asks before a session the agent proposes. The call runs in
-  the background and returns the child's report when the goal is reached, or its question
-  when it asks for help.
+- `start_session(task, budget_usd)`: starts a child, a separate Kayden agent with its own
+  context, in the conversation's work folder, on the task as a goal. The agent calls it
+  when the user asked for the work; when it is its own idea it proposes the call
+  ([proposals](2026-11-11-proposals.md)), as the Claude app asks before a session the agent
+  proposes. The call runs in the background and returns the child's report when the goal
+  is reached, or its question when it asks for help.
 - `message_session(session, text)`: answers a question or adds an instruction, then waits
   the same way.
 - `stop_session(session)`: stops a child.
@@ -78,8 +78,7 @@ therefore shows a child with the same code as its own conversation.
   Clicking a child shows it in the conversation area: its messages and steps, its
   permission cards, Stop, and a message box that talks to it. Clicking a conversation goes
   back; the child keeps working. Memory, tool servers and settings stay the window's own.
-- **Row actions:** open, resume, stop, rename, archive and delete; a proposal is started or
-  dismissed.
+- **Row actions:** open, resume, stop, rename, archive and delete.
 - **TUI:** `/sessions` lists the children with the same actions; opening one shows it in
   place of the conversation, the app's runtime swapped for the child's, until `/back`.
 - Both status lines count the children working; the parent conversation shows each child

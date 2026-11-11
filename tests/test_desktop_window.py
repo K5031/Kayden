@@ -859,7 +859,7 @@ async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a haiku", "initiation": "user_asked"}, id="s")]),
+        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
         [finish("Haiku written."), {"text": "Here is the haiku."}, {"text": "Shorter now."}])
     controller = Controller(h.runtime, ConversationModel())
@@ -915,15 +915,13 @@ async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
             for i in range(window.conversation_list.count())] == ["alpha", "beta", "Second"]
 
 
-async def test_child_rows_have_a_menu_and_proposals_wait_for_start(
-        make, qapp, tmp_path, child_env):
+async def test_child_rows_have_a_menu(make, qapp, tmp_path, child_env):
     from kayden.frontends.desktop.window import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Tidy the notes",
-                                           "initiation": "own_initiative"}, id="s")]),
-        Step(text="Proposed."), Step(text="Thanks.")],
+        Step(calls=[call("start_session", {"task": "Tidy the notes"}, id="s")]),
+        Step(text="Started."), Step(text="Thanks.")],
         [finish("Tidied."), {"text": "Done."}])
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, sessions=sessions)
@@ -931,20 +929,14 @@ async def test_child_rows_have_a_menu_and_proposals_wait_for_start(
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     window.show()
     await h.turn("Hi")
-    await window.fill_sidebar()
     [child] = sessions.sessions
-    row = next(window.conversation_list.item(i) for i in range(window.conversation_list.count())
-               if window.conversation_list.item(i).data(KIND_ROLE) == "session")
-    assert "Proposed" in row.data(PREVIEW_ROLE)
-    menu = window.session_menu(child)
-    assert [a.text() for a in menu.actions()] == ["Start", "Dismiss"]
-    action(menu, "Start").trigger()
     await eventually(lambda: child.state == "done", timeout=30)
+    await window.fill_sidebar()
     menu = window.session_menu(child)
     assert [a.text() for a in menu.actions()] == ["Open", "Rename…", "Archive", "Delete…"]
-    child_title = "Notes"
-    sessions.rename(child, child_title)
+    sessions.rename(child, "Notes")
     assert any(window.conversation_list.item(i).text() == "Notes"
+               and window.conversation_list.item(i).data(KIND_ROLE) == "session"
                for i in range(window.conversation_list.count()))
 
 

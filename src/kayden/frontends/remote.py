@@ -33,6 +33,8 @@ from kayden.api import (
     PermissionRequested,
     PermissionResolved,
     PlanItem,
+    ProposalMade,
+    ProposalResolved,
     RuntimeSnapshot,
     RuntimeStateError,
     Settings,
@@ -271,6 +273,9 @@ class RemoteRuntime:
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:
         await self._call("resolve_permission", request_id=request_id, decision=decision)
 
+    async def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
+        await self._call("resolve_proposal", proposal_id=proposal_id, accept=accept)
+
 
 def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
     """The snapshot after `envelope`: what the events say about the fields a frontend reads
@@ -308,6 +313,11 @@ def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
         case PermissionResolved(request_id=request_id):
             return replace(snap, pending_permissions=tuple(
                 r for r in snap.pending_permissions if r.id != request_id))
+        case ProposalMade(proposal=proposal):
+            return replace(snap, proposals=(*snap.proposals, proposal))
+        case ProposalResolved(proposal_id=proposal_id):
+            return replace(snap, proposals=tuple(
+                p for p in snap.proposals if p.id != proposal_id))
         case MessageQueued():
             return replace(snap, queued_messages=(*snap.queued_messages, envelope.event))
         case MessageCommitted(message=message):

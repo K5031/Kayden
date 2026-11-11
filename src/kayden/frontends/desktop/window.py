@@ -20,7 +20,6 @@ from PySide6.QtGui import (
     QCloseEvent,
     QColor,
     QContextMenuEvent,
-    QCursor,
     QDesktopServices,
     QFont,
     QFontMetrics,
@@ -77,6 +76,7 @@ from kayden.api import (
     ModelInfo,
     PermissionPolicy,
     PermissionRequest,
+    Proposal,
     RuntimeAPI,
     Settings,
     SettingsUpdate,
@@ -104,6 +104,7 @@ from kayden.frontends.common import (
     needs_restart,
     parse_plan_text,
     plan_text,
+    proposal_parts,
     request_note,
     restart_notice,
 )
@@ -774,6 +775,36 @@ class PermissionCard(QFrame):
         self.resolve(request_id, decision)
 
 
+class ProposalCard(QFrame):
+    """A call the agent proposed: it runs only if the user approves it."""
+
+    def __init__(self, proposal: Proposal, resolve: Callable[[str, bool], None]) -> None:
+        super().__init__()
+        self.setObjectName("prompt")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 12, 10)
+        headline, detail = proposal_parts(proposal)
+        layout.addWidget(_label(headline, role="strong"))
+        layout.addWidget(_label(proposal.reason, tone="muted"))
+        if detail:
+            layout.addWidget(_label(detail, tone="muted"))
+        buttons = QHBoxLayout()
+        approve = _primary(QPushButton("Approve"))
+        dismiss = QPushButton("Dismiss")
+        approve.clicked.connect(lambda: self._answer(proposal.id, True))
+        dismiss.clicked.connect(lambda: self._answer(proposal.id, False))
+        buttons.addWidget(approve)
+        buttons.addWidget(dismiss)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+        self.resolve = resolve
+        self.setAccessibleName(f"Proposal: {headline}")
+
+    def _answer(self, proposal_id: str, accept: bool) -> None:
+        self.setEnabled(False)  # the card goes when ProposalResolved arrives
+        self.resolve(proposal_id, accept)
+
+
 class ConversationList(QListWidget):
     """Right-click, the Menu key or Shift+F10 asks for an entry's menu."""
 
@@ -1244,6 +1275,8 @@ class MainWindow(QMainWindow):
                 _discard(child.widget())
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
+        for proposal in self.model.proposals.values():
+            self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
 
     def _show_empty_state(self) -> None:
         self.empty_state.setVisible(self.model.conversation is not None and not self.model.items
@@ -1460,9 +1493,6 @@ class MainWindow(QMainWindow):
         session = self._session_of(session_id)
         if session is None or (self._viewing is not None and self._viewing[0] is session):
             return
-        if session.state == "proposed":  # nothing to open yet: start or dismiss it
-            self.session_menu(session).popup(QCursor.pos())
-            return
         _spawn(self.open_session(session))
 
     def _row_menu(self, entry: QListWidgetItem, at: QPoint) -> None:
@@ -1476,10 +1506,6 @@ class MainWindow(QMainWindow):
         assert self.sessions is not None
         sessions = self.sessions
         menu = QMenu(self)
-        if session.state == "proposed":
-            menu.addAction("Start", lambda: self.home.command(sessions.start(session)))
-            menu.addAction("Dismiss", lambda: sessions.dismiss(session))
-            return menu
         menu.addAction("Open", lambda: _spawn(self.open_session(session)))
         if session.resumable:
             menu.addAction("Resume", lambda: self.home.command(sessions.resume(session)))

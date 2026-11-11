@@ -393,7 +393,7 @@ async def test_a_child_opens_in_place_to_approve_and_talk_to(make, tmp_path, chi
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Look it up", "initiation": "user_asked"},
+        Step(calls=[call("start_session", {"task": "Look it up"},
                          id="s")]),
         Step(text="Started."), Step(text="Reported.")],
         [{"calls": [{"name": "lookup"}]}, finish("Looked it up."), {"text": "Done."},

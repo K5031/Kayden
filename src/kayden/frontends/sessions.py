@@ -74,18 +74,16 @@ START = ToolSpec(
     "working in the same folder with your tools, so long side work does not fill your "
     "conversation. Describe the task fully: it sees nothing of this conversation. It runs in "
     "the background and returns its report when done, or a question if it needs one. "
-    "Several can run at once; the user can open and talk to each. initiation: user_asked "
-    "when the user asked for this work or for a sub-session, so it starts now; "
-    "own_initiative when it is your idea, so the user is asked first and it starts only "
-    "if they start it. Once the call has returned, you get a notice whenever it ends a turn.",
+    "Several can run at once; the user can open and talk to each. Once the call has "
+    "returned, you get a notice whenever it stops working. Start one when the user asked "
+    "for the work; when it is your own idea, propose it (propose) instead.",
     {"type": "object",
      "properties": {
          "task": {"type": "string", "minLength": 1},
-         "initiation": {"type": "string", "enum": ["user_asked", "own_initiative"]},
          "budget_usd": {"type": "number", "exclusiveMinimum": 0,
                         "default": DEFAULT_BUDGET_USD,
                         "description": "The most it may spend, in US dollars."}},
-     "required": ["task", "initiation"]},
+     "required": ["task"]},
     timeout=math.inf,
 )
 MESSAGE = ToolSpec(
@@ -103,8 +101,7 @@ STOP = ToolSpec(
     {"type": "object", "properties": {"session": _SESSION}, "required": ["session"]},
 )
 
-STATE_LABELS = {"proposed": "Proposed: start or dismiss", "dismissed": "Dismissed",
-                "starting": "Starting", "working": "Working",
+STATE_LABELS = {"starting": "Starting", "working": "Working",
                 "waiting": "Waiting for an answer", "idle": "Ready", "done": "Done",
                 "failed": "Failed", "stopped": "Stopped"}
 NOTE_CHARS = 400  # of a child's last reply in a notice to its parent
@@ -137,9 +134,8 @@ def message_lines(messages: Sequence[Message]) -> list[tuple[str, str]]:
 
 @dataclass
 class SubSession:
-    """One child as the frontend lists it. `state`: proposed (waiting for the user to
-    start it), dismissed, starting, working, waiting (for an answer to its question), idle
-    (reopened, nothing to do), done, failed or stopped."""
+    """One child as the frontend lists it. `state`: starting, working, waiting (for an
+    answer to its question), idle (reopened, nothing to do), done, failed or stopped."""
 
     id: str
     task: str
@@ -225,7 +221,7 @@ class SubSessions(Tools):
     def of(self, conversation_id: str | None, *, include_archived: bool = False
            ) -> list[SubSession]:
         return [s for s in self.sessions if s.conversation_id == conversation_id
-                and s.state != "dismissed" and (include_archived or not s.archived)]
+                and (include_archived or not s.archived)]
 
     def take_notes(self, conversation_id: str) -> list[str]:
         """The notices waiting for this conversation; the frontend sends them to it."""
@@ -269,15 +265,6 @@ class SubSessions(Tools):
         self._set(session, state="working", failure=None)
         await channel.request("activate")
 
-    async def start(self, session: SubSession) -> None:
-        """Start a proposed child: the user agreed."""
-        if session.state == "proposed":
-            await self._launch(session)
-
-    def dismiss(self, session: SubSession) -> None:
-        if session.state == "proposed":
-            self._set(session, state="dismissed")
-
     def rename(self, session: SubSession, title: str) -> None:
         self._set(session, title=title.strip() or None)
 
@@ -308,10 +295,7 @@ class SubSessions(Tools):
         if call.name == START.name:
             session = await self._new(args["task"], args.get("budget_usd", DEFAULT_BUDGET_USD),
                                       ctx.conversation_id)
-            if args["initiation"] == "user_asked":
-                await self._launch(session)
-            else:
-                self._set(session, state="proposed")
+            await self._launch(session)
             if session.state == "failed":
                 return ToolOutput(self._outcome(session), is_error=True)
             return await self._wait(session, ctx)
@@ -321,8 +305,8 @@ class SubSessions(Tools):
         if call.name == STOP.name:
             self.stop(session)
             return ToolOutput(f"Sub-session {session.id} stopped.")
-        if session.state in ("proposed", "dismissed") or session.child_conversation_id is None:
-            return ToolOutput(f"Sub-session {session.id} was never started.", is_error=True)
+        if session.child_conversation_id is None:
+            return ToolOutput(f"Sub-session {session.id} never started.", is_error=True)
         channel = self._channels.get(session.id) or await self._spawn(session, resume=True)
         self._set(session, state="working", question=None, failure=None)
         await channel.request("send", text=args["text"])
@@ -400,20 +384,13 @@ class SubSessions(Tools):
         session.awaited += 1
         try:
             async with session.changed:
-                while session.state in ("proposed", "starting", "working"):
-                    if session.state == "proposed":
-                        if shown is None:
-                            shown = "Waiting for the user to start it"
-                            ctx.progress(shown)
-                        await session.changed.wait()
-                        continue
+                while session.state in ("starting", "working"):
                     step = "Needs your approval" if session.approvals else session.step
                     if step and step != shown:
                         shown = step
                         ctx.progress(step)
                     await session.changed.wait()
         except asyncio.CancelledError:
-            self.dismiss(session)
             self.stop(session)
             raise
         finally:
@@ -431,8 +408,6 @@ class SubSessions(Tools):
                         f"message_session(session=\"{session.id}\", text=...).")
             case "stopped":
                 return f"Sub-session {session.id} was stopped."
-            case "dismissed":
-                return f"The user dismissed sub-session {session.id}; it did not start."
         return f"Sub-session {session.id} failed: {session.failure}"
 
     def _event(self, session: SubSession, channel: Channel,

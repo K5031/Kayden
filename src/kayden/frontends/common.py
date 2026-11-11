@@ -25,6 +25,7 @@ from kayden.api import (
     PermissionRequest,
     PlanItem,
     PlanStatus,
+    Proposal,
     ServerToolUse,
     Settings,
     SettingsUpdate,
@@ -40,6 +41,16 @@ PERMISSION_LABELS = {
     PermissionPolicy.ASK: "Ask me before every action",
     PermissionPolicy.DENY: "Never run tools",
 }
+
+
+def proposal_parts(proposal: Proposal) -> tuple[str, str]:
+    """A proposal for its card: the headline ("Kayden proposes: …") and the call's other
+    arguments."""
+    headline, detail = call_parts(proposal.call.arguments)
+    if proposal.call.name == "start_session":
+        headline = headline or f"Start a sub-session: {proposal.call.arguments.get('task')}"
+        detail = ""
+    return f"Kayden proposes: {headline or f'using {proposal.call.name}'}", detail
 
 
 def request_note(request: PermissionRequest) -> str:

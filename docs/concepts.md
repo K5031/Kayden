@@ -74,8 +74,8 @@ background while the conversation goes on, and its report comes back as the resu
 step. Several can run at once.
 
 - **You decide on the agent's own ideas.** When you asked for the work, the sub-session
-  starts at once. When it is the agent's idea, it waits in the sidebar as a proposal until
-  you start or dismiss it.
+  starts at once. When it is the agent's idea, it is a
+  [proposal](using-kayden.md#proposals) you approve or dismiss.
 - **The agent hears back.** When a sub-session stops working (it is done, asks something,
   or answered you) and the agent was not already waiting for it, the agent gets a short
   notice in its conversation, which wakes it.
