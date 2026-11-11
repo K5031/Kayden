@@ -19,8 +19,7 @@ def commands() -> set[str]:
 
 
 def test_every_command_is_a_request():
-    assert commands() - NOT_REQUESTS - set(REQUESTS) == set()
-    assert set(REQUESTS) - commands() == set()  # nothing that is not a command
+    assert set(REQUESTS) == commands() - NOT_REQUESTS
 
 
 def test_the_remote_runtime_has_every_command_with_the_same_parameters():

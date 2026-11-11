@@ -14,28 +14,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import os
 import sys
-from collections.abc import Awaitable, Callable, Mapping
 from typing import IO, Any
 
 from kayden.api import (
-    Decision,
     Duty,
     DutyKind,
     Frontend,
     FrontendInfo,
     InstancePaths,
-    PlanItem,
-    PlanStatus,
     RuntimeAPI,
     RuntimeStateError,
-    SettingsUpdate,
     StartOptions,
 )
-from kayden.frontends.wire import from_json, to_json
+from kayden.frontends.wire import COMMANDS, command_args, to_json
 
 logger = logging.getLogger(__name__)
 
@@ -44,64 +40,15 @@ REFUSED = -32000  # the runtime refused: RuntimeStateError, ValueError, KeyError
 _LINE_LIMIT = 16 * 1024 * 1024
 
 
-def _duty(raw: Mapping[str, Any] | None) -> Duty | None:
-    if raw is None:
-        return None
-    return Duty(_arg(dict(raw), "instruction"), DutyKind(raw.get("kind", "duty")),
-                raw.get("min_interval_s", 60.0), raw.get("max_interval_s", 3600.0))
+# Requests are RuntimeAPI's commands by name; restart() is the spawner's, not the channel's.
+REQUESTS: frozenset[str] = COMMANDS - {"restart"}
 
 
-def _plan(raw: list[Mapping[str, Any]]) -> list[PlanItem]:
-    return [PlanItem(_arg(dict(i), "text"), PlanStatus(i.get("status", "todo")), i.get("due"),
-                     i.get("note", "")) for i in raw]
-
-
-def _arg(params: dict[str, Any], name: str) -> Any:
-    """A required parameter; TypeError (invalid params) when it is missing."""
-    if name not in params:
-        raise TypeError(f"missing parameter {name!r}")
-    return params.pop(name)
-
-
-type Handler = Callable[[RuntimeAPI, dict[str, Any]], Awaitable[Any]]
-
-REQUESTS: dict[str, Handler] = {
-    "start": lambda r, p: r.start(StartOptions(**p)),
-    "send": lambda r, p: r.send(_arg(p, "text"), **p),
-    "activate": lambda r, p: r.activate(**p),
-    "stop": lambda r, p: r.stop(**p),
-    "cancel_operation": lambda r, p: r.cancel_operation(_arg(p, "call_id"), **p),
-    "select_model": lambda r, p: r.select_model(_arg(p, "model_id"), **p),
-    "set_duty": lambda r, p: r.set_duty(_duty(_arg(p, "duty")), **p),
-    "set_plan": lambda r, p: r.set_plan(_plan(_arg(p, "plan")), **p),
-    "resolve_proposal": lambda r, p: r.resolve_proposal(
-        _arg(p, "proposal_id"), _arg(p, "accept"), **p),
-    "resolve_permission": lambda r, p: r.resolve_permission(
-        _arg(p, "request_id"), Decision(_arg(p, "decision")), **p),
-    "snapshot": lambda r, p: _now(r.snapshot(**p)),
-    "history": lambda r, p: r.history(_arg(p, "conversation_id"), **p),
-    "list_conversations": lambda r, p: r.list_conversations(**p),
-    "list_models": lambda r, p: r.list_models(**p),
-    "settings": lambda r, p: r.settings(**p),
-    "list_tools": lambda r, p: r.list_tools(**p),
-    "search_archive": lambda r, p: r.search_archive(_arg(p, "query"), **p),
-    "inspect_memory": lambda r, p: r.inspect_memory(_arg(p, "conversation_id"), **p),
-    "notes": lambda r, p: r.notes(**p),
-    "save_note": lambda r, p: r.save_note(
-        _arg(p, "title"), _arg(p, "description"), _arg(p, "text"), **p),
-    "delete_note": lambda r, p: r.delete_note(_arg(p, "note_id"), **p),
-    "rename_conversation": lambda r, p: r.rename_conversation(
-        _arg(p, "conversation_id"), _arg(p, "title"), **p),
-    "archive_conversation": lambda r, p: r.archive_conversation(
-        _arg(p, "conversation_id"), _arg(p, "archived"), **p),
-    "delete_conversation": lambda r, p: r.delete_conversation(_arg(p, "conversation_id"), **p),
-    "update_settings": lambda r, p: r.update_settings(
-        from_json(_arg(p, "update"), SettingsUpdate), **p),
-}
-
-
-async def _now(value: Any) -> Any:
-    return value
+async def _call(runtime: RuntimeAPI, method: str, params: dict[str, Any]) -> Any:
+    if method == "start" and "options" not in params:
+        params = {"options": params}  # start's options may come as the request's params
+    result = getattr(runtime, method)(**command_args(method, params))
+    return await result if inspect.isawaitable(result) else result
 
 
 def factory(options: dict[str, Any], paths: InstancePaths | None) -> HeadlessFrontend:
@@ -197,15 +144,14 @@ class HeadlessFrontend(Frontend):
             return
         request_id, method = message.get("id"), message["method"]
         params = message.get("params") or {}
-        handler = REQUESTS.get(method)
-        if handler is None:
+        if method not in REQUESTS:
             await self._error(request_id, NO_METHOD, f"unknown method {method!r}")
             return
         if not isinstance(params, dict):
             await self._error(request_id, INVALID_PARAMS, "params must be an object")
             return
         try:
-            result = await handler(runtime, dict(params))
+            result = await _call(runtime, method, dict(params))
         except (TypeError, AttributeError) as e:
             await self._error(request_id, INVALID_PARAMS, str(e))
             return

@@ -41,11 +41,11 @@ process and knows nothing of ranks, teams or other units (SPEC 10.2).
   unit dies (its pipe closes). At start the frontend keeps the channel's file descriptors
   and points the process's own stdin at /dev/null and stdout at stderr, so no library
   print or subprocess can corrupt the channel.
-- **Requests map one to one to `RuntimeAPI`** (`REQUESTS`): `start`, `send`, `activate`,
-  `stop`, `cancel_operation`, `select_model`, `set_duty`, `set_plan`,
-  `resolve_permission`, `snapshot`, `history`, `list_conversations`, `list_models`,
-  `settings`. Each runs in its own task. The runtime's refusals are error -32000 with its
-  message and the exception's class.
+- **Requests are RuntimeAPI's commands,** read from the protocol itself: a request names a
+  command (every one but `events`, which are notifications, and `restart`), its
+  parameters are decoded by the command's type hints, and it runs in its own task. The
+  runtime's refusals are error -32000 with its message and the exception's class. A new
+  command needs no channel code.
 - **Events are notifications:** every `EventEnvelope`, with its `seq`, so a client
   recovers from a gap the way the desktop app does.
 - **Encoding:** API dataclasses as JSON objects with their class name under `"type"`,

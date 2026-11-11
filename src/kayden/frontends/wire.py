@@ -1,11 +1,16 @@
-"""How API values travel over the headless channel: dataclasses as JSON objects with their
-class name under "type", enums as their values, tuples as lists. from_json reverses it,
-guided by the API's type hints, so a dict that only looks like an object (a tool call's
-arguments) stays a dict."""
+"""How the headless channel carries RuntimeAPI. Its commands (COMMANDS) are read from the
+RuntimeAPI protocol itself, so both ends follow it: the headless frontend answers a request
+by calling the command of that name, and the remote runtime sends one per command.
+
+Values: dataclasses as JSON objects with their class name under "type", enums as their
+values, tuples as lists. from_json reverses it, guided by the API's type hints, so a dict
+that only looks like an object (a tool call's arguments) stays a dict, and an object sent
+without its "type" (a duty, a plan item) still becomes the type the hint names."""
 
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import types
 import typing
 from collections.abc import Mapping, Sequence
@@ -19,6 +24,23 @@ from kayden import api
 CLASSES: Mapping[str, type] = {
     name: cls for name, cls in vars(api).items()
     if isinstance(cls, type) and dataclasses.is_dataclass(cls)}
+# Every RuntimeAPI command but events(), which the channel carries as notifications.
+COMMANDS: frozenset[str] = frozenset(
+    name for name, member in vars(api.RuntimeAPI).items()
+    if not name.startswith("_") and inspect.isfunction(member)) - {"events"}
+
+
+def command_args(name: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    """A request's parameters as the command's arguments, decoded by its type hints.
+    TypeError when they do not fit its signature."""
+    command = getattr(api.RuntimeAPI, name)
+    inspect.signature(command).bind(None, **params)
+    hints = _hints(command)
+    return {key: from_json(value, hints.get(key, Any)) for key, value in params.items()}
+
+
+def result_hint(name: str) -> Any:
+    return _hints(getattr(api.RuntimeAPI, name)).get("return", Any)
 
 
 def to_json(value: Any) -> Any:
@@ -73,6 +95,8 @@ def _union(value: Any, options: Sequence[Any]) -> Any:
             classes = _classes(option)
             if value["type"] in classes:
                 return _object(value, classes[value["type"]])
+    if isinstance(value, dict) and len(classes := _classes(typing.Union[*options])) == 1:
+        return _object(value, next(iter(classes.values())))  # sent without its "type"
     for option in options:
         if isinstance(option, type) and issubclass(option, Enum) and isinstance(value, str):
             return option(value)
@@ -103,5 +127,5 @@ def _object(value: dict[str, Any], cls: type | None = None) -> Any:
 
 
 @cache
-def _hints(cls: type) -> dict[str, Any]:
-    return typing.get_type_hints(cls, vars(api))
+def _hints(target: Any) -> dict[str, Any]:
+    return typing.get_type_hints(target, vars(api))

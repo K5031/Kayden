@@ -5,50 +5,38 @@ exactly as it does its own runtime."""
 from __future__ import annotations
 
 import asyncio
+import inspect
 import itertools
 import json
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from typing import Any
 
 from kayden.api import (
-    ArchiveHit,
-    ConversationId,
-    ConversationInfo,
     ConversationUpdated,
-    Decision,
-    Duty,
     DutyScheduled,
     EventEnvelope,
     HelpNeeded,
-    MemoryNote,
-    MemoryView,
-    Message,
     MessageCommitted,
     MessageQueued,
-    ModelInfo,
     ModelSelected,
     OperationInfo,
     PermissionRequested,
     PermissionResolved,
-    PlanItem,
     ProposalMade,
     ProposalResolved,
+    RuntimeAPI,
     RuntimeSnapshot,
     RuntimeStateError,
-    Settings,
-    SettingsUpdate,
-    StartOptions,
     StateChanged,
     ToolBackgrounded,
     ToolFinished,
     ToolProgress,
-    ToolSpec,
     ToolStarted,
     UsageUpdated,
 )
-from kayden.frontends.wire import from_json, to_json
+from kayden.frontends.wire import COMMANDS, from_json, result_hint, to_json
 
 STDERR_LINES = 20
 _ERRORS: dict[str, type[Exception]] = {
@@ -135,7 +123,8 @@ class Channel:
 class RemoteRuntime:
     """RuntimeAPI for a child. attach() first: it subscribes, then reads the snapshot,
     which events keep current, since snapshot() must answer at once. restart() is refused:
-    the parent's window restarts the parent."""
+    the parent's window restarts the parent. Every other command is made from RuntimeAPI
+    itself (_command): a request of the same name."""
 
     def __init__(self, channel: Channel) -> None:
         self.channel = channel
@@ -181,100 +170,31 @@ class RemoteRuntime:
         assert self._snapshot is not None, "attach() first"
         return self._snapshot
 
-    async def _call(self, method: str, hint: Any = Any, **params: Any) -> Any:
-        return from_json(await self.channel.request(method, **params), hint)
-
-    async def list_models(self) -> Sequence[ModelInfo]:
-        return await self._call("list_models", Sequence[ModelInfo])
-
-    async def list_tools(self) -> Sequence[ToolSpec]:
-        return await self._call("list_tools", Sequence[ToolSpec])
-
-    async def list_conversations(self, *, include_archived: bool = False
-                                 ) -> Sequence[ConversationInfo]:
-        return await self._call("list_conversations", Sequence[ConversationInfo],
-                                include_archived=include_archived)
-
-    async def history(self, conversation_id: ConversationId, *, before: str | None = None,
-                      limit: int | None = None) -> Sequence[Message]:
-        return await self._call("history", Sequence[Message], conversation_id=conversation_id,
-                                before=before, limit=limit)
-
-    async def search_archive(self, query: str, *, conversation_id: ConversationId | None = None,
-                             limit: int = 10) -> Sequence[ArchiveHit]:
-        return await self._call("search_archive", Sequence[ArchiveHit], query=query,
-                                conversation_id=conversation_id, limit=limit)
-
-    async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None:
-        return await self._call("inspect_memory", MemoryView | None,
-                                conversation_id=conversation_id)
-
-    async def notes(self) -> Sequence[MemoryNote]:
-        return await self._call("notes", Sequence[MemoryNote])
-
-    # ── Control ───────────────────────────────────────────────────────────
-
-    async def start(self, options: StartOptions) -> ConversationInfo:
-        return await self._call("start", ConversationInfo,
-                                **{k: v for k, v in to_json(options).items() if k != "type"})
-
-    async def select_model(self, model_id: str) -> None:
-        await self._call("select_model", model_id=model_id)
-
-    async def settings(self) -> Settings:
-        return await self._call("settings", Settings)
-
-    async def update_settings(self, update: SettingsUpdate) -> Settings:
-        return await self._call("update_settings", Settings, update=update)
-
     async def restart(self) -> None:
         raise RuntimeStateError("a sub-session restarts with its parent")
 
-    async def send(self, text: str) -> None:
-        await self._call("send", text=text)
 
-    async def activate(self) -> None:
-        await self._call("activate")
+def _command(name: str) -> Callable[..., Any]:
+    """RemoteRuntime's method for a RuntimeAPI command: the same signature, sent as the
+    request of that name, its reply decoded by the command's return type."""
+    command = getattr(RuntimeAPI, name)
+    signature = inspect.signature(command)
+    hint = result_hint(name)
 
-    async def stop(self) -> None:
-        await self._call("stop")
+    async def send(self: RemoteRuntime, *args: Any, **kwargs: Any) -> Any:
+        bound = signature.bind(self, *args, **kwargs)
+        params = {k: v for k, v in bound.arguments.items() if k != "self"}
+        return from_json(await self.channel.request(name, **params), hint)
 
-    async def cancel_operation(self, call_id: str) -> None:
-        await self._call("cancel_operation", call_id=call_id)
+    send.__name__ = send.__qualname__ = name
+    send.__signature__ = signature  # type: ignore[attr-defined]
+    send.__doc__ = command.__doc__
+    return send
 
-    async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
-        await self._call("rename_conversation", conversation_id=conversation_id, title=title)
 
-    async def archive_conversation(self, conversation_id: ConversationId, archived: bool
-                                   ) -> None:
-        await self._call("archive_conversation", conversation_id=conversation_id,
-                         archived=archived)
-
-    async def delete_conversation(self, conversation_id: ConversationId) -> None:
-        await self._call("delete_conversation", conversation_id=conversation_id)
-
-    async def save_note(self, title: str, description: str, text: str, *,
-                        note_id: str | None = None) -> MemoryNote:
-        return await self._call("save_note", MemoryNote, title=title, description=description,
-                                text=text, note_id=note_id)
-
-    async def delete_note(self, note_id: str) -> None:
-        await self._call("delete_note", note_id=note_id)
-
-    async def set_duty(self, duty: Duty | None) -> None:
-        plain = None if duty is None else {k: v for k, v in to_json(duty).items()
-                                           if k != "type"}
-        await self._call("set_duty", duty=plain)
-
-    async def set_plan(self, plan: Sequence[PlanItem]) -> None:
-        await self._call("set_plan", plan=[{k: v for k, v in to_json(i).items() if k != "type"}
-                                           for i in plan])
-
-    async def resolve_permission(self, request_id: str, decision: Decision) -> None:
-        await self._call("resolve_permission", request_id=request_id, decision=decision)
-
-    async def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
-        await self._call("resolve_proposal", proposal_id=proposal_id, accept=accept)
+for _name in sorted(COMMANDS):
+    if _name not in vars(RemoteRuntime):  # snapshot and restart are its own
+        setattr(RemoteRuntime, _name, _command(_name))
 
 
 def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
