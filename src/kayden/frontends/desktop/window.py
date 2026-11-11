@@ -669,6 +669,7 @@ class AssistantBubble(QWidget):
     def _render(self) -> None:
         item = self.item
         self.thinking.setVisible(bool(item.reasoning))
+        self.thinking.setText("Thinking…" if not item.final and not item.text else "Thinking")
         self.reasoning.setText(item.reasoning)
         self.body.setVisible(bool(item.text))
         self.body.setMarkdown(item.text)

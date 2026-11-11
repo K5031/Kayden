@@ -180,6 +180,11 @@ at the next start. The output of `kayden --show-config` is a valid `config.toml`
 from. A file that is not valid stops Kayden with a one-line message naming the mistake; a
 module that rejects its options opens the settings with the message instead.
 
+With Claude models that always think (Opus 5.x, Sonnet 5.x, Haiku 5.x), Kayden asks for a
+summary of the thinking to be streamed, so you see it under **Thinking** as it happens.
+To change that, set `thinking` in the Core's options for that model, for example
+`thinking = { type = "adaptive", display = "omitted" }`.
+
 ## API keys
 
 Kayden looks for a key in the environment first (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`,

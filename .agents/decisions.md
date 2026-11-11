@@ -824,3 +824,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Shown | While a step is todo or doing (`common.checklist`): desktop `PlanCard` above the other cards, ✓ ◐ ○ and struck-through dropped steps as drawn icons; terminal `PlanPanel` at the top of the prompts. Gone once every step is done or dropped |
 | Steps | `update_plan` and `wrap_up` calls are not shown as steps (`common.CARD_TOOLS`): the checklist and the card show them |
 | Caching | The plan is in the system prompt, as with duties and the Memory summary, so a plan change starts a new prompt prefix |
+
+## Streaming thinking (Anthropic)
+
+| Choice | Decision |
+|---|---|
+| Default | For models that always think (`claude-opus-5*`, `claude-sonnet-5*`, `claude-haiku-5*`, Fable, Mythos), a request without `thinking` in the merged options gets `{"type": "adaptive", "display": "summarized"}` (`anthropic._thinking_shown`). The API's default, `omitted`, streams empty thinking blocks, and on Opus 5.5 the notes between tool calls come back as thinking too: a long silence, then the whole answer. `display` changes what is shown, not what is billed |
+| Configured | Any `thinking` in the Core's or the model's options is sent as it is |
+| Not `updates` | `display: "updates"` (a beta) would show only the notes between tool calls; `summarized` also shows the reasoning, which the Thinking section already holds |
+| Desktop | The Thinking button reads "Thinking…" while the reply has no text and is not final |

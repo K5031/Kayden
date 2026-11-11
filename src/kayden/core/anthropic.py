@@ -61,6 +61,11 @@ from kayden.core._common import (
 PROVIDER = "anthropic"
 logger = logging.getLogger(__name__)
 _THINKING = ("thinking", "redacted_thinking")
+# Models that always think (Opus 5.x, Sonnet 5.x, Haiku 5.x, Fable, Mythos) hide their
+# reasoning and their notes between tool calls unless asked: the stream goes quiet for the
+# whole thought, then the answer arrives at once. Kayden asks for a summary of both.
+_ALWAYS_THINKS = re.compile(r"claude-(?:(?:opus|sonnet|haiku)-5|fable|mythos)\b")
+SHOWN_THINKING = {"type": "adaptive", "display": "summarized"}
 # The 400 for a thinking block replayed after something before it changed.
 _BINDING_ERROR = "bound to a different conversation"
 _INVALID_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")  # ids from other providers may break the API
@@ -113,6 +118,14 @@ _PRICES = {
         ("claude-haiku-4-5-20251001", 1.0, 5.0, None),
     )
 }
+
+
+def _thinking_shown(model: str, body: dict[str, Any]) -> dict[str, Any]:
+    """The request options, asking an always-thinking model to stream a summary of its
+    thinking unless the configuration says otherwise about thinking."""
+    if "thinking" in body or not _ALWAYS_THINKS.match(model):
+        return body
+    return {**body, "thinking": dict(SHOWN_THINKING)}
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> AnthropicCore:
@@ -197,7 +210,8 @@ class AnthropicCore(Core):
             "model": request.model,
             "messages": turns,
             "max_tokens": request.max_output_tokens or self._default_max_tokens,
-            "extra_body": request_options(self._options, self._models.get(request.model)),
+            "extra_body": _thinking_shown(
+                request.model, request_options(self._options, self._models.get(request.model))),
         }
         if request.system:
             params["system"] = request.system

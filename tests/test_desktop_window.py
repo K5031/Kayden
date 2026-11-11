@@ -1527,3 +1527,12 @@ def test_a_long_message_wraps_inside_its_bubble(qapp):
     assert bubble.text.width() <= room  # nothing cut at the right edge
     assert bubble.text.minimumWidth() <= room
     bubble.close()
+
+
+def test_thinking_says_so_while_it_streams(qapp):
+    item = AssistantItem(reasoning="Looking at the files")
+    bubble = AssistantBubble(item)
+    assert not bubble.thinking.isHidden() and bubble.thinking.text() == "Thinking…"
+    item.text, item.final = "Done.", True
+    bubble.refresh()
+    assert bubble.thinking.text() == "Thinking"

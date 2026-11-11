@@ -11,6 +11,7 @@ import pytest
 from anthropic import AsyncAnthropic
 
 from kayden.api import (
+    InferenceRequest,
     Message,
     Reasoning,
     Role,
@@ -449,3 +450,28 @@ async def test_foreign_tool_ids_are_sanitized(anthropic: AnthropicDriver) -> Non
     sent = anthropic.last_sent()
     assert sent.tool_call_ids == ["functions_get_weather_0"]
     assert sent.tool_results == [("functions_get_weather_0", "ok", False)]
+
+
+@pytest.mark.parametrize("model, options, sent", [
+    # Always-thinking models stream their reasoning, and between-tool notes, instead of
+    # empty thinking blocks: a long silence, then a wall of text.
+    ("claude-opus-5-5", {}, {"type": "adaptive", "display": "summarized"}),
+    ("claude-sonnet-5-5", {}, {"type": "adaptive", "display": "summarized"}),
+    ("claude-fable-5-1", {}, {"type": "adaptive", "display": "summarized"}),
+    # What the configuration says stands.
+    ("claude-haiku-5-5", {"thinking": {"type": "disabled"}}, {"type": "disabled"}),
+    ("claude-opus-5-5", {"thinking": {"type": "adaptive", "display": "omitted"}},
+     {"type": "adaptive", "display": "omitted"}),
+    # Models that do not think unless asked, or think another way, are left alone.
+    ("claude-opus-4-8", {}, None),
+    ("claude-haiku-4-5", {}, None),
+])
+async def test_thinking_is_shown_by_default_on_models_that_always_think(
+        model: str, options: dict, sent: dict | None) -> None:
+    anthropic = AnthropicDriver(models={model: ModelConfig(context_window=200_000,
+                                                           options=options)})
+    anthropic.queue_text()
+    await collect(anthropic.core, InferenceRequest(model, "", [user("hi")], [],
+                                                   max_output_tokens=256))
+    await anthropic.core.aclose()
+    assert anthropic.stub.bodies[-1].get("thinking") == sent
