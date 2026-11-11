@@ -150,6 +150,7 @@ class AssistantItem:
     text: str = ""
     reasoning: str = ""
     final: bool = False  # committed; False while streaming
+    created_at: float | None = None  # when its message was committed
     interrupted: bool = False  # the cycle ended before it was committed
     refused: bool = False
 
@@ -687,12 +688,14 @@ class ConversationModel:
         for block in message.blocks:
             match block:
                 case TextBlock(text=text):
-                    current = current or self._add(AssistantItem(final=True))
+                    current = current or self._add(
+                        AssistantItem(final=True, created_at=message.created_at))
                     current.text += text
                     last = current
                     self.on_change(Updated(current))
                 case Reasoning(text=text):
-                    current = current or self._add(AssistantItem(final=True))
+                    current = current or self._add(
+                        AssistantItem(final=True, created_at=message.created_at))
                     current.reasoning += text
                     self.on_change(Updated(current))
                 case ToolCall() as call:
@@ -732,12 +735,13 @@ class ConversationModel:
 # ── conversations ─────────────────────────────────────────────────────────
 
 
-def conversation_label(info: ConversationInfo) -> str:
-    """Its title, else the start of its first message, else "New chat"."""
+def conversation_label(info: ConversationInfo, *, full: bool = False) -> str:
+    """Its title, else the start of its first message (all of it with `full`), else
+    "New chat"."""
     if info.title:
         return info.title
     if info.preview and info.preview.strip() and notice_of(info.preview) is None:
-        return clip(info.preview, LABEL_CHARS)
+        return info.preview.strip() if full else clip(info.preview, LABEL_CHARS)
     return "New chat"
 
 
@@ -747,6 +751,19 @@ def conversation_preview(info: ConversationInfo) -> str:
             or notice_of(info.preview) is not None):
         return ""
     return clip(info.preview, LABEL_CHARS)
+
+
+def relative_age(timestamp: float, now: float | None = None) -> str:
+    """How long ago, as a person would say it: "just now", "5 minutes ago", "3 hours ago",
+    then the date (relative_date)."""
+    seconds = (time.time() if now is None else now) - timestamp
+    if seconds < 60:
+        return "just now"
+    for unit, size in (("minute", 60), ("hour", 3600)):
+        count = int(seconds // size)
+        if seconds < size * (60 if unit == "minute" else 24):
+            return f"{count} {unit}{'' if count == 1 else 's'} ago"
+    return relative_date(timestamp, now)
 
 
 def relative_date(timestamp: float, now: float | None = None) -> str:

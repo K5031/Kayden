@@ -1460,3 +1460,54 @@ async def test_the_plan_shows_as_a_checklist_while_steps_are_open(make, qapp):
     controller.send("carry on")
     await eventually(lambda: not controller.model.busy and len(h.core.requests) >= 4)
     await eventually(lambda: controller.model.checklist == ())  # all done: it goes
+
+
+def test_a_reply_shows_copy_and_its_age_on_hover(qapp):
+    import time
+
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QEnterEvent
+
+    bubble = AssistantBubble(AssistantItem(text="Hello **there**", final=True,
+                                           created_at=time.time() - 125))
+    assert not bubble.footer.isVisible() and bubble.footer.sizePolicy().retainSizeWhenHidden()
+    bubble.show()
+    QApplication.sendEvent(bubble, QEnterEvent(QPointF(1, 1), QPointF(1, 1), QPointF(1, 1)))
+    assert bubble.footer.isVisible() and bubble.age.text() == "2 minutes ago"
+    bubble.copy.click()
+    assert QApplication.clipboard().text() == "Hello **there**"
+    QApplication.sendEvent(bubble, QEvent(QEvent.Type.Leave))
+    assert not bubble.footer.isVisible()
+
+
+def test_relative_age_reads_like_a_person_would_say_it():
+    from kayden.frontends.desktop.viewmodel import relative_age
+
+    now = 1_000_000.0
+    assert relative_age(now - 20, now) == "just now"
+    assert relative_age(now - 60, now) == "1 minute ago"
+    assert relative_age(now - 3 * 3600, now) == "3 hours ago"
+
+
+async def test_sidebar_tooltips_show_only_the_full_title(make, qapp, tmp_path):
+    from kayden.frontends.sessions import SubSession
+
+    h: Harness = await make()
+    talked = await h.start()
+    await h.turn("A long first message that reads as the title of this conversation")
+    window, _controller, _ = await open_window(h)
+    session = SubSession("1", "Research the full bracket\n\nTips: lots of detail", talked.id,
+                         tmp_path / "s1")
+
+    class Sessions:
+        listeners: list = []  # noqa: RUF012
+
+        def of(self, conversation_id, include_archived=False):
+            return (session,) if conversation_id == talked.id else ()
+
+    window.sessions = Sessions()
+    await window.fill_sidebar()
+    lst = window.conversation_list
+    tips = [lst.item(i).toolTip() for i in range(lst.count())]
+    assert tips == ["A long first message that reads as the title of this conversation",
+                    "Research the full bracket"]  # the brief's first line, not all of it

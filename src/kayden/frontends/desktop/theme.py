@@ -227,6 +227,8 @@ QLabel[role="header"] {{ font-size: {body}; font-weight: 600; }}
 QPushButton#nav:hover {{ background: {c.select}; }}
 QToolButton#menu {{ padding: 6px; border-radius: 8px; }}
 QToolButton#menu:hover {{ background: {c.select}; }}
+QToolButton#replyAction {{ padding: 3px; border-radius: 6px; }}
+QToolButton#replyAction:hover {{ background: {c.select}; }}
 QToolButton#profile {{ color: {c.text}; padding: 6px 8px; }}
 QToolButton#windowControl {{ padding: 6px; border-radius: 6px; }}
 QDialog#settings {{ border: 1px solid {c.line}; }}
@@ -275,7 +277,8 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
     """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", "menu" (three
-    lines), "plus", a plan step's "done", "doing", "todo" or "dropped", or a window control:
+    lines), "plus", "copy", "check", a plan step's "done", "doing", "todo" or "dropped", or a
+    window control:
     "minimize", "maximize", "restore", "close"."""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
@@ -344,6 +347,22 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
             painter.drawEllipse(QPointF(s / 2, s / 2), s * 0.4, s * 0.4)
             painter.setBrush(QColor(color))
             painter.drawPie(QRectF(s * 0.2, s * 0.2, s * 0.6, s * 0.6), 90 * 16, -180 * 16)
+        case "copy":  # two overlapping sheets
+            painter.setPen(QPen(QColor(color), size / 12))
+            painter.drawRoundedRect(QRectF(s * 0.36, s * 0.36, s * 0.46, s * 0.46), 2, 2)
+            path = QPainterPath(QPointF(s * 0.24, s * 0.64))
+            path.lineTo(s * 0.18, s * 0.64)
+            path.lineTo(s * 0.18, s * 0.18)
+            path.lineTo(s * 0.64, s * 0.18)
+            path.lineTo(s * 0.64, s * 0.24)
+            painter.drawPath(path)
+        case "check":
+            painter.setPen(QPen(QColor(color), size / 10, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            path = QPainterPath(QPointF(s * 0.22, s * 0.52))
+            path.lineTo(s * 0.42, s * 0.72)
+            path.lineTo(s * 0.78, s * 0.3)
+            painter.drawPath(path)
         case "todo" | "dropped":  # a dashed circle
             painter.setPen(QPen(QColor(color), size / 12, Qt.PenStyle.DashLine))
             painter.drawEllipse(QPointF(s / 2, s / 2), s * 0.4, s * 0.4)

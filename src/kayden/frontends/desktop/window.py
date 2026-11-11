@@ -24,12 +24,14 @@ from PySide6.QtGui import (
     QContextMenuEvent,
     QCursor,
     QDesktopServices,
+    QEnterEvent,
     QFont,
     QFontMetrics,
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QShortcut,
@@ -146,6 +148,7 @@ from kayden.frontends.desktop.viewmodel import (
     limit_update,
     memory_source,
     needs_welcome,
+    relative_age,
     relative_date,
     settings_update,
     step_segments,
@@ -174,6 +177,7 @@ EMPTY_HINT = "Ask a question or describe a task."
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
 COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
 RECENT_FOLDERS = 6  # a new chat's folder menu: its own and recent ones
+COPIED_MS = 1500  # a reply's copy button shows a tick this long
 MASCOT_WIDTH = 200  # px: the new chat's mascot
 ASSETS = Path(__file__).parent / "assets"
 SIDEBAR_WIDTH = 320  # px at 100%: room for a title and a sub-session's under it
@@ -374,17 +378,36 @@ class RowDelegate(QStyledItemDelegate):
         self._paint_row(painter, option, index)
 
     def _paint_group(self, painter: QPainter, option: QStyleOptionViewItem, index: Any) -> None:
-        """A project heading: its name and whether it is folded."""
+        """A project heading: its name, then a chevron that says whether it is folded."""
         colors = theme.current()
         folded = "folded" in (index.data(FLAGS_ROLE) or set())
         font = self._small_font(option)
         font.setWeight(QFont.Weight.DemiBold)
+        name = index.data(Qt.ItemDataRole.DisplayRole)
         painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(font)
         painter.setPen(QColor(colors.muted))
-        text = f"{'▸' if folded else '▾'}  {index.data(Qt.ItemDataRole.DisplayRole)}"
-        painter.drawText(option.rect.adjusted(self.PAD.width(), self.PAD.height() + 2, 0, 0),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, text)
+        metrics = QFontMetrics(font)
+        top = option.rect.top() + self.PAD.height() + 2
+        left = option.rect.left() + self.PAD.width()
+        painter.drawText(left, top, metrics.horizontalAdvance(name) + 1, metrics.height(),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
+        x = left + metrics.horizontalAdvance(name) + 7
+        y = top + metrics.height() / 2
+        r = metrics.height() * 0.16
+        painter.setPen(QPen(QColor(colors.muted), 1.3, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        chevron = QPainterPath()
+        if folded:  # pointing right
+            chevron.moveTo(x, y - r * 1.4)
+            chevron.lineTo(x + r * 1.2, y)
+            chevron.lineTo(x, y + r * 1.4)
+        else:  # pointing down
+            chevron.moveTo(x - r * 0.2, y - r * 0.6)
+            chevron.lineTo(x + r * 1.2, y + r * 0.8)
+            chevron.lineTo(x + r * 2.6, y - r * 0.6)
+        painter.drawPath(chevron)
         painter.restore()
 
     def _paint_branch(self, painter: QPainter, option: QStyleOptionViewItem, index: Any
@@ -583,8 +606,29 @@ class AssistantBubble(QWidget):
         self.body = MarkdownView()
         self.body.setAccessibleName("Kayden")
         self.marker = _label(selectable=False, tone="muted")
+        # Shown while the pointer is on the reply: copy it, and how long ago it came.
+        self.footer = QWidget()
+        footer = QHBoxLayout(self.footer)
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(8)
+        self.copy = QToolButton(objectName="replyAction")
+        self.copy.setToolTip("Copy")
+        self.copy.setAccessibleName("Copy reply")
+        self.copy.setIconSize(QSize(15, 15))
+        self.copy.clicked.connect(self._copy)
+        self.age = _label(selectable=False, role="small")
+        footer.addWidget(self.copy)
+        footer.addWidget(self.age)
+        footer.addStretch()
+        policy = self.footer.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)  # no jump when it shows
+        self.footer.setSizePolicy(policy)
+        self.footer.hide()
+        self._copied = QTimer(self, singleShot=True, interval=COPIED_MS)
+        self._copied.timeout.connect(self._paint_copy)
+        self._paint_copy()
         layout.addWidget(self.thinking, 0, Qt.AlignmentFlag.AlignLeft)
-        for widget in (self.reasoning, self.body, self.marker):
+        for widget in (self.reasoning, self.body, self.marker, self.footer):
             layout.addWidget(widget)
         self._timer = QTimer(self, singleShot=True, interval=RENDER_INTERVAL_MS)
         self._timer.timeout.connect(self._render)
@@ -597,6 +641,26 @@ class AssistantBubble(QWidget):
                 self._render()
             else:
                 self._timer.start()
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        super().enterEvent(event)
+        if self.item.final and self.item.text:
+            self.age.setText(relative_age(self.item.created_at)
+                             if self.item.created_at is not None else "")
+            self.footer.show()
+
+    def leaveEvent(self, event: QEvent) -> None:
+        super().leaveEvent(event)
+        self.footer.hide()
+
+    def _copy(self) -> None:
+        QApplication.clipboard().setText(self.item.text)
+        self._paint_copy(copied=True)
+        self._copied.start()
+
+    def _paint_copy(self, copied: bool = False) -> None:
+        self.copy.setIcon(theme.icon("check" if copied else "copy", theme.current().muted))
+        self.copy.setToolTip("Copied" if copied else "Copy")
 
     def _toggle_thinking(self, shown: bool) -> None:
         self.thinking.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
@@ -1893,8 +1957,7 @@ class MainWindow(QMainWindow):
                 entry.setData(PREVIEW_ROLE, conversation_preview(info))
                 entry.setData(DATE_ROLE, relative_date(info.updated_at))
                 entry.setData(FLAGS_ROLE, {"archived"} if info.archived else set())
-                entry.setToolTip("\n".join(p for p in (title, conversation_preview(info),
-                                                       relative_date(info.updated_at)) if p))
+                entry.setToolTip(conversation_label(info, full=True))
                 self.conversation_list.addItem(entry)
                 if viewing is None and info.id == current:
                     self.conversation_list.setCurrentItem(entry)
@@ -1908,7 +1971,7 @@ class MainWindow(QMainWindow):
                     row.setData(PREVIEW_ROLE, session.summary)
                     row.setData(FLAGS_ROLE, {"working"} if session.running else
                                 {"archived"} if session.archived else set())
-                    row.setToolTip(f"{session.task}\n{session.summary}")
+                    row.setToolTip(session.name)
                     self.conversation_list.addItem(row)
                     if session.id == viewing:
                         self.conversation_list.setCurrentItem(row)

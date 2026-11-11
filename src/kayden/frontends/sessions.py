@@ -170,7 +170,9 @@ class SubSession:
 
     @property
     def name(self) -> str:
-        return self.title or self.task
+        """Its title, else its task's first line: the brief below it is for the agent."""
+        return self.title or next((line.strip() for line in self.task.splitlines()
+                                   if line.strip()), self.task)
 
     @property
     def resumable(self) -> bool:
