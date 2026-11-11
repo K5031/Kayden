@@ -1397,7 +1397,7 @@ async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path
     await window.fill_sidebar()
     window._refresh_status()
     button = window.folder_button
-    assert not button.isHidden() and button.text().strip() == "default"
+    assert not button.isHidden() and button.text().split()[0] == "default"
     assert button.toolTip().endswith(str(default))
     menu = button.menu()
     menu.aboutToShow.emit()
@@ -1406,7 +1406,7 @@ async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path
     assert [a.text() for a in menu.actions() if a.isChecked()] == ["default"]
     next(a for a in menu.actions() if a.text() == "project").trigger()
     await eventually(lambda: controller.model.conversation.folder == str(project))
-    await eventually(lambda: button.text().strip() == "project")
+    await eventually(lambda: button.text().split()[0] == "project")
     controller.send("hello")
     await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
     assert button.isHidden()  # chosen with the first message; the header shows it after

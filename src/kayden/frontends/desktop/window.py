@@ -1274,6 +1274,20 @@ class MainWindow(QMainWindow):
                      _label(EMPTY_HINT, selectable=False, tone="muted")):
             line.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             empty.addWidget(line)
+        # A new chat's folder, and recent ones to start it in instead; only before the first
+        # message (the header's tooltip shows it after).
+        self.folder_button = QToolButton(objectName="folderPicker")
+        self.folder_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.folder_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.folder_button.setIconSize(QSize(18, 18))
+        self.folder_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.folder_button.setAccessibleName("Work folder")
+        folder_menu = QMenu(self, objectName="folderMenu")
+        folder_menu.aboutToShow.connect(self._fill_folder_menu)
+        self.folder_button.setMenu(folder_menu)
+        self.folder_button.hide()
+        empty.addSpacing(16)
+        empty.addWidget(self.folder_button, 0, Qt.AlignmentFlag.AlignHCenter)
         empty.addStretch(3)
         outer.addWidget(self.load_earlier, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addLayout(self.items_layout)
@@ -1324,17 +1338,6 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _=False, p=policy: self.choose_permissions(p))
             self.permission_actions[policy] = action
         self.permissions_button.setMenu(permissions_menu)
-        # A new chat's folder, and recent ones to start it in instead; only before the first
-        # message (the header's tooltip shows it after).
-        self.folder_button = QToolButton(objectName="modelPicker")
-        self.folder_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.folder_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.folder_button.setAccessibleName("Work folder")
-        folder_menu = QMenu(self)
-        folder_menu.aboutToShow.connect(self._fill_folder_menu)
-        self.folder_button.setMenu(folder_menu)
-        self.folder_button.hide()
-        footer.addWidget(self.folder_button)
         footer.addStretch(1)
         footer.addWidget(self.permissions_button)
         footer.addWidget(self.model_button)
@@ -1373,7 +1376,7 @@ class MainWindow(QMainWindow):
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.text))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
-        self.folder_button.setIcon(theme.icon("folder", colors.muted, 14))
+        self.folder_button.setIcon(theme.icon("folder", colors.text, 18))
         maximized = self.isMaximized()
         for name, button in self.window_buttons.items():
             kind = "restore" if name == "maximize" and maximized else name
@@ -1751,7 +1754,7 @@ class MainWindow(QMainWindow):
                     and not model.has_earlier)
         self.folder_button.setVisible(new_chat)
         if folder is not None:
-            self.folder_button.setText(f" {Path(folder).name or folder}")
+            self.folder_button.setText(f"  {Path(folder).name or folder}  ⌄")
             self.folder_button.setToolTip(f"Kayden works in {folder_path(folder)}")
         self.send_button.setText("Stop" if model.busy else "Send")
         self.send_button.setToolTip("Stop (Esc)" if model.busy else "Send (Enter)")

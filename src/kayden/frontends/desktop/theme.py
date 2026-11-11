@@ -178,6 +178,12 @@ QToolButton#send:hover {{ background: {c.select}; }}
 QToolButton#modelPicker {{ color: {c.muted}; padding: 2px 6px; font-size: {small}; }}
 QToolButton#modelPicker:hover {{ background: {c.select}; color: {c.text}; }}
 QToolButton#modelPicker::menu-indicator {{ image: none; width: 0; }}
+QToolButton#folderPicker {{ color: {c.text}; padding: 8px 14px; border: 1px solid {c.line};
+    border-radius: 10px; }}
+QToolButton#folderPicker:hover {{ background: {c.select}; }}
+QToolButton#folderPicker::menu-indicator {{ image: none; width: 0; }}
+QMenu#folderMenu {{ min-width: 260px; padding: 6px; }}
+QMenu#folderMenu::item {{ padding: 8px 28px 8px 12px; border-radius: 6px; }}
 QToolButton#folder {{ padding: 0 4px; }}
 QToolButton#folder:hover {{ background: {c.line}; color: {c.text}; }}
 

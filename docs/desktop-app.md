@@ -68,7 +68,7 @@ another reason, the Settings window opens with the message.
 | See what a tool did | Steps between two replies fold into one line: the step under way while Kayden works ("Search the web for flights to Oslo"), then how many steps there were and any that failed ("4 steps · 1 failed"). Click it to see each step and the thinking between them; point at a step to see the tool and its exact input, and press its arrow for the result. A step without a sentence shows the tool and its input. |
 | See the model's reasoning | Open **Thinking** above a reply. |
 | Start over | **New chat** (**Ctrl+N**). Nothing is added to the list until you send your first message. |
-| Work in another folder | In a new chat, the folder under the message box: pick a recent one or **Choose folder…**. Any time: **☰ → New chat in another folder…**. A new chat starts in it. See [Folders](using-kayden.md#folders). |
+| Work in another folder | In a new chat, the folder button in the middle: pick a recent one or **Choose folder…**. Any time: **☰ → New chat in another folder…**. A new chat starts in it. See [Folders](using-kayden.md#folders). |
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **☰ → View → Show archived conversations** to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
