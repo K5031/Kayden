@@ -65,8 +65,8 @@ under `"type"`, such as `MessageCommitted`, `StateChanged`, `PermissionRequested
 comes as `ProposalMade`: answer it with `resolve_proposal`. A question the agent asks
 with its duty paused comes as `HelpNeeded`: answer it with `send`.
 
-**The wrap-up card is a tool call.** A turn may end with a `wrap_up` call: `recap`, and for a
-decision `question` and up to three `options`, the agent's pick first (an `ask_for_help` call
+**The wrap-up card is a tool call.** A turn that leaves a decision may end with a `wrap_up` call:
+`question`, up to three `options` with the agent's pick first, and an optional `recap` (an `ask_for_help` call
 may carry `replies` the same way). Answer with `send`, using an option's `label` or anything
 else. An option with a `call` is also a pending proposal with `card: true` and the
 `wrap_up` call's id: `resolve_proposal(id, true)` runs it. Sending a message withdraws it.

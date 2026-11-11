@@ -1,5 +1,5 @@
-"""The wrap-up card: the agent ends its turn with a recap and, when the user has a decision
-to make, a question and options to click. An option sends its label as the user's message,
+"""The wrap-up card: when the user has a decision to make, the agent ends its turn with a
+question and options to click, and an optional recap. An option sends its label as the user's message,
 or runs the one call it carries."""
 
 from __future__ import annotations
@@ -76,12 +76,13 @@ async def test_wrapping_up_with_other_calls_is_an_error(make):
 
 
 @pytest.mark.parametrize("arguments", [
-    {"question": "Push it?", "options": [{"label": "Yes"}]},  # no recap
-    {"recap": RECAP, "options": []},
-    {"recap": RECAP, "options": [{"label": str(i)} for i in range(4)]},
-    {"recap": RECAP, "options": [{"label": ""}]},
-    {"recap": RECAP, "options": [{"label": "A", "call": PUSH}, {"label": "B", "call": PUSH}]},
-    {"recap": RECAP, "options": [{"label": "A", "call": {"name": "nope"}}]},
+    {"recap": RECAP},  # no decision
+    {"options": [{"label": "Yes"}]},  # no question
+    {"question": "Push?", "options": []},
+    {"question": "Push?", "options": [{"label": str(i)} for i in range(4)]},
+    {"question": "Push?", "options": [{"label": ""}]},
+    {"question": "Push?", "options": [{"label": "A", "call": PUSH}, {"label": "B", "call": PUSH}]},
+    {"question": "Push?", "options": [{"label": "A", "call": {"name": "nope"}}]},
 ])
 async def test_an_invalid_card_is_an_error(make, arguments: dict[str, Any]):
     h = await harness(make, [
@@ -230,7 +231,8 @@ async def test_the_terminal_app_shows_the_card(make):
 def test_cards_come_from_wrap_up_and_ask_for_help():
     assert card_of(ToolCall("a", "wrap_up", ACTION)) == Card(
         "a", RECAP, "Push it?", ("Yes, push", "Not now"), "Yes, push")
-    assert card_of(ToolCall("b", "wrap_up", {"recap": RECAP})) == Card("b", RECAP, "", (), None)
+    assert card_of(ToolCall("b", "wrap_up", {"question": "Push?", "options": [{"label": "Yes"}]})
+                   ) == Card("b", "", "Push?", ("Yes",), None)
     assert card_of(ToolCall("c", "ask_for_help", {"question": "Which?", "replies": ["A"]})) == (
         Card("c", "", "Which?", ("A",), None))
     assert card_of(ToolCall("d", "ask_for_help", {"question": "Which?"})) is None

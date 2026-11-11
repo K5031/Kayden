@@ -56,9 +56,9 @@ agent or switch conversations are withdrawn.
 
 ### The wrap-up card
 
-When the agent finishes a piece of work, or needs you to decide something, it ends its turn
-with a card above the message box: a short recap of what is done and what is not and, when
-there is a decision, a question with up to three buttons, its recommendation first.
+When the agent needs you to decide something, it ends its turn with a card above the message
+box: the question, up to three buttons with its recommendation first, and sometimes a short
+recap of what is done and what is not. Other answers have no card.
 
 - Most buttons send their text as your message, as if you had typed it.
 - One button may do the thing itself ("Yes, push" runs the push). Kayden runs exactly what

@@ -1,10 +1,10 @@
 # Agent Note: Wrap-up card
 
-Status: implemented — the agent ends a turn with a card: a recap, a question and up to three options, one of which may run a call
+Status: implemented — when the user has a decision to make, the agent ends its turn with a card: a question, up to three options, one of which may run a call, and an optional recap
 
 ## Problem
 
-A turn often ends with work done and a decision for the user: push or not, which fix first,
+A turn often ends with a decision for the user: push or not, which fix first,
 carry on or stop. The user then scrolls back to see what changed, types "yes", or retypes an
 option the agent just listed. The Claude app ends such a turn with one box: a short recap of
 what is done and not done, one question, and buttons, the agent's pick first. A button
@@ -17,11 +17,11 @@ answers to pick.
 
 ## Decision
 
-- **A built-in `wrap_up(recap, question?, options?)`,** in `BUILTIN_TOOLS`, offered in every
-  request. `recap` is two or three sentences; `options` are one to three, each a `label`
-  written as the user would say it and, for at most one of them, a `call` to run. The
-  description asks for it after a turn that did work or leaves a decision, not after a short
-  answer, and to call it alone, last.
+- **A built-in `wrap_up(question, options, recap?)`,** in `BUILTIN_TOOLS`, offered in every
+  request, only for a turn that leaves the user a decision. `options` are one to three, each
+  a `label` written as the user would say it and, for at most one of them, a `call` to run;
+  `recap` is one or two sentences when the decision needs them. The description says to
+  call it alone, last.
 - **It ends the turn.** When it is the only call in its message, the cycle ends as after an
   answer that calls no tool: no further request is paid for. Called with other tools, it is
   an error result and the cycle goes on.
@@ -50,6 +50,10 @@ answers to pick.
   ideas). One mechanism, but a proposal is pending while the agent works on and several can
   be open, while the card is the end of a turn; one tool would still need both behaviours.
   The Claude app keeps them apart too.
+- **A card after every working turn,** recap only when there is no decision, as the Claude
+  app does. There the recap is the session's status in a sidebar of many sessions; in
+  Kayden the answer right above already says what was done, so the card would repeat it and
+  cost output tokens on every working turn.
 - **Replies only, no recap or actions** (`suggest_replies`). Smaller, but the user still
   scrolls back for what changed, and "Yes, push" costs a request in which the agent pushes.
 - **Markup in the answer's text** (a block frontends strip). No tool and no extra request
@@ -62,8 +66,8 @@ answers to pick.
 
 - Answering a pending decision is one click, costs no extra request, and an action runs
   exactly as shown.
-- Every request carries one more tool schema, about 350 tokens, and most working turns end
-  with a few dozen more output tokens for the recap.
+- Every request carries one more tool schema, about 350 tokens; only turns that end with a
+  decision pay for the card's output.
 - The model may add a card where none is needed, or write labels as itself ("I'll push").
   The description guards against both; if real use shows it is not enough, the base system
   prompt should say it too.

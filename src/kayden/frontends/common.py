@@ -70,7 +70,7 @@ def card_of(call: ToolCall) -> Card | None:
         raw = [o for o in args.get("options") or () if isinstance(o, dict)]
         options = tuple(o["label"] for o in raw if isinstance(o.get("label"), str) and o["label"])
         action = next((o["label"] for o in raw if "call" in o and o.get("label")), None)
-        if not text("recap") and not options:
+        if not options:
             return None
         return Card(call.id, text("recap"), text("question"), options, action)
     if call.name in SUGGESTION_TOOLS:

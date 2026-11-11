@@ -778,7 +778,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 
 | Choice | Decision |
 |---|---|
-| Limits | `recap` up to 400 characters, `question` up to 100, one to three options with labels up to 40; at most one option carries a call |
+| Limits | `question` (required) up to 100 characters, one to three options (required) with labels up to 40, optional `recap` up to 400; at most one option carries a call |
 | Withdrawal | A user message cancels a pending card proposal before it is appended; the cancelled outcome goes in first and no wake-up of its own follows |
 | Close | ✕ clears the card in that window's model only; nothing is saved, so reopening shows it again |
 | Stale action | After a restart the card proposal is gone; its option then sends its label as a message |

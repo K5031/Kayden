@@ -741,15 +741,14 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     # a Proposal with card=True and the wrap_up call's id.
     "wrap_up": ToolSpec(
         "wrap_up",
-        "End your turn with a card for the user, when the turn did work (changed files, ran "
-        "commands, finished steps) or leaves them a decision; not after a short answer to a "
-        "question. recap: two or three short sentences on what is now done and what is not. "
-        "When the user has a decision to make, also: question, one short sentence; options, "
-        "1 to 3 buttons that answer it, your recommendation first. An option's label is "
-        "written as the user would say it (\"Yes, push\", \"Fix the first one\", \"Not "
-        "now\"); a click sends it as their message. At most one option may carry a call: "
-        "clicking it runs exactly that call, and you are woken with its result. Call wrap_up "
-        "alone, last, after your other work: your turn ends with it.",
+        "Only when your turn leaves the user a decision (go ahead or not, which option): end "
+        "it with a card. question: one short sentence. options: 1 to 3 buttons that answer "
+        "it, your recommendation first, each label written as the user would say it (\"Yes, "
+        "push\", \"Fix the first one\", \"Not now\"); a click sends it as their message. At "
+        "most one option may carry a call: clicking it runs exactly that call, and you are "
+        "woken with its result. recap, optional: one or two sentences on what is done and "
+        "not done, when the decision needs it. Call wrap_up alone, last, after your other "
+        "work: your turn ends with it.",
         {
             "type": "object",
             "properties": {
@@ -773,7 +772,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
                     },
                 },
             },
-            "required": ["recap"],
+            "required": ["question", "options"],
         },
     ),
 }
