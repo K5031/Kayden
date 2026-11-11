@@ -1,6 +1,6 @@
 # Contributing to Kayden
 
-Thanks for wanting to help. Kayden is an early MVP: the module contracts may still change,
+Thanks for wanting to help. Kayden is young: the module contracts may still change,
 so small, focused changes are the easiest to land.
 
 ## Getting set up

@@ -2,16 +2,16 @@
 
 Modular AI agent application. Read before coding:
 - `PHILOSOPHY.md`: where Kayden is going: the base unit of a fleet (KFM) that works without supervision.
-- `SPEC.md`: product requirements (the MVP spec).
+- `SPEC.md`: product requirements: what Kayden does.
 - `src/kayden/api.py`: normative module contracts (Core, Memory, Tools, Frontend, RuntimeAPI). Spec section 16 summarizes the behavior it cannot express.
 
 ## Stack
-Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, ruff. SQLite (stdlib, FTS5) for Memory when it is built.
+Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, ruff. SQLite (stdlib, FTS5) for the Memory archive.
 
 ## Rules
 - Define expected behavior as a test before implementing it.
 - The runtime owns orchestration; modules never call each other.
-- No speculative abstractions, no features outside the MVP, no unrequested refactoring.
+- No speculative abstractions, no features the owner has not asked for, no unrequested refactoring.
 - No migration or compatibility code for older data folders, settings or flags. A store of another schema version is refused.
 - Prefer established libraries over custom mechanisms.
 - Modules must never block the event loop.

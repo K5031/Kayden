@@ -1,4 +1,4 @@
-Kayden v1 — MVP Specification
+Kayden v1 — Specification
 Status: Product spec with module contracts (Draft 3.0); implementation choices are recorded in .agents/decisions.md and open contract issues in .agents/contract-issues.md
 Purpose: Define the product, runtime responsibilities, module boundaries, and observable behavior before delegating implementation to coding agents.
 Repository: this repository is the v1 implementation; the previous Kayden repository is kept as a reference.
@@ -384,7 +384,7 @@ Keep the runtime responsible for orchestration.
 Preserve developer freedom within module APIs.
 Prefer established libraries and proven mechanisms.
 Avoid unnecessary refactoring.
-Do not introduce features outside the agreed MVP.
+Do not introduce features the owner has not asked for; add each feature to this spec when it is built.
 Keep interfaces documented and independently implementable.
 Test end-to-end workflows.
 Prioritize useful product progress over architectural sophistication.
