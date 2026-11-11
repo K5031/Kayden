@@ -93,6 +93,7 @@ from kayden.frontends.common import (
     MCP_WARNING,
     MODULE_LABELS,
     PERMISSION_LABELS,
+    PERMISSION_SHORT,
     PLAN_HINT,
     call_parts,
     delete_details,
@@ -1191,7 +1192,19 @@ class MainWindow(QMainWindow):
         self.model_button.setAccessibleName("Model")
         footer = QHBoxLayout()
         footer.setContentsMargins(10, 4, 4, 0)
+        self.permissions_button = QToolButton(objectName="modelPicker")
+        self.permissions_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.permissions_button.setAccessibleName("What the agent may do")
+        permissions_menu = QMenu(self)
+        self.permission_actions: dict[PermissionPolicy, QAction] = {}
+        for policy, label in PERMISSION_LABELS.items():
+            action = permissions_menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(lambda _=False, p=policy: self.choose_permissions(p))
+            self.permission_actions[policy] = action
+        self.permissions_button.setMenu(permissions_menu)
         footer.addWidget(self.status_label, 1)
+        footer.addWidget(self.permissions_button)
         footer.addWidget(self.model_button)
         bottom_column = QWidget()
         bottom_column.setMaximumWidth(COLUMN_WIDTH)
@@ -1254,6 +1267,21 @@ class MainWindow(QMainWindow):
         if event.type() in (QEvent.Type.PaletteChange,  # the system switched light or dark
                             QEvent.Type.WindowStateChange):  # maximize becomes restore
             self._paint_icons()
+
+    def choose_permissions(self, policy: PermissionPolicy) -> None:
+        """Change what the agent may do; doing more without asking is confirmed first."""
+        current = self.home.model.permissions
+        self._refresh_status()  # the menu shows the current choice until it changes
+
+        def apply() -> None:
+            self.home.command(self.runtime.update_settings(SettingsUpdate(permissions=policy)))
+
+        order = list(PermissionPolicy)
+        if current is not None and order.index(policy) > order.index(current):
+            confirm(self, "Let the agent do more without asking?", apply, yes="Allow",
+                    details=PERMISSION_LABELS[policy] + ".")
+        elif policy != current:
+            apply()
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -1513,6 +1541,14 @@ class MainWindow(QMainWindow):
         known = () if self._models is None or isinstance(self._models, str) else self._models
         names = {m.id: m.name for m in known}
         self.model_button.setText(names.get(model.model or "", model.model or ""))
+        policy = self.home.model.permissions
+        self.permissions_button.setVisible(policy is not None)
+        if policy is not None:
+            self.permissions_button.setText(PERMISSION_SHORT[policy])
+            self.permissions_button.setToolTip(f"What the agent may do: "
+                                               f"{PERMISSION_LABELS[policy].lower()}")
+            for each, action in self.permission_actions.items():
+                action.setChecked(each == policy)
         conversation = model.conversation
         if conversation is not None:
             self.title_label.setText(conversation_label(

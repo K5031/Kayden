@@ -60,6 +60,15 @@ def proposal_parts(proposal: Proposal) -> tuple[str, str]:
     return f"Kayden proposes: {headline or f'using {proposal.call.name}'}", detail
 
 
+PERMISSION_SHORT = {  # for a picker: a word or two
+    PermissionPolicy.AUTO: "Auto",
+    PermissionPolicy.ALLOW_WORKSPACE: "Work folder",
+    PermissionPolicy.ALLOW_READ_ONLY: "Read only",
+    PermissionPolicy.ASK: "Ask first",
+    PermissionPolicy.DENY: "No tools",
+}
+
+
 def request_note(request: PermissionRequest) -> str:
     """What a call that asks for permission does, and why it asks, for the prompt."""
     if request.confined:

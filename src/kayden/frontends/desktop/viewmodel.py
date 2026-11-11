@@ -314,6 +314,7 @@ class ConversationModel:
         self.usage: UsageSnapshot | None = None
         self.duty_wake_at: float | None = None
         self.help_needed: str | None = None
+        self.permissions: PermissionPolicy | None = None  # what the agent may do
         self.notice = ""  # transient status text: retries, maintenance, stop stalled
         self.failure: Failure | None = None  # shown as a banner until the next cycle
         self.has_earlier = False
@@ -388,6 +389,7 @@ class ConversationModel:
         self.usage = snapshot.usage
         self.duty_wake_at = snapshot.duty_wake_at
         self.help_needed = snapshot.help_needed
+        self.permissions = snapshot.config.permissions if snapshot.config else None
         self.notice = ""
         self.failure = None
         self.has_earlier = len(history) >= page
@@ -489,6 +491,8 @@ class ConversationModel:
                 self.model = model_id
             case SettingsChanged(settings=settings):
                 self.model = settings.model or self.model
+                self.permissions = settings.permissions
+                self.on_change(StatusChanged())
             case MaintenanceStarted():
                 self.notice = "Tidying up memory…"
             case MaintenanceFinished():

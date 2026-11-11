@@ -1060,3 +1060,21 @@ async def test_the_model_picker_under_the_message_box_shows_the_models_name(make
     assert window.model_button.text() == "Fake One"  # its name, not its id
     assert window.model_button.menu() is window.model_menu
     assert window.input.height() >= 2 * window.input.fontMetrics().lineSpacing()
+
+
+async def test_the_permission_picker_tightens_at_once_and_asks_before_loosening(make, qapp):
+    h: Harness = await make(permissions=PermissionPolicy.ALLOW_READ_ONLY)
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    window.show()
+    window._refresh_status()
+    assert window.permissions_button.text() == "Read only"
+    window.choose_permissions(PermissionPolicy.ASK)  # stricter: no question
+    await eventually(lambda: window.permissions_button.text() == "Ask first")
+    assert (await h.runtime.settings()).permissions == PermissionPolicy.ASK
+    window.choose_permissions(PermissionPolicy.AUTO)  # looser: asks first
+    box = message_box(window)
+    [allow] = [b for b in box.buttons() if b.text() == "Allow"]
+    allow.click()
+    await eventually(lambda: window.permissions_button.text() == "Auto")
+    assert window.permission_actions[PermissionPolicy.AUTO].isChecked()

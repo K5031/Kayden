@@ -77,6 +77,7 @@ another reason, the Settings window opens with the message.
 | Fold a project | Conversations are grouped by their folder; click a folder's name to fold or unfold it. |
 | Give a conversation standing work | **☰ → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
 | Change the model | Click the model's name under the message box, or **☰ → Model**. |
+| Change what Kayden may do on its own | Click the mode under the message box (Auto, Work folder, Read only, Ask first, No tools). Letting it do more asks you first. See [Permissions](settings.md#permissions). |
 | Change settings | the gear at the bottom left, or **Ctrl+,**. |
 | Make everything larger or smaller | **Ctrl +** and **Ctrl −** (also in **☰ → View**); **Ctrl+0** goes back to normal. Kayden remembers the size. |
 
