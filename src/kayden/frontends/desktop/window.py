@@ -743,6 +743,36 @@ class NoticeLine(QLabel):
                      f'<a href="{self.item.link}">{NOTICE_LINKS[self.item.link]}</a>')
 
 
+class Detail(QWidget):
+    """A call's arguments on a card: the start, with Show all when they run long (a
+    sub-session's brief, a long command)."""
+
+    LINES = 3
+    CHARS = 240
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        lines = text.splitlines()
+        short = "\n".join(lines[:self.LINES])
+        if len(short) > self.CHARS:
+            short = short[:self.CHARS].rstrip()
+        self.full, self.short = text, (short + "…" if short != text else text)
+        self.label = _label(self.short, tone="muted")
+        layout.addWidget(self.label)
+        self.toggle = QToolButton(text="Show all")
+        self.toggle.setVisible(self.short != text)
+        self.toggle.clicked.connect(self._toggled)
+        layout.addWidget(self.toggle, alignment=Qt.AlignmentFlag.AlignLeft)
+
+    def _toggled(self) -> None:
+        expanded = self.label.text() == self.full
+        self.label.setText(self.short if expanded else self.full)
+        self.toggle.setText("Show all" if expanded else "Show less")
+
+
 class PermissionCard(QFrame):
     def __init__(self, request: PermissionRequest,
                  resolve: Callable[[str, Decision], None]) -> None:
@@ -755,7 +785,8 @@ class PermissionCard(QFrame):
         layout.addWidget(_label(f"Kayden wants to: {headline}" if headline
                                 else f"Kayden wants to use {call.name}", role="strong"))
         layout.addWidget(_label(request_note(request), tone="muted"))
-        layout.addWidget(_label(detail, tone="muted"))
+        if detail:
+            layout.addWidget(Detail(detail))
         buttons = QHBoxLayout()
         for decision, label in ((Decision.ALLOW_ONCE, "Allow once"),
                                 (Decision.ALLOW_CONVERSATION, "Allow for this conversation"),
@@ -787,7 +818,7 @@ class ProposalCard(QFrame):
         layout.addWidget(_label(headline, role="strong"))
         layout.addWidget(_label(proposal.reason, tone="muted"))
         if detail:
-            layout.addWidget(_label(detail, tone="muted"))
+            layout.addWidget(Detail(detail))
         buttons = QHBoxLayout()
         approve = _primary(QPushButton("Approve"))
         dismiss = QPushButton("Dismiss")

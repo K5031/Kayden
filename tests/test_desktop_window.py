@@ -957,3 +957,18 @@ async def test_a_notice_from_a_child_wakes_the_open_conversation(make, qapp, tmp
     await eventually(lambda: any("Sub-session 1 (x) ended a turn" in str(m.blocks)
                                  for m in h.store.conversations[info.id].messages))
     assert sessions.notes == {}
+
+
+def test_long_call_details_are_clipped_until_shown(qapp):
+    from kayden.frontends.desktop.window import Detail
+
+    brief = "\n".join(f"Line {n} of a long sub-session brief." for n in range(12))
+    detail = Detail(brief)
+    assert detail.label.text().endswith("…") and "Line 5" not in detail.label.text()
+    assert detail.toggle.isVisibleTo(detail) and detail.toggle.text() == "Show all"
+    detail.toggle.click()
+    assert detail.label.text() == brief and detail.toggle.text() == "Show less"
+    detail.toggle.click()
+    assert "Line 5" not in detail.label.text()
+    short = Detail("ls -la")
+    assert short.label.text() == "ls -la" and not short.toggle.isVisibleTo(short)
