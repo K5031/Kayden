@@ -1712,7 +1712,9 @@ class MainWindow(QMainWindow):
         # While a conversation opens, the one clicked stays highlighted, not the old one.
         current = (self._opening[0] if self._opening is not None
                    else own.id if own is not None else None)
-        viewing = self._viewing[0].id if self._viewing is not None else None
+        shown = self._opening_session or (self._viewing[0] if self._viewing is not None
+                                          else None)
+        viewing = shown.id if shown is not None else None
         archived = self.show_archived.isChecked()
         groups: dict[str | None, list[ConversationInfo]] = {}
         for info in self._conversations.values():
@@ -1868,7 +1870,7 @@ class MainWindow(QMainWindow):
         session = self._session_of(session_id)
         if session is None or (self._viewing is not None and self._viewing[0] is session):
             return
-        _spawn(self.open_session(session))
+        self.open_session(session)
 
     def _row_menu(self, entry: QListWidgetItem, at: QPoint) -> None:
         if entry.data(KIND_ROLE) == "session":
@@ -1881,7 +1883,7 @@ class MainWindow(QMainWindow):
         assert self.sessions is not None
         sessions = self.sessions
         menu = QMenu(self)
-        menu.addAction("Open", lambda: _spawn(self.open_session(session)))
+        menu.addAction("Open", lambda: self.open_session(session))
         if session.resumable:
             menu.addAction("Resume", lambda: self.home.command(sessions.resume(session)))
         if session.running:
@@ -1940,24 +1942,29 @@ class MainWindow(QMainWindow):
                 yes="Delete", danger=True,
                 details="It stops, and its conversation is erased. This cannot be undone.")
 
-    async def open_session(self, session: SubSession) -> None:
+    def open_session(self, session: SubSession) -> None:
         """Show a sub-session in the conversation area, as its own conversation: its
-        messages, steps and prompts, and the message box talks to it."""
-        assert self.sessions is not None
+        messages, steps and prompts, and the message box talks to it. Its row stays
+        highlighted while it opens, which may mean starting it again."""
         if self._opening_session is session:
             return  # a click can also activate (KDE) and ask twice
         self._opening_session = session
+        _spawn(self._open_session(session))
+
+    async def _open_session(self, session: SubSession) -> None:
+        assert self.sessions is not None
         try:
             remote = await self.sessions.open(session)
         except Exception as e:  # noqa: BLE001 - shown, never fatal
+            self._opening_session = None
+            self._render_sidebar()  # back to what is shown
             self.model.notify(f"The sub-session could not be opened: {user_message(e)}")
             return
-        finally:
-            self._opening_session = None
         self._leave_session()
         controller = Controller(remote, ConversationModel())
         pump = asyncio.create_task(controller.run())
         self._viewing = (session, remote, pump)
+        self._opening_session = None
         self._show(controller)
 
     def _leave_session(self) -> None:

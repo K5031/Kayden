@@ -873,6 +873,9 @@ async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
     assert row.text() == "Write a haiku" and "Done" in row.data(PREVIEW_ROLE)
     window._conversation_chosen(row)
     window._conversation_chosen(row)  # KDE activates on the same click: opened once
+    window._render_sidebar()  # the list changes while the child starts again
+    current = window.conversation_list.currentItem()
+    assert (current.data(KIND_ROLE), current.text()) == ("session", "Write a haiku")
     await eventually(lambda: window.controller is not window.home
                      and any(isinstance(i, AssistantItem) and "Here is the haiku." in i.text
                              for i in window.model.items), timeout=15)
