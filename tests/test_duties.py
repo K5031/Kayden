@@ -92,7 +92,7 @@ async def test_turning_a_duty_on_starts_work_and_shows_it(make):
     assert "Keep the inbox answered" in request.system
     assert "update_plan" in [t.name for t in request.tools]
     assert "finish_goal" not in [t.name for t in request.tools]  # a duty, not a goal
-    assert "the duty was turned on" in notices(request)[0]
+    assert notices(request)[0].endswith("[Runtime notice] New duty: Keep the inbox answered")
     [updated] = [e for e in h.rec.of(ConversationUpdated) if e.info.duty is not None]
     assert updated.info.duty == QUIET
     assert h.store.conversations[h.conversation.id].info.duty == QUIET
@@ -182,7 +182,7 @@ async def test_with_nothing_due_it_wakes_at_the_maximum_interval(make):
     wake_at = h.runtime.snapshot().duty_wake_at
     assert wake_at is not None and wake_at - time.time() <= 0.3
     await idle(h, 2)
-    assert "scheduled check-in" in notices(h.core.requests[1])[-1]
+    assert "Time to check in on your duty." in notices(h.core.requests[1])[-1]
     await eventually(lambda: "duty: scheduled check-in" in wakes(h))  # logged with its cause
 
 
@@ -192,7 +192,7 @@ async def test_a_due_plan_item_wakes_it_early(make):
         Step(text="later"), Step(text="posting")])
     await h.runtime.set_duty(Duty("Run socials", min_interval_s=0.05, max_interval_s=30))
     await idle(h, 3)
-    assert "a plan item is due" in notices(h.core.requests[2])[-1]
+    assert "A step in your plan is due." in notices(h.core.requests[2])[-1]
 
 
 async def test_the_minimum_interval_holds_back_an_overdue_item(make):
@@ -213,7 +213,7 @@ async def test_it_wakes_on_the_first_finished_operation(make):
     await h.runtime.set_duty(QUIET)
     await idle(h, 3)
     assert "b" in [op.call.id for op in h.runtime.snapshot().operations]  # still running
-    assert "background work finished" in notices(h.core.requests[2])[-1]
+    assert "Background work finished." in notices(h.core.requests[2])[-1]
 
 
 async def test_a_user_message_still_wakes_it(make):
@@ -347,7 +347,7 @@ async def test_finished_work_still_wakes_an_agent_waiting_for_help(make):
         Step(text="Waiting."), Step(text="The watcher fired.")], tools=tools)
     await h.runtime.set_duty(QUIET)
     await idle(h, 3)
-    assert "background work finished" in notices(h.core.requests[2])[-1]
+    assert "Background work finished." in notices(h.core.requests[2])[-1]
     assert h.runtime.snapshot().help_needed == "Login code?"  # still unanswered
 
 
@@ -366,6 +366,6 @@ async def test_the_task_stays_in_view_after_the_goal_is_finished(make):
                                   max_interval_s=30))
     await idle(h, 2)
     first, after = h.core.requests[0], h.core.requests[1]
-    assert "Your goal: Launch the campaign" in notices(first)[0]
+    assert "New goal: Launch the campaign" in notices(first)[0]
     assert "Launch the campaign" not in after.system  # the goal has ended
     assert any("Launch the campaign" in text for text in notices(after))  # still in view

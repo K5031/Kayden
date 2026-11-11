@@ -722,6 +722,10 @@ def _detach(widget: QWidget) -> None:
 NOTICE_LINKS = {"memory": "Open memory"}
 
 
+def is_long(text: str) -> bool:
+    return "\n" in text or len(text) > 160
+
+
 class NoticeLine(QLabel):
     """A line from Kayden itself; with a link, linkActivated carries the item's link."""
 
@@ -744,21 +748,17 @@ class NoticeLine(QLabel):
 
 
 class Detail(QWidget):
-    """A call's arguments on a card: the start, with Show all when they run long (a
-    sub-session's brief, a long command)."""
+    """Text that may run long, folded to its start with Show all: a call's arguments on a
+    card (a sub-session's brief, a long command), or a long notice (a new goal)."""
 
-    LINES = 3
-    CHARS = 240
-
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, *, lines: int = 3, chars: int = 240) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        lines = text.splitlines()
-        short = "\n".join(lines[:self.LINES])
-        if len(short) > self.CHARS:
-            short = short[:self.CHARS].rstrip()
+        short = "\n".join(text.splitlines()[:lines])
+        if len(short) > chars:
+            short = short[:chars].rstrip()
         self.full, self.short = text, (short + "…" if short != text else text)
         self.label = _label(self.short, tone="muted")
         layout.addWidget(self.label)
@@ -771,6 +771,9 @@ class Detail(QWidget):
         expanded = self.label.text() == self.full
         self.label.setText(self.short if expanded else self.full)
         self.toggle.setText("Show all" if expanded else "Show less")
+
+    def refresh(self) -> None:
+        pass  # its text does not change
 
 
 class PermissionCard(QFrame):
@@ -1251,6 +1254,8 @@ class MainWindow(QMainWindow):
                 return AssistantBubble(item)
             case ToolItem():
                 return ToolCard(item, self.controller.cancel)
+            case NoticeItem() if item.link is None and is_long(item.text):
+                return Detail(item.text, lines=1, chars=140)  # a new goal's brief
             case NoticeItem():
                 line = NoticeLine(item)
                 line.linkActivated.connect(self._notice_link)

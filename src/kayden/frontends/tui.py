@@ -1916,7 +1916,12 @@ class KaydenApp(App[None]):
         if message.role is Role.USER:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             if (notice := notice_of(text)) is not None:
-                await self._mount(SystemEntry(notice))
+                if "\n" in notice or len(notice) > 160:  # a new goal's brief: folded
+                    title = _clip(notice.splitlines()[0], 100)
+                    await self._mount(Collapsible(Static(notice, markup=False), title=title,
+                                                  collapsed=True, classes="notice"))
+                else:
+                    await self._mount(SystemEntry(notice))
             elif text:
                 await self._mount(UserEntry(text, message_id=message.id))
             for block in message.blocks:

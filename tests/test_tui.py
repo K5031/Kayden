@@ -1263,3 +1263,19 @@ async def test_a_runtime_notice_is_a_system_line():
         await caught_up(pilot, app, stub)
         assert plain(entries(app, SystemEntry)[-1]) == "Woken for the duty."
         assert not any("Woken" in plain(e) for e in entries(app, UserEntry))
+
+
+async def test_a_long_notice_is_folded():
+    from textual.widgets import Collapsible
+
+    from kayden.api import NOTICE_PREFIX
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        brief = f"{NOTICE_PREFIX}New goal: Research Worlds.\n\nFind every series."
+        stub.emit(MessageCommitted(msg("n2", Role.USER, Text(brief))))
+        await caught_up(pilot, app, stub)
+        [folded] = app.query(Collapsible).filter(".notice")
+        assert folded.collapsed and folded.title == "New goal: Research Worlds."

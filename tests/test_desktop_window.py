@@ -994,3 +994,17 @@ async def test_settings_set_the_limit_per_sub_session(make, qapp, tmp_path):
     save.click()
     await eventually(lambda: sessions.limit_usd == 4)
     assert SubSessions(tmp_path).limit_usd == 4
+
+
+async def test_a_long_notice_is_folded(make, qapp):
+    from kayden.frontends.desktop.viewmodel import NoticeItem
+    from kayden.frontends.desktop.window import Detail, NoticeLine
+
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    brief = "New goal: Research Gen.G's path through Worlds.\n\nFind every series they played."
+    assert isinstance(window._widget_for(NoticeItem(brief)), Detail)
+    folded = window._widget_for(NoticeItem(brief))
+    assert folded.label.text() == "New goal: Research Gen.G's path through Worlds.…"
+    assert isinstance(window._widget_for(NoticeItem("Time to check in.")), NoticeLine)
