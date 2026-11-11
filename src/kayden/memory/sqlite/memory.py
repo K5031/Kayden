@@ -281,6 +281,12 @@ class _State:
     index: list[str]  # "title: description" of the other notes, most recently written first
     active: list[_Active]
     seeded: bool  # a summary row exists
+    # The message the current turn started from, when compaction cut inside that turn: it
+    # stays in view before the active messages, so the agent keeps the task's wording.
+    task: Message | None = None
+
+    def view(self) -> list[Message]:
+        return ([self.task] if self.task else []) + [a.message for a in self.active]
 
 
 class SqliteMemory(Memory):
@@ -576,7 +582,7 @@ class SqliteMemory(Memory):
         next maintain)."""
         count = context.count_tokens
         source = await self._run(_read_state, state.info.seed_from)
-        messages = [a.message for a in source.active]
+        messages = source.view()
         if not source.summary and not messages:
             return False
         system, summary_tokens = self._prompt(state, source.summary, context)
@@ -606,7 +612,8 @@ class SqliteMemory(Memory):
         config, count = self._config, context.count_tokens
         conversation_id = state.info.id
         sizes = [count([a.message]) for a in state.active]
-        total = sum(sizes) + (count(state.summary) if state.summary else 0)
+        total = (sum(sizes) + (count(state.summary) if state.summary else 0)
+                 + (count([state.task]) if state.task else 0))
         if total <= config.trigger_fraction * context.max_tokens:
             return False
         system, summary_tokens = self._prompt(state, state.summary, context)
@@ -984,17 +991,34 @@ def _read_state(
             if with_active
             else []
         )
+        task = None
+        if rows and rows[0][2] != Role.USER.value:
+            task_row = conn.execute(
+                "SELECT id, role, created_at, blocks FROM messages WHERE conversation_id = ?"
+                " AND seq <= ? AND role = ? ORDER BY seq DESC LIMIT 1",
+                (conversation_id, through_seq, Role.USER.value),
+            ).fetchone()
+            task = _message(task_row) if task_row else None
     active = [_Active(r[0], _message(r[1:])) for r in rows]
     index = [f"{n.title}: {n.description}" for n in notes[1:]]
-    return _State(info, summary, notes[0].text, index, active, row is not None)
+    return _State(info, summary, notes[0].text, index, active, row is not None, task)
 
 
 def _valid_starts(messages: Sequence[Message], *, pending_calls_block: bool) -> list[int]:
     """Indices i of USER messages where messages[i:] orphans no tool result.
 
+    Falls back to any role when no USER message qualifies (a transcript the runtime would
+    never write).
+    """
+    starts = _open_starts(messages, pending_calls_block=pending_calls_block)
+    return [i for i in starts if messages[i].role is Role.USER] or starts
+
+
+def _open_starts(messages: Sequence[Message], *, pending_calls_block: bool) -> list[int]:
+    """Indices i where messages[i:] orphans no tool result.
+
     With pending_calls_block, a call that has no result yet also pins the cut before it,
-    so its later result never lands after its compacted call. Falls back to any role when
-    no USER message qualifies (a transcript the runtime would never write).
+    so its later result never lands after its compacted call.
     """
     n = len(messages)
     blocked = [0] * (n + 2)
@@ -1015,7 +1039,7 @@ def _valid_starts(messages: Sequence[Message], *, pending_calls_block: bool) -> 
         depth += blocked[i]
         if depth == 0:
             starts.append(i)
-    return [i for i in starts if messages[i].role is Role.USER] or starts
+    return starts
 
 
 def _choose_cut(
@@ -1024,11 +1048,15 @@ def _choose_cut(
 ) -> tuple[int, str] | None:
     """The compaction cut and the transcript to summarize, whose message fits `allowance`."""
     messages = [a.message for a in active]
-    candidates = [s for s in _valid_starts(messages, pending_calls_block=True) if s >= 1]
-    if not candidates or allowance <= 0:
-        return None
+    starts = _open_starts(messages, pending_calls_block=True)
+    candidates = [s for s in starts if s >= 1 and messages[s].role is Role.USER]
     target = sum(sizes) * remove_fraction
     cumulative = list(accumulate(sizes, initial=0))
+    if not candidates or cumulative[candidates[-1]] < target:  # a long turn: cut inside it
+        candidates = [s for s in starts
+                      if s >= 1 and messages[s].role in (Role.USER, Role.ASSISTANT)]
+    if not candidates or allowance <= 0:
+        return None
     wanted = next((s for s in candidates if cumulative[s] >= target), candidates[-1])
     candidates = [s for s in candidates if s <= wanted]
 
@@ -1122,7 +1150,7 @@ def _fit(state: _State, request: ContextRequest, long_term_fraction: float) -> A
     view if it alone exceeds the budget. The addendum (summary, the profile, then the
     notes' index, most recently written first) gets what remains, and the verbatim tail extends back as far as still fits."""
     count, budget = request.count_tokens, request.max_tokens
-    messages = [a.message for a in state.active]
+    messages = state.view()
     starts = _valid_starts(messages, pending_calls_block=False)
     newest = list(messages[starts[-1]:]) if starts else []
     view = _truncate_to_fit(newest, budget, count)

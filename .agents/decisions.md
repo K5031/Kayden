@@ -172,8 +172,12 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   (summary plus active verbatim context; compaction runs before every request, so a big
   step is compacted before it is sent, and the 10% covers token-count estimates), remove 0.5 (cut-half), summary 0.05, long-term
   rendering 0.05. All token figures use the runtime's `TokenCounter`.
-- Compaction cuts only before a USER message that splits no call from its result (or
-  pending call). The request to the light model is sized so that system prompt, transcript
+- Compaction cuts before a USER message that splits no call from its result (or pending
+  call). When no such cut removes the share it should, as in one long task after a single
+  message, it may also cut before an ASSISTANT message inside the turn. The message that
+  turn started from then stays in view before the active messages (`_State.task`, read
+  from the archive), so the agent keeps the task's wording and the request still opens
+  with a user message. The request to the light model is sized so that system prompt, transcript
   and requested output fit `max_input_tokens(light=True)`: the cut moves earlier if needed,
   and a single oversized exchange is shown truncated (the archive keeps it whole). If not
   even that fits, maintain does nothing and returns False.

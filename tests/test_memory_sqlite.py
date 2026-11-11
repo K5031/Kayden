@@ -32,6 +32,7 @@ from tests.conformance.memory_suite import (
     active,
     addendum,
     assert_archived,
+    assert_well_formed,
     context,
     count_tokens,
     text_message,
@@ -184,6 +185,34 @@ async def test_an_overlong_summary_loses_prose_before_topics(open_store):
     state = await memory.inspect(conv.id)
     assert state is not None and state.summary.endswith("- Postgres backup script")
     assert count_tokens(state.summary) <= SUMMARY_TOKENS
+
+
+async def test_a_long_task_from_one_message_is_compacted_between_its_steps(open_store):
+    """One message, then many tool steps: compaction cuts between finished steps, and the
+    message the task started from stays in view so the agent keeps its wording."""
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    task = text_message("tok9999")
+    steps = [m for t in tokens(0, 20) for m in tool_exchange(t)]
+    await memory.append(conv.id, [task, *steps])
+    assert await maintain(memory, conv.id, FakeCompletion(render=tagged))
+    view = await active(memory, conv.id)
+    assert view[0] == task and view[1].role is Role.ASSISTANT
+    assert 0 < len(view) - 1 < len(steps) and view[1:] == steps[len(steps) - len(view) + 1:]
+    assert_well_formed(view)
+    assert await maintain(memory, conv.id, FakeCompletion(render=tagged))  # and again
+    again = await active(memory, conv.id)
+    assert again[0] == task and len(again) < len(view) and again[1].role is Role.ASSISTANT
+
+
+async def test_turns_are_still_cut_at_a_message_when_one_is_far_enough_back(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    first = [text_message("tok9998"), *(m for t in tokens(0, 12) for m in tool_exchange(t))]
+    second = [text_message("tok9999"), *(m for t in tokens(12, 4) for m in tool_exchange(t))]
+    await memory.append(conv.id, [*first, *second])
+    assert await maintain(memory, conv.id, FakeCompletion(render=tagged))
+    assert (await active(memory, conv.id))[0] == second[0]
 
 
 async def test_compaction_uses_light_model_and_summary_budget(open_store):
