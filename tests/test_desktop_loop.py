@@ -38,8 +38,11 @@ def test_garbage_qt_objects_are_freed_on_the_qt_thread() -> None:
             holder.clear()  # the QObject is now garbage, in a cycle
             return [[] for _ in range(300_000)]  # enough to trigger every generation
 
-        await asyncio.to_thread(work)
+        # Kept until collected: the loop collects when it next finds the count over its
+        # threshold, which it would not if the allocations were freed first.
+        junk = await asyncio.to_thread(work)
         await eventually(lambda: freed_in)
+        del junk
 
     gc.collect()
     asyncio.run(main(), loop_factory=lambda: QtEventLoop(app))
