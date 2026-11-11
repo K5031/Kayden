@@ -214,6 +214,10 @@ QPushButton#nav {{ background: transparent; border: none; color: {c.text};
 QPushButton#nav:hover {{ background: {c.select}; }}
 QToolButton#menu {{ padding: 4px 8px; font-size: {title}; }}
 QToolButton#profile {{ color: {c.text}; padding: 6px 8px; }}
+QToolButton#windowControl {{ padding: 6px; border-radius: 6px; }}
+QToolButton#windowControl:hover {{ background: {c.select}; }}
+QToolButton#windowClose {{ padding: 6px; border-radius: 6px; }}
+QToolButton#windowClose:hover {{ background: {c.error}; }}
 QToolButton#profile:hover, QToolButton#gear:hover {{ background: {c.select}; }}
 QToolButton#profile::menu-indicator {{ image: none; width: 0; }}
 QToolButton#menu::menu-indicator {{ image: none; width: 0; }}
@@ -249,7 +253,8 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
-    """A line icon: "send" (an up arrow), "stop" (a square), "folder" or "gear"."""
+    """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", or a window
+    control: "minimize", "maximize", "restore", "close"."""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.setDevicePixelRatio(scale)
@@ -295,6 +300,21 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
             path.closeSubpath()
             painter.drawPath(path)
             painter.drawEllipse(centre, s * 0.13, s * 0.13)
+        case "minimize":
+            painter.drawLine(QPointF(s * 0.25, s * 0.5), QPointF(s * 0.75, s * 0.5))
+        case "maximize":
+            painter.drawRoundedRect(QRectF(s * 0.27, s * 0.27, s * 0.46, s * 0.46), 1, 1)
+        case "restore":
+            painter.drawRoundedRect(QRectF(s * 0.25, s * 0.37, s * 0.38, s * 0.38), 1, 1)
+            path = QPainterPath(QPointF(s * 0.37, s * 0.37))
+            path.lineTo(s * 0.37, s * 0.25)
+            path.lineTo(s * 0.75, s * 0.25)
+            path.lineTo(s * 0.75, s * 0.63)
+            path.lineTo(s * 0.63, s * 0.63)
+            painter.drawPath(path)
+        case "close":
+            painter.drawLine(QPointF(s * 0.3, s * 0.3), QPointF(s * 0.7, s * 0.7))
+            painter.drawLine(QPointF(s * 0.7, s * 0.3), QPointF(s * 0.3, s * 0.7))
     painter.end()
     return QIcon(pixmap)
 

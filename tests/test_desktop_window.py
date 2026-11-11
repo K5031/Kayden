@@ -1024,3 +1024,29 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     window._build_menus()  # reconnect to the replaced method
     window.gear_button.click()
     assert opened
+
+
+async def test_the_window_draws_its_own_title_bar(make, qapp):
+    from PySide6.QtCore import QPoint
+
+    from kayden.frontends.desktop.window import DragArea
+
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    assert window.windowFlags() & Qt.WindowType.FramelessWindowHint
+    assert set(window.window_buttons) == {"minimize", "maximize", "close"}
+    assert window.findChildren(DragArea)  # the header and the sidebar's top row
+    window.resize(800, 600)
+    window.show()
+    edges = window._edges.edges
+    assert edges(window.mapToGlobal(QPoint(2, 300))) == Qt.Edge.LeftEdge
+    assert edges(window.mapToGlobal(QPoint(799, 599))) == (Qt.Edge.RightEdge
+                                                          | Qt.Edge.BottomEdge)
+    assert not edges(window.mapToGlobal(QPoint(400, 300)))
+    window.window_buttons["maximize"].click()
+    await eventually(lambda: window.isMaximized())
+    assert window.window_buttons["maximize"].toolTip() == "Restore"
+    assert not edges(window.mapToGlobal(QPoint(2, 300)))  # maximized: nothing to resize
+    window.window_buttons["maximize"].click()
+    await eventually(lambda: not window.isMaximized())

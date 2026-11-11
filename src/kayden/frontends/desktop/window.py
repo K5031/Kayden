@@ -15,17 +15,19 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
     QContextMenuEvent,
+    QCursor,
     QDesktopServices,
     QFont,
     QFontMetrics,
     QKeyEvent,
     QKeySequence,
+    QMouseEvent,
     QPainter,
     QPen,
     QShortcut,
@@ -736,6 +738,93 @@ def is_long(text: str) -> bool:
     return "\n" in text or len(text) > 160
 
 
+class DragArea(QFrame):
+    """Where the window is grabbed: dragging moves it, a double-click maximizes or restores
+    it, as a title bar would. Buttons and fields inside it work as usual."""
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        handle = self.window().windowHandle()
+        if event.button() == Qt.MouseButton.LeftButton and handle is not None:
+            handle.startSystemMove()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        window = self.window()
+        if window.isMaximized():
+            window.showNormal()
+        else:
+            window.showMaximized()
+
+
+class WindowEdges(QObject):
+    """Resizing a window without a frame: near an edge the cursor shows the direction, and
+    pressing there hands the resize to the window system."""
+
+    MARGIN = 6  # px from the edge
+
+    def __init__(self, window: QWidget) -> None:
+        super().__init__(window)
+        self.window = window
+        self.cursor_set = False
+        QApplication.instance().installEventFilter(self)
+
+    def edges(self, global_pos: QPoint) -> Qt.Edge:
+        if self.window.isMaximized() or self.window.isFullScreen():
+            return Qt.Edge(0)
+        pos = self.window.mapFromGlobal(global_pos)
+        rect, m = self.window.rect(), self.MARGIN
+        found = Qt.Edge(0)
+        if pos.x() <= m:
+            found |= Qt.Edge.LeftEdge
+        elif pos.x() >= rect.width() - m:
+            found |= Qt.Edge.RightEdge
+        if pos.y() <= m:
+            found |= Qt.Edge.TopEdge
+        elif pos.y() >= rect.height() - m:
+            found |= Qt.Edge.BottomEdge
+        return found
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        kind = event.type()
+        if kind not in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress):
+            return False
+        if not isinstance(watched, QWidget) or watched.window() is not self.window:
+            return False
+        edges = self.edges(event.globalPosition().toPoint())  # type: ignore[attr-defined]
+        if kind == QEvent.Type.MouseMove:
+            self._show_cursor(edges)
+            return False
+        handle = self.window.windowHandle()
+        if edges and handle is not None and event.button() == Qt.MouseButton.LeftButton:  # type: ignore[attr-defined]
+            handle.startSystemResize(edges)
+            return True
+        return False
+
+    def _show_cursor(self, edges: Qt.Edge) -> None:
+        shape = _EDGE_CURSORS.get(edges)
+        if shape is None and self.cursor_set:
+            QApplication.restoreOverrideCursor()
+            self.cursor_set = False
+        elif shape is not None:
+            if self.cursor_set:
+                QApplication.changeOverrideCursor(QCursor(shape))
+            else:
+                QApplication.setOverrideCursor(QCursor(shape))
+                self.cursor_set = True
+
+
+_E = Qt.Edge
+_EDGE_CURSORS = {
+    _E.LeftEdge: Qt.CursorShape.SizeHorCursor, _E.RightEdge: Qt.CursorShape.SizeHorCursor,
+    _E.TopEdge: Qt.CursorShape.SizeVerCursor, _E.BottomEdge: Qt.CursorShape.SizeVerCursor,
+    _E.TopEdge | _E.LeftEdge: Qt.CursorShape.SizeFDiagCursor,
+    _E.BottomEdge | _E.RightEdge: Qt.CursorShape.SizeFDiagCursor,
+    _E.TopEdge | _E.RightEdge: Qt.CursorShape.SizeBDiagCursor,
+    _E.BottomEdge | _E.LeftEdge: Qt.CursorShape.SizeBDiagCursor,
+}
+
+
 class NoticeLine(QLabel):
     """A line from Kayden itself; with a link, linkActivated carries the item's link."""
 
@@ -929,6 +1018,10 @@ class MainWindow(QMainWindow):
         self._conversations: dict[str, ConversationInfo] = {}
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
         self.setWindowTitle("Kayden")
+        # No title bar from the desktop: the header and the sidebar's top row move the
+        # window, the header has its controls, and the edges resize it (WindowEdges).
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        self._edges = WindowEdges(self)
         self.resize(1000, 720)
         self._build()
         self._build_menus()
@@ -984,11 +1077,12 @@ class MainWindow(QMainWindow):
         self.gear_button.setToolTip("Settings (Ctrl+,)")
         self.gear_button.setAccessibleName("Settings")
         self.gear_button.setIconSize(QSize(18, 18))
-        top = QHBoxLayout()
+        top_row = DragArea()
+        top = QHBoxLayout(top_row)
         top.setContentsMargins(0, 0, 0, 6)
         top.addWidget(self.menu_button)
         top.addStretch()
-        side.addLayout(top)
+        side.addWidget(top_row)
         side.addWidget(self.new_button)
         side.addSpacing(10)
         side.addWidget(self.conversation_list, 1)
@@ -1013,13 +1107,25 @@ class MainWindow(QMainWindow):
         banner.addWidget(self.banner_settings)
         self.banner.hide()
 
-        header = QFrame(objectName="header")
+        header = DragArea(objectName="header")
         head = QHBoxLayout(header)
-        head.setContentsMargins(18, 10, 14, 10)
-        head.setSpacing(10)
+        head.setContentsMargins(18, 8, 8, 8)
+        head.setSpacing(4)
         self.title_label = ElidedLabel()
         self.title_label.setProperty("role", "title")
         head.addWidget(self.title_label, 1)
+        self.window_buttons: dict[str, QToolButton] = {}
+        for name, tip, command in (("minimize", "Minimize", self.showMinimized),
+                                   ("maximize", "Maximize", self._toggle_maximized),
+                                   ("close", "Close", self.close)):
+            button = QToolButton(objectName="windowClose" if name == "close"
+                                 else "windowControl")
+            button.setToolTip(tip)
+            button.setAccessibleName(tip)
+            button.setIconSize(QSize(16, 16))
+            button.clicked.connect(command)
+            head.addWidget(button)
+            self.window_buttons[name] = button
 
         self.scroll = QScrollArea(widgetResizable=True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1114,6 +1220,11 @@ class MainWindow(QMainWindow):
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.on_accent))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
+        maximized = self.isMaximized()
+        for name, button in self.window_buttons.items():
+            kind = "restore" if name == "maximize" and maximized else name
+            button.setIcon(theme.icon(kind, colors.muted))
+        self.window_buttons["maximize"].setToolTip("Restore" if maximized else "Maximize")
         self.profile_button.setIcon(theme.avatar(self.user_name))
 
     def _choose_folder(self) -> None:
@@ -1133,8 +1244,15 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
-        if event.type() == QEvent.Type.PaletteChange:  # the system switched light or dark
+        if event.type() in (QEvent.Type.PaletteChange,  # the system switched light or dark
+                            QEvent.Type.WindowStateChange):  # maximize becomes restore
             self._paint_icons()
+
+    def _toggle_maximized(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     def _build_menus(self) -> None:
         """No menu bar. The ☰ menu holds what is about the conversation (new chat, duty,
