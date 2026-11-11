@@ -57,9 +57,14 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
     return "\n\n".join(parts)
 
 
-def notice(cause: str) -> str:
-    return (f"{NOTICE_PREFIX}You were woken for your duty: {cause}. Continue it, or end "
-            "your turn if there is nothing to do now.")
+def notice(cause: str, duty: Duty | None) -> str:
+    """The message that starts a cycle a duty woke. The one that turns it on states the
+    task, so the transcript keeps it after the duty ends (a goal reached mid-cycle)."""
+    text = f"{NOTICE_PREFIX}You were woken for your duty: {cause}."
+    if cause == TURNED_ON and duty is not None:
+        text += f" Your {'goal' if duty.kind == DutyKind.GOAL else 'duty'}: {duty.instruction}"
+        return text
+    return f"{text} Continue it, or end your turn if there is nothing to do now."
 
 
 def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:

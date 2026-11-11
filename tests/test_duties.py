@@ -356,3 +356,16 @@ async def test_ask_for_help_needs_a_duty(make):
     await h.runtime.set_plan([PlanItem("x")])  # a plan alone offers update_plan only
     await h.turn("hi")
     assert "ask_for_help" not in [t.name for t in h.core.requests[0].tools]
+
+
+async def test_the_task_stays_in_view_after_the_goal_is_finished(make):
+    h = await duty_harness(make, [
+        Step(calls=[call("finish_goal", {"report": "Launched."})]),
+        Step(text="All done.")])
+    await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
+                                  max_interval_s=30))
+    await idle(h, 2)
+    first, after = h.core.requests[0], h.core.requests[1]
+    assert "Your goal: Launch the campaign" in notices(first)[0]
+    assert "Launch the campaign" not in after.system  # the goal has ended
+    assert any("Launch the campaign" in text for text in notices(after))  # still in view

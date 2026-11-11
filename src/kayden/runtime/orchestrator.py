@@ -1077,8 +1077,9 @@ class Runtime:
         await self._deliver_inbox()
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
-            await self._append(Message(_new_id(), Role.USER, (Text(duties.notice(cause)),),
-                                       time.time()))
+            duty = self._conversation.duty if self._conversation is not None else None
+            await self._append(Message(_new_id(), Role.USER,
+                                       (Text(duties.notice(cause, duty)),), time.time()))
         else:
             await self._ensure_user_last()
         while True:
