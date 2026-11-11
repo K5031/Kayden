@@ -12,6 +12,7 @@ import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +137,20 @@ _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
 _NO_DUTIES = "this memory module cannot keep duties"
 _RUNTIME_TOOLS = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
+
+
+def _stamped(message: Message) -> Message:
+    """A user message as the model sees it: its text starts with when it was sent, from
+    the stored time, so the request stays the same from one turn to the next."""
+    if message.role != Role.USER:
+        return message
+    for i, block in enumerate(message.blocks):
+        if isinstance(block, Text):
+            sent = datetime.fromtimestamp(message.created_at).astimezone()
+            stamp = f"[Sent {sent.strftime('%a %Y-%m-%d %H:%M')} {sent.isoformat()[-6:]}] "
+            blocks = (*message.blocks[:i], Text(stamp + block.text), *message.blocks[i + 1:])
+            return replace(message, blocks=blocks)
+    return message
 
 
 def _new_id() -> str:
@@ -1049,8 +1064,8 @@ class Runtime:
         await self._deliver_inbox()
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
-            await self._append(Message(_new_id(), Role.USER,
-                                       (Text(duties.notice(cause, time.time())),), time.time()))
+            await self._append(Message(_new_id(), Role.USER, (Text(duties.notice(cause)),),
+                                       time.time()))
         else:
             await self._ensure_user_last()
         while True:
@@ -1282,7 +1297,8 @@ class Runtime:
         if section := duties.prompt(self._conversation.duty, self._conversation.plan):
             system = f"{system}\n\n{section}"
         self._unseen = False
-        return InferenceRequest(info.id, system, list(assembled.messages), tools, reserve)
+        messages = [_stamped(m) for m in assembled.messages]
+        return InferenceRequest(info.id, system, messages, tools, reserve)
 
     async def _calibrate(self, request: InferenceRequest) -> None:
         if request.model in self._calibration:

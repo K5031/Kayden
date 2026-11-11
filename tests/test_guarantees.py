@@ -322,9 +322,9 @@ async def test_single_cycle_at_a_time(make: Any) -> None:
     await h.rec.wait_state(AgentState.IDLE, count=2)
     assert core.max_active == 1
     assert len([r for r in core.requests if r.tools]) == 2
-    texts = [b.text for m in core.requests[1].messages if m.role == Role.USER
-             for b in m.blocks if isinstance(b, Text)]
-    assert texts == ["one", "two", "three"]
+    texts = [b.text.split("] ", 1)[1] for m in core.requests[1].messages
+             if m.role == Role.USER for b in m.blocks if isinstance(b, Text)]
+    assert texts == ["one", "two", "three"]  # each after the time it was sent
 
 
 # ── Turn boundary ──

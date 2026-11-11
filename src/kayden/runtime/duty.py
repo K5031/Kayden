@@ -45,7 +45,7 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
             "background work finishes, when an open plan item falls due, and at least "
             f"every {_span(duty.max_interval_s)}. To react to something outside (new mail, "
             "a webhook, a file), start a tool that waits for it; when it finishes it wakes "
-            "you. Wake-up notices give the time. If you are blocked and only your supervisor "
+            "you. If you are blocked and only your supervisor "
             "can unblock you, call ask_for_help and end your turn; solve what you can "
             "yourself first.")
     if plan:
@@ -57,9 +57,9 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
     return "\n\n".join(parts)
 
 
-def notice(cause: str, now: float) -> str:
-    return (f"[Runtime notice] It is {local(now)}. You were woken for your duty: {cause}. "
-            "Continue it, or end your turn if there is nothing to do now.")
+def notice(cause: str) -> str:
+    return (f"[Runtime notice] You were woken for your duty: {cause}. Continue it, or end "
+            "your turn if there is nothing to do now.")
 
 
 def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:

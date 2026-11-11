@@ -15,6 +15,9 @@ conversation after its first message; you can rename it.
   bring it back.
 - **Delete** erases a conversation for good. See [Deleting](#deleting).
 
+The agent sees when each of your messages was sent, so it knows the date and time and how
+long ago you last wrote. The conversation shows your messages as you typed them.
+
 ## Background tasks
 
 A tool that runs longer than about 10 seconds moves to the background. The agent gets on

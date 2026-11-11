@@ -52,7 +52,7 @@ def wakes(h: Harness) -> list[str]:
 
 def notices(request: Any) -> list[str]:
     return [b.text for m in request.messages for b in m.blocks
-            if isinstance(b, Text) and b.text.startswith("[Runtime notice]")]
+            if isinstance(b, Text) and "[Runtime notice]" in b.text]
 
 
 async def idle(h: Harness, requests: int) -> None:

@@ -68,7 +68,7 @@ class EchoCore(Core):
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
         last = request.messages[-1]
-        text = "echo: " + render(last)
+        text = "echo: " + render(last).split("] ", 1)[-1]  # without the time it was sent
         yield Completed(
             Message(f"echo-{len(request.messages)}", Role.ASSISTANT, (Text(text),), 0.0),
             Usage(1, 1),

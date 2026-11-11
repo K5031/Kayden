@@ -650,8 +650,8 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 |---|---|
 | Intervals | Default minimum 1 minute, maximum 1 hour (`Duty.min_interval_s`, `max_interval_s`); the frontends take minutes |
 | Spending limit | `Budget.max_cost_usd` must be set: `set_duty` refuses without it; a duty whose limit was removed later pauses when the cycle ends, with `Failure(BUDGET)` |
-| Prompt | Appended to the system prompt after Memory's addendum: "## Your duty" (instruction, how it is woken, finish_goal for a goal) and "## Plan" (one line per item: status, text, due in local ISO time, note). A plan without a duty is shown alone. The current time is not in the system prompt, which would change every request and void the provider's prompt cache; wake-up notices and update_plan's result give it |
-| Notice | A cycle the runtime starts for a duty begins with a USER message "[Runtime notice] It is <local time>. You were woken for your duty: <cause>…"; causes: the duty was turned on, a plan item is due, scheduled check-in, background work finished. User-message cycles get none |
+| Prompt | Appended to the system prompt after Memory's addendum: "## Your duty" (instruction, how it is woken, finish_goal for a goal) and "## Plan" (one line per item: status, text, due in local ISO time, note). A plan without a duty is shown alone. The current time is not in the system prompt, which would change every request and void the provider's prompt cache; every user message carries its sending time (Message times) and update_plan's result gives the time |
+| Notice | A cycle the runtime starts for a duty begins with a USER message "[Runtime notice] You were woken for your duty: <cause>…"; causes: the duty was turned on, a plan item is due, scheduled check-in, background work finished. User-message cycles get none |
 | update_plan | Replaces the whole list; `due` is ISO 8601 (local time without an offset) or `due_in_minutes`; an unreadable time is an ERROR result and changes nothing. Offered while the conversation has a duty or a plan; finish_goal only with a goal |
 | Schedule | Computed when a cycle ends idle (an asyncio timer); cancelled by any cycle request, Stop, start, failure, ending the duty and shutdown; recomputed when the duty or plan changes while idle. Overdue items wake at the minimum interval |
 | Events | `ConversationUpdated` for duty and plan changes; `DutyScheduled(wake_at)` and `RuntimeSnapshot.duty_wake_at` for the next wake; the event log records `duty`, `plan` (item count), `duty_scheduled` (delay, cause), `duty_paused`, `goal_finished` and each `cycle_requested` reason ("duty: <cause>") |
@@ -659,3 +659,10 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 | Store | SQLite schema 8: `conversations.duty` (JSON or NULL) and `conversations.plan` (JSON list, default `[]`) |
 | Plan text | The TUI and desktop edit the plan as lines: `[status] step \| due YYYY-MM-DD HH:MM \| note` (`frontends.common.plan_text`, `parse_plan_text`) |
 | Commands | TUI: `/duty <instruction>`, `/goal <instruction>`, `/duty off`, `/duty` or `/plan` or F5 for the screen. Desktop: **Kayden → Duty…** |
+
+## Message times
+
+| Choice | Value |
+|---|---|
+| Stamp | In the request only, the first text block of every USER message (the user's, runtime notices, the activation notice) starts with `[Sent Wed 2026-11-11 10:15 +01:00] `: its `created_at` in local time with weekday and offset. Tool results and operation results are not stamped |
+| Why there | Computed from the stored time, so a message reads the same in every request and the provider's prompt cache holds; the transcript, the frontends and search keep the text as typed |
