@@ -765,6 +765,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Settings window | Frameless, its own title and ✕ (dragged by its title row); sections down the left (General, Spending, Permissions, Instructions, Memory, Tool servers) and rows with a name and a one-line explanation on the left and the control on the right. Memory and Tool servers are the old dialogs embedded as pages; the profile menu's Memory and Tool servers open Settings at them. Save and Cancel stay |
 | Status | No status line under the message box: Stop is the send button, working sub-sessions are dots in the sidebar, notices say the rest. A duty's next check-in (or that it is paused) is a small note beside the title |
 | Start | The window opens maximized |
+| Folder picker | Under the message box, left, only in a new chat before its first message (and only when the Tools take a folder): the folder's name; its menu lists that folder (checked) and those of recent conversations, newest first, six in all, then Choose folder…. Picking one starts the new chat there |
 | Sidebar | Starts 320 px wide at 100% zoom, scaled with it; the divider can be dragged, and the width is not saved |
 
 ## Compaction lines

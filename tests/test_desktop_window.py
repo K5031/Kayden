@@ -1380,3 +1380,33 @@ async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
     assert sessions._viewers.get(child.id, 0) == 0  # released, not left open
     assert controller.model.conversation.id == parent_id
     assert window.conversation_list.currentItem().data(Qt.ItemDataRole.UserRole) == parent_id
+
+
+async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path):
+    default, project, other = (tmp_path / n for n in ("default", "project", "other"))
+    for folder in (default, project, other):
+        folder.mkdir()
+    tools = FakeTools()
+    tools.folders = []
+    h: Harness = await make(tools=tools, modules=ModuleState(work_folder=str(default)))
+    h.core.add(Step(text="hi"))
+    await h.chat("In project", folder=str(project))
+    await h.chat("In other", folder=str(other))
+    await h.start()  # a new chat, in the default folder
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    window._refresh_status()
+    button = window.folder_button
+    assert not button.isHidden() and button.text().strip() == "default"
+    assert button.toolTip().endswith(str(default))
+    menu = button.menu()
+    menu.aboutToShow.emit()
+    labels = [a.text() for a in menu.actions() if a.text()]
+    assert labels == ["default", "other", "project", "Choose folder…"]
+    assert [a.text() for a in menu.actions() if a.isChecked()] == ["default"]
+    next(a for a in menu.actions() if a.text() == "project").trigger()
+    await eventually(lambda: controller.model.conversation.folder == str(project))
+    await eventually(lambda: button.text().strip() == "project")
+    controller.send("hello")
+    await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
+    assert button.isHidden()  # chosen with the first message; the header shows it after

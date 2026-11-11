@@ -168,6 +168,7 @@ EMPTY_TITLE = "Start a conversation"
 EMPTY_HINT = "Ask a question or describe a task."
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
 COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
+RECENT_FOLDERS = 6  # a new chat's folder menu: its own and recent ones
 SIDEBAR_WIDTH = 320  # px at 100%: room for a title and a sub-session's under it
 TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
@@ -1323,6 +1324,17 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _=False, p=policy: self.choose_permissions(p))
             self.permission_actions[policy] = action
         self.permissions_button.setMenu(permissions_menu)
+        # A new chat's folder, and recent ones to start it in instead; only before the first
+        # message (the header's tooltip shows it after).
+        self.folder_button = QToolButton(objectName="modelPicker")
+        self.folder_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.folder_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.folder_button.setAccessibleName("Work folder")
+        folder_menu = QMenu(self)
+        folder_menu.aboutToShow.connect(self._fill_folder_menu)
+        self.folder_button.setMenu(folder_menu)
+        self.folder_button.hide()
+        footer.addWidget(self.folder_button)
         footer.addStretch(1)
         footer.addWidget(self.permissions_button)
         footer.addWidget(self.model_button)
@@ -1361,6 +1373,7 @@ class MainWindow(QMainWindow):
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.text))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
+        self.folder_button.setIcon(theme.icon("folder", colors.muted, 14))
         maximized = self.isMaximized()
         for name, button in self.window_buttons.items():
             kind = "restore" if name == "maximize" and maximized else name
@@ -1374,6 +1387,26 @@ class MainWindow(QMainWindow):
             return
         folder = self.model.conversation.folder if self.model.conversation else None
         choose_folder(self, folder or str(Path.home()), self.folder_chosen)
+
+    def _fill_folder_menu(self) -> None:
+        """The open chat's folder, then those of recent conversations, newest first."""
+        menu = self.folder_button.menu()
+        menu.clear()
+        own = self.model.conversation.folder if self.model.conversation else None
+        recent = [info.folder for info in sorted(self._conversations.values(),
+                                                 key=lambda i: i.updated_at, reverse=True)
+                  if info.folder is not None]
+        for folder in list(dict.fromkeys([own, *recent]))[:RECENT_FOLDERS]:
+            if folder is None:
+                continue
+            action = menu.addAction(Path(folder).name or folder)
+            action.setCheckable(True)
+            action.setChecked(folder == own)
+            action.setToolTip(folder_path(folder))
+            action.triggered.connect(lambda _=False, f=folder: self.folder_chosen(f))
+        menu.setToolTipsVisible(True)
+        menu.addSeparator()
+        menu.addAction("Choose folder…", self._choose_folder)
 
     def folder_chosen(self, folder: str) -> None:
         """Start a chat in `folder`; an open chat with no messages moves there."""
@@ -1714,6 +1747,12 @@ class MainWindow(QMainWindow):
                                     if folder is not None else "")
         if hasattr(self, "folder_action"):  # built after the first status
             self.folder_action.setVisible(folder is not None)
+        new_chat = (self._viewing is None and folder is not None and not model.items
+                    and not model.has_earlier)
+        self.folder_button.setVisible(new_chat)
+        if folder is not None:
+            self.folder_button.setText(f" {Path(folder).name or folder}")
+            self.folder_button.setToolTip(f"Kayden works in {folder_path(folder)}")
         self.send_button.setText("Stop" if model.busy else "Send")
         self.send_button.setToolTip("Stop (Esc)" if model.busy else "Send (Enter)")
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")
