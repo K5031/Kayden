@@ -1124,3 +1124,17 @@ async def test_settings_has_sections_with_memory_and_tool_servers(make, qapp):
     assert dialog.stack.currentWidget() is dialog.memory
     dialog.show_page("Instructions")
     assert dialog.instructions.isVisibleTo(dialog.stack.currentWidget())
+
+
+async def test_the_sidebar_starts_wide_enough_to_read_titles(make, qapp):
+    from PySide6.QtWidgets import QSplitter
+
+    h: Harness = await make()
+    await h.start()
+    window, _, _ = await open_window(h)
+    window.resize(1400, 900)
+    window.show()
+    await asyncio.sleep(0.05)
+    sidebar = window.findChild(QSplitter).sizes()[0]
+    assert sidebar >= 320 * theme.zoom()
+    window.close()

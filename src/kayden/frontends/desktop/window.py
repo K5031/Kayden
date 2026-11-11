@@ -167,6 +167,7 @@ EMPTY_TITLE = "Start a conversation"
 EMPTY_HINT = "Ask a question or describe a task."
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
 COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
+SIDEBAR_WIDTH = 320  # px at 100%: room for a title and a sub-session's under it
 TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
 # Item data the sidebar and memory rows are drawn from.
@@ -1320,7 +1321,8 @@ class MainWindow(QMainWindow):
         splitter.addWidget(sidebar)
         splitter.addWidget(main)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([250, 750])
+        sidebar_width = round(SIDEBAR_WIDTH * theme.zoom())
+        splitter.setSizes([sidebar_width, max(self.width() - sidebar_width, COLUMN_WIDTH)])
         self.setCentralWidget(splitter)
         self._paint_icons()
 
