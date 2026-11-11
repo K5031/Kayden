@@ -129,6 +129,7 @@ from kayden.frontends.common import (
     model_label,
     module_options,
     needs_restart,
+    notice_of,
     parse_plan_text,
     past_tense,
     plan_text,
@@ -1703,7 +1704,7 @@ class KaydenApp(App[None]):
                     self._stream.append(entry)
                 entry.stream_arguments(name, chunk)
             case MessageQueued(message_id=message_id, text=text):
-                if message_id not in self._queued:
+                if message_id not in self._queued and notice_of(text) is None:
                     entry = UserEntry(text, queued=True, message_id=message_id)
                     self._queued[message_id] = await self._mount(entry)
             case MessageCommitted(message=message, stop=stop):
@@ -1875,7 +1876,9 @@ class KaydenApp(App[None]):
         self._rendered_ids.add(message.id)
         if message.role is Role.USER:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
-            if text:
+            if (notice := notice_of(text)) is not None:
+                await self._mount(SystemEntry(notice))
+            elif text:
                 await self._mount(UserEntry(text, message_id=message.id))
             for block in message.blocks:
                 if isinstance(block, OperationResult):

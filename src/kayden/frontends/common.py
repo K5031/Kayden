@@ -15,6 +15,7 @@ from typing import Any
 
 from kayden.api import (
     DESCRIPTION_ARG,
+    NOTICE_PREFIX,
     AgentState,
     Duty,
     DutyKind,
@@ -41,6 +42,12 @@ PERMISSION_LABELS = {
     PermissionPolicy.ASK: "Ask me before every action",
     PermissionPolicy.DENY: "Never run tools",
 }
+
+
+def notice_of(text: str) -> str | None:
+    """What a message Kayden wrote for the model (api.NOTICE_PREFIX) says, to show as a
+    notice; None for anything the user wrote."""
+    return text.removeprefix(NOTICE_PREFIX).strip() if text.startswith(NOTICE_PREFIX) else None
 
 
 def proposal_parts(proposal: Proposal) -> tuple[str, str]:

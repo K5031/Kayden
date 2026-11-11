@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kayden.api import Budget, McpServer, PermissionPolicy
+from kayden.api import NOTICE_PREFIX, Budget, McpServer, PermissionPolicy
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are Kayden, an AI agent. Use the available tools to accomplish the user's goals.\n"
@@ -19,7 +19,7 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 ACTIVATION_NOTICE = (
-    "[Runtime notice] You were activated without a new user message. Continue your work, "
+    f"{NOTICE_PREFIX}You were activated without a new user message. Continue your work, "
     "or just say so if there is nothing to do."
 )
 

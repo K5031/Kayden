@@ -728,3 +728,10 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Withdrawn | `op_cancel` on its id, Stop, and `start()` (switching conversations) cancel pending proposals: `ProposalResolved(id, None)`. Pending proposals are not in `RuntimeSnapshot.operations` nor counted in `StateChanged.pending_ops` |
 | Results | Approved: the call's own output. Dismissed: "The user dismissed the proposal; it did not run." (OK status) |
 | Cards | Desktop: `ProposalCard` with the permission cards ("Kayden proposes: <step sentence>", the reason, other arguments; a `start_session` shows its task), Approve and Dismiss. TUI: `ProposalPrompt`, `/approve` and `/dismiss` answer the first open one |
+
+## Runtime notices
+
+| Choice | Value |
+|---|---|
+| Marker | `api.NOTICE_PREFIX` ("[Runtime notice] ") starts every USER message Kayden writes for the model: the activation notice, a duty's wake-up, a sub-session's report to its parent |
+| Shown | Frontends show such a message as a notice line without the prefix (desktop `NoticeItem`, TUI `SystemEntry`), never as the user's bubble; a queued one is shown once it is committed. A conversation whose first message is a notice is labelled "New chat" until it gets a title |

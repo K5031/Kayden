@@ -87,6 +87,7 @@ from kayden.frontends.common import (
     group_title,
     help_text,
     money,
+    notice_of,
     past_tense,
     provider_step,
 )
@@ -544,6 +545,8 @@ class ConversationModel:
         return item
 
     def _queue(self, event: MessageQueued) -> None:
+        if notice_of(event.text) is not None:
+            return  # shown once it is committed, as a notice
         if event.message_id not in self._queued and event.message_id not in self._seen:
             self._queued[event.message_id] = self._add(
                 UserItem(event.text, event.message_id, queued=True))
@@ -597,7 +600,9 @@ class ConversationModel:
         self._seen.add(message.id)
         if message.role is Role.USER:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
-            if text:
+            if (notice := notice_of(text)) is not None:
+                self._add(NoticeItem(notice, "info"))
+            elif text:
                 self._add(UserItem(text, message.id))
             for block in message.blocks:
                 if isinstance(block, OperationResult):
@@ -654,14 +659,15 @@ def conversation_label(info: ConversationInfo) -> str:
     """Its title, else the start of its first message, else "New chat"."""
     if info.title:
         return info.title
-    if info.preview and info.preview.strip():
+    if info.preview and info.preview.strip() and notice_of(info.preview) is None:
         return clip(info.preview, LABEL_CHARS)
     return "New chat"
 
 
 def conversation_preview(info: ConversationInfo) -> str:
     """The sidebar's second line: the start of the first message, unless it is the label."""
-    if not info.title or not info.preview or not info.preview.strip():
+    if (not info.title or not info.preview or not info.preview.strip()
+            or notice_of(info.preview) is not None):
         return ""
     return clip(info.preview, LABEL_CHARS)
 

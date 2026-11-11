@@ -30,6 +30,7 @@ import tomli_w
 
 from kayden.api import (
     DESCRIPTION_ARG,
+    NOTICE_PREFIX,
     AgentState,
     ConversationUpdated,
     EventEnvelope,
@@ -122,7 +123,7 @@ def message_lines(messages: Sequence[Message]) -> list[tuple[str, str]]:
                 case Text(text=text) if text.strip():
                     who = {Role.USER: "You", Role.ASSISTANT: "Agent"}.get(message.role,
                                                                         message.role)
-                    if text.startswith("[Runtime notice]"):
+                    if text.startswith(NOTICE_PREFIX):
                         who = "Kayden"
                     shown.append((who, text))
                 case ToolCall(name=name, arguments=args):
@@ -468,7 +469,7 @@ class SubSessions(Tools):
                       for b in m.blocks if isinstance(b, Text) and b.text.strip()), "")
         if len(reply) > NOTE_CHARS:
             reply = reply[:NOTE_CHARS] + "…"
-        note = (f"[Runtime notice] Sub-session {session.id} ({session.name[:80]}) ended a "
+        note = (f"{NOTICE_PREFIX}Sub-session {session.id} ({session.name[:80]}) ended a "
                 f"turn: {STATE_LABELS[session.state].lower()}.")
         if session.state == "waiting":
             note += f" It asks: {session.question}"

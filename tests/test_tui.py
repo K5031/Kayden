@@ -1250,3 +1250,16 @@ async def test_a_memory_update_after_an_answer_is_mentioned():
         await caught_up(pilot, app, stub)
         [line] = entries(app, SystemEntry)
         assert plain(line) == f"Memory updated: Trip, {PROFILE} (F4 to see it)"
+
+
+async def test_a_runtime_notice_is_a_system_line():
+    from kayden.api import NOTICE_PREFIX
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        stub.emit(MessageCommitted(msg("n1", Role.USER, Text(f"{NOTICE_PREFIX}Woken for the duty."))))
+        await caught_up(pilot, app, stub)
+        assert plain(entries(app, SystemEntry)[-1]) == "Woken for the duty."
+        assert not any("Woken" in plain(e) for e in entries(app, UserEntry))

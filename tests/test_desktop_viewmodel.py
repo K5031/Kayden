@@ -609,3 +609,20 @@ async def test_a_question_for_help_is_shown_and_named_in_the_status(make):
     assert "Duty waiting for your answer" in model.status_text
     controller.send("The main one.")
     await eventually(lambda: model.help_needed is None)
+
+
+async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make):
+    from kayden.api import Budget, Duty
+    from kayden.frontends.desktop.viewmodel import conversation_label
+
+    h: Harness = await make(budget=Budget(max_cost_usd=5))
+    h.core.add(Step(text="On it."))
+    info = await h.start()
+    model, _controller, _ = await attach(h)
+    await h.runtime.set_duty(Duty("Watch the inbox"))
+    await eventually(lambda: any("woken for your duty" in n.text for n in of(model, NoticeItem)))
+    assert not any("Runtime notice" in u.text for u in of(model, UserItem))
+    [notice] = [n for n in of(model, NoticeItem) if "woken" in n.text]
+    assert not notice.text.startswith("[Runtime notice]")
+    [stored] = await h.runtime.list_conversations()
+    assert stored.id == info.id and conversation_label(stored) == "New chat"

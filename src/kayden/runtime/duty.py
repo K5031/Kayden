@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from kayden.api import Duty, DutyKind, PlanItem, PlanStatus
+from kayden.api import NOTICE_PREFIX, Duty, DutyKind, PlanItem, PlanStatus
 
 TURNED_ON = "the duty was turned on"
 DUE = "a plan item is due"
@@ -58,7 +58,7 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
 
 
 def notice(cause: str) -> str:
-    return (f"[Runtime notice] You were woken for your duty: {cause}. Continue it, or end "
+    return (f"{NOTICE_PREFIX}You were woken for your duty: {cause}. Continue it, or end "
             "your turn if there is nothing to do now.")
 
 
