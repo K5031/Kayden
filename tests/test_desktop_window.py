@@ -417,14 +417,6 @@ async def test_continue_in_a_new_conversation(make, qapp):
     await eventually(lambda: controller.model.conversation.seed_from == first.id)
 
 
-async def test_spending_is_shown_above_the_conversation(make, qapp):
-    h: Harness = await make()
-    await h.start()
-    window, _controller, _ = await open_window(h)
-    assert window.spending_label.text().endswith("spent")
-    assert window.spending_label.isVisibleTo(window)
-
-
 async def test_memory_dialog_add_edit_delete_notes(make, qapp):
     from kayden.api import PROFILE
     from kayden.frontends.desktop.window import NoteDialog
@@ -493,13 +485,12 @@ async def test_the_folder_is_shown_and_choosing_another_starts_a_chat_there(make
     h.core.add(Step(text="hi"))
     empty = await h.start()
     window, controller, _ = await open_window(h)
-    await eventually(lambda: window.folder_button.text() == "default")
-    assert window.folder_button.isVisibleTo(window)
-    assert str(default) in window.folder_button.toolTip()
+    await eventually(lambda: str(default) in window.title_label.toolTip())
+    assert window.folder_action.isVisible()
 
     window.folder_chosen(str(project))  # an empty chat moves: no blank entry is left
     await eventually(lambda: controller.model.conversation.folder == str(project))
-    await eventually(lambda: window.folder_button.text() == "project")
+    await eventually(lambda: str(project) in window.title_label.toolTip())
     listed = await h.runtime.list_conversations()
     assert [c.id for c in listed] == [controller.model.conversation.id] != [empty.id]
 
@@ -511,12 +502,12 @@ async def test_the_folder_is_shown_and_choosing_another_starts_a_chat_there(make
     assert talked in [c.id for c in await h.runtime.list_conversations()]
 
 
-async def test_the_folder_button_is_hidden_for_tools_with_a_fixed_folder(make, qapp):
+async def test_the_folder_item_is_hidden_for_tools_with_a_fixed_folder(make, qapp):
     h: Harness = await make()
     await h.start()
     window, _controller, _ = await open_window(h)
     window._refresh_status()
-    assert not window.folder_button.isVisibleTo(window)
+    assert not window.folder_action.isVisible()
 
 
 async def test_a_command_shows_its_description_with_the_command_behind_it(make, qapp):
@@ -1018,7 +1009,8 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     window, _controller, _ = await open_window(h)
     assert window.menuBar().isHidden()
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
-    assert texts == ["&New chat", "&Duty…", "S&top", "&View", "&Model"]
+    assert texts == ["&New chat", "New chat in another &folder…", "&Duty…", "S&top", "&View",
+                     "&Model"]
     profile = window.profile_button.menu()
     window._fill_profile_header()
     texts = [a.text() for a in profile.actions() if a.text() and a.isVisible()]

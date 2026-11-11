@@ -1019,24 +1019,7 @@ class MainWindow(QMainWindow):
         head.setSpacing(10)
         self.title_label = ElidedLabel()
         self.title_label.setProperty("role", "title")
-        group = QFrame(objectName="headerGroup")
-        controls = QHBoxLayout(group)
-        controls.setContentsMargins(10, 4, 10, 4)
-        controls.setSpacing(10)
-        self.folder_button = QToolButton(objectName="folder")
-        self.folder_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.folder_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.folder_button.setAccessibleName("Work folder")
-        self.folder_button.clicked.connect(self._choose_folder)
-        self.folder_button.hide()
-        self.spending_label = _label(wrap=False, selectable=False, tone="muted")
-        self.spending_label.setToolTip("What Kayden has spent so far, across all conversations.")
-        controls.addWidget(self.folder_button)
-        controls.addWidget(self.spending_label)
-        group.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.spending_group = group
         head.addWidget(self.title_label, 1)
-        head.addWidget(group)
 
         self.scroll = QScrollArea(widgetResizable=True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1130,7 +1113,6 @@ class MainWindow(QMainWindow):
         colors = theme.current()
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.on_accent))
-        self.folder_button.setIcon(theme.icon("folder", colors.muted))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
         self.profile_button.setIcon(theme.avatar(self.user_name))
 
@@ -1182,9 +1164,11 @@ class MainWindow(QMainWindow):
         help_action = QAction("&Help", self, shortcut=QKeySequence.StandardKey.HelpContents)
         help_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(DOCS_URL)))
 
+        self.folder_action = QAction("New chat in another &folder…", self)
+        self.folder_action.triggered.connect(self._choose_folder)
         main_menu = QMenu(self)
         self.menu_button.setMenu(main_menu)
-        main_menu.addActions([self.new_action, self.duty_action, stop])
+        main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop])
         main_menu.addSeparator()
         view_menu = main_menu.addMenu("&View")
         for text, keys, steps in (
@@ -1405,17 +1389,11 @@ class MainWindow(QMainWindow):
         if conversation is not None:
             self.title_label.setText(conversation_label(
                 self._conversations.get(conversation.id, conversation)))
-        self.spending_label.setText(model.spending_text)
-        self.spending_label.setVisible(bool(model.spending_text))
         folder = conversation.folder if conversation is not None else None
-        self.folder_button.setVisible(folder is not None)
-        if folder is not None:
-            self.folder_button.setText(Path(folder).name or folder)
-            self.folder_button.setToolTip(
-                f"Kayden works in {folder_path(folder)}. Click to start a chat in another "
-                "folder." if self.model.items or self.model.has_earlier else
-                f"Kayden works in {folder_path(folder)}. Click to choose another folder.")
-        self.spending_group.setVisible(bool(model.spending_text) or folder is not None)
+        self.title_label.setToolTip(f"Kayden works in {folder_path(folder)}"
+                                    if folder is not None else "")
+        if hasattr(self, "folder_action"):  # built after the first status
+            self.folder_action.setVisible(folder is not None)
         self.send_button.setText("Stop" if model.busy else "Send")
         self.send_button.setToolTip("Stop (Esc)" if model.busy else "Send (Enter)")
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")

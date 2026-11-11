@@ -66,7 +66,7 @@ another reason, the Settings window opens with the message.
 | See what a tool did | Steps between two replies fold into one line: the step under way while Kayden works ("Search the web for flights to Oslo"), then how many steps there were and any that failed ("4 steps · 1 failed"). Click it to see each step and the thinking between them; point at a step to see the tool and its exact input, and press its arrow for the result. A step without a sentence shows the tool and its input. |
 | See the model's reasoning | Open **Thinking** above a reply. |
 | Start over | **New chat** (**Ctrl+N**). |
-| Work in another folder | Click the folder above the conversation and choose one. A chat with no messages yet moves there; otherwise a new chat starts in it. See [Folders](using-kayden.md#folders). |
+| Work in another folder | **☰ → New chat in another folder…** and choose one. A chat with no messages yet moves there; otherwise a new chat starts in it. See [Folders](using-kayden.md#folders). |
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **☰ → View → Show archived conversations** to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
@@ -92,9 +92,9 @@ undone. What Kayden remembered from it stays in Memory, where you can forget it 
 conversation opens a new chat in its place, once Kayden is not working. See [Deleting](concepts.md#deleting) for what
 deletion does not reach.
 
-Above the conversation are the conversation's folder and what Kayden has spent so far,
-across all conversations. The
-line under the message box shows what Kayden is doing, how many tasks run in the background,
+Hover the conversation's title to see its folder. What Kayden has spent, across all
+conversations, is at the top of the menu under your name; when you pass 80% of your
+spending limit, a notice in the conversation says so. The line under the message box shows what Kayden is doing, how many tasks run in the background,
 when a duty checks in next, and the model.
 
 At start the app reopens your most recent conversation, or the one you were in when you

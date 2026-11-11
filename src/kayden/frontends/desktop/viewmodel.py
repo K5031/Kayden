@@ -115,6 +115,9 @@ def clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+LIMIT_WARNING = 0.8  # of the spending limit: one notice when it is passed
+
+
 class Phase(StrEnum):
     PREPARING = "preparing"  # the model is still writing the call
     WAITING = "waiting"  # written, not started: a permission prompt or review, earlier calls
@@ -344,6 +347,17 @@ class ConversationModel:
         return " · ".join(parts)
 
     @property
+    def limit_share(self) -> float | None:
+        """How much of the spending limit is spent, 0 to 1; None without a limit."""
+        if self.usage is None:
+            return None
+        remaining = self.usage.budget_remaining.get("max_cost_usd")
+        if remaining is None:
+            return None
+        spent = self.usage.usage.cost_usd or 0.0
+        return spent / (spent + remaining) if spent + remaining > 0 else 1.0
+
+    @property
     def spending_text(self) -> str:
         if self.usage is None:
             return ""
@@ -485,7 +499,15 @@ class ConversationModel:
                     f"{len(call_ids)} task{'s' if len(call_ids) != 1 else ''} did not confirm "
                     "that they stopped and may still be running.", "warning"))
             case UsageUpdated(snapshot=snapshot):
+                before = self.limit_share
                 self.usage = snapshot
+                after = self.limit_share
+                if before is not None and after is not None and before < LIMIT_WARNING <= after:
+                    spent = snapshot.usage.cost_usd or 0.0
+                    limit = spent + snapshot.budget_remaining["max_cost_usd"]
+                    self._add(NoticeItem(f"You have spent {money(spent)} of your {money(limit)} "
+                                         "limit. Kayden stops when it is reached; raise it in "
+                                         "Settings.", "warning"))
             case ConversationUpdated(info=info):
                 if self.conversation is not None and info.id == self.conversation.id:
                     self.conversation = info

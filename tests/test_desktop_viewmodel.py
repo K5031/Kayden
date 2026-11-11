@@ -627,3 +627,21 @@ async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make
     assert not notice.text.startswith("[Runtime notice]")
     [stored] = await h.runtime.list_conversations()
     assert stored.id == info.id and conversation_label(stored) == "New chat"
+
+
+def test_passing_80_percent_of_the_limit_gives_one_warning():
+    from kayden.api import Usage, UsageSnapshot, UsageUpdated
+
+    model = ConversationModel()
+    model.usage = UsageSnapshot(Usage(0, 0, cost_usd=7.0), 0, 0.0, {"max_cost_usd": 3.0})
+
+    def spend(cost: float) -> None:
+        model.apply(UsageUpdated(UsageSnapshot(Usage(0, 0, cost_usd=cost), 0, 0.0,
+                                               {"max_cost_usd": 10.0 - cost})))
+
+    spend(7.9)
+    assert not of(model, NoticeItem)
+    spend(8.1)
+    spend(9.0)
+    [warning] = of(model, NoticeItem)
+    assert warning.severity == "warning" and "$8.10 of your $10 limit" in warning.text
