@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import html
 import json
 from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass
@@ -78,7 +79,7 @@ from kayden.api import (
     Decision,
     Duty,
     McpServer,
-    MemoryFile,
+    MemoryNote,
     ModelInfo,
     PermissionPolicy,
     PermissionRequest,
@@ -96,7 +97,6 @@ from kayden.frontends.common import (
     MCP_VARIABLES_HINT,
     MCP_WARNING,
     MEMORY_HINT,
-    MEMORY_TEMPLATE,
     MODULE_LABELS,
     PERMISSION_LABELS,
     PERMISSION_SHORT,
@@ -111,7 +111,6 @@ from kayden.frontends.common import (
     mcp_server,
     mcp_target,
     mcp_variables,
-    memory_label,
     model_label,
     module_options,
     needs_restart,
@@ -147,6 +146,7 @@ from kayden.frontends.desktop.viewmodel import (
     conversation_preview,
     group_heading,
     limit_update,
+    memory_source,
     needs_welcome,
     relative_age,
     relative_date,
@@ -831,6 +831,7 @@ def _detach(widget: QWidget) -> None:
                        if (child := layout.itemAt(i).layout()) is not None)
 
 
+NOTICE_LINKS = {"memory": "Open memory"}
 
 
 def is_long(text: str) -> bool:
@@ -968,7 +969,7 @@ _EDGE_CURSORS = {
 
 
 class NoticeLine(QLabel):
-    """A line from Kayden itself."""
+    """A line from Kayden itself; with a link, linkActivated carries the item's link."""
 
     def __init__(self, item: NoticeItem) -> None:
         super().__init__()
@@ -979,8 +980,13 @@ class NoticeLine(QLabel):
         self.refresh()
 
     def refresh(self) -> None:
-        self.setTextFormat(Qt.TextFormat.PlainText)
-        self.setText(self.item.text)
+        if self.item.link is None:
+            self.setTextFormat(Qt.TextFormat.PlainText)
+            self.setText(self.item.text)
+            return
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setText(f"{html.escape(self.item.text)} · "
+                     f'<a href="{self.item.link}">{NOTICE_LINKS[self.item.link]}</a>')
 
 
 class Detail(QWidget):
@@ -1688,7 +1694,7 @@ class MainWindow(QMainWindow):
 
     async def check_memory(self) -> None:
         """Hide Memory when the Memory module cannot show what it remembers."""
-        self.memory_action.setVisible(await self.controller.memory_files() is not None)
+        self.memory_action.setVisible(await self.controller.notes() is not None)
 
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
@@ -1774,10 +1780,12 @@ class MainWindow(QMainWindow):
                 return AssistantBubble(item)
             case ToolItem():
                 return ToolCard(item, self.controller.cancel)
-            case NoticeItem() if is_long(item.text):
+            case NoticeItem() if item.link is None and is_long(item.text):
                 return Detail(item.text, lines=1, chars=140)  # a new goal's brief
             case NoticeItem():
-                return NoticeLine(item)
+                line = NoticeLine(item)
+                line.linkActivated.connect(self._notice_link)
+                return line
 
     def _rebuild(self) -> None:
         for widget in (*self._widgets.values(), *self._groups.values()):
@@ -2046,6 +2054,10 @@ class MainWindow(QMainWindow):
     def open_memory(self) -> None:
         self.open_settings("Memory")
 
+    def _notice_link(self, link: str) -> None:
+        if link == "memory":
+            self.open_memory()
+
     def bring_forward(self) -> None:
         """Another launch of Kayden asked for this window."""
         self.showNormal()
@@ -2270,8 +2282,8 @@ class MainWindow(QMainWindow):
 
 
 class MemoryDialog(QDialog):
-    """The open conversation's project memory: MEMORY.md and one file per memory, which the
-    user adds, edits and deletes."""
+    """What Kayden remembers across conversations: the profile and notes, which the user
+    adds, edits and deletes."""
 
     def __init__(self, parent: QWidget, controller: Controller, *, embedded: bool = False
                  ) -> None:
@@ -2287,7 +2299,7 @@ class MemoryDialog(QDialog):
                                 role="title" if embedded else "heading"))
         layout.addWidget(_label(MEMORY_HINT, tone="muted"))
         self.entries = QListWidget()
-        self.entries.setAccessibleName("Memory files")
+        self.entries.setAccessibleName("Memory notes")
         self.entries.setItemDelegate(RowDelegate(self.entries, wrap=True))
         self.entries.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.entries.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -2296,7 +2308,7 @@ class MemoryDialog(QDialog):
         self.entries.itemActivated.connect(lambda _: self._edit())
         layout.addWidget(self.entries, 1)
         self.add_button = _primary(QPushButton("Add…"))
-        self.add_button.clicked.connect(lambda: MemoryFileDialog(self, None).open())
+        self.add_button.clicked.connect(lambda: NoteDialog(self, None).open())
         self.edit_button = QPushButton("Edit…")
         self.edit_button.clicked.connect(self._edit)
         self.forget_button = QPushButton("Delete…")
@@ -2314,57 +2326,58 @@ class MemoryDialog(QDialog):
 
     def refresh(self) -> None:
         async def load() -> None:
-            files = await self.controller.memory_files()
+            notes = await self.controller.notes()
             selected = self._selected()
             self.entries.clear()
-            for file in files or ():
-                name, description = memory_label(file)
-                item = QListWidgetItem(name)
-                item.setData(Qt.ItemDataRole.UserRole, file)
-                item.setData(PREVIEW_ROLE, description)
-                item.setToolTip(file.path)
+            for note in notes or ():
+                item = QListWidgetItem(note.title)
+                item.setData(Qt.ItemDataRole.UserRole, note)
+                item.setData(PREVIEW_ROLE, note.description)
+                item.setToolTip(memory_source(note))
                 self.entries.addItem(item)
-                if selected is not None and file.path == selected.path:
+                if selected is not None and note.id == selected.id:
                     self.entries.setCurrentItem(item)
             self._selection_changed()
 
         self.controller.command(load())
 
-    def _selected(self) -> MemoryFile | None:
+    def _selected(self) -> MemoryNote | None:
         item = self.entries.currentItem()
         return None if item is None else item.data(Qt.ItemDataRole.UserRole)
 
     def _selection_changed(self) -> None:
-        selected = self._selected() is not None
-        self.edit_button.setEnabled(selected)
-        self.forget_button.setEnabled(selected)
+        note = self._selected()
+        self.edit_button.setEnabled(note is not None)
+        self.forget_button.setEnabled(note is not None and not note.fixed)
 
     def _edit(self) -> None:
-        if (file := self._selected()) is not None:
-            MemoryFileDialog(self, file).open()
+        if (note := self._selected()) is not None:
+            NoteDialog(self, note).open()
 
     def _forget(self) -> None:
-        if (file := self._selected()) is not None:
-            confirm(self, f"Delete “{clip(memory_label(file)[0], 80)}”?",
-                    lambda: self.controller.delete_memory_file(file.path), yes="Delete",
-                    danger=True, details="Kayden won't remember it in this project any more.")
+        if (note := self._selected()) is not None:
+            confirm(self, f"Delete the note “{clip(note.title, 80)}”?",
+                    lambda: self.controller.delete_note(note.id), yes="Delete", danger=True,
+                    details="Kayden won't use it again. The messages it came from stay until "
+                            "you delete their conversation.")
 
 
-class MemoryFileDialog(QDialog):
-    """Add a memory file, or edit one's text as it is."""
+class NoteDialog(QDialog):
+    """Add or edit one memory note; the profile keeps its title."""
 
-    def __init__(self, parent: MemoryDialog, file: MemoryFile | None) -> None:
+    def __init__(self, parent: MemoryDialog, note: MemoryNote | None) -> None:
         super().__init__(parent)
-        self.memory, self.file = parent, file
-        self.setWindowTitle(f"Edit {file.path}" if file else "Add a memory")
-        self.setMinimumSize(620, 460)
+        self.memory, self.note = parent, note
+        self.setWindowTitle("Edit note" if note else "Add a note")
+        self.setMinimumSize(560, 420)
         form = QFormLayout(self)
         form.setContentsMargins(20, 18, 20, 16)
-        self.path = QLineEdit(file.path if file else "")
-        self.path.setPlaceholderText("a-short-name.md")
-        self.path.setReadOnly(file is not None)
-        self.text = QPlainTextEdit(file.text if file else
-                                   MEMORY_TEMPLATE.format(name="a-short-name"))
+        self.title = QLineEdit(note.title if note else "")
+        self.title.setPlaceholderText("A project, person or topic")
+        self.title.setReadOnly(note is not None and note.fixed)
+        self.description = QLineEdit(note.description if note else "")
+        self.description.setPlaceholderText("One line: what the note is about")
+        self.text = QPlainTextEdit(note.text if note else "")
         self.error = _label()
         theme.mark(self.error, "tone", "error")
         self.error.hide()
@@ -2373,8 +2386,9 @@ class MemoryFileDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         self.save_button = _primary(buttons.button(QDialogButtonBox.StandardButton.Save))
-        form.addRow("File", self.path)
-        form.addRow("Text", self.text)
+        form.addRow("Title", self.title)
+        form.addRow("About", self.description)
+        form.addRow("Note", self.text)
         form.addRow(self.error)
         form.addRow(buttons)
 
@@ -2386,8 +2400,9 @@ class MemoryFileDialog(QDialog):
             self.error.setText(user_message(error))
             self.error.show()
 
-        self.memory.controller.write_memory_file(
-            self.path.text().strip(), self.text.toPlainText(), failed=failed,
+        self.memory.controller.save_note(
+            self.title.text(), self.description.text(), self.text.toPlainText(),
+            self.note.id if self.note else None, failed=failed,
             done=lambda _: self.accept())
 
 

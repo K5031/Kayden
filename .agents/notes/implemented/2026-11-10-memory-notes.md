@@ -1,8 +1,6 @@
 # Agent Note: Memory as notes
 
-Status: rejected — replaced by [Memory like Claude Code](../implemented/2026-11-11-memory-like-claude-code.md): a light model saving after every answer kept the wrong things, and nothing cleaned up
-
-Kept because the save pass after each answer is a tempting design: it learns without the agent's attention, but a cheap model reading one exchange saved news of the day's work and what the repository already said (a note on the Kayden project, 2026-11-11), and topic notes grew into pages too coarse to correct one fact at a time.
+Status: implemented — long-term memory is a profile and topic notes, an index always in view, saved after each answer
 
 ## Problem
 
@@ -23,7 +21,7 @@ Anthropic's memory tool: a folder of files the model checks before a task), and 
 they go (Claude's app saves "individual topics as you chat"). This copies that pattern
 (the owner, 2026-11-10).
 
-## Proposal
+## Decision
 
 ### What is kept
 
@@ -68,7 +66,9 @@ notes by title and description and opens one in an editor.
 The SQLite store moved to schema 7; a store of schema 6 is refused, as for every schema
 change. The owner's store is converted once, by hand.
 
-Choices and limits are listed in `.agents/decisions.md` (Memory notes).
+Choices and limits are listed in `.agents/decisions.md` (Memory notes). Another Memory,
+[Memory like Claude Code](2026-11-11-memory-like-claude-code.md), keeps long-term memory
+as a folder of files per project instead and can be chosen in its place.
 
 ## Alternatives considered
 

@@ -114,23 +114,28 @@ Kayden keeps every message of every conversation until you delete the conversati
   "Compacting conversation…" while this runs, then "Conversation compacted".
 - The agent can **search** a conversation's full history, including summarized parts, and
   your other conversations that are not archived.
-- **Long-term memory** works like Claude Code's: a folder of small Markdown files for each
-  project (the conversation's folder), in Kayden's data folder under `projects/`. Each file
-  holds one fact (about you, how you want Kayden to work, the project, or where to find
-  something), and `MEMORY.md` lists them, one line each. Every conversation in the project
-  sees that list; the agent opens a file when it is relevant, so memory stays cheap as it
-  grows.
-- The agent writes memory itself while it works, when it learns something worth keeping:
-  your preferences, decisions and their reasons, facts the files do not record. It updates
-  or deletes a memory that turns out wrong, and skips what your files or history already
-  say. Each save shows as a step. You can read, add, edit and **delete** the files in
-  Memory, or open them in any editor. Memory stays when a conversation is deleted.
+- **Long-term memory** is a set of notes shared by all your conversations: **About you**
+  (who you are, how you like answers) and one note per project, person or topic, each with
+  a one-line description. Every conversation sees About you and the list of notes; the
+  agent opens a note when it is relevant, so memory stays cheap as it grows.
+- After each answer, Kayden's cheaper upkeep model reads the exchange and saves what will
+  matter later (decisions, plans, lasting facts) into the notes. It skips small talk, news
+  of recent work and anything Kayden can read again in your files, and rewrites a note that
+  has gone out of date, so you do not have to tidy memory yourself.
+  When it saves something, a line under the answer says so ("Memory updated: Trip"), with
+  a link to Memory in the app (F4 in the terminal).
+  The agent also saves when you ask it to remember something, and deletes a note when you
+  say it is no longer true. It never keeps passwords or keys on purpose. You can read, add,
+  edit and **delete** notes in Memory. Notes stay when the conversation that wrote them is
+  deleted. Deleting a note does not delete the messages it came from.
+- Kayden can keep long-term memory **per project, as files** instead, the way Claude
+  Code does; see [Installed modules](settings.md#installed-modules).
 
 ## Deleting
 
-Deleting a conversation erases its messages, its summary and its search entries. The
-project's memory stays, so Kayden still knows what it learned; to remove a memory too,
-delete it in Memory. Kayden overwrites the erased content in its database file, so it
+Deleting a conversation erases its messages, its summary and its search entries. Memory
+notes it wrote stay, so Kayden still knows what it learned; to remove one too, delete it in
+Memory. Deleting a note erases it with its earlier versions. Kayden overwrites the erased content in its database file, so it
 cannot be recovered from there. It cannot be undone.
 
 Deletion only reaches Kayden's database. It does not reach:

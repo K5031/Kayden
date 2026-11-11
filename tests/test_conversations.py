@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from kayden.api import (
+    PROFILE,
     AgentState,
     ConversationDeleted,
     ConversationUpdated,
@@ -109,6 +110,19 @@ async def test_seed_from_must_exist_and_start_a_new_conversation(make: Any) -> N
 # ── long-term memory ──
 
 
+async def test_conversations_use_and_add_long_term_memory(make: Any) -> None:
+    core = ScriptedCore(default=lambda r: Step(text="summary" if r.maintenance else "ok"))
+    h: Harness = await make(core=core, memory_kw={"compact_at": 0.002})
+    h.memory.extract = ["The user likes tea."]
+    conv = await h.start()
+    for i in range(3):
+        await h.turn(f"message {i} " + "x" * 400)
+    [profile] = await h.runtime.notes()
+    assert ("The user likes tea." in profile.text) and profile.source_conversation_id == conv.id
+    await h.turn("again")
+    assert "The user likes tea." in core.requests[-1].system
+
+
 async def test_recall_all_searches_other_conversations_but_not_archived(make: Any) -> None:
     h: Harness = await make(core=ScriptedCore(default=Step(text="ok")))
     shared = await h.start()
@@ -135,39 +149,42 @@ async def test_recall_all_searches_other_conversations_but_not_archived(make: An
 # ── editable long-term memory ──
 
 
-async def test_memory_the_user_writes_changes_the_next_context(make: Any) -> None:
+async def test_notes_the_user_writes_change_the_next_context(make: Any) -> None:
     core = ScriptedCore(default=Step(text="ok"))
     h: Harness = await make(core=core)
     await h.start()
-    await h.runtime.write_memory_file("MEMORY.md", "- [Trip](trip.md) — the spring trip\n")
-    await h.runtime.write_memory_file("trip.md", "Flights booked for May.\n")
+    await h.runtime.save_note(PROFILE, "", "Lives in Oslo.")
+    note = await h.runtime.save_note("Trip", "The spring trip", "Flights booked for May.")
     await h.turn("hi")
     system = core.requests[-1].system
-    assert "- [Trip](trip.md) — the spring trip" in system
-    assert "Flights booked" not in system  # a memory file is read on demand
+    assert "Lives in Oslo." in system and "Trip: The spring trip" in system
+    assert "Flights booked" not in system  # a note's text is read on demand
 
-    await h.runtime.write_memory_file("MEMORY.md", "- [Trip](trip.md) — the summer trip\n")
+    edited = await h.runtime.save_note("Trip", "The summer trip", "Moved to July.",
+                                       note_id=note.id)
+    assert edited.id == note.id
+    assert [r.text for r in h.store.long_term[note.id]] == [
+        "Flights booked for May.", "Moved to July."]
     await h.turn("hi again")
-    assert "the summer trip" in core.requests[-1].system
+    assert "The summer trip" in core.requests[-1].system
 
-    await h.runtime.delete_memory_file("trip.md")
-    await h.runtime.delete_memory_file("MEMORY.md")
-    assert await h.runtime.memory_files() == []
+    await h.runtime.delete_note(note.id)
+    assert [n.title for n in await h.runtime.notes()] == [PROFILE]
     await h.turn("and again")
     assert "Trip" not in core.requests[-1].system
     await settled(h)
     assert len(h.rec.of(MemoriesChanged)) >= 4
-    logged = [d for d in await decisions(h) if d.get("decision", "").startswith("memory_")]
-    assert [d["decision"] for d in logged] == ["memory_written"] * 3 + ["memory_deleted"] * 2
-    assert "summer" not in json.dumps(logged) and "May" not in json.dumps(logged)
+    logged = [d for d in await decisions(h) if d.get("decision", "").startswith("note_")]
+    assert [d["decision"] for d in logged] == ["note_saved"] * 3 + ["note_deleted"]
+    assert "Oslo" not in json.dumps(logged) and "July" not in json.dumps(logged)
 
 
 async def test_memory_commands_report_an_unsupported_module(make: Any) -> None:
     h: Harness = await make(memory_kw={"editable": False})
     with pytest.raises(NotImplementedError, match="cannot edit memories"):
-        await h.runtime.memory_files()
+        await h.runtime.notes()
     with pytest.raises(NotImplementedError, match="cannot edit memories"):
-        await h.runtime.write_memory_file("x.md", "y")
+        await h.runtime.save_note("x", "", "y")
     conv = await h.start()
     await h.start()
     with pytest.raises(NotImplementedError, match="cannot delete conversations"):
@@ -256,11 +273,12 @@ async def test_delete_conversation(make: Any) -> None:
     h: Harness = await make(core=ScriptedCore(default=Step(text="ok")))
     doomed = await h.start()
     await h.turn("my password is hunter2")
-    await h.runtime.write_memory_file("account.md", "Has an account.\n")
+    note = h.store.save("Account", "", "The password is hunter2.", None, doomed.id)
     seeded = await h.start(seed_from=doomed.id)
     await h.runtime.delete_conversation(doomed.id)
     assert doomed.id not in h.store.conversations
-    assert [f.path for f in await h.runtime.memory_files()] == ["account.md"]  # the project's
+    kept = [n for n in await h.runtime.notes() if n.id == note.id]  # notes stay until deleted
+    assert [n.source_conversation_id for n in kept] == [None]
     assert h.store.conversations[seeded.id].info.seed_from is None
     await settled(h)
     assert h.rec.of(ConversationDeleted) == [ConversationDeleted(doomed.id)]

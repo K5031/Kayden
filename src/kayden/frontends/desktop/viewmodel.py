@@ -37,7 +37,7 @@ from kayden.api import (
     MaintenanceFinished,
     MaintenanceStarted,
     MemoriesChanged,
-    MemoryFile,
+    MemoryNote,
     Message,
     MessageCommitted,
     MessageQueued,
@@ -210,6 +210,7 @@ class ToolItem:
 class NoticeItem:
     text: str
     severity: str = "info"  # info | warning | error
+    link: str | None = None  # a link after the text: "memory" opens the Memory window
 
 
 type Item = UserItem | AssistantItem | ToolItem | NoticeItem
@@ -553,7 +554,9 @@ class ConversationModel:
                 self.on_change(StatusChanged())
             case ConversationDeleted():
                 self.on_change(ConversationListChanged())
-            case MemoriesChanged():
+            case MemoriesChanged(saved=saved):
+                if saved:  # Memory saved on its own after the answer: say so, as Claude does
+                    self._add(NoticeItem(f"Memory updated: {', '.join(saved)}", link="memory"))
                 self.on_change(MemoryListChanged())
             case Failure():
                 self.failure = event
@@ -776,6 +779,13 @@ def relative_date(timestamp: float, now: float | None = None) -> str:
         return time.strftime("%a", when)
     date = f"{when.tm_mday} {time.strftime('%b', when)}"
     return date if when.tm_year == today.tm_year else f"{date} {when.tm_year}"
+
+
+def memory_source(note: MemoryNote) -> str:
+    when = time.strftime("%d %b %Y", time.localtime(note.updated_at))
+    if note.source_conversation_id is None:
+        return f"Last written by you on {when}"
+    return f"Last written in a conversation on {when}"
 
 
 def newest_first(conversations: Sequence[ConversationInfo]) -> list[ConversationInfo]:
@@ -1068,22 +1078,23 @@ class Controller:
 
         return self.command(erase(), failed=failed)
 
-    async def memory_files(self) -> list[MemoryFile] | None:
-        """The open conversation's project memory, MEMORY.md first; None when the Memory
-        module keeps none, so its controls are hidden."""
+    async def notes(self) -> list[MemoryNote] | None:
+        """Long-term memory notes, the profile first; None when the Memory module cannot
+        show them, so their controls are hidden."""
         try:
-            return list(await self.runtime.memory_files())
+            return list(await self.runtime.notes())
         except NotImplementedError:
             return None
 
-    def write_memory_file(self, path: str, text: str,
-                          failed: Callable[[Exception], None] | None = None,
-                          done: Callable[[Any], None] | None = None) -> asyncio.Task[None]:
-        return self.command(self.runtime.write_memory_file(path, text), done=done,
-                            failed=failed)
+    def save_note(self, title: str, description: str, text: str,
+                  note_id: str | None = None,
+                  failed: Callable[[Exception], None] | None = None,
+                  done: Callable[[Any], None] | None = None) -> asyncio.Task[None]:
+        return self.command(self.runtime.save_note(title, description, text, note_id=note_id),
+                            done=done, failed=failed)
 
-    def delete_memory_file(self, path: str) -> asyncio.Task[None]:
-        return self.command(self.runtime.delete_memory_file(path))
+    def delete_note(self, note_id: str) -> asyncio.Task[None]:
+        return self.command(self.runtime.delete_note(note_id))
 
     def save_duty(self, duty: Duty | None, plan: Sequence[PlanItem],
                   failed: Callable[[Exception], None] | None = None,

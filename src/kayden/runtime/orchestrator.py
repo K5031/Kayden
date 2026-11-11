@@ -55,7 +55,7 @@ from kayden.api import (
     MaintenanceStarted,
     MemoriesChanged,
     Memory,
-    MemoryFile,
+    MemoryNote,
     MemoryView,
     Message,
     MessageCommitted,
@@ -403,9 +403,12 @@ class Runtime:
             return None
         return await self._memory.inspect(conversation_id)
 
-    async def memory_files(self) -> Sequence[MemoryFile]:
+    async def notes(self) -> Sequence[MemoryNote]:
         self._hold_lock()
-        return await self._edit_memories(self._memory.memory_files(self._project()))
+        try:
+            return await self._memory.notes(folder=self._project())
+        except NotImplementedError:
+            raise NotImplementedError(_NO_MEMORY_EDITING) from None
 
     # ── Control ──────────────────────────────────────────────────────────
 
@@ -580,22 +583,24 @@ class Runtime:
         self._log.decision("delete_conversation", conversation=conversation_id)
         self._emit(ConversationDeleted(conversation_id))
 
-    async def write_memory_file(self, path: str, text: str) -> MemoryFile:
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None) -> MemoryNote:
         self._hold_lock()
-        file = await self._edit_memories(
-            self._memory.write_memory_file(self._project(), path, text))
-        self._log.decision("memory_written", by="user")
+        note = await self._edit_memories(
+            self._memory.save_note(title, description, text, note_id=note_id,
+                                   folder=self._project()))
+        self._log.decision("note_saved", note=note.id, by="user")
         self._emit(MemoriesChanged())
-        return file
+        return note
 
-    async def delete_memory_file(self, path: str) -> None:
+    async def delete_note(self, note_id: str) -> None:
         self._hold_lock()
-        await self._edit_memories(self._memory.delete_memory_file(self._project(), path))
-        self._log.decision("memory_deleted", by="user")
+        await self._edit_memories(self._memory.delete_note(note_id, folder=self._project()))
+        self._log.decision("note_deleted", note=note_id, by="user")
         self._emit(MemoriesChanged())
 
     def _project(self) -> str | None:
-        """Whose long-term memory the user sees: the open conversation's work folder."""
+        """Whose long-term memory: the open conversation's work folder (Memory.notes)."""
         return self._conversation.folder if self._conversation is not None else None
 
     async def _edit_memories[T](self, call: Awaitable[T]) -> T:
@@ -1177,8 +1182,12 @@ class Runtime:
                      and results[0].status in (ToolStatus.OK, ToolStatus.BACKGROUNDED))
             if (calls and not ended) or delivered:  # a queued message authorizes the next turn
                 continue
-            # After the answer: Memory's upkeep (a title, compaction) while nothing waits.
-            await self._maintain(list(specs.values()))
+            # After the answer: Memory saves what the exchange taught it.
+            before = await self._note_versions()
+            if await self._maintain(list(specs.values())):
+                after = await self._note_versions()
+                saved = tuple(title for key, title in after.items() if key not in before)
+                self._emit(MemoriesChanged(saved))
             if self._stopping:
                 return
             self._enter_idle()
@@ -1290,6 +1299,17 @@ class Runtime:
         self._emit(UsageUpdated(self._budget.snapshot()))
 
     # ── Maintenance ──────────────────────────────────────────────────────
+
+    async def _note_versions(self) -> dict[tuple[str, float], str]:
+        """Each note's (id, last written) -> title; empty when Memory keeps no notes."""
+        try:
+            return {(n.id, n.updated_at): n.title
+                    for n in await self._memory.notes(folder=self._project())}
+        except NotImplementedError:
+            return {}
+        except Exception:  # module calls are wrapped; no notice is no harm
+            logger.exception("Memory.notes failed")
+            return {}
 
     async def _maintain(self, tools: Sequence[ToolSpec]) -> bool:
         """Whether Memory acted."""

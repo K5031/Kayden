@@ -1,12 +1,11 @@
-"""SQLite Memory: append-only archive and rolling summary in SQLite; long-term memory as a
-folder of Markdown files per project (memory.folder), as Claude Code keeps it.
+"""SQLite Memory: append-only archive, rolling summary, long-term entries.
 
 The archive is the single source of truth for messages. Active context is the archived
 messages after the latest summary's `through_seq`, so compaction removes nothing: it
-inserts one summary row in a single transaction. All token figures come from the
-runtime's `TokenCounter`; thresholds are fractions of the window.
+inserts one summary row (plus any long-term entries) in a single transaction. All token
+figures come from the runtime's `TokenCounter`; thresholds are fractions of the window.
 
-The only removal from the archive is erasure the user asks for (delete_conversation). It runs with
+The only removal is erasure the user asks for (delete_conversation, forget). It runs with
 `secure_delete` on, so erased content is overwritten in the file, and checkpoints the
 write-ahead log afterwards so no copy stays there.
 """
@@ -33,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import (
-    MEMORY_INDEX,
+    PROFILE,
     ArchiveHit,
     AssembledContext,
     Block,
@@ -46,7 +45,7 @@ from kayden.api import (
     DutyKind,
     InstancePaths,
     Memory,
-    MemoryFile,
+    MemoryNote,
     MemoryView,
     Message,
     OperationResult,
@@ -63,16 +62,17 @@ from kayden.api import (
     ToolResult,
     ToolSpec,
 )
-from kayden.memory.folder import RULES, MemoryFolder, project_key
 from kayden.memory.tools import memory_tools, run_memory_tool
 
 from . import codec
 
 logger = logging.getLogger(__name__)
 # A store of another version is refused.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 8
 # Output headroom on top of the summary budget, for its tags.
 _SUMMARY_TAG_TOKENS = 64  # the summary and topics tags
+_SAVE_OUTPUT_TOKENS = 1024  # the pass after an answer: the changes it writes
+_SAVE_NOTES_FRACTION = 0.05  # of its window: note texts shown to it, newest first
 _TITLE_OUTPUT_TOKENS = 20
 _TITLE_INPUT_CHARS = 2000
 _TITLE_MAX_CHARS = 80
@@ -89,7 +89,7 @@ class CompactionConfig:
     trigger_fraction: float = 0.9  # compact once summary + active verbatim context exceed this
     remove_fraction: float = 0.5  # share of active tokens moved into the summary; 0.5 = cut-half
     summary_fraction: float = 0.05  # rolling-summary budget
-    long_term_fraction: float = 0.05  # budget for the memory rules and MEMORY.md
+    long_term_fraction: float = 0.05  # budget for the profile and the notes' index
 
     def __post_init__(self) -> None:
         for name in ("trigger_fraction", "remove_fraction", "summary_fraction",
@@ -102,13 +102,10 @@ CUT_HALF = CompactionConfig(remove_fraction=0.5)
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> SqliteMemory:
-    """Options: `path` (default `<data_dir>/memory.db`), `projects`, the folder of the
-    projects' memory folders (default `<data_dir>/projects`), plus any CompactionConfig
-    field."""
+    """Options: `path` (default `<data_dir>/memory.db`) plus any CompactionConfig field."""
     options = dict(options)
     path = Path(options.pop("path", paths.data_dir / "memory.db"))
-    projects = Path(options.pop("projects", paths.data_dir / "projects"))
-    return SqliteMemory(path, CompactionConfig(**options), projects=projects)
+    return SqliteMemory(path, CompactionConfig(**options))
 
 
 factory.display_name = "Built-in memory (SQLite)"  # type: ignore[attr-defined]
@@ -122,10 +119,38 @@ CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
 WHEN OLD.conversation_id NOT IN (SELECT conversation_id FROM erasing)
 BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
 """
+# Notes, each change a revision; note 1 is the profile. saved_exchanges says how far the
+# pass after each answer has read a conversation.
+_PROFILE_ID = 1
+_PROFILE_DESCRIPTION = "Who the user is and how they want answers"
+_MEMORY_TABLES = f"""
+CREATE TABLE notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL
+);
+CREATE TABLE note_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL REFERENCES notes(id),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    text TEXT NOT NULL,
+    source_conversation_id TEXT REFERENCES conversations(id),
+    created_at REAL NOT NULL
+);
+CREATE INDEX note_revisions_note ON note_revisions(note_id, id);
+CREATE INDEX note_revisions_source ON note_revisions(source_conversation_id);
+INSERT INTO notes (id, created_at) VALUES ({_PROFILE_ID}, 0);
+INSERT INTO note_revisions (note_id, title, description, text, created_at)
+    VALUES ({_PROFILE_ID}, '{PROFILE}', '{_PROFILE_DESCRIPTION}', '', 0);
+CREATE TABLE saved_exchanges (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+    through_seq INTEGER NOT NULL
+);
+"""
 _FTS_TABLE = """CREATE VIRTUAL TABLE messages_fts USING fts5(
     body, content='', tokenize='porter unicode61 remove_diacritics 2'
 );"""
-_SCHEMA = f"""
+_ARCHIVE_SCHEMA = f"""
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
     title TEXT,
@@ -191,6 +216,44 @@ Previous summary:
 {summary}
 """
 
+_SAVE_PROMPT = """\
+You keep the long-term memory of an AI agent that works for a user. Read their latest
+exchange, which follows, and save what will matter in later conversations: who the user
+is and how they want answers, their projects, the people in them, decisions and plans and
+why, lasting facts about their work or setup. Save what the user said or decided, not what
+the agent suggested, and nothing the exchange does not state. Never save passwords, keys
+or other secrets.
+
+Save only what stays true and the agent could not find again. Skip:
+- news: recent work, what was just built, fixed or tried, the state of a task;
+- what the files, code, docs or git history of a project already say, such as how it is
+  built or what a tool does: the agent can read them again;
+- passing remarks, small talk, one-off requests, and anything already saved.
+
+Keep notes current: when a note shown in full holds news or something that is no longer
+true, save it again without that. A note you would write for this exchange alone is often
+better not written at all.
+
+Memory is a profile, titled "{profile_title}", and notes, one per project, person or
+topic, each with a one-line description.
+
+Reply with changes only, or with nothing at all when nothing lasting was said:
+<save title="..." description="...">the note's whole new text</save> creates a note, or
+replaces one shown in full below (the profile included);
+<append title="...">text to add</append> adds to a note listed by title only.
+To change a note, use its exact title. Keep notes short: facts and decisions, not the
+conversation.
+
+The profile:
+{profile}
+
+Notes shown in full:
+{shown}
+
+Other notes (title: description):
+{index}
+"""
+
 _TITLE_PROMPT = """\
 Write a title of at most six words for a conversation that starts with the user's message
 below. Reply with the title only: no quotes, no punctuation at the end."""
@@ -198,9 +261,20 @@ below. Reply with the title only: no quotes, no punctuation at the end."""
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
 _TOPICS_RE = re.compile(r"<topics>(.*?)</topics>", re.DOTALL)
 TOPICS_HEADING = "Topics so far (search the history for details):"
+_SAVE_RE = re.compile(r'<save title="([^"]*)"(?: description="([^"]*)")?>(.*?)</save>',
+                      re.DOTALL)
+_APPEND_RE = re.compile(r'<append title="([^"]*)">(.*?)</append>', re.DOTALL)
 _WORD_RE = re.compile(r"\w+")
 _INFO_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder, duty, plan"
 _NEW_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder"
+_CURRENT_NOTES = (
+    "SELECT n.id, r.title, r.description, r.text, r.source_conversation_id, r.created_at"
+    " FROM notes n JOIN note_revisions r ON r.id ="
+    " (SELECT MAX(id) FROM note_revisions WHERE note_id = n.id)"
+)
+_NOTES_ORDER = f" ORDER BY n.id != {_PROFILE_ID}, r.created_at DESC, n.id DESC"
+
+
 @dataclass(frozen=True, slots=True)
 class _Active:
     seq: int
@@ -221,17 +295,19 @@ class _State:
         return ([self.task] if self.task else []) + [a.message for a in self.active]
 
 
-class SqliteMemory(Memory):
-    """Memory on one SQLite file (WAL, so another process may read it concurrently). All
-    database work runs on a single worker thread."""
+class SqliteArchive(Memory):
+    """The archive, rolling summaries and conversations on one SQLite file (WAL, so another
+    process may read it concurrently); all database work runs on a single worker thread.
+    Long-term memory is a subclass's: what it adds to every request (_long_term), its
+    upkeep after an answer, what it erases with a conversation, and its tools."""
+
+    SCHEMA = _ARCHIVE_SCHEMA  # a subclass adds its own tables
+    SCHEMA_VERSION = 1
 
     def __init__(
-        self, path: str | PathLike[str], config: CompactionConfig = CUT_HALF, *,
-        projects: str | PathLike[str] | None = None,
+        self, path: str | PathLike[str], config: CompactionConfig = CUT_HALF
     ) -> None:
         self._path = Path(path)
-        # Long-term memory: a folder of files per project (memory.folder).
-        self._projects = Path(projects) if projects is not None else self._path.parent / "projects"
         self._config = config
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kayden-memory")
         self._conn: sqlite3.Connection | None = None
@@ -339,6 +415,7 @@ class SqliteMemory(Memory):
                 conn.execute("DELETE FROM erasing WHERE conversation_id = ?", (conversation_id,))
                 conn.execute("DELETE FROM summaries WHERE conversation_id = ?",
                              (conversation_id,))
+                self._erase(conn, conversation_id)
                 conn.execute("UPDATE conversations SET seed_from = NULL WHERE seed_from = ?",
                              (conversation_id,))
                 conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
@@ -430,8 +507,8 @@ class SqliteMemory(Memory):
 
     async def assemble(self, request: ContextRequest) -> AssembledContext:
         state = await self._run(_read_state, request.conversation_id)
-        index = await asyncio.to_thread(self._folder(state.info.folder).index)
-        return _fit(state, index, request, self._config.long_term_fraction)
+        long_term = await self._long_term(state.info)
+        return _fit(state, long_term, request, self._config.long_term_fraction)
 
     # ── Maintenance ───────────────────────────────────────────────────────
 
@@ -452,6 +529,7 @@ class SqliteMemory(Memory):
                 acted = await self._compact(state, complete, context) or acted
             if state.info.title is None:
                 acted = await self._title(conversation_id, complete) or acted
+            acted = await self._after_answer(conversation_id, complete, context) or acted
             return acted
 
     def _prompt(self, state: _State, summary: str, context: ContextRequest) -> tuple[str, int]:
@@ -601,31 +679,35 @@ class SqliteMemory(Memory):
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView:
         state = await self._run(_read_state, conversation_id, False)
-        index = await asyncio.to_thread(self._folder(state.info.folder).index)
-        return MemoryView(summary=state.summary, long_term=[index] if index else [])
+        long_term = await self._long_term(state.info)
+        return MemoryView(summary=state.summary,
+                          long_term=[long_term.head, *long_term.lines])
+
+    # ── Long-term memory: a subclass's ────────────────────────────────────
+
+    async def _conversation(self, conversation_id: ConversationId) -> ConversationInfo:
+        """KeyError if unknown."""
+        return await self._run(_require_conversation, conversation_id)
+
+    async def _long_term(self, info: ConversationInfo) -> LongTerm:
+        """What long-term memory adds to every request of this conversation."""
+        return LongTerm()
+
+    async def _after_answer(self, conversation_id: ConversationId, complete: Completion,
+                            context: ContextRequest) -> bool:
+        """Upkeep at the end of maintain (the runtime calls it again after an answer)."""
+        return False
+
+    def _erase(self, conn: sqlite3.Connection, conversation_id: ConversationId) -> None:
+        """Inside the transaction that erases a conversation: what goes or changes with it."""
 
     # ── Tools ─────────────────────────────────────────────────────────────
 
     async def list_tools(self) -> Sequence[ToolSpec]:
-        return memory_tools(editable=True)
+        return memory_tools(editable=False)
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         return await run_memory_tool(self, call, ctx)
-
-    # ── Long-term memory ──────────────────────────────────────────────────
-
-    def _folder(self, folder: str | None) -> MemoryFolder:
-        """The memory folder of a project: `<projects>/<key>/memory`."""
-        return MemoryFolder(self._projects / project_key(folder) / "memory")
-
-    async def memory_files(self, folder: str | None) -> Sequence[MemoryFile]:
-        return await asyncio.to_thread(self._folder(folder).files)
-
-    async def write_memory_file(self, folder: str | None, path: str, text: str) -> MemoryFile:
-        return await asyncio.to_thread(self._folder(folder).write, path, text)
-
-    async def delete_memory_file(self, folder: str | None, path: str) -> None:
-        await asyncio.to_thread(self._folder(folder).delete, path)
 
     async def aclose(self) -> None:
         def run(conn: sqlite3.Connection) -> None:
@@ -644,11 +726,137 @@ class SqliteMemory(Memory):
 
     def _call[T](self, fn: Callable[..., T], *args: Any) -> T:
         if self._conn is None:
-            self._conn = _open(self._path)
+            self._conn = _open(self._path, self.SCHEMA, self.SCHEMA_VERSION)
         return fn(self._conn, *args)
 
 
-def _open(path: Path) -> sqlite3.Connection:
+class SqliteMemory(SqliteArchive):
+    """The built-in Memory: the SQLite archive, plus long-term memory as notes in the same
+    file, a profile and one note per topic, saved by a light-model pass after each answer
+    (Agent Note: memory as notes)."""
+
+    SCHEMA = _ARCHIVE_SCHEMA + _MEMORY_TABLES
+    SCHEMA_VERSION = SCHEMA_VERSION
+
+    async def _long_term(self, info: ConversationInfo) -> LongTerm:
+        notes = await self.notes()
+        return LongTerm(notes[0].text, [f"{n.title}: {n.description}" for n in notes[1:]],
+                        _render_notes)
+
+    async def _after_answer(self, conversation_id: ConversationId, complete: Completion,
+                            context: ContextRequest) -> bool:
+        return await self._save_exchange(conversation_id, complete, context)
+
+    def _erase(self, conn: sqlite3.Connection, conversation_id: ConversationId) -> None:
+        conn.execute("UPDATE note_revisions SET source_conversation_id = NULL"
+                     " WHERE source_conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM saved_exchanges WHERE conversation_id = ?",
+                     (conversation_id,))
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        return memory_tools(editable=True)
+
+    async def _save_exchange(self, conversation_id: ConversationId, complete: Completion,
+                             context: ContextRequest) -> bool:
+        """After an answer (the newest message an answer that calls no tool): the light
+        model reads the exchange since the last save and writes what will matter later
+        into the profile and notes. A failed request is tried again after the next answer;
+        an exhausted budget propagates."""
+        count = context.count_tokens
+        rows, notes = await self._run(_unsaved, conversation_id)
+        messages = [_message(r[1:]) for r in rows]
+        if not messages or messages[-1].role is not Role.ASSISTANT or any(
+                isinstance(b, ToolCall) for b in messages[-1].blocks):
+            return False
+        profile = notes[0]
+        others = notes[1:]
+        shown, room = [], int(_SAVE_NOTES_FRACTION * complete.max_input_tokens(light=True))
+        for note in others:  # most recently written first
+            if count(note.text) > room:
+                break
+            shown.append(note)
+            room -= count(note.text)
+        listed = [n for n in others if n not in shown]
+        system = _SAVE_PROMPT.format(
+            profile_title=PROFILE, profile=profile.text or "(empty)",
+            shown="\n\n".join(f'<note title="{n.title}" description="{n.description}">\n'
+                               f"{n.text}\n</note>" for n in shown) or "(none)",
+            index="\n".join(f"- {n.title}: {n.description}" for n in listed) or "(none)")
+        allowance = (complete.max_input_tokens(light=True) - _SAVE_OUTPUT_TOKENS
+                     - count(system))
+        transcript = _render_transcript(messages)
+        if count(transcript) > allowance:  # keep the newest part
+            keep = _max_true(len(transcript), lambda n: count(transcript[-n:]) <= allowance)
+            transcript = transcript[-keep:] if keep else ""
+        try:
+            output = await complete(system, [_user_message(transcript)],
+                                    max_tokens=_SAVE_OUTPUT_TOKENS, light=True)
+        except CoreError as e:
+            logger.warning("saving the exchange of %s failed: %s", conversation_id, e)
+            return False
+        changes = _parse_saves(output)
+        last = rows[-1][0]
+
+        def commit(conn: sqlite3.Connection) -> None:
+            now = time.time()
+            with _transaction(conn):
+                _require_conversation(conn, conversation_id)
+                for kind, title, description, text in changes:
+                    _apply_change(conn, kind, title, description, text, conversation_id, now)
+                conn.execute(
+                    "INSERT INTO saved_exchanges VALUES (?, ?) ON CONFLICT(conversation_id)"
+                    " DO UPDATE SET through_seq = excluded.through_seq",
+                    (conversation_id, last))
+
+        await self._run(commit)
+        return bool(changes)
+
+    # ── Long-term memory ──────────────────────────────────────────────────
+
+    async def notes(self, *, folder: str | None = None) -> Sequence[MemoryNote]:
+        """One memory for every conversation: `folder` is ignored."""
+
+        def run(conn: sqlite3.Connection) -> list[MemoryNote]:
+            return [_note(row) for row in conn.execute(_CURRENT_NOTES + _NOTES_ORDER)]
+
+        return await self._run(run)
+
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None,
+                        conversation_id: ConversationId | None = None,
+                        folder: str | None = None) -> MemoryNote:
+        def run(conn: sqlite3.Connection) -> MemoryNote:
+            with _transaction(conn):
+                if conversation_id is not None:
+                    _require_conversation(conn, conversation_id)
+                return _save(conn, title, description, text, note_id, conversation_id,
+                             time.time())
+
+        return await self._run(run)
+
+    async def delete_note(self, note_id: str, *, folder: str | None = None) -> None:
+        def run(conn: sqlite3.Connection) -> None:
+            with _transaction(conn):
+                note = _require_note(conn, note_id)
+                if note.id == str(_PROFILE_ID):
+                    raise ValueError("the profile can be emptied but not deleted")
+                conn.execute("DELETE FROM note_revisions WHERE note_id = ?", (int(note_id),))
+                conn.execute("DELETE FROM notes WHERE id = ?", (int(note_id),))
+            _checkpoint(conn)
+
+        await self._run(run)
+
+
+
+def _render_notes(profile: str, index: Sequence[str]) -> str:
+    parts = [f"## {PROFILE}\n{profile}"] if profile else []
+    if index:
+        parts.append("## Memory notes (read one with read_note)\n"
+                     + "\n".join(f"- {line}" for line in index))
+    return "\n\n".join(parts)
+
+
+def _open(path: Path, schema: str, schema_version: int) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, isolation_level=None)
     try:
@@ -659,13 +867,13 @@ def _open(path: Path) -> sqlite3.Connection:
         with _transaction(conn):
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             if version == 0:
-                _execute_script(conn, _SCHEMA)
-            elif version != SCHEMA_VERSION:
+                _execute_script(conn, schema)
+            elif version != schema_version:
                 raise RuntimeError(
                     f"{path}: memory schema version {version} is not supported"
-                    f" (expected {SCHEMA_VERSION})"
+                    f" (expected {schema_version})"
                 )
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.execute(f"PRAGMA user_version = {schema_version}")
     except BaseException:
         conn.close()
         raise
@@ -734,6 +942,91 @@ def _clean_title(output: str) -> str:
     line = next((ln for ln in output.splitlines() if ln.strip()), "")
     title = line.strip().strip("#*_`\"'“”‘’ ").removeprefix("Title:").strip().rstrip(".")
     return title[:_TITLE_MAX_CHARS].strip()
+
+
+def _note(row: Sequence[Any]) -> MemoryNote:
+    return MemoryNote(str(row[0]), row[1], row[2], row[3], row[4], row[5],
+                      fixed=row[0] == _PROFILE_ID)
+
+
+def _require_note(conn: sqlite3.Connection, note_id: str) -> MemoryNote:
+    row = None
+    if note_id.isdigit():
+        row = conn.execute(_CURRENT_NOTES + " WHERE n.id = ?", (int(note_id),)).fetchone()
+    if row is None:
+        raise KeyError(f"unknown memory note {note_id}")
+    return _note(row)
+
+
+def _note_titled(conn: sqlite3.Connection, title: str) -> MemoryNote | None:
+    key = title.strip().casefold()
+    return next((n for n in map(_note, conn.execute(_CURRENT_NOTES))
+                 if n.title.casefold() == key), None)
+
+
+def _save(conn: sqlite3.Connection, title: str, description: str, text: str,
+          note_id: str | None, source: ConversationId | None, now: float) -> MemoryNote:
+    """Write a revision of the note `note_id` names, else of the one titled `title`, else of
+    a new note."""
+    title, description = title.strip(), " ".join(description.split())
+    if not title:
+        raise ValueError("a note needs a title")
+    same = _note_titled(conn, title)
+    if note_id is not None:
+        current = _require_note(conn, note_id)
+        if same is not None and same.id != current.id:
+            raise ValueError(f"another note is titled {same.title!r}")
+    else:
+        current = same
+        title = same.title if same is not None else title  # found by title: keep its own
+    if current is None:
+        note_id = str(conn.execute("INSERT INTO notes (created_at) VALUES (?)", (now,)).lastrowid)
+        description = description or title
+    else:
+        note_id = current.id
+        if note_id == str(_PROFILE_ID) and title.casefold() != PROFILE.casefold():
+            raise ValueError(f"the profile keeps its title, {PROFILE!r}")
+        title = current.title if note_id == str(_PROFILE_ID) else title
+        description = description or current.description
+    conn.execute(
+        "INSERT INTO note_revisions (note_id, title, description, text, source_conversation_id,"
+        " created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (int(note_id), title, description, text.strip(), source, now))
+    return _require_note(conn, note_id)
+
+
+def _apply_change(conn: sqlite3.Connection, kind: str, title: str, description: str,
+                  text: str, source: ConversationId, now: float) -> None:
+    """One change from the pass after an answer: `save` writes the whole text, `append`
+    adds to a note's text (creating the note when there is none)."""
+    title = title.strip().lstrip("#").strip()  # a heading copied as a title is the title
+    if kind == "append" and (current := _note_titled(conn, title)) is not None:
+        text = f"{current.text}\n{text.strip()}".strip()
+    _save(conn, title, description, text, None, source, now)
+
+
+def _unsaved(conn: sqlite3.Connection, conversation_id: ConversationId
+             ) -> tuple[list[Sequence[Any]], list[MemoryNote]]:
+    """What the pass after an answer reads: the messages since its last save, and the
+    notes (the profile first)."""
+    with _transaction(conn, "DEFERRED"):
+        _require_conversation(conn, conversation_id)
+        row = conn.execute("SELECT through_seq FROM saved_exchanges WHERE conversation_id = ?",
+                           (conversation_id,)).fetchone()
+        through = row[0] if row else 0
+        rows = conn.execute(
+            "SELECT seq, id, role, created_at, blocks FROM messages"
+            " WHERE conversation_id = ? AND seq > ? ORDER BY seq",
+            (conversation_id, through)).fetchall()
+        notes = [_note(r) for r in conn.execute(_CURRENT_NOTES + _NOTES_ORDER)]
+    return rows, notes
+
+
+def _parse_saves(output: str) -> list[tuple[str, str, str, str]]:
+    """(kind, title, description, text) for each change, in the order written."""
+    changes = [(m.start(), ("save", m[1], m[2] or "", m[3])) for m in _SAVE_RE.finditer(output)]
+    changes += [(m.start(), ("append", m[1], "", m[2])) for m in _APPEND_RE.finditer(output)]
+    return [c for _, c in sorted(changes) if c[1].strip() and c[3].strip()]
 
 
 def _replace_summary(conn: sqlite3.Connection, conversation_id: ConversationId,
@@ -917,24 +1210,30 @@ def _topics(lines: Sequence[str]) -> str:
     return "\n".join([TOPICS_HEADING, *lines]) if lines else ""
 
 
-def _render_addendum(summary: str, memory: bool, index: Sequence[str]) -> str:
-    """The conversation summary, then with `memory` the memory rules and the lines of the
-    project's MEMORY_INDEX."""
-    parts = []
-    if summary:
-        parts.append(f"## Conversation summary\n{summary}")
-    if memory:
-        parts.append(f"{RULES}\n\n## {MEMORY_INDEX}\n"
-                     + ("\n".join(index) if index else "(empty: nothing saved yet)"))
+@dataclass(frozen=True, slots=True)
+class LongTerm:
+    """What long-term memory adds to every request, as a subclass of SqliteArchive renders
+    it: a head shown whenever it fits (the profile, or memory rules) and lines kept from the
+    top within the long-term budget (an index)."""
+
+    head: str = ""
+    lines: Sequence[str] = ()
+    render: Callable[[str, Sequence[str]], str] = lambda head, lines: ""
+
+
+def _render_addendum(summary: str, long_term: str) -> str:
+    parts = [f"## Conversation summary\n{summary}"] if summary else []
+    if long_term:
+        parts.append(long_term)
     return "\n\n".join(parts)
 
 
-def _fit(state: _State, memory_index: str, request: ContextRequest, long_term_fraction: float
-         ) -> AssembledContext:
+def _fit(state: _State, long_term: LongTerm, request: ContextRequest,
+         long_term_fraction: float) -> AssembledContext:
     """The newest exchange (from the last USER message on) is always included, truncated in
-    view if it alone exceeds the budget. The addendum (summary, then the memory rules and
-    as much of the project's MEMORY_INDEX, from the top, as fits the long-term budget) gets
-    what remains, and the verbatim tail extends back as far as still fits."""
+    view if it alone exceeds the budget. The addendum (summary, then long-term memory: its
+    head when it fits, its lines from the top within the long-term budget) gets what
+    remains, and the verbatim tail extends back as far as still fits."""
     count, budget = request.count_tokens, request.max_tokens
     messages = state.view()
     starts = _valid_starts(messages, pending_calls_block=False)
@@ -945,19 +1244,19 @@ def _fit(state: _State, memory_index: str, request: ContextRequest, long_term_fr
     def size(addendum: str) -> int:
         return count(addendum) if addendum else 0
 
-    lines = [line for line in memory_index.splitlines() if line.strip()]
-    rules = size(_render_addendum("", True, []))
-    memory = rules <= room  # the rules come whenever they fit; the index within its budget
-    keep = _max_true(len(lines), lambda k: size(_render_addendum("", True, lines[:k])) - rules
-                     <= long_term_fraction * budget) if memory else 0
+    render, lines = long_term.render, list(long_term.lines)
+    head = long_term.head if size(render(long_term.head, [])) <= room else ""
+    base = size(render(head, []))
+    keep = _max_true(len(lines), lambda k: size(render(head, lines[:k])) - base
+                     <= long_term_fraction * budget)
     keep = _max_true(keep, lambda k: size(
-        _render_addendum(state.summary, memory, lines[:k])) <= room)
-    index = lines[:keep]
+        _render_addendum(state.summary, render(head, lines[:k]))) <= room)
+    memory = render(head, lines[:keep])
     summary = state.summary
-    if size(_render_addendum(summary, memory, index)) > room:
+    if size(_render_addendum(summary, memory)) > room:
         summary = summary[: _max_true(len(summary), lambda n: size(
-            _render_addendum(summary[:n], memory, index)) <= room)]
-    addendum = _render_addendum(summary, memory, index)
+            _render_addendum(summary[:n], memory)) <= room)]
+    addendum = _render_addendum(summary, memory)
     if view != newest:
         return AssembledContext(addendum, view)
 

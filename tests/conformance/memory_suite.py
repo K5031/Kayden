@@ -714,45 +714,35 @@ class MemoryConformance:
         assert tail[:-1] == messages[len(messages) - len(tail) + 1:]
         await assert_archived(memory, conv.id, messages + late)
 
-    # ── Long-term memory: a folder of files per project ───────────────────
+    # ── Long-term memory the user can change ──────────────────────────────
 
     async def editable(self, memory: Memory) -> None:
         try:
-            await memory.memory_files(None)
+            await memory.notes()
         except NotImplementedError:
-            pytest.skip("long-term memory files are optional and not implemented")
+            pytest.skip("editing long-term memory is optional and not implemented")
 
-    async def test_each_project_keeps_files_and_requests_see_its_index(
-            self, open_memory: MemoryFactory, tmp_path: Path):
+    async def test_notes_round_trip(self, open_memory: MemoryFactory, tmp_path: Path):
+        """What every Memory that keeps notes does: write, list, rename, delete, durably."""
         memory = open_memory()
         await self.editable(memory)
         project = str(tmp_path / "project")
-        conv = await memory.create_conversation(title="test", folder=project)
-        other = await memory.create_conversation(title="other")
-        await memory.append(conv.id, [text_message("tok0001")])
-        await memory.append(other.id, [text_message("tok0002")])
-        fact = "---\nname: tea\ndescription: Drinks tea\n---\n\nOnly green tea.\n"
-        await memory.write_memory_file(project, "tea.md", fact)
-        await memory.write_memory_file(project, "MEMORY.md", "- [Tea](tea.md) — drinks tea\n")
-        text = await addendum(memory, conv.id)
-        assert "- [Tea](tea.md) — drinks tea" in text and "Only green tea." not in text
-        assert "drinks tea" not in await addendum(memory, other.id)  # another project
+        note = await memory.save_note("trip", "The Oslo trip", "Leaves Friday.",
+                                      folder=project)
         await memory.aclose()
-
         memory = open_memory()
-        files = await memory.memory_files(project)
-        assert [(f.path, f.text) for f in files] == [
-            ("MEMORY.md", "- [Tea](tea.md) — drinks tea\n"), ("tea.md", fact)]
-        assert await memory.memory_files(None) == []
-        await memory.write_memory_file(project, "tea.md", "Matcha.\n")
-        assert [f.text for f in await memory.memory_files(project)][1] == "Matcha.\n"
-        await memory.delete_memory_file(project, "tea.md")
-        assert [f.path for f in await memory.memory_files(project)] == ["MEMORY.md"]
+        [kept] = [n for n in await memory.notes(folder=project) if n.id == note.id]
+        assert kept.description == "The Oslo trip" and "Leaves Friday." in kept.text
+        renamed = await memory.save_note("journey", "", "Leaves Saturday.", note_id=note.id,
+                                         folder=project)
+        titles = [n.title for n in await memory.notes(folder=project)]
+        assert any(t.startswith("journey") for t in titles)
+        assert not any(t.startswith("trip") for t in titles)
+        assert "Leaves Saturday." in renamed.text
+        await memory.delete_note(renamed.id, folder=project)
+        assert not any(n.title.startswith("journey") for n in await memory.notes(folder=project))
         with pytest.raises(KeyError):
-            await memory.delete_memory_file(project, "tea.md")
-        for outside in ("../escape.md", "/etc/passwd", ""):
-            with pytest.raises(ValueError):
-                await memory.write_memory_file(project, outside, "x")
+            await memory.delete_note(renamed.id, folder=project)
 
     # ── Continue from ─────────────────────────────────────────────────────
 
@@ -838,13 +828,3 @@ class MemoryConformance:
         await memory.aclose()
         assert (await open_memory().list_conversations())[-1].id == kept.id
 
-    async def test_memory_outlives_the_conversations_of_its_project(self, memory: Memory,
-                                                                    tmp_path: Path):
-        project = str(tmp_path / "project")
-        doomed = await memory.create_conversation(folder=project)
-        try:
-            await memory.write_memory_file(project, "diet.md", "Is vegetarian.\n")
-            await memory.delete_conversation(doomed.id)
-        except NotImplementedError:
-            pytest.skip("memory files and deleting conversations are optional")
-        assert [f.text for f in await memory.memory_files(project)] == ["Is vegetarian.\n"]

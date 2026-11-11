@@ -14,7 +14,7 @@ from kayden.api import (
     ConversationInfo,
     Decision,
     EventEnvelope,
-    MemoryFile,
+    MemoryNote,
     MemoryView,
     Message,
     ModelInfo,
@@ -128,7 +128,7 @@ class SetupRuntime:
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None:
         self._refuse()
 
-    async def memory_files(self) -> Sequence[MemoryFile]:
+    async def notes(self) -> Sequence[MemoryNote]:
         self._refuse()
 
     async def start(self, options: StartOptions) -> ConversationInfo:
@@ -159,10 +159,11 @@ class SetupRuntime:
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
         self._refuse()
 
-    async def write_memory_file(self, path: str, text: str) -> MemoryFile:
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None) -> MemoryNote:
         self._refuse()
 
-    async def delete_memory_file(self, path: str) -> None:
+    async def delete_note(self, note_id: str) -> None:
         self._refuse()
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:

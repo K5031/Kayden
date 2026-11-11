@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from kayden.api import (
-    MEMORY_INDEX,
+    PROFILE,
     ArchiveHit,
     AssembledContext,
     Block,
@@ -24,7 +24,7 @@ from kayden.api import (
     CoreError,
     Duty,
     Memory,
-    MemoryFile,
+    MemoryNote,
     MemoryView,
     Message,
     OperationResult,
@@ -38,7 +38,6 @@ from kayden.api import (
     ToolResult,
     ToolSpec,
 )
-from kayden.memory.folder import project_key
 from kayden.memory.tools import memory_tools, run_memory_tool
 
 
@@ -54,15 +53,41 @@ class Conversation:
 @dataclass
 class MemoryStore:
     conversations: dict[ConversationId, Conversation] = field(default_factory=dict)
-    # project key (memory.folder.project_key) -> path -> file
-    memory: dict[str, dict[str, MemoryFile]] = field(default_factory=dict)
+    # note id -> revisions, oldest first; the last one is current; "1" is the profile
+    long_term: dict[str, list[MemoryNote]] = field(default_factory=lambda: {
+        "1": [MemoryNote("1", PROFILE, "Who the user is", "", None, 0.0, fixed=True)]})
+    next_id: int = 1
 
-    def folder(self, folder: str | None) -> dict[str, MemoryFile]:
-        return self.memory.setdefault(project_key(folder), {})
+    def save(self, title: str, description: str, text: str, note_id: str | None,
+             source: ConversationId | None) -> MemoryNote:
+        title = title.strip()
+        if not title:
+            raise ValueError("a note needs a title")
+        same = next((n for n in self.notes() if n.title.casefold() == title.casefold()), None)
+        if note_id is not None:
+            if note_id not in self.long_term:
+                raise KeyError(note_id)
+            if same is not None and same.id != note_id:
+                raise ValueError(f"another note is titled {same.title!r}")
+        else:
+            note_id = same.id if same is not None else None
+            title = same.title if same is not None else title
+        if note_id == "1" and title.casefold() != PROFILE.casefold():
+            raise ValueError("the profile keeps its title")
+        if note_id is None:
+            self.next_id += 1
+            note_id = str(self.next_id)
+            self.long_term[note_id] = []
+        previous = self.long_term[note_id][-1] if self.long_term[note_id] else None
+        note = MemoryNote(note_id, PROFILE if note_id == "1" else title,
+                          description or (previous.description if previous else ""),
+                          text.strip(), source, time.time(), fixed=note_id == "1")
+        self.long_term[note_id].append(note)
+        return note
 
-    def index(self, folder: str | None) -> str:
-        file = self.folder(folder).get(MEMORY_INDEX)
-        return file.text if file else ""
+    def notes(self) -> list[MemoryNote]:
+        current = [revisions[-1] for revisions in self.long_term.values()]
+        return sorted(current, key=lambda n: (n.id != "1", -n.updated_at))
 
 
 def render_block(block: Block) -> str:
@@ -112,6 +137,7 @@ class InMemoryMemory(Memory):
         self.maintain_override: Callable[[Completion], Awaitable[bool]] | None = None
         self.auto_title = auto_title  # write titles during maintain with a light call
         self.editable = editable  # False: the optional memory methods are unsupported
+        self.extract: list[str] = []  # facts the next compaction adds to the profile
 
     async def list_tools(self) -> Sequence[ToolSpec]:
         return memory_tools(editable=self.editable)
@@ -170,30 +196,33 @@ class InMemoryMemory(Memory):
             raise NotImplementedError
         self._conv(conversation_id)
         del self.store.conversations[conversation_id]
+        for note_id, revisions in self.store.long_term.items():
+            self.store.long_term[note_id] = [
+                replace(r, source_conversation_id=None)
+                if r.source_conversation_id == conversation_id else r for r in revisions]
         for conv in self.store.conversations.values():
             if conv.info.seed_from == conversation_id:
                 conv.info = replace(conv.info, seed_from=None)
 
-    async def memory_files(self, folder: str | None) -> Sequence[MemoryFile]:
+    async def notes(self, *, folder: str | None = None) -> Sequence[MemoryNote]:
         if not self.editable:
             raise NotImplementedError
-        files = self.store.folder(folder)
-        return sorted(files.values(), key=lambda f: (f.path != MEMORY_INDEX, f.path))
+        return self.store.notes()
 
-    async def write_memory_file(self, folder: str | None, path: str, text: str) -> MemoryFile:
+    async def save_note(self, title: str, description: str, text: str, *,
+                        note_id: str | None = None,
+                        conversation_id: ConversationId | None = None,
+                        folder: str | None = None) -> MemoryNote:
         if not self.editable:
             raise NotImplementedError
-        if not path.strip() or path.startswith("/") or ".." in path.split("/"):
-            raise ValueError(f"{path!r} is not a path inside the memory folder")
-        file = MemoryFile(path.strip(), text, time.time())
-        self.store.folder(folder)[file.path] = file
-        return file
+        return self.store.save(title, description, text, note_id, conversation_id)
 
-    async def delete_memory_file(self, folder: str | None, path: str) -> None:
+    async def delete_note(self, note_id: str, *, folder: str | None = None) -> None:
         if not self.editable:
             raise NotImplementedError
-        if self.store.folder(folder).pop(path, None) is None:
-            raise KeyError(path)
+        if note_id == "1":
+            raise ValueError("the profile can be emptied but not deleted")
+        del self.store.long_term[note_id]
 
     async def append(self, conversation_id: ConversationId, messages: Sequence[Message]) -> None:
         conv = self._conv(conversation_id)
@@ -240,8 +269,12 @@ class InMemoryMemory(Memory):
         parts = []
         if conv.summary:
             parts.append(f"Summary of earlier conversation:\n{conv.summary}")
-        if index := self.store.index(conv.info.folder):
-            parts.append(f"{MEMORY_INDEX}:\n{index}")
+        profile, *others = self.store.notes()
+        if profile.text:
+            parts.append(f"{PROFILE}:\n{profile.text}")
+        if others:
+            parts.append("Memory notes:\n" + "\n".join(f"- {n.title}: {n.description}"
+                                                      for n in others))
         return "\n\n".join(parts)
 
     async def assemble(self, request: ContextRequest) -> AssembledContext:
@@ -337,6 +370,10 @@ class InMemoryMemory(Memory):
         # Atomic: summary and compaction point change together, after inference.
         conv.summary, conv.active_from = summary, conv.active_from + j
         conv.compactions += 1
+        profile = self.store.notes()[0]
+        added = [fact for fact in self.extract if fact not in profile.text]
+        if added:  # stands in for what the pass after an answer saves
+            self.store.save(PROFILE, "", "\n".join([profile.text, *added]), "1", conv.info.id)
         return True
 
     async def search(self, query: str, *,
@@ -360,8 +397,9 @@ class InMemoryMemory(Memory):
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView | None:
         conv = self._conv(conversation_id)
-        index = self.store.index(conv.info.folder)
-        return MemoryView(conv.summary, [index] if index else [])
+        profile, *others = self.store.notes()
+        return MemoryView(conv.summary, [profile.text, *(f"{n.title}: {n.description}"
+                                                         for n in others)])
 
 
 def factory(options: dict[str, Any], paths: Any) -> InMemoryMemory:

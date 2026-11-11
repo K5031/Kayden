@@ -33,6 +33,7 @@ openai = "kayden.core.openai_compat:openai_factory"
 
 [project.entry-points."kayden.memories"]
 sqlite = "kayden.memory.sqlite:factory"
+files = "kayden.memory.files:factory"
 
 [project.entry-points."kayden.tools"]
 shell-files = "kayden.tools.shell_files:factory"

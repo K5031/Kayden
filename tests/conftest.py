@@ -17,6 +17,7 @@ from kayden.api import (
     AgentState,
     ConversationInfo,
     Decision,
+    Memory,
     Message,
     PermissionPolicy,
     PermissionRequested,
@@ -66,7 +67,7 @@ class Harness:
     runtime: Runtime
     core: ScriptedCore
     tools: FakeTools
-    memory: InMemoryMemory
+    memory: Any  # InMemoryMemory unless the test gave a real Memory
     store: MemoryStore
     rec: Recorder
     data_dir: Path
@@ -224,6 +225,7 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
         more_tools: Sequence[FakeTools] = (),
         store: MemoryStore | None = None,
         memory_kw: dict[str, Any] | None = None,
+        memory: Memory | None = None,  # a real Memory module instead of the fake
         data_dir: Path | None = None,
         interactive: bool = True,
         kind: str = "terminal",
@@ -235,7 +237,8 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
         tools = tools or FakeTools()
         tools.trace = trace
         store = store if store is not None else MemoryStore()
-        memory = InMemoryMemory(store, trace=trace, **(memory_kw or {}))
+        fake = InMemoryMemory(store, trace=trace, **(memory_kw or {}))
+        memory = memory or fake
         data_dir = data_dir or tmp_path / f"instance{len(harnesses)}"
         frontend = ScriptedFrontend(interactive=interactive, kind=kind)
         runtime = Runtime(
@@ -245,8 +248,9 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
             frontend=frontend.info,
             config=RuntimeConfig(data_dir=data_dir, **{**FAST, **config}),
         )
-        memory.seq_source = lambda: runtime.snapshot().seq
-        h = Harness(runtime, core, tools, memory, store, frontend.attach(runtime), data_dir, trace)
+        fake.seq_source = lambda: runtime.snapshot().seq
+        h = Harness(runtime, core, tools, memory, store, frontend.attach(runtime), data_dir,
+                    trace)
         harnesses.append(h)
         return h
 

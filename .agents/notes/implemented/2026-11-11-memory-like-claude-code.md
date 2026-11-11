@@ -1,31 +1,40 @@
 # Agent Note: Memory like Claude Code
 
-Status: implemented — long-term memory is a folder of Markdown files per project, written by the agent itself, as in Claude Code
+Status: implemented — a second Memory module, `kayden.memory.files`, keeps long-term memory as Claude Code does: a folder of Markdown files per project, written by the agent itself
 
-Replaces [Memory as notes](../rejected/2026-11-10-memory-notes.md).
+Sits beside [Memory as notes](2026-11-10-memory-notes.md), which stays the built-in Memory.
 
 ## Problem
 
-Long-term memory is a profile and topic notes in SQLite, written mostly by a save pass
-that a light model runs after every answer. In use it kept the wrong things: a note on the
-Kayden project that repeated what the repository says, plus news of the day's work. A
-light model reading one exchange cannot tell what is worth keeping, nothing cleans up
-afterwards, and a topic note grows into a page that is hard to correct one fact at a
-time.
+The built-in Memory keeps a profile and topic notes in SQLite, written mostly by a save
+pass that a light model runs after every answer. In use it kept the wrong things: a note
+on the Kayden project that repeated what the repository says, plus news of the day's work.
+A light model reading one exchange cannot tell what is worth keeping.
 
 Claude Code keeps memory differently, and well: one Markdown file per fact, typed, with a
 `MEMORY.md` index loaded into every session, written by the main agent itself while it
-works under written rules (save what the repository does not record, check for an existing
-memory first, update or delete what turns out wrong). The owner wants exactly that
-(2026-11-11): "exact same so if we need to drop sqlite do it".
+works under written rules. The owner wants exactly that (2026-11-11), and wants it as a
+test of the architecture: keep the old Memory, build the new one as a module of its own,
+and swap it in by configuration, starting from an empty store.
 
 ## Decision
 
+### A module of its own
+
+`kayden.memory.files` (entry point `files`), chosen with
+`[memory] factory = "kayden.memory.files:factory"`. Its archive (messages, summaries,
+search, conversation metadata) is the built-in one's, shared through the base class
+`SqliteArchive` in `kayden.memory.sqlite`, in its own file, `memory-files.db` (schema 1).
+`SqliteMemory`, the built-in Memory, is `SqliteArchive` plus notes, the profile and the
+save pass, in `memory.db` (schema 8). A subclass supplies what every request sees of
+long-term memory (`_long_term`), what follows an answer (`_after_answer`) and what
+deleting a conversation also erases (`_erase`).
+
 ### The folder
 
-- One memory folder per project, outside the project: `<data dir>/projects/<key>/memory/`
-  (`kayden.memory.folder`),
-  where `<key>` is the conversation's folder as an absolute path with `/` turned into `-`
+- One memory folder per project, outside the project:
+  `<data dir>/projects/<key>/memory/` (option `projects`), where `<key>` is the
+  conversation's folder as an absolute path with `/` turned into `-`
   (`-home-k5031-Projects-Kayden`), as Claude Code names its project folders. A
   conversation without a folder uses the key `default`.
 - In it, `MEMORY.md`, the index, and one `.md` file per memory, in Claude Code's format:
@@ -46,70 +55,52 @@ memory first, update or delete what turns out wrong). The owner wants exactly th
 
 ### What every request sees
 
-The system prompt gets, from Memory's addendum, the memory rules (Claude Code's: the four
-types and what each is for, what not to save, how to save in two steps, keep `MEMORY.md`
-to pointers, check before saving, update or delete wrong memories, link with `[[name]]`)
-and then the folder's `MEMORY.md`, cut at the long-term budget. Memory files are not
-loaded; the agent opens one when it is relevant.
+The memory rules (Claude Code's: the four types, what not to save, saving in two steps,
+`MEMORY.md` as pointers only, check before saving, update or delete wrong memories, link
+with `[[name]]`) and then the folder's `MEMORY.md`, from the top within the long-term
+budget. Memory files are not loaded; the agent opens one when it is relevant.
 
 ### The agent's tool
 
-Claude Code writes its memory with its ordinary file tools. Kayden's file tools belong to
-the Tools module and its work folder, and modules never reach into each other's storage,
-so Memory offers one tool on its folder, `memory` (`kayden.memory.tools`), with the
-commands of Anthropic's memory tool, which Claude models know: `view` (a file, or the
-folder's listing), `create`, `str_replace`, `insert`, `delete`, `rename`. Paths are
-relative to the memory folder; anything that leaves it is refused. The agent keeps
-`MEMORY.md` itself, as in Claude Code.
-
-### What is not there
-
-- No pass after an answer saves anything: the runtime still calls `maintain` then, for the
-  title and compaction only, and announces no memory changes of its own.
-- No profile: facts about the user are `user` memories like any other.
-- No revisions, forgotten-fact fingerprints or source conversations.
+Claude Code writes memory with its ordinary file tools. Kayden's file tools belong to the
+Tools module, and modules never reach into each other's storage, so this Memory offers one
+tool on its folder, `memory`, with the commands of Anthropic's memory tool, which Claude
+models know: `view`, `create`, `str_replace`, `insert`, `delete`, `rename`. Paths are
+relative to the memory folder; anything that leaves it is refused. No pass after an answer
+saves anything, and there is no profile: facts about the user are `user` memories.
 
 ### The contract
 
-Memory's optional `memory_files(folder)` (`api.MemoryFile`: path, text, updated_at;
-`MEMORY.md` first), `write_memory_file(folder, path, text)` and
-`delete_memory_file(folder, path)` work on a project's folder, given as the conversation's
-work folder; `RuntimeAPI` has the same without the folder, for the open conversation.
-`MemoriesChanged` follows every write by the tool or the user. The Memory window in both
-apps lists the open conversation's memory files under the name and description of their
-frontmatter (`common.memory_label`) and edits a file's text as it is.
-
-### Storage
-
-The SQLite store keeps the archive, summaries and conversation metadata: schema 9, without
-the note tables. A store of schema 8 is refused, as for every schema change; the owner's
-store is converted once, by hand, its notes written out as memory files.
-
-The prompt carries the rules whenever they fit and `MEMORY.md` from the top within the
-long-term budget (5 % of the context).
+The notes API serves both modules. Each file is a `MemoryNote`: its path is the id and the
+title, its frontmatter's description the description, its body the text. The notes methods
+take `folder`, the conversation's work folder, which the runtime passes and a module with
+one memory for all conversations ignores. `MemoryNote.fixed` marks a note that can only be
+emptied (the built-in profile), so frontends no longer know the profile's title.
 
 ## Alternatives considered
 
-- **Keep notes in SQLite, shaped like Claude Code's** (a type at the top of each note's
-  text, an index from titles and descriptions). No schema change, but not the same: no
-  files to read or edit outside Kayden, and the owner asked for the same.
+- **Replace the built-in Memory.** Built first: the store went to schema 9 without notes,
+  and the contract got memory-file methods instead of notes. It works, but leaves no
+  choice, needs the owner's store converted by hand, and does not show that a Memory can
+  be swapped.
+- **A Memory written from scratch, without the shared archive.** The purest test, but it
+  would copy the archive, search and erasure, which have nothing to do with how long-term
+  memory is kept.
 - **Let the agent use the Tools module's file tools on the memory folder.** Closest to
-  Claude Code's own tools, but the Tools module would then write Memory's storage, and the
-  folder sits outside the work folder, so every save would meet a permission check.
-- **Keep the save pass as a safety net.** Catches what the agent forgets, but it is what
-  saved the wrong things, and Claude Code has none.
-- **One memory for all projects.** Simpler, but Claude Code keeps memory per project, and
-  a project's facts are noise in another's prompt.
+  Claude Code, but the Tools module would then write Memory's storage, and the folder sits
+  outside the work folder, so every save would meet a permission check.
+- **Memory-file methods in the contract beside the notes methods.** Frontends would need
+  a second Memory window for the same job; a file maps onto a note without loss.
 
 ## Consequences
 
-- Memory is written by the model doing the work, with the conversation in view, and holds
-  one fact per file, each with its type and reason: precise to update or delete.
-- It costs a tool call on the main model when the agent saves, instead of a light-model
-  request after every answer.
-- Memory depends on the agent remembering to save; when it forgets, nothing catches it.
-  That is Claude Code's trade-off too.
-- Memory is per project: what Kayden learns about the user in one project is not seen in
-  another, as in Claude Code.
-- The files can be read and edited outside Kayden.
-- The owner's existing notes had to be converted by hand.
+- Swapping Memory needed, outside the new module: the `folder` keyword and `fixed` in the
+  contract, the runtime passing the open conversation's folder, frontends reading `fixed`,
+  and the archive split out of `SqliteMemory`. Core, Tools and the runtime's loop are
+  unchanged, and the same runtime test passes on both modules.
+- Switching starts from an empty archive: the other module's conversations stay in their
+  file and come back when switched back.
+- Memory is written by the model doing the work, one fact per file; when it forgets to
+  save, nothing catches it, as in Claude Code.
+- Memory is per project: what Kayden learns in one project is not seen in another.
+- The files can be read and edited outside Kayden. Their edits keep no revisions.

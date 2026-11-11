@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -9,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from kayden.api import (
+    PROFILE,
     ContextRequest,
     InstancePaths,
+    Memory,
     Message,
     OpaqueBlock,
     Reasoning,
@@ -27,6 +30,7 @@ from tests.conformance.memory_suite import (
     WINDOW,
     FakeCompletion,
     MemoryConformance,
+    MemoryFactory,
     active,
     addendum,
     assert_archived,
@@ -41,9 +45,18 @@ from tests.conformance.memory_suite import (
 CONFIG = CompactionConfig(trigger_fraction=0.75, remove_fraction=0.5, summary_fraction=0.05,
                           long_term_fraction=0.05)
 SUMMARY_TOKENS = CONFIG.summary_fraction * WINDOW
+_FACT_RE = re.compile(r"remember: ([a-z ]+)")
+
+
 def tagged(kept: list[str], text: str) -> str:
-    """A summary for compaction."""
-    return f"<summary>\nSummary: {' '.join(kept)}\n</summary>"
+    """A summary for compaction; for the pass after an answer, each "remember: …" fact not
+    yet in the profile, appended to it."""
+    if not text.startswith("You keep the long-term memory"):
+        return f"<summary>\nSummary: {' '.join(kept)}\n</summary>"
+    profile = text.split("The profile:")[1].split("Notes shown in full:")[0]
+    exchange = text.split("Other notes (title: description):")[1]
+    facts = [f for f in dict.fromkeys(_FACT_RE.findall(exchange)) if f not in profile]
+    return "".join(f'<append title="{PROFILE}">{f}</append>' for f in facts)
 
 
 def answer(token: str = "done") -> Message:
@@ -58,6 +71,54 @@ class TestSqliteMemory(MemoryConformance):
     @pytest.fixture
     def completion(self) -> FakeCompletion:
         return FakeCompletion(render=tagged)
+
+    # The built-in Memory's own: a fixed profile and topic notes.
+
+    async def test_the_profile_is_seen_in_full_other_notes_by_title(
+            self, open_memory: MemoryFactory):
+        memory = open_memory()
+        await self.editable(memory)
+        [profile] = await memory.notes()
+        assert profile.title == PROFILE and profile.text == ""
+        conv = await memory.create_conversation(title="test")
+        await memory.append(conv.id, [text_message("tok0001")])
+        await memory.save_note(PROFILE, "", "Lives in Oslo.")
+        note = await memory.save_note("Kayden", "The user's AI agent project",
+                                      "Written in Python; the owner pushes to main.")
+        assert note.source_conversation_id is None
+        text = await addendum(memory, conv.id)
+        assert "Lives in Oslo." in text and "Kayden" in text
+        assert "The user's AI agent project" in text and "pushes to main" not in text
+        await memory.aclose()
+
+        memory = open_memory()
+        renamed = await memory.save_note("Kayden app", "", "Python.", note_id=note.id)
+        assert (renamed.id, renamed.description) == (note.id, "The user's AI agent project")
+        same = await memory.save_note("kayden APP", "", "Python 3.13.")  # case ignored
+        assert same.id == note.id and same.text == "Python 3.13."
+        assert [n.title for n in await memory.notes()] == [PROFILE, "Kayden app"]
+        with pytest.raises(ValueError):
+            await memory.save_note("Other", "", "x", note_id=profile.id)  # keeps its title
+        with pytest.raises(ValueError):
+            await memory.delete_note(profile.id)
+        await memory.delete_note(note.id)
+        assert [n.title for n in await memory.notes()] == [PROFILE]
+        assert "Kayden" not in await addendum(memory, conv.id)
+        with pytest.raises(KeyError):
+            await memory.delete_note(note.id)
+
+    async def test_memories_outlive_the_conversation_they_came_from(self, memory: Memory):
+        doomed = await memory.create_conversation()
+        try:
+            await memory.save_note("Diet", "What the user eats", "Is vegetarian",
+                                   conversation_id=doomed.id)
+            await memory.delete_conversation(doomed.id)
+        except NotImplementedError:
+            pytest.skip("editing memories and deleting conversations are optional")
+        kept = [n for n in await memory.notes() if n.title == "Diet"]
+        assert [(n.text, n.source_conversation_id) for n in kept] == [("Is vegetarian", None)]
+        with pytest.raises(KeyError):
+            await memory.save_note("x", "", "y", conversation_id="missing")
 
 
 @pytest.fixture
@@ -95,10 +156,6 @@ async def test_factory_uses_the_instance_data_dir(tmp_path: Path):
         assert isinstance(memory, SqliteMemory)
         await memory.create_conversation(title="test")
         assert (tmp_path / "memory.db").exists()
-        await memory.write_memory_file("/home/me/Code", "MEMORY.md", "- x\n")
-        assert (tmp_path / "projects" / "-home-me-Code" / "memory" / "MEMORY.md").exists()
-        await memory.write_memory_file(None, "MEMORY.md", "- y\n")
-        assert (tmp_path / "projects" / "default" / "memory" / "MEMORY.md").exists()
     finally:
         await memory.aclose()
     with pytest.raises(TypeError):
@@ -230,7 +287,7 @@ async def test_an_empty_summary_compacts_nothing(open_store, output: str):
     assert not await maintain(memory, conv.id, FakeCompletion(render=lambda kept, text: output))
     view = await memory.assemble(context(conv.id, 10_000_000))
     assert [m.id for m in view.messages] == [m.id for m in messages]
-    assert "Conversation summary" not in view.system_addendum  # no summary was written
+    assert view.system_addendum == ""
     assert await maintain(memory, conv.id, FakeCompletion(render=tagged))  # a later pass works
 
 
@@ -254,26 +311,95 @@ async def test_summary_is_held_to_its_budget(open_store):
     await maintain(memory, conv.id, FakeCompletion(render=lambda k, t: "word " * 10_000))
     view = await memory.inspect(conv.id)
     assert 0 < count_tokens(view.summary) <= SUMMARY_TOKENS
-    assert view.long_term == []  # nothing saved
+    assert view.long_term == [""]  # an empty profile, no notes
 
 
-async def test_memory_rules_and_index_are_a_fraction_of_the_budget(open_store, tmp_path: Path):
+async def test_what_an_exchange_teaches_is_saved_for_every_conversation(open_store):
     memory = open_store()
-    project = str(tmp_path / "project")
-    conv = await memory.create_conversation(title="test", folder=project)
-    await memory.append(conv.id, [text_message("tok0001")])
-    index = "".join(f"- [Memory {i}](m{i}.md) — {'x' * 100}\n" for i in range(100))
-    await memory.write_memory_file(project, "MEMORY.md", index)
-    await memory.write_memory_file(project, "m0.md", "the text is never shown")
-    budget = 6_000
-    rendered = (await memory.assemble(context(conv.id, budget))).system_addendum
-    assert "# Memory" in rendered and "one file holding one fact" in rendered  # the rules
-    assert "[Memory 0]" in rendered and "[Memory 99]" not in rendered  # from the top
-    assert "the text is never shown" not in rendered
-    index_lines = [line for line in rendered.splitlines() if line.startswith("- [Memory")]
-    assert count_tokens("\n".join(index_lines)) <= CONFIG.long_term_fraction * budget + 10
-    assert (await memory.inspect(conv.id)).long_term == [index]
+    first = await memory.create_conversation(title="test")
+    second = await memory.create_conversation(title="test")
+    fact = Message("fact", Role.USER, (Text("remember: user prefers green tea."),), time.time())
+    await memory.append(first.id, [fact, answer()])
+    completion = FakeCompletion(render=tagged)
+    assert await maintain(memory, first.id, completion)  # after the answer
 
+    [profile] = await memory.notes()
+    assert profile.text == "user prefers green tea" and profile.source_conversation_id == first.id
+    assert "user prefers green tea" in await addendum(memory, second.id)
+
+    # Said again elsewhere, it is not saved twice; the profile survives a reopen.
+    again = Message("fact2", Role.USER, fact.blocks, time.time())
+    await memory.append(second.id, [again, answer()])
+    assert not await maintain(memory, second.id, completion)
+    await memory.aclose()
+    reopened = open_store()
+    assert (await reopened.inspect(second.id)).long_term == ["user prefers green tea"]
+
+
+async def test_the_pass_reads_each_exchange_once_and_never_mid_turn(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    completion = FakeCompletion(render=tagged)
+    await memory.append(conv.id, [text_message("remember: likes jazz")])
+    await maintain(memory, conv.id, completion)  # the user's message: no answer yet
+    await memory.append(conv.id, tool_exchange("tok0001")[:1])  # an answer that calls a tool
+    await maintain(memory, conv.id, completion)
+    assert completion.calls == []
+    await memory.append(conv.id, [*tool_exchange("tok0001")[1:], answer()])
+    assert await maintain(memory, conv.id, completion)
+    assert len(completion.calls) == 1 and "likes jazz" in repr(completion.calls[0]["messages"])
+    assert not await maintain(memory, conv.id, completion)  # nothing new since
+    assert len(completion.calls) == 1
+
+
+async def test_the_pass_appends_to_notes_it_is_shown_by_title_only(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.save_note("Big", "A long note", "y " * 20_000)  # past what the pass is shown
+    await memory.save_note("Small", "A short note", "fits")
+    completion = FakeCompletion(input_tokens=100_000, render=lambda kept, text: (
+        '<append title="Big">one more line</append>'
+        '<save title="Trip" description="The Oslo trip">Leaves on Friday.</save>'))
+    await memory.append(conv.id, [text_message("tok0001"), answer()])
+    assert await maintain(memory, conv.id, completion)
+    shown = completion.calls[0]["system"]
+    assert "fits" in shown and "y y y" not in shown and "- Big: A long note" in shown
+    notes = {n.title: n for n in await memory.notes()}
+    assert notes["Big"].text.endswith("y\none more line")
+    assert notes["Big"].description == "A long note"  # appending keeps it
+    assert (notes["Trip"].description, notes["Trip"].text) == ("The Oslo trip", "Leaves on Friday.")
+
+
+async def test_a_failed_pass_reads_the_exchange_after_the_next_answer(open_store):
+    from kayden.api import CoreError
+
+    class Failing(FakeCompletion):
+        async def __call__(self, system, messages, *, max_tokens, light=False,
+                       compacting=False):
+            raise CoreError("overloaded")
+
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.append(conv.id, [text_message("remember: likes jazz"), answer()])
+    assert not await maintain(memory, conv.id, Failing())
+    await memory.append(conv.id, [text_message("remember: lives in oslo"), answer()])
+    completion = FakeCompletion(render=tagged)
+    assert await maintain(memory, conv.id, completion)
+    assert (await memory.notes())[0].text == "likes jazz\nlives in oslo"
+
+
+async def test_long_term_rendering_is_a_fraction_of_the_budget(open_store, db: Path):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.append(conv.id, [text_message("tok0001")])
+    for i in range(100):
+        await memory.save_note(f"note number {i}", "x" * 100, "the text is never shown")
+    budget = 4_000
+    rendered = (await memory.assemble(context(conv.id, budget))).system_addendum
+    assert "note number 99" in rendered and "note number 0:" not in rendered  # newest first
+    assert "the text is never shown" not in rendered
+    assert count_tokens(rendered) <= CONFIG.long_term_fraction * budget + 10
+    assert len((await memory.inspect(conv.id)).long_term) == 101  # the profile and 100
 
 
 async def test_untagged_output_becomes_the_summary(open_store):
@@ -434,7 +560,7 @@ async def test_process_crash_inside_compaction_transaction(open_store, db: Path)
 
     reopened = open_store()
     view = await reopened.inspect(conv.id)
-    assert view.summary == "" and view.long_term == []
+    assert view.summary == "" and view.long_term == [""]
     assert await active(reopened, conv.id) == messages
     await assert_archived(reopened, conv.id, messages)
 
@@ -522,17 +648,33 @@ async def test_deleted_conversation_leaves_nothing_on_disk(open_store, db: Path)
     await memory.append(doomed.id, [answer()])
     await maintain(memory, doomed.id, FakeCompletion(render=lambda kept_, text: tagged(
         [*kept_, "summarysecretword"], text)))
+    assert (await memory.notes())[0].text == "password is zanzibarquux"
     for word in (b"zanzibarquux", b"wombatblob", b"summarysecretword", b"quokkatitle"):
         assert word in on_disk(db)
 
     await memory.delete_conversation(doomed.id)
-    for word in (b"zanzibarquux", b"wombatblob", b"summarysecretword", b"quokkatitle",
-                 doomed.id.encode()):
+    for word in (b"wombatblob", b"summarysecretword", b"quokkatitle", doomed.id.encode()):
         assert word not in on_disk(db), word
+    [profile] = await memory.notes()  # notes stay until deleted
+    assert profile.text == "password is zanzibarquux"
+    assert profile.source_conversation_id is None
     assert len(await memory.history(kept.id)) == 3
     with sqlite3.connect(db) as conn, pytest.raises(sqlite3.IntegrityError,
                                                     match="append-only"):
         conn.execute("DELETE FROM messages")  # the archive guard is back in force
+
+
+async def test_a_deleted_note_leaves_nothing_on_disk(open_store, db: Path):
+    memory = open_store()
+    await memory.create_conversation(title="test")
+    note = await memory.save_note("Locker", "The gym locker", "The code is marmalade.")
+    await memory.save_note("Locker", "", "The code is pumpernickel.")
+    with sqlite3.connect(db) as conn:  # the edit kept the earlier revision
+        texts = [r[0] for r in conn.execute("SELECT text FROM note_revisions WHERE note_id = ?"
+                                            " ORDER BY id", (int(note.id),))]
+    assert texts == ["The code is marmalade.", "The code is pumpernickel."]
+    await memory.delete_note(note.id)
+    assert b"marmalade" not in on_disk(db) and b"pumpernickel" not in on_disk(db)
 
 
 async def test_an_empty_seed_is_retried_rather_than_lost(open_store):
@@ -592,3 +734,14 @@ async def test_long_tool_output_is_shortened_for_the_summary_not_the_archive(ope
     assert ToolResult("c1", ToolStatus.OK, log) in [b for m in stored for b in m.blocks]
 
 
+async def test_the_saving_pass_is_told_what_not_to_keep(open_store):
+    """Notes hold what stays true and cannot be found again: not news of recent work, not
+    what the files or the history already say, and a stale note is rewritten."""
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.append(conv.id, [text_message("remember: likes jazz"), answer()])
+    completion = FakeCompletion(render=tagged)
+    await maintain(memory, conv.id, completion)
+    prompt = " ".join(completion.calls[0]["system"].split())
+    for rule in ("news", "recent work", "files", "history", "no longer true"):
+        assert rule in prompt, rule

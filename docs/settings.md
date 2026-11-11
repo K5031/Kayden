@@ -69,7 +69,22 @@ with your permissions, so install only ones you trust; see
 
 The memory module, where conversations and long-term memory are kept, is not in the
 settings screen: another one would be another archive, without your conversations. It is
-set with `[memory]` in [config.toml](#configtoml).
+set with `[memory]` in [config.toml](#configtoml). Kayden comes with two:
+
+- **Notes** (the default): About you and one note per topic, shared by all your
+  conversations and saved after each answer. See [Memory](concepts.md#memory).
+- **Files per project**, as in Claude Code: each project folder gets its own memory
+  folder, `~/.kayden/projects/<project>/memory/`, with a `MEMORY.md` index and one
+  Markdown file per fact. The agent writes them itself while it works, and every
+  conversation in that folder sees the index. Choose it with:
+
+  ```toml
+  [memory]
+  factory = "kayden.memory.files:factory"
+  ```
+
+  It keeps its conversations in `memory-files.db`, so it starts empty; your other
+  conversations come back when you remove these lines.
 
 ## Permissions
 
@@ -140,6 +155,7 @@ Everything is in Kayden's data folder, `~/.kayden` (or `--data-dir`, or `$KAYDEN
 | `settings.toml` | What you changed in the settings screen, the chosen modules under `[modules]`, tool servers under `[[mcp_servers]]` (their variables by name only) |
 | `config.toml` | Optional hand-written configuration, for advanced use |
 | `memory.db` | Your conversations and long-term memory |
+| `memory-files.db`, `projects/` | The same, with the files-per-project memory |
 | `usage.json` | What has been spent so far; delete it, while Kayden is closed, to start counting from zero |
 | `events.jsonl` | Activity log of what Kayden did and when; it holds no message text, tool input or tool output |
 
