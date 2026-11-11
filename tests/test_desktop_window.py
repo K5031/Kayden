@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import asyncio
 import itertools
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -1244,3 +1245,44 @@ async def test_one_click_switches_once_where_a_click_also_activates(make, qapp):
     await eventually(lambda: controller.model.conversation.id == target.id)
     await asyncio.sleep(0.05)
     assert len(starts) == 1
+
+
+async def test_leaving_a_sub_session_for_its_parent_never_shows_the_old_chat(
+        make, qapp, tmp_path, child_env):
+    """Open chat A, a sub-session of chat B, then B: A must not light up on the way."""
+    from PySide6.QtWidgets import QListWidgetItem
+
+    from kayden.frontends.desktop.window import KIND_ROLE
+    from tests.test_sub_sessions import finish, parent
+
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Research"}, id="s")]),
+        Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
+    await h.turn("Start research")
+    parent_id = h.conversation.id
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done",
+                     timeout=30)
+    await eventually(lambda: len(h.core.requests) == 3  # the parent read the notice
+                     and h.runtime.snapshot().state == AgentState.IDLE, timeout=15)
+    await h.chat("Test message")  # now the open chat
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, sessions=sessions)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    await window.fill_sidebar()
+    lst = window.conversation_list
+
+    def row(kind: str, match: Callable[[QListWidgetItem], bool]) -> QListWidgetItem:
+        return next(lst.item(i) for i in range(lst.count())
+                    if lst.item(i).data(KIND_ROLE) == kind and match(lst.item(i)))
+
+    window._conversation_chosen(row("session", lambda r: True))
+    await eventually(lambda: window._viewing is not None, timeout=15)
+    highlighted: list[str] = []
+    lst.currentItemChanged.connect(
+        lambda now, _: now is not None and highlighted.append(now.text()))
+    window._conversation_chosen(
+        row("conversation", lambda r: r.data(Qt.ItemDataRole.UserRole) == parent_id))
+    await eventually(lambda: controller.model.conversation.id == parent_id)
+    await window.fill_sidebar()
+    assert "Test message" not in highlighted

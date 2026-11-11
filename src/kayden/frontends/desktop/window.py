@@ -1506,20 +1506,32 @@ class MainWindow(QMainWindow):
 
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
-        if self._opening is not None:
-            return  # one switch at a time: a click can also activate (KDE) and ask twice
+        if self._switching():
+            return
+        # Marked first: leaving a sub-session redraws the list, which then shows this one.
+        self._opening = (conversation_id,)
         if self._viewing is not None:
             self._leave_session()
             own = self.model.conversation
             if own is not None and conversation_id == own.id and seed_from is None:
+                self._opening = None
+                self._render_sidebar()
                 return
         if reason := self.controller.can_switch():
+            self._opening = None
             self.model.notify(reason)
             _spawn(self.fill_sidebar())  # select the open conversation again
             return
-        self._opening = (conversation_id,)
         task = self.controller.open_conversation(conversation_id, seed_from=seed_from)
         task.add_done_callback(lambda _: self._opened())
+
+    def _switching(self) -> bool:
+        """One switch at a time: a click can also activate (KDE) and ask twice, and a click
+        while one opens is dropped. The list shows the one opening again."""
+        if self._opening is None and self._opening_session is None:
+            return False
+        self._render_sidebar()
+        return True
 
     def _opened(self) -> None:
         self._opening = None
@@ -1946,8 +1958,8 @@ class MainWindow(QMainWindow):
         """Show a sub-session in the conversation area, as its own conversation: its
         messages, steps and prompts, and the message box talks to it. Its row stays
         highlighted while it opens, which may mean starting it again."""
-        if self._opening_session is session:
-            return  # a click can also activate (KDE) and ask twice
+        if self._switching():
+            return
         self._opening_session = session
         _spawn(self._open_session(session))
 
