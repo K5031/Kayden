@@ -14,9 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from kayden.api import Frontend, FrontendInfo, InstancePaths, RuntimeAPI, Tools
-from kayden.frontends.desktop import single
-from kayden.frontends.desktop.loop import run_on_qt
-from kayden.frontends.sessions import SubSessions
 
 # PySide6 6.12 on Python 3.15 breaks reading a lazily imported module attribute (PEP 810)
 # from another module once Qt is loaded. asyncio.to_thread reads this one, so resolve it
@@ -25,6 +22,10 @@ _ = concurrent.futures.ThreadPoolExecutor
 
 import qasync  # noqa: F401
 from PySide6 import QtWidgets  # noqa: F401
+
+from kayden.frontends.desktop import single
+from kayden.frontends.desktop.loop import run_on_qt
+from kayden.frontends.sessions import SubSessions
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> DesktopFrontend:

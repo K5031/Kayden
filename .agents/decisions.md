@@ -392,6 +392,21 @@ Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
 | Sidebar row | Title (the title, else the first message, else "New chat"), date (time today, "Yesterday", weekday within a week, else "3 Nov", plus the year when not this year), and the first message as a second line when the title is not it |
 | Your messages | At most 75 % of the transcript's width |
 | Message box | Grows with its text to 6 lines |
+| Event loop | `loop.QtEventLoop`, qasync's `QEventLoop` with three fixes (below); `KAYDEN_TEST_LOOP=qasync` runs the tests on it |
+| Garbage collection | Automatic collection is off while a `QtEventLoop` is open; every 100 ms (`GC_CHECK_S`) the loop collects the oldest generation whose count passed its threshold |
+
+**qasync fixes (`QtEventLoop`).** Python's cyclic garbage collector runs in whichever thread
+allocates. A QObject it frees in an `asyncio.to_thread` worker (one importing the provider's
+SDK during `update_settings`, say) cannot stop its timers from there ("Timers cannot be
+stopped from another thread"); the next one to fire hits freed memory and segfaults. Every
+closed qasync loop leaves such a QObject in a cycle, and the app's own may too, so the loop
+collects on the Qt thread instead. qasync's `run_until_complete` also processes Qt events
+once more after the loop stops; a task woken there fails with "not the running loop" and
+never resumes, so the next `run_until_complete` waiting on it hangs (fixture teardown in the
+tests, `asyncio.run`'s shutdown in the app). `QtEventLoop.run_until_complete` leaves those
+callbacks for the next run, as asyncio does. On Python 3.15, transports pass `context` to the
+loop's `_add_reader` and `_add_writer`, which qasync's do not take, so every socket read
+failed; `QtEventLoop` takes it and runs the callback in that context.
 
 **PySide6 on Python 3.15.** With PySide6 6.12 loaded, reading a lazily imported module
 attribute (PEP 810) from another module returns the `lazy_import` object instead of
@@ -400,12 +415,9 @@ resolving it. `asyncio.to_thread` reads `concurrent.futures.ThreadPoolExecutor`,
 Qt import; `tests/conftest.py` imports it first for the same reason. Other lazily imported
 stdlib names stay exposed on 3.15.
 
-**qasync results (2026-11-08, qasync 0.28.0, PySide6 6.12.0).** With
-`KAYDEN_TEST_LOOP=qasync`, every test file passes on Python 3.13.18 when run on its own.
-On 3.15.1, `test_commands.py` hangs and `core/test_openai_compat.py` segfaults in fixture
-teardown; the other files pass. A single run of the whole suite segfaults on both versions
-after a few dozen tests, each of which creates its own `QEventLoop`; the app creates one.
-Bundles therefore carry Python 3.13.
+**qasync results (2026-11-11, qasync 0.28.0, PySide6 6.12.0).** With
+`KAYDEN_TEST_LOOP=qasync`, the whole suite passes on Python 3.15.1, repeatedly and in one
+run, on `QtEventLoop`. Bundles carry Python 3.13.
 
 **Briefcase (0.4.7).** The bundle installs Kayden as a package (`requires =
 [".[desktop]"]`), not its sources: Kayden finds its modules through entry points, which

@@ -22,7 +22,9 @@ from tests.conftest import eventually
 
 @pytest.fixture
 def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
+    app.setQuitOnLastWindowClosed(False)  # the launcher's setting: the runtime ends the loop
+    return app
 
 
 async def test_a_second_launch_asks_the_first_to_come_forward(tmp_path):
