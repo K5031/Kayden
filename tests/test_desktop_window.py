@@ -873,7 +873,6 @@ async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
     row = window.conversation_list.item(2)
     assert row.text() == "Write a haiku" and "Done" in row.data(PREVIEW_ROLE)
     window._conversation_chosen(row)
-    window._conversation_chosen(row)  # KDE activates on the same click: opened once
     window._render_sidebar()  # the list changes while the child starts again
     current = window.conversation_list.currentItem()
     assert (current.data(KIND_ROLE), current.text()) == ("session", "Write a haiku")
@@ -1286,3 +1285,98 @@ async def test_leaving_a_sub_session_for_its_parent_never_shows_the_old_chat(
     await eventually(lambda: controller.model.conversation.id == parent_id)
     await window.fill_sidebar()
     assert "Test message" not in highlighted
+
+
+async def test_enter_opens_the_selected_conversation(make, qapp):
+    h: Harness = await make()
+    target = await h.chat("Target")
+    await h.chat("Current")
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    lst = window.conversation_list
+    lst.setCurrentItem(next(lst.item(i) for i in range(lst.count())
+                            if lst.item(i).text() == "Target"))
+    QTest.keyClick(lst, Qt.Key.Key_Return)
+    await eventually(lambda: controller.model.conversation.id == target.id)
+
+
+async def test_the_last_click_wins_while_a_conversation_opens(make, qapp):
+    h: Harness = await make()
+    first = await h.chat("First")
+    second = await h.chat("Second")
+    await h.chat("Current")
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    history = h.runtime.history
+
+    async def slow_history(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0.05)
+        return await history(*args, **kwargs)
+
+    h.runtime.history = slow_history  # type: ignore[method-assign]
+    window.open_conversation(first.id)
+    window.open_conversation(second.id)  # clicked before the first had opened
+    window._render_sidebar()
+    assert window.conversation_list.currentItem().text() == "Second"
+    await eventually(lambda: controller.model.conversation.id == second.id
+                     and window._opening is None)
+    await asyncio.sleep(0.1)
+    assert controller.model.conversation.id == second.id
+    assert window.conversation_list.currentItem().text() == "Second"
+
+
+async def test_a_failed_load_does_not_stop_later_switches(make, qapp):
+    h: Harness = await make()
+    first = await h.chat("First")
+    await h.chat("Current")
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    history = h.runtime.history
+    failures = [KeyError("gone")]
+
+    async def failing_once(*args: Any, **kwargs: Any) -> Any:
+        if failures:
+            raise failures.pop()
+        return await history(*args, **kwargs)
+
+    h.runtime.history = failing_once  # type: ignore[method-assign]
+    window.open_conversation(first.id)
+    await eventually(lambda: window._opening is None)
+    window.open_conversation(None)
+    await eventually(lambda: controller.model.conversation.id != first.id
+                     and window._opening is None)
+
+
+async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
+        make, qapp, tmp_path, child_env):
+    from tests.test_sub_sessions import finish, parent
+
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Research"}, id="s")]),
+        Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
+    await h.turn("Start research")
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done"
+                     and len(h.core.requests) == 3
+                     and h.runtime.snapshot().state == AgentState.IDLE, timeout=30)
+    parent_id = h.conversation.id
+    await h.chat("Other")  # the open chat
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, sessions=sessions)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    await window.fill_sidebar()
+    child = sessions.sessions[0]
+    opened = sessions.open
+
+    async def slow_open(session: Any) -> Any:  # a stopped child starting again
+        await asyncio.sleep(0.2)
+        return await opened(session)
+
+    sessions.open = slow_open  # type: ignore[method-assign]
+    window.open_session(child)
+    window.open_conversation(parent_id)  # changed their mind meanwhile
+    await asyncio.sleep(0.5)
+    assert window._viewing is None and window.controller is window.home
+    assert sessions._viewers.get(child.id, 0) == 0  # released, not left open
+    assert controller.model.conversation.id == parent_id
+    assert window.conversation_list.currentItem().data(Qt.ItemDataRole.UserRole) == parent_id

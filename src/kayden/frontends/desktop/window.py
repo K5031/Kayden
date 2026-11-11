@@ -11,7 +11,8 @@ import asyncio
 import getpass
 import html
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Container, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -990,7 +991,7 @@ class WrapUpCard(QFrame):
     first. A click sends an option as the user's message, or runs its call while that is
     pending; the close button puts the card away."""
 
-    def __init__(self, card: Card, live_action: bool, choose: Callable[[str], None],
+    def __init__(self, card: Card, pending: Container[str], choose: Callable[[int], None],
                  close: Callable[[], None]) -> None:
         super().__init__()
         self.setObjectName("prompt")
@@ -1016,19 +1017,42 @@ class WrapUpCard(QFrame):
                 button = QPushButton(option)
                 if i == 0:
                     _primary(button)
-                runs = live_action and option == card.action
-                button.setToolTip("Do this" if runs else "Send this reply")
-                button.clicked.connect(lambda _=False, text=option: choose(text))
+                button.setToolTip("Do this" if card.runs(i, pending) else "Send this reply")
+                button.clicked.connect(lambda _=False, index=i: choose(index))
                 buttons.addWidget(button)
             buttons.addStretch()
             layout.addLayout(buttons)
         self.setAccessibleName(card.question or "Turn summary")
 
 
-class ConversationList(QListWidget):
-    """Right-click, the Menu key or Shift+F10 asks for an entry's menu."""
+@dataclass(frozen=True, slots=True)
+class Opening:
+    """What the user last asked to see, while it opens: a sub-session, else a conversation
+    (None: a new chat). The newest request wins; the sidebar highlights it meanwhile."""
 
+    request: int
+    conversation: str | None = None
+    session: SubSession | None = None
+
+
+class ConversationList(QListWidget):
+    """A click or Enter chooses an entry: `chosen`, once per click. (itemActivated is not
+    used: where a single click activates, as on KDE, it comes with itemClicked.) Right-click,
+    the Menu key or Shift+F10 asks for an entry's menu."""
+
+    chosen = Signal(QListWidgetItem)
     menu_requested = Signal(QListWidgetItem, QPoint)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.itemClicked.connect(self.chosen)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and (
+                entry := self.currentItem()) is not None:
+            self.chosen.emit(entry)
+            return
+        super().keyPressEvent(event)
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         if event.reason() == QContextMenuEvent.Reason.Mouse:
@@ -1105,9 +1129,8 @@ class MainWindow(QMainWindow):
         self.memory_dialog: MemoryDialog | None = None
         self.mcp_dialog: McpDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
-        # While a conversation opens: its id (None for a new chat, which is not listed).
-        self._opening: tuple[str | None] | None = None
-        self._opening_session: SubSession | None = None
+        self._opening: Opening | None = None
+        self._requests = 0
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
         self.setWindowTitle("Kayden")
         # No title bar from the desktop: the header and the sidebar's top row move the
@@ -1146,8 +1169,7 @@ class MainWindow(QMainWindow):
         self.conversation_list.setAccessibleName("Conversations")
         self.conversation_list.setToolTip("Right-click a conversation, or press the Menu key, "
                                           "to rename, archive or delete it.")
-        self.conversation_list.itemActivated.connect(self._conversation_chosen)
-        self.conversation_list.itemClicked.connect(self._conversation_chosen)
+        self.conversation_list.chosen.connect(self._conversation_chosen)
         self.conversation_list.menu_requested.connect(self._row_menu)
         for keys, command in ((QKeySequence("F2"), self.rename_conversation),
                               (QKeySequence.StandardKey.Delete, self.delete_conversation)):
@@ -1506,38 +1528,40 @@ class MainWindow(QMainWindow):
 
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
-        if self._switching():
-            return
         # Marked first: leaving a sub-session redraws the list, which then shows this one.
-        self._opening = (conversation_id,)
+        opening = self._open(conversation=conversation_id)
         if self._viewing is not None:
             self._leave_session()
             own = self.model.conversation
             if own is not None and conversation_id == own.id and seed_from is None:
-                self._opening = None
-                self._render_sidebar()
+                self._settle(opening)
                 return
         if reason := self.controller.can_switch():
-            self._opening = None
+            self._settle(opening)
             self.model.notify(reason)
-            _spawn(self.fill_sidebar())  # select the open conversation again
             return
         task = self.controller.open_conversation(conversation_id, seed_from=seed_from)
-        task.add_done_callback(lambda _: self._opened())
+        task.add_done_callback(lambda _: self._opened(opening))
 
-    def _switching(self) -> bool:
-        """One switch at a time: a click can also activate (KDE) and ask twice, and a click
-        while one opens is dropped. The list shows the one opening again."""
-        if self._opening is None and self._opening_session is None:
+    def _open(self, *, conversation: str | None = None,
+              session: SubSession | None = None) -> Opening:
+        self._requests += 1
+        self._opening = Opening(self._requests, conversation, session)
+        return self._opening
+
+    def _settle(self, opening: Opening) -> bool:
+        """`opening` is done; True when it was the newest request, so what it opened shows."""
+        if self._opening is not opening:
             return False
+        self._opening = None
         self._render_sidebar()
         return True
 
-    def _opened(self) -> None:
-        self._opening = None
-        self.input.setFocus()
-        _spawn(self.fill_sidebar())
-        self._deliver_notes()
+    def _opened(self, opening: Opening) -> None:
+        if self._settle(opening):
+            self.input.setFocus()
+            _spawn(self.fill_sidebar())
+            self._deliver_notes()
 
     # ── view model changes ────────────────────────────────────────────────
 
@@ -1647,16 +1671,17 @@ class MainWindow(QMainWindow):
             if not proposal.card:
                 self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
         if (card := self.model.card) is not None:
-            self.prompts.addWidget(WrapUpCard(card, card.call_id in self.model.proposals,
-                                              self._choose, self.model.close_card))
+            self.prompts.addWidget(WrapUpCard(card, self.model.proposals, self._choose,
+                                              self.model.close_card))
 
-    def _choose(self, option: str) -> None:
-        card = self.model.card
-        if card is not None and option == card.action and card.call_id in self.model.proposals:
+    def _choose(self, index: int) -> None:
+        if (card := self.model.card) is None:
+            return
+        if card.runs(index, self.model.proposals):
             self.controller.resolve_proposal(card.call_id, True)
             self.model.close_card()
         else:
-            self.controller.send(option)
+            self.controller.send(card.options[index])
         self.input.setFocus()
 
     def _show_empty_state(self) -> None:
@@ -1720,12 +1745,13 @@ class MainWindow(QMainWindow):
     def _render_sidebar(self) -> None:
         """Conversations grouped by project (their folder), newest first, each with its
         sub-sessions under it. A folded group shows only its heading."""
-        own = self.home.model.conversation
-        # While a conversation opens, the one clicked stays highlighted, not the old one.
-        current = (self._opening[0] if self._opening is not None
-                   else own.id if own is not None else None)
-        shown = self._opening_session or (self._viewing[0] if self._viewing is not None
-                                          else None)
+        # What the user last asked for stays highlighted while it opens, not what was open.
+        opening, own = self._opening, self.home.model.conversation
+        if opening is not None:
+            current, shown = opening.conversation, opening.session
+        else:
+            current = own.id if own is not None else None
+            shown = self._viewing[0] if self._viewing is not None else None
         viewing = shown.id if shown is not None else None
         archived = self.show_archived.isChecked()
         groups: dict[str | None, list[ConversationInfo]] = {}
@@ -1880,7 +1906,8 @@ class MainWindow(QMainWindow):
 
     def _session_chosen(self, session_id: str) -> None:
         session = self._session_of(session_id)
-        if session is None or (self._viewing is not None and self._viewing[0] is session):
+        if session is None or (self._viewing is not None and self._viewing[0] is session) or (
+                self._opening is not None and self._opening.session is session):
             return
         self.open_session(session)
 
@@ -1958,25 +1985,26 @@ class MainWindow(QMainWindow):
         """Show a sub-session in the conversation area, as its own conversation: its
         messages, steps and prompts, and the message box talks to it. Its row stays
         highlighted while it opens, which may mean starting it again."""
-        if self._switching():
-            return
-        self._opening_session = session
-        _spawn(self._open_session(session))
+        opening = self._open(session=session)
+        self._render_sidebar()
+        _spawn(self._open_session(opening, session))
 
-    async def _open_session(self, session: SubSession) -> None:
+    async def _open_session(self, opening: Opening, session: SubSession) -> None:
         assert self.sessions is not None
         try:
             remote = await self.sessions.open(session)
         except Exception as e:  # noqa: BLE001 - shown, never fatal
-            self._opening_session = None
-            self._render_sidebar()  # back to what is shown
+            self._settle(opening)
             self.model.notify(f"The sub-session could not be opened: {user_message(e)}")
+            return
+        if self._opening is not opening:  # the user asked for something else meanwhile
+            self.sessions.release(session, remote)
             return
         self._leave_session()
         controller = Controller(remote, ConversationModel())
         pump = asyncio.create_task(controller.run())
         self._viewing = (session, remote, pump)
-        self._opening_session = None
+        self._opening = None
         self._show(controller)
 
     def _leave_session(self) -> None:

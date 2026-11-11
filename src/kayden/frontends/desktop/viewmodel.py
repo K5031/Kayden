@@ -333,6 +333,7 @@ class ConversationModel:
         self._oldest_id: str | None = None
         self._insert_at: int | None = None  # set while prepending an earlier page
         self._compaction: NoticeItem | None = None  # the line of a running compaction
+        self._closed_card: str | None = None  # the card the user put away
 
     # ── status ────────────────────────────────────────────────────────────
 
@@ -455,7 +456,8 @@ class ConversationModel:
                 if item is None:
                     item = self._add_tool(ToolCall(call_id, name or "tool", {}), streaming=True)
                     item.phase = Phase.PREPARING
-                    self._stream.append(item)
+                    if item in self.items:  # a wrap_up call is shown as the card instead
+                        self._stream.append(item)
                 if name:
                     item.name = name
                 item.arguments += chunk
@@ -580,9 +582,8 @@ class ConversationModel:
         return item
 
     def _remove(self, item: Item) -> None:
-        if item in self.items:  # a wrap_up call is never shown
-            self.items.remove(item)
-            self.on_change(Removed(item))
+        self.items.remove(item)
+        self.on_change(Removed(item))
 
     def _add_tool(self, call: ToolCall, *, streaming: bool = False) -> ToolItem:
         arguments = "" if streaming else json.dumps(call.arguments, ensure_ascii=False)
@@ -593,18 +594,22 @@ class ConversationModel:
         return item
 
     def _set_card(self, card: Card | None) -> None:
+        if card is not None and card.call_id == self._closed_card:
+            card = None  # put away: reloading the history does not bring it back
         if card != self.card:
             self.card = card
             self.on_change(PromptsChanged())
 
     def close_card(self) -> None:
         """The user put the card away; typing an answer still works."""
+        if self.card is not None:
+            self._closed_card = self.card.call_id
         self._set_card(None)
 
     def _queue(self, event: MessageQueued) -> None:
-        self._set_card(None)
         if notice_of(event.text) is not None:
             return  # shown once it is committed, as a notice
+        self._set_card(None)
         if event.message_id not in self._queued and event.message_id not in self._seen:
             self._queued[event.message_id] = self._add(
                 UserItem(event.text, event.message_id, queued=True))
@@ -657,9 +662,9 @@ class ConversationModel:
         """Add a message's items; returns its last assistant text item, if any."""
         self._seen.add(message.id)
         if message.role is Role.USER:
-            if self._insert_at is None:  # not an earlier page
-                self._set_card(None)
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
+            if text and notice_of(text) is None and self._insert_at is None:
+                self._set_card(None)  # answered: results and notices leave it up
             if (notice := notice_of(text)) is not None:
                 self._add(NoticeItem(notice, "info"))
             elif text:
@@ -871,6 +876,7 @@ class Controller:
         self._inbox: asyncio.Queue[EventEnvelope | Callable[[], Awaitable[None]] | None] = (
             asyncio.Queue())
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._switching = asyncio.Lock()  # conversation switches, one after another
         self.can_delete = True  # False once Memory said it cannot delete conversations
         self.sessions: SubSessions | None = None  # deleted with their conversation
 
@@ -881,7 +887,10 @@ class Controller:
             await self.recover()
             while (item := await self._inbox.get()) is not None:
                 if callable(item):
-                    await item()
+                    try:
+                        await item()
+                    except Exception as e:  # noqa: BLE001 - shown; the view keeps following
+                        self.model.notify(user_message(e))
                     continue
                 if item.seq <= self.model.last_seq:
                     continue
@@ -981,15 +990,20 @@ class Controller:
         return self._switch(StartOptions(folder=folder))
 
     def _switch(self, options: StartOptions) -> asyncio.Task[None]:
+        """One after another, so the conversation asked for last is the one left open."""
+
         async def start() -> None:
-            await self.runtime.start(options)
-            await self._shown()
+            async with self._switching:
+                await self.runtime.start(options)
+                await self._shown()
 
         return self.command(start())
 
     async def _shown(self) -> None:
         """Load the conversation now open, in order with events, and return once it is in
         the model: what runs after a switch (the sidebar) then sees the new one."""
+        if self.model.closed:  # nothing reads the inbox any more
+            return
         loaded: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
         async def recover() -> None:

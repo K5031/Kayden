@@ -10,10 +10,13 @@ from typing import Any
 import pytest
 
 from kayden.api import (
+    NOTICE_PREFIX,
     AgentState,
+    Message,
     OperationResult,
     PermissionPolicy,
     ProposalMade,
+    Role,
     ToolCall,
     ToolResult,
     ToolStatus,
@@ -230,10 +233,62 @@ async def test_the_terminal_app_shows_the_card(make):
 
 def test_cards_come_from_wrap_up_and_ask_for_help():
     assert card_of(ToolCall("a", "wrap_up", ACTION)) == Card(
-        "a", RECAP, "Push it?", ("Yes, push", "Not now"), "Yes, push")
+        "a", RECAP, "Push it?", ("Yes, push", "Not now"), 0)
+    card = card_of(ToolCall("a", "wrap_up", ACTION))
+    assert card.runs(0, {"a"}) and not card.runs(1, {"a"}) and not card.runs(0, set())
     assert card_of(ToolCall("b", "wrap_up", {"question": "Push?", "options": [{"label": "Yes"}]})
                    ) == Card("b", "", "Push?", ("Yes",), None)
     assert card_of(ToolCall("c", "ask_for_help", {"question": "Which?", "replies": ["A"]})) == (
         Card("c", "", "Which?", ("A",), None))
     assert card_of(ToolCall("d", "ask_for_help", {"question": "Which?"})) is None
     assert card_of(ToolCall("e", "read", WRAP)) is None
+
+
+async def test_a_background_result_or_notice_leaves_the_card_up(make):
+    from kayden.api import OperationResult
+    from kayden.api import Text as TextBlock
+    from kayden.frontends.desktop.viewmodel import ConversationModel
+
+    model = ConversationModel()
+    wrap = ToolCall("w", "wrap_up", WRAP)
+    model._render(Message("a", Role.ASSISTANT, (wrap,), 0.0))
+    assert model.card is not None
+    model._render(Message("b", Role.USER, (OperationResult("op", ToolStatus.OK, "built"),), 0.0))
+    model._render(Message("c", Role.USER, (TextBlock(NOTICE_PREFIX + " Sub-session ended."),),
+                          0.0))
+    assert model.card is not None  # neither is the user's answer
+    model._render(Message("d", Role.USER, (TextBlock("Not now"),), 0.0))
+    assert model.card is None
+
+
+def test_a_closed_card_stays_closed_when_the_history_is_reloaded():
+    from kayden.frontends.desktop.viewmodel import ConversationModel
+
+    model = ConversationModel()
+    wrap = ToolCall("w", "wrap_up", WRAP)
+    model._render(Message("a", Role.ASSISTANT, (wrap,), 0.0))
+    model.close_card()
+    model._render(Message("a2", Role.ASSISTANT, (wrap,), 0.0))  # as a recover renders it
+    assert model.card is None
+
+
+@pytest.mark.usefixtures("qapp")
+async def test_options_are_told_apart_by_position_not_label(make):
+    from PySide6.QtWidgets import QPushButton
+
+    from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kayden.frontends.desktop.window import MainWindow, WrapUpCard
+
+    same = {**WRAP, "options": [{"label": "Yes", "call": PUSH}, {"label": "Yes"}]}
+    h = await harness(make, [
+        Step(text="Committed.", calls=[call("wrap_up", same, id="w")]), Step(text="ok")])
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    await h.turn("commit it")
+    await eventually(lambda: "w" in controller.model.proposals)
+    window.findChildren(WrapUpCard)[-1].findChildren(QPushButton)[1].click()  # the reply
+    await eventually(lambda: len(h.core.requests) == 2)
+    assert h.tools.started == []  # the call did not run
+    assert "Yes" in [getattr(b, "text", None) for b in blocks(h)]

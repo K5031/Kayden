@@ -471,16 +471,17 @@ class WrapUpPrompt(Vertical):
                                   else "", (card.question, "bold")))
         with Horizontal(classes="buttons"):
             for i, option in enumerate(card.options):
-                yield Button(option, variant="primary" if i == 0 else "default")
+                yield Button(option, id=f"option-{i}", variant="primary" if i == 0 else "default")
             yield Button("✕", id="close", tooltip="Close")
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        if event.button.id == "close":
+        name = event.button.id or ""
+        if name == "close":
             self.app.close_card()  # type: ignore[attr-defined]
-        else:
-            self.app.choose(str(event.button.label))  # type: ignore[attr-defined]
+        elif name.startswith("option-"):
+            self.app.choose(int(name.removeprefix("option-")))  # type: ignore[attr-defined]
 
 
 # ── modal screens ────────────────────────────────────────────────────────
@@ -1590,6 +1591,7 @@ class KaydenApp(App[None]):
         self._tool_entries: dict[str, ToolEntry] = {}
         self._card: WrapUpPrompt | None = None
         self._card_proposals: set[str] = set()  # wrap_up options pending, shown on the card
+        self._closed_card: str | None = None  # the card the user put away
         self._stream: list[AssistantEntry | ToolEntry] = []
         self._queued: dict[str, UserEntry] = {}
         self._rendered_ids: set[str] = set()
@@ -1788,7 +1790,8 @@ class KaydenApp(App[None]):
                     self._stream.append(entry)
                 entry.stream_arguments(name, chunk)
             case MessageQueued(message_id=message_id, text=text):
-                await self._set_card(None)
+                if notice_of(text) is None:
+                    await self._set_card(None)
                 if message_id not in self._queued and notice_of(text) is None:
                     entry = UserEntry(text, queued=True, message_id=message_id)
                     self._queued[message_id] = await self._mount(entry)
@@ -1974,9 +1977,9 @@ class KaydenApp(App[None]):
         """Mount a message's entries; returns its last assistant text entry, if any."""
         self._rendered_ids.add(message.id)
         if message.role is Role.USER:
-            if self._insert_before is None:  # not an earlier page
-                await self._set_card(None)
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
+            if text and notice_of(text) is None and self._insert_before is None:
+                await self._set_card(None)  # answered: results and notices leave it up
             if (notice := notice_of(text)) is not None:
                 if "\n" in notice or len(notice) > 160:  # a new goal's brief: folded
                     title = _clip(notice.splitlines()[0], 100)
@@ -2037,6 +2040,8 @@ class KaydenApp(App[None]):
         await self.query_one("#permissions", Vertical).mount(prompt)
 
     async def _set_card(self, card: Card | None) -> None:
+        if card is not None and card.call_id == self._closed_card:
+            card = None  # put away: reloading the history does not bring it back
         if self._card is not None and self._card.card == card:
             return
         if self._card is not None:
@@ -2046,15 +2051,19 @@ class KaydenApp(App[None]):
             self._card = WrapUpPrompt(card)
             await self.query_one("#permissions", Vertical).mount(self._card)
 
-    def choose(self, option: str) -> None:
-        card = self._card.card if self._card is not None else None
-        if card is not None and option == card.action and card.call_id in self._card_proposals:
+    def choose(self, index: int) -> None:
+        if self._card is None:
+            return
+        card = self._card.card
+        if card.runs(index, self._card_proposals):
             self.resolve_proposal(card.call_id, True)
             self.close_card()
         else:
-            self._call(self.runtime.send(option))
+            self._call(self.runtime.send(card.options[index]))
 
     def close_card(self) -> None:
+        if self._card is not None:
+            self._closed_card = self._card.card.call_id
         self.run_worker(self._set_card(None))
 
     def resolve_proposal(self, proposal_id: str, accept: bool) -> None:

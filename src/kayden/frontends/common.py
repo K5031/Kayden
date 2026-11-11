@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -48,14 +48,18 @@ PERMISSION_LABELS = {
 
 @dataclass(frozen=True, slots=True)
 class Card:
-    """What a SUGGESTION_TOOLS call shows under the answer. `action` is the label of the
-    option that runs a call, the card Proposal with id `call_id` while it is pending."""
+    """What a SUGGESTION_TOOLS call shows under the answer. `action` is the index of the
+    option that runs a call: the card Proposal with id `call_id`, while it is pending."""
 
     call_id: str
     recap: str
     question: str
     options: tuple[str, ...]
-    action: str | None
+    action: int | None
+
+    def runs(self, index: int, pending: Container[str]) -> bool:
+        """Whether choosing option `index` approves its call rather than sending its label."""
+        return index == self.action and self.call_id in pending
 
 
 def card_of(call: ToolCall) -> Card | None:
@@ -67,9 +71,10 @@ def card_of(call: ToolCall) -> Card | None:
         return value if isinstance(value, str) else ""
 
     if call.name == "wrap_up":
-        raw = [o for o in args.get("options") or () if isinstance(o, dict)]
-        options = tuple(o["label"] for o in raw if isinstance(o.get("label"), str) and o["label"])
-        action = next((o["label"] for o in raw if "call" in o and o.get("label")), None)
+        raw = [o for o in args.get("options") or ()
+               if isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"]]
+        options = tuple(o["label"] for o in raw)
+        action = next((i for i, o in enumerate(raw) if "call" in o), None)
         if not options:
             return None
         return Card(call.id, text("recap"), text("question"), options, action)
