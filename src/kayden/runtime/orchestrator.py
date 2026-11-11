@@ -24,6 +24,7 @@ from kayden.api import (
     DESCRIPTION_ARG,
     DUTY_TOOLS,
     PERMISSION_CEILING_ENV,
+    SKILL_TOOL,
     AgentConfig,
     AgentState,
     ArchiveHit,
@@ -82,6 +83,7 @@ from kayden.api import (
     SettingsChanged,
     SettingsUpdate,
     ShuttingDown,
+    Skill,
     StartOptions,
     StateChanged,
     StopReason,
@@ -106,6 +108,7 @@ from kayden.api import (
     UsageUpdated,
 )
 from kayden.runtime import duty as duties
+from kayden.runtime import skills as skill_files
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
 from kayden.runtime.config import (
     ACTIVATION_NOTICE,
@@ -143,7 +146,7 @@ EVENT_LOG_FILE = "events.jsonl"
 _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
 _NO_DUTIES = "this memory module cannot keep duties"
-_RUNTIME_TOOLS = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
+_RUNTIME_TOOLS = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS) | {SKILL_TOOL.name}
 
 
 def _stamped(message: Message) -> Message:
@@ -326,6 +329,8 @@ class Runtime:
         # folder: one given for a confined call covers confined calls only.
         self._grants: dict[str, bool] = {}
         self._memory_tools: set[str] = set()  # offered by Memory this request
+        self._skills: dict[str, skill_files.Loaded] = {}  # found for this request
+        self._skill_problems: list[str] = []
         self._tool_owner: dict[str, Tools] = {}  # the Tools module that offered each name
         self._own_description: set[str] = set()  # tools whose schema declares DESCRIPTION_ARG
         self._wake_set: set[CallId] | None = None
@@ -598,6 +603,25 @@ class Runtime:
         await self._edit_memories(self._memory.delete_note(note_id, folder=self._project()))
         self._log.decision("note_deleted", note=note_id, by="user")
         self._emit(MemoriesChanged())
+
+    async def skills(self) -> Sequence[Skill]:
+        await self._load_skills()
+        return tuple(s.skill for s in self._skills.values())
+
+    async def _load_skills(self) -> None:
+        """Read the skill folders again, so a new or changed skill needs no restart."""
+        roots = skill_files.folders(self._config.data_dir, self._project())
+        self._skills, problems = await asyncio.to_thread(skill_files.load, roots)
+        if problems != self._skill_problems:
+            self._skill_problems = problems
+            for problem in problems:
+                self._log.decision("skill_skipped", problem=problem)
+
+    def _system(self) -> str:
+        """The system prompt with the skills' listing."""
+        section = skill_files.prompt(self._skills)
+        return f"{self._config.system_prompt}\n\n{section}" if section else \
+            self._config.system_prompt
 
     def _project(self) -> str | None:
         """Whose long-term memory: the open conversation's work folder (Memory.notes)."""
@@ -902,7 +926,7 @@ class Runtime:
                       window // 4)
         count = self._counter(info.id)
         tool_json = json.dumps([[t.name, t.description, t.parameters] for t in tools])
-        budget = window - reserve - count(self._config.system_prompt) - count(tool_json)
+        budget = window - reserve - count(self._system()) - count(tool_json)
         return ContextRequest(self._conversation.id, max(0, int(budget * factor)), count), reserve
 
     # ── Tools offered to the model ───────────────────────────────────────
@@ -919,6 +943,9 @@ class Runtime:
                 specs["ask_for_help"] = DUTY_TOOLS["ask_for_help"]
             if conversation.duty is not None and conversation.duty.kind == DutyKind.GOAL:
                 specs["finish_goal"] = DUTY_TOOLS["finish_goal"]
+        await self._load_skills()
+        if self._skills:
+            specs[SKILL_TOOL.name] = SKILL_TOOL
         self._memory_tools, self._tool_owner = set(), {}
         for module in (self._memory, self._core, *self._tools):
             try:
@@ -1376,7 +1403,7 @@ class Runtime:
         tools = list(specs.values())
         context, reserve = self._context_request(info, tools, factor)
         assembled = await self._memory.assemble(context)
-        system = self._config.system_prompt
+        system = self._system()
         if assembled.system_addendum:
             system = f"{system}\n\n{assembled.system_addendum}"
         assert self._conversation is not None
@@ -1951,6 +1978,14 @@ class Runtime:
                 await self._save_duty(None, self._conversation.plan)
                 self._log.decision("goal_finished")
                 return ToolStatus.OK, "Goal reached; the duty has ended."
+            case "skill":
+                name = args["name"].strip().removeprefix("/")
+                loaded = self._skills.get(name)
+                if loaded is None:
+                    return ToolStatus.ERROR, (f"There is no skill {name!r}. The skills are: "
+                                              f"{', '.join(self._skills) or 'none'}.")
+                self._log.decision("skill", name=name)
+                return ToolStatus.OK, skill_files.render(loaded, args.get("arguments", ""))
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."
 
     def _describe(self, op: Operation) -> str:

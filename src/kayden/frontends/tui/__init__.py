@@ -185,7 +185,8 @@ HELP = (
     "/conversations (F3), /memory (F4), /mcp (tool servers), /folder [path], "
     "/duty [instruction|off] (F5), /goal [instruction], /sessions, /back, "
     "/approve, /dismiss (a proposal), "
-    "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
+    "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /skills, /quit (Ctrl+Q). "
+    "A skill's name runs it: /consolidate-memory. "
     "Messages can be sent while the agent runs; they are queued."
 )
 UNTITLED = "New chat"
@@ -2263,8 +2264,22 @@ class KaydenApp(App[None]):
                 self.exit()
             case "help":
                 self.notify(HELP, markup=False, timeout=10)
+            case "skills":
+                self._call(self._list_skills())
             case _:
-                self.notify(f"Unknown command /{name}. {HELP}", severity="error", markup=False)
+                self._call(self._skill(name, text))
+
+    async def _skill(self, name: str, text: str) -> None:
+        """A skill's name as a command is a message for the agent, which loads the skill."""
+        if any(skill.name == name for skill in await self.runtime.skills()):
+            await self.runtime.send(text)
+        else:
+            self.notify(f"Unknown command /{name}. {HELP}", severity="error", markup=False)
+
+    async def _list_skills(self) -> None:
+        skills = await self.runtime.skills()
+        self.notify("\n".join(f"/{s.name}: {s.description}" for s in skills)
+                    or "There are no skills.", markup=False, timeout=10)
 
     def new_in_folder(self, folder: str) -> None:
         """Start a chat in `folder`."""

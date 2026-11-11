@@ -97,6 +97,8 @@ recap of what is done and what is not. Other answers have no card.
 | | `/folder [path]` | Show the work folder, or start a chat in another one |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
 | Ctrl+Q | `/quit` | Quit |
+| | `/skills` | List the [skills](concepts.md#skills) |
+| | `/<skill name>` | Run a skill, for example `/consolidate-memory` |
 | | `/help` | List the commands |
 
 ## Conversations and memory

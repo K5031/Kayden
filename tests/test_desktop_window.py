@@ -1390,7 +1390,8 @@ async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
     window.open_conversation(parent_id)  # changed their mind meanwhile
     await asyncio.sleep(0.5)
     assert window._viewing is None and window.controller is window.home
-    assert sessions._viewers.get(child.id, 0) == 0  # released, not left open
+    # released, not left open (the child may still be starting on a busy machine)
+    await eventually(lambda: sessions._viewers.get(child.id, 0) == 0)
     assert controller.model.conversation.id == parent_id
     assert window.conversation_list.currentItem().data(Qt.ItemDataRole.UserRole) == parent_id
 

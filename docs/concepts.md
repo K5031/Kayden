@@ -131,6 +131,35 @@ Kayden keeps every message of every conversation until you delete the conversati
 - Kayden can keep long-term memory **per project, as files** instead, the way Claude
   Code does; see [Installed modules](settings.md#installed-modules).
 
+## Skills
+
+A skill is a set of written instructions for one kind of task, which the agent reads only
+when that task comes up. Every conversation sees the list of skills (a name and one line
+each), so having many costs little.
+
+- **Use one** by asking for the task in your own words, or by writing its name as a
+  message: `/consolidate-memory`. Anything after the name is passed to the skill.
+- **Kayden comes with** `consolidate-memory`: the agent rereads its long-term memory,
+  merges duplicates, fixes or deletes what is out of date and tells you what it changed.
+  It runs only when you ask.
+- **Add your own** as a folder with a `SKILL.md` file:
+
+  ```markdown
+  ---
+  name: release-notes
+  description: Write release notes from the git log, in this project's format.
+  ---
+
+  1. Read the commits since the last tag...
+  ```
+
+  The name is lowercase letters, digits and hyphens. Put the folder in `~/.kayden/skills/`
+  to have the skill everywhere, or in a project's `.claude/skills/` to have it in chats
+  that work in that folder. A project's skill replaces yours of the same name, and yours
+  replaces Kayden's. The format is Claude Code's, so its skills work as they are. A new or
+  changed skill is picked up with your next message.
+- A project's skills are instructions from that project, so open only folders you trust.
+
 ## Deleting
 
 Deleting a conversation erases its messages, its summary and its search entries. Memory

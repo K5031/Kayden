@@ -43,7 +43,7 @@ and the terminal app drive their sub-sessions this way:
 | `snapshot` | none |
 | `history` | `conversation_id`, optional `before`, `limit` |
 | `list_conversations` | optional `include_archived` |
-| `list_models`, `list_tools`, `settings`, `notes` | none |
+| `list_models`, `list_tools`, `settings`, `notes`, `skills` | none |
 | `update_settings` | `update`: a `SettingsUpdate` object |
 | `rename_conversation`, `archive_conversation`, `delete_conversation` | `conversation_id`, and `title` or `archived` |
 | `search_archive` | `query`, optional `conversation_id`, `limit` |

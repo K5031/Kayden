@@ -70,6 +70,7 @@ src/kayden/frontends/                 Frontends; common.py is what every fronten
                                       sessions.py the sub-sessions a frontend hosts
   tui/                                terminal app (Textual)
   desktop/                            desktop app: viewmodel.py (no Qt), window.py, assets
+src/kayden/skills/                    the skills Kayden comes with (runtime/skills.py loads them)
 src/kayden/window.py                  the window launcher
 src/kayden_desktop/                   the module a Briefcase bundle runs
 src/kayden/__main__.py                the `kayden` command: config, saved settings, restarts

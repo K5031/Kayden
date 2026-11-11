@@ -103,7 +103,7 @@ async def test_live_settings_apply_from_the_next_request(make):
     h.core.add(Step(calls=[call("write", id="w")]), Step(text="done"))
     await h.turn("go")
     request = h.core.requests[-2]
-    assert request.model == "fake-2" and request.system == "Be brief."
+    assert request.model == "fake-2" and request.system.startswith("Be brief.")
     assert (await h.results())["w"].status == ToolStatus.REFUSED  # DENY applied
 
 

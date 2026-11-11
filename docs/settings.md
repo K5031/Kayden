@@ -156,6 +156,7 @@ Everything is in Kayden's data folder, `~/.kayden` (or `--data-dir`, or `$KAYDEN
 | `config.toml` | Optional hand-written configuration, for advanced use |
 | `memory.db` | Your conversations and long-term memory |
 | `memory-files.db`, `projects/` | The same, with the files-per-project memory |
+| `skills/` | Your own [skills](concepts.md#skills) |
 | `usage.json` | What has been spent so far; delete it, while Kayden is closed, to start counting from zero |
 | `events.jsonl` | Activity log of what Kayden did and when; it holds no message text, tool input or tool output |
 

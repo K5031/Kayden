@@ -446,6 +446,18 @@ PROFILE = "About you"  # the built-in Memory's note every request sees in full
 
 
 @dataclass(frozen=True, slots=True)
+class Skill:
+    """Instructions for one kind of task, which the model loads when the task comes up
+    (SKILL_TOOL) or the user asks for by writing /name as a message. A folder with a
+    SKILL.md in Claude Code's format: Kayden's own, the user's in <data dir>/skills, a
+    project's in <work folder>/.claude/skills; a later one replaces an earlier one of the
+    same name."""
+
+    name: str  # lowercase letters, digits and hyphens
+    description: str  # one line: what it does and when to use it
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryNote:
     """One entry of long-term memory, as the Memory module keeps it: the built-in Memory's
     notes (a profile, titled PROFILE, and one note per topic), or another module's (a file
@@ -836,13 +848,30 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
     ),
 }
 
+# The runtime built-in offered while there are skills (Skill): it answers with a skill's
+# instructions and the folder its files are in. Every request's system prompt lists the
+# skills by name and description. Never gated and not counted.
+SKILL_TOOL = ToolSpec(
+    "skill",
+    "Load a skill's instructions by its name, then follow them. Use it when a task fits a "
+    "listed skill, or when the user's message starts with /name.",
+    {"type": "object",
+     "properties": {
+         "name": {"type": "string", "minLength": 1},
+         "arguments": {"type": "string",
+                       "description": "What the user wrote after /name, or what the "
+                                      "skill should work on."}},
+     "required": ["name"]},
+    read_only=True,
+)
+
 # Calls frontends show as a card under the answer (wrap_up: recap, question, options;
 # ask_for_help: question, replies), while no user message follows it. A click on an option
 # sends its label as the user's message, or approves its call's Proposal.
 SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
 
 # No module may declare these names.
-RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
+RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS) | {SKILL_TOOL.name}
 
 # Text Kayden itself writes into a conversation as a USER message, for the model (an
 # activation, a duty's wake-up, a sub-session's report) starts with this. Frontends show
@@ -1537,6 +1566,11 @@ class RuntimeAPI(Protocol):
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None: ...
     async def notes(self) -> Sequence[MemoryNote]:
         """The open conversation's long-term memory (Memory.notes, its work folder)."""
+
+    async def skills(self) -> Sequence[Skill]:
+        """The skills the open conversation has, by name; without one, those of no
+        project. A frontend with commands of its own sends /name as a message when name
+        is one of them."""
 
     # Control
 

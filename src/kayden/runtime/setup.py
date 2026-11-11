@@ -25,6 +25,7 @@ from kayden.api import (
     SettingsChanged,
     SettingsUpdate,
     ShuttingDown,
+    Skill,
     StartOptions,
     ToolSpec,
     Usage,
@@ -130,6 +131,9 @@ class SetupRuntime:
 
     async def notes(self) -> Sequence[MemoryNote]:
         self._refuse()
+
+    async def skills(self) -> Sequence[Skill]:
+        return ()
 
     async def start(self, options: StartOptions) -> ConversationInfo:
         self._refuse()

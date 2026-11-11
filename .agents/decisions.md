@@ -853,3 +853,14 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Folder | The runtime passes the open conversation's work folder to `notes`, `save_note`, `delete_note`; `SqliteMemory` ignores it |
 | Fixed | `MemoryNote.fixed` (the built-in profile) replaces the frontends' title check |
 | Tool | `memory`, Anthropic's memory tool commands, run in a thread; read-only `recall` and `read_around` come from the archive |
+
+## Skills
+
+| Choice | Decision |
+|---|---|
+| Name | `[a-z0-9][a-z0-9-]{0,63}`; frontmatter `name`, else the folder's name |
+| Description | Frontmatter `description`, else the instructions' first paragraph; one line, 500 characters at most in the listing |
+| Order | Listed by name; Kayden's, then `<data dir>/skills`, then `<work folder>/.claude/skills`, the later replacing the earlier |
+| Reread | With every request and every `RuntimeAPI.skills()` call, in a thread |
+| Tool | `skill`, read-only, never gated or counted; a leading `/` in the name is dropped; an unknown name answers ERROR with the names |
+| Prompt | The section follows the user's instructions and precedes Memory's addendum and the duty, so the stable part of the prompt comes first |

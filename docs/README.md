@@ -11,5 +11,5 @@ Claude, DeepSeek or OpenAI models, using your own API key.
 | [Desktop app](desktop-app.md) | Use Kayden in a window instead of a terminal |
 | [Settings](settings.md) | Change the AI provider, model, spending limit, permissions, instructions or interface |
 | [Driving Kayden from a program](headless.md) | Run Kayden without a screen and control it over stdin and stdout |
-| [Concepts](concepts.md) | Understand conversations, background tasks, duties, sub-sessions, memory, deleting and budgets |
+| [Concepts](concepts.md) | Understand conversations, background tasks, duties, sub-sessions, memory, skills, deleting and budgets |
 | [Development](development.md) | Understand how Kayden is built, run the tests, contribute |

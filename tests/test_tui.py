@@ -48,6 +48,7 @@ from kayden.api import (
     Settings,
     SettingsUpdate,
     ShuttingDown,
+    Skill,
     StartOptions,
     StateChanged,
     StopReason,
@@ -289,6 +290,9 @@ class StubRuntime:
 
     async def send(self, text: str) -> None:
         await self._record("send", text)
+
+    async def skills(self):
+        return (Skill("greet", "Greet someone by name"),)
 
     async def activate(self) -> None:
         await self._record("activate")
@@ -578,6 +582,25 @@ async def test_model_selection_dialog_and_command():
         await type_text(pilot, "/model m1")
         await pilot.press("enter")
         await until(pilot, lambda: ("select_model", "m1") in stub.calls)
+
+
+async def test_a_skill_name_as_a_command_goes_to_the_agent():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        await type_text(pilot, "/greet Ada")
+        await pilot.press("enter")
+        await until(pilot, lambda: ("send", "/greet Ada") in stub.calls)
+        await type_text(pilot, "/nope")
+        await pilot.press("enter")
+        await until(pilot, lambda: any("Unknown command /nope" in n.message
+                                       for n in app._notifications))
+        assert ("send", "/nope") not in stub.calls
+        await type_text(pilot, "/skills")
+        await pilot.press("enter")
+        await until(pilot, lambda: any("/greet: Greet someone by name" in n.message
+                                       for n in app._notifications))
 
 
 async def test_activate_needs_only_a_started_agent():
