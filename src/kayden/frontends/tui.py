@@ -120,7 +120,9 @@ from kayden.frontends.common import (
     PERMISSION_LABELS,
     PLAN_HINT,
     RESULT_LABELS,
+    Card,
     call_parts,
+    card_of,
     delete_details,
     duty_status,
     folder_path,
@@ -139,7 +141,6 @@ from kayden.frontends.common import (
     plan_text,
     proposal_parts,
     provider_step,
-    replies_of,
     request_note,
     restart_notice,
 )
@@ -455,22 +456,31 @@ class ProposalPrompt(Vertical):
         self.app.resolve_proposal(self.proposal.id, event.button.id == "approve")  # type: ignore[attr-defined]
 
 
-class ReplyButtons(Horizontal):
-    """The agent's suggested replies under its answer, its pick first; pressing one sends
-    it as the user's message."""
+class WrapUpPrompt(Vertical):
+    """The card that ends the agent's turn: its recap, its question and the options, its pick
+    first. Pressing an option sends it as the user's message, or runs its call while that is
+    pending; ✕ puts the card away."""
 
-    def __init__(self, replies: Sequence[str]) -> None:
-        super().__init__(classes="buttons")
-        self.replies = tuple(replies)
+    def __init__(self, card: Card) -> None:
+        super().__init__()
+        self.card = card
 
     def compose(self) -> ComposeResult:
-        for i, reply in enumerate(self.replies):
-            yield Button(reply, variant="primary" if i == 0 else "default")
+        card = self.card
+        yield Label(Text.assemble((card.recap, "dim"), "\n" if card.recap and card.question
+                                  else "", (card.question, "bold")))
+        with Horizontal(classes="buttons"):
+            for i, option in enumerate(card.options):
+                yield Button(option, variant="primary" if i == 0 else "default")
+            yield Button("✕", id="close", tooltip="Close")
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.app.send_reply(str(event.button.label))  # type: ignore[attr-defined]
+        if event.button.id == "close":
+            self.app.close_card()  # type: ignore[attr-defined]
+        else:
+            self.app.choose(str(event.button.label))  # type: ignore[attr-defined]
 
 
 # ── modal screens ────────────────────────────────────────────────────────
@@ -1526,6 +1536,9 @@ class KaydenApp(App[None]):
     #permissions { height: auto; max-height: 50%; }
     PermissionPrompt { height: auto; border: round $warning; padding: 0 1; }
     PermissionPrompt .buttons { height: auto; }
+    WrapUpPrompt { height: auto; border: round $primary; padding: 0 1; }
+    WrapUpPrompt .buttons { height: auto; }
+    WrapUpPrompt Button { margin-right: 1; }
     PermissionPrompt Button { margin-right: 1; }
     ModalScreen { align: center middle; }
     .dialog { width: 70; height: auto; max-height: 90%; border: thick $primary; padding: 1 2;
@@ -1575,7 +1588,8 @@ class KaydenApp(App[None]):
         self.notice = ""
         self._inbox: asyncio.Queue[EventEnvelope | _Resync | None] = asyncio.Queue()
         self._tool_entries: dict[str, ToolEntry] = {}
-        self._replies: ReplyButtons | None = None
+        self._card: WrapUpPrompt | None = None
+        self._card_proposals: set[str] = set()  # wrap_up options pending, shown on the card
         self._stream: list[AssistantEntry | ToolEntry] = []
         self._queued: dict[str, UserEntry] = {}
         self._rendered_ids: set[str] = set()
@@ -1697,7 +1711,8 @@ class KaydenApp(App[None]):
         self._rendered_ids.clear()
         self._prompts.clear()
         self._proposals.clear()
-        self._replies = None
+        self._card = None
+        self._card_proposals.clear()
         self.last_seq = snap.seq
         self.state = snap.state
         self.pending_ops = len(snap.operations)
@@ -1773,7 +1788,7 @@ class KaydenApp(App[None]):
                     self._stream.append(entry)
                 entry.stream_arguments(name, chunk)
             case MessageQueued(message_id=message_id, text=text):
-                await self._set_replies(())
+                await self._set_card(None)
                 if message_id not in self._queued and notice_of(text) is None:
                     entry = UserEntry(text, queued=True, message_id=message_id)
                     self._queued[message_id] = await self._mount(entry)
@@ -1798,6 +1813,7 @@ class KaydenApp(App[None]):
             case ProposalMade(proposal=proposal):
                 await self._add_proposal(proposal)
             case ProposalResolved(proposal_id=proposal_id):
+                self._card_proposals.discard(proposal_id)
                 if (card := self._proposals.pop(proposal_id, None)) is not None:
                     await card.remove()
             case ModelRetry(attempt=attempt, max_attempts=max_attempts, delay_s=delay, error=err):
@@ -1880,7 +1896,7 @@ class KaydenApp(App[None]):
     async def _mount_step(self, entry: ToolEntry) -> ToolEntry:
         """Add a step to the group just before it, or start one, taking along the thinking
         that came right before the step."""
-        if entry.tool_name == "suggest_replies":  # shown as the reply buttons instead
+        if entry.tool_name == "wrap_up":  # shown as the card instead
             entry.display = False
             return await self._mount(entry)
         transcript = self.query_one("#transcript", VerticalScroll)
@@ -1959,7 +1975,7 @@ class KaydenApp(App[None]):
         self._rendered_ids.add(message.id)
         if message.role is Role.USER:
             if self._insert_before is None:  # not an earlier page
-                await self._set_replies(())
+                await self._set_card(None)
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             if (notice := notice_of(text)) is not None:
                 if "\n" in notice or len(notice) > 160:  # a new goal's brief: folded
@@ -1989,8 +2005,8 @@ class KaydenApp(App[None]):
                     current.refresh_content()
                 case ToolCall() as call:
                     await self._mount_tool(call)
-                    if (replies := replies_of(call)) and self._insert_before is None:
-                        await self._set_replies(replies)
+                    if (card := card_of(call)) and self._insert_before is None:
+                        await self._set_card(card)
                     current = None
                 case ToolResult() as result:
                     await self._finish_tool(result, None)
@@ -2011,24 +2027,35 @@ class KaydenApp(App[None]):
         entry.finish(result, duration)
 
     async def _add_proposal(self, proposal: Proposal) -> None:
+        if proposal.card:
+            self._card_proposals.add(proposal.id)
+            return
         if proposal.id in self._proposals:
             return
         prompt = ProposalPrompt(proposal)
         self._proposals[proposal.id] = prompt
         await self.query_one("#permissions", Vertical).mount(prompt)
 
-    async def _set_replies(self, replies: Sequence[str]) -> None:
-        if self._replies is not None and self._replies.replies == tuple(replies):
+    async def _set_card(self, card: Card | None) -> None:
+        if self._card is not None and self._card.card == card:
             return
-        if self._replies is not None:
-            await self._replies.remove()
-            self._replies = None
-        if replies:
-            self._replies = ReplyButtons(replies)
-            await self.query_one("#permissions", Vertical).mount(self._replies)
+        if self._card is not None:
+            await self._card.remove()
+            self._card = None
+        if card is not None:
+            self._card = WrapUpPrompt(card)
+            await self.query_one("#permissions", Vertical).mount(self._card)
 
-    def send_reply(self, text: str) -> None:
-        self._call(self.runtime.send(text))
+    def choose(self, option: str) -> None:
+        card = self._card.card if self._card is not None else None
+        if card is not None and option == card.action and card.call_id in self._card_proposals:
+            self.resolve_proposal(card.call_id, True)
+            self.close_card()
+        else:
+            self._call(self.runtime.send(option))
+
+    def close_card(self) -> None:
+        self.run_worker(self._set_card(None))
 
     def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
         self._call(self.runtime.resolve_proposal(proposal_id, accept))

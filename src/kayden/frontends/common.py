@@ -9,6 +9,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -45,11 +46,39 @@ PERMISSION_LABELS = {
 }
 
 
-def replies_of(call: ToolCall) -> tuple[str, ...]:
-    """The replies a call offers as buttons, or none."""
-    replies = call.arguments.get("replies") if call.name in SUGGESTION_TOOLS else None
-    return tuple(r for r in replies if isinstance(r, str) and r) if isinstance(
-        replies, list) else ()
+@dataclass(frozen=True, slots=True)
+class Card:
+    """What a SUGGESTION_TOOLS call shows under the answer. `action` is the label of the
+    option that runs a call, the card Proposal with id `call_id` while it is pending."""
+
+    call_id: str
+    recap: str
+    question: str
+    options: tuple[str, ...]
+    action: str | None
+
+
+def card_of(call: ToolCall) -> Card | None:
+    """The card a call shows, or None."""
+    args = call.arguments
+
+    def text(key: str) -> str:
+        value = args.get(key)
+        return value if isinstance(value, str) else ""
+
+    if call.name == "wrap_up":
+        raw = [o for o in args.get("options") or () if isinstance(o, dict)]
+        options = tuple(o["label"] for o in raw if isinstance(o.get("label"), str) and o["label"])
+        action = next((o["label"] for o in raw if "call" in o and o.get("label")), None)
+        if not text("recap") and not options:
+            return None
+        return Card(call.id, text("recap"), text("question"), options, action)
+    if call.name in SUGGESTION_TOOLS:
+        replies = args.get("replies")
+        options = tuple(r for r in replies if isinstance(r, str) and r) if isinstance(
+            replies, list) else ()
+        return Card(call.id, "", text("question"), options, None) if options else None
+    return None
 
 
 def notice_of(text: str) -> str | None:

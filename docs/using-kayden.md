@@ -54,12 +54,19 @@ carries on meanwhile. Approve runs exactly that step, without asking again, and 
 told the result; Dismiss tells it you said no. Proposals still open when you quit, stop the
 agent or switch conversations are withdrawn.
 
-### Suggested replies
+### The wrap-up card
 
-When an answer ends with a question for you (go ahead or not, which option), the agent may
-add up to three replies as buttons above the message box, its recommendation first. Click
-one to send it as your message, or type any other answer. The buttons go away once you send
-anything, and come back if you reopen the conversation before answering.
+When the agent finishes a piece of work, or needs you to decide something, it ends its turn
+with a card above the message box: a short recap of what is done and what is not and, when
+there is a decision, a question with up to three buttons, its recommendation first.
+
+- Most buttons send their text as your message, as if you had typed it.
+- One button may do the thing itself ("Yes, push" runs the push). Kayden runs exactly what
+  the agent proposed, and the agent picks up from the result.
+- Type any other answer instead, or close the card with ✕. Once you send anything, the card
+  goes away, and a button that would have done something is withdrawn.
+- The card comes back if you reopen the conversation before answering. After a restart a
+  button that would have done something just sends its text.
 
 ## Keys and commands
 

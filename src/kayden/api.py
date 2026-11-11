@@ -737,15 +737,44 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
         },
     ),
     # Ends the turn when it is the only call in its message (no request follows); frontends
-    # read the replies from the transcript (see SUGGESTION_TOOLS).
-    "suggest_replies": ToolSpec(
-        "suggest_replies",
-        "Only when your answer ends with a question the user must decide (go ahead or not, "
-        "which option): offer 1 to 3 short replies they can click instead of typing, written "
-        "as the user would say them (\"Yes, push\", \"Fix the first one\", \"Not now\"), "
-        "your recommendation first. Call it alone, last, after your other work: your turn "
-        "ends with it. The user can still type any other answer.",
-        {"type": "object", "properties": {"replies": _REPLIES}, "required": ["replies"]},
+    # show it as a card from the transcript (see SUGGESTION_TOOLS). An option with a call is
+    # a Proposal with card=True and the wrap_up call's id.
+    "wrap_up": ToolSpec(
+        "wrap_up",
+        "End your turn with a card for the user, when the turn did work (changed files, ran "
+        "commands, finished steps) or leaves them a decision; not after a short answer to a "
+        "question. recap: two or three short sentences on what is now done and what is not. "
+        "When the user has a decision to make, also: question, one short sentence; options, "
+        "1 to 3 buttons that answer it, your recommendation first. An option's label is "
+        "written as the user would say it (\"Yes, push\", \"Fix the first one\", \"Not "
+        "now\"); a click sends it as their message. At most one option may carry a call: "
+        "clicking it runs exactly that call, and you are woken with its result. Call wrap_up "
+        "alone, last, after your other work: your turn ends with it.",
+        {
+            "type": "object",
+            "properties": {
+                "recap": {"type": "string", "minLength": 1, "maxLength": 400},
+                "question": {"type": "string", "minLength": 1, "maxLength": 100},
+                "options": {
+                    "type": "array", "minItems": 1, "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "minLength": 1, "maxLength": 40},
+                            "call": {
+                                "type": "object",
+                                "properties": {"name": {"type": "string"},
+                                               "arguments": {"type": "object", "default": {}}},
+                                "required": ["name"],
+                                "description": "A tool call to run when this option is clicked.",
+                            },
+                        },
+                        "required": ["label"],
+                    },
+                },
+            },
+            "required": ["recap"],
+        },
     ),
 }
 
@@ -781,7 +810,7 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         "When you are blocked and only your supervisor can unblock you (a decision, an "
         "approval, access you lack): ask one clear question. Your duty's check-ins pause "
         "until they answer; finished background work still wakes you. Optionally offer 1 to "
-        "3 replies they can click, as with suggest_replies.",
+        "3 replies they can click, written as they would say them.",
         {"type": "object",
          "properties": {"question": {"type": "string", "minLength": 1}, "replies": _REPLIES},
          "required": ["question"]},
@@ -794,9 +823,10 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
     ),
 }
 
-# Calls whose `replies` argument frontends show as buttons under the answer, while no user
-# message follows it; a click sends the reply as the user's message.
-SUGGESTION_TOOLS = frozenset({"suggest_replies", "ask_for_help"})
+# Calls frontends show as a card under the answer (wrap_up: recap, question, options;
+# ask_for_help: question, replies), while no user message follows it. A click on an option
+# sends its label as the user's message, or approves its call's Proposal.
+SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
 
 # No module may declare these names.
 RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
@@ -1282,15 +1312,17 @@ class DutyScheduled:
 
 @dataclass(frozen=True, slots=True)
 class Proposal:
-    """A tool call the agent proposed (the propose built-in). Nothing runs until the user
-    approves it (RuntimeAPI.resolve_proposal); then exactly `call` runs, ungated, as the
-    operation `id` (the propose call's id), and its result wakes the agent like any
-    backgrounded call. A pending proposal is left out of the wake set. op_cancel, Stop and
-    a restart end it."""
+    """A tool call the agent proposed (the propose built-in, or an option of wrap_up). Nothing
+    runs until the user approves it (RuntimeAPI.resolve_proposal); then exactly `call` runs,
+    ungated, as the operation `id` (the propose or wrap_up call's id), and its result wakes
+    the agent like any backgrounded call. A pending proposal is left out of the wake set.
+    op_cancel, Stop and a restart end it; a user message also ends a card proposal, without
+    waking the agent on its own."""
 
     id: CallId
     call: ToolCall
     reason: str
+    card: bool = False  # an option of the wrap_up call `id`: shown on its card, not alone
 
 
 @dataclass(frozen=True, slots=True)

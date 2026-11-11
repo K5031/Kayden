@@ -86,7 +86,9 @@ from kayden.frontends.common import (
     COMPACTED,
     COMPACTING,
     RESULT_LABELS,
+    Card,
     call_parts,
+    card_of,
     duty_status,
     group_title,
     help_text,
@@ -94,7 +96,6 @@ from kayden.frontends.common import (
     notice_of,
     past_tense,
     provider_step,
-    replies_of,
 )
 from kayden.frontends.sessions import SubSessions
 
@@ -312,7 +313,7 @@ class ConversationModel:
         self.items: list[Item] = []
         self.prompts: dict[str, PermissionRequest] = {}
         self.proposals: dict[str, Proposal] = {}  # shown with the prompts
-        self.replies: tuple[str, ...] = ()  # the agent's suggested replies, as buttons
+        self.card: Card | None = None  # the agent's wrap-up card under its answer
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
         self.pending_ops = 0
@@ -385,7 +386,7 @@ class ConversationModel:
         self.items.clear()
         self.prompts.clear()
         self.proposals.clear()
-        self.replies = ()
+        self.card = None
         self._tools.clear()
         self._stream.clear()
         self._queued.clear()
@@ -580,25 +581,29 @@ class ConversationModel:
         return item
 
     def _remove(self, item: Item) -> None:
-        if item in self.items:  # a suggest_replies call is never shown
+        if item in self.items:  # a wrap_up call is never shown
             self.items.remove(item)
             self.on_change(Removed(item))
 
     def _add_tool(self, call: ToolCall, *, streaming: bool = False) -> ToolItem:
         arguments = "" if streaming else json.dumps(call.arguments, ensure_ascii=False)
         item = ToolItem(call.id, call.name, arguments)
-        if call.name != "suggest_replies":  # shown as the reply buttons instead
+        if call.name != "wrap_up":  # shown as the card instead
             self._add(item)
         self._tools[call.id] = item
         return item
 
-    def _set_replies(self, replies: tuple[str, ...]) -> None:
-        if replies != self.replies:
-            self.replies = replies
+    def _set_card(self, card: Card | None) -> None:
+        if card != self.card:
+            self.card = card
             self.on_change(PromptsChanged())
 
+    def close_card(self) -> None:
+        """The user put the card away; typing an answer still works."""
+        self._set_card(None)
+
     def _queue(self, event: MessageQueued) -> None:
-        self._set_replies(())
+        self._set_card(None)
         if notice_of(event.text) is not None:
             return  # shown once it is committed, as a notice
         if event.message_id not in self._queued and event.message_id not in self._seen:
@@ -654,7 +659,7 @@ class ConversationModel:
         self._seen.add(message.id)
         if message.role is Role.USER:
             if self._insert_at is None:  # not an earlier page
-                self._set_replies(())
+                self._set_card(None)
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             if (notice := notice_of(text)) is not None:
                 self._add(NoticeItem(notice, "info"))
@@ -679,8 +684,8 @@ class ConversationModel:
                 case ToolCall() as call:
                     if call.id not in self._tools:
                         self._add_tool(call)
-                    if (replies := replies_of(call)) and self._insert_at is None:
-                        self._set_replies(replies)
+                    if (card := card_of(call)) and self._insert_at is None:
+                        self._set_card(card)
                     current = None
                 case ToolResult() as result:
                     self._finish(result, None)

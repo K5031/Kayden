@@ -11,7 +11,7 @@ import os
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime
 from pathlib import Path
@@ -1026,6 +1026,11 @@ class Runtime:
     async def _deliver_inbox(self) -> bool:
         if not self._inbox:
             return False
+        if any(p.card for p, _ in self._proposals.values()):
+            # The user wrote instead of clicking: its outcome goes before their message.
+            await self._withdraw_proposals(cards_only=True)
+            if self._cycle_active:
+                await self._flush_results()
         while self._inbox:
             q = self._inbox.pop(0)
             await self._append(Message(q.message_id, Role.USER, (Text(q.text),), time.time()))
@@ -1130,8 +1135,8 @@ class Runtime:
                 return
             await self._flush_results()
             delivered = await self._deliver_inbox()
-            ended = (len(calls) == 1 and calls[0].name == "suggest_replies"
-                     and results[0].status == ToolStatus.OK)
+            ended = (len(calls) == 1 and calls[0].name == "wrap_up"
+                     and results[0].status in (ToolStatus.OK, ToolStatus.BACKGROUNDED))
             if (calls and not ended) or delivered:  # a queued message authorizes the next turn
                 continue
             # After the answer: Memory saves what the exchange taught it.
@@ -1506,10 +1511,10 @@ class Runtime:
         tasks: dict[CallId, asyncio.Task[tuple[ToolResult, float]]] = {}
         barrier: asyncio.Task[Any] | None = None
         for call in calls:
-            if call.name == "suggest_replies" and len(calls) > 1:
+            if call.name == "wrap_up" and len(calls) > 1:
                 results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, (
-                    "Not shown: call suggest_replies alone, in a message of its own after "
-                    "your other work.")), 0.0)
+                    "Not shown: call wrap_up alone, in a message of its own after your other "
+                    "work.")), 0.0)
                 continue
             if error := self._validate(call, specs):
                 results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, error), 0.0)
@@ -1539,6 +1544,8 @@ class Runtime:
         try:
             if call.name == "propose":
                 return self._propose(call), 0.0
+            if call.name == "wrap_up":
+                return self._wrap_up(call), 0.0
             if call.name in _RUNTIME_TOOLS or call.name in self._memory_tools:
                 return await self._run_builtin(call, spec)
             return await self._run_module_call(call, spec)
@@ -1667,16 +1674,43 @@ class Runtime:
 
     def _propose(self, call: ToolCall) -> ToolResult:
         """Put the proposed call before the user as an operation that returns at once."""
-        raw = call.arguments["call"]
+        if error := self._make_proposal(call, call.arguments["call"], call.arguments["reason"]):
+            return ToolResult(call.id, ToolStatus.ERROR, error)
+        return ToolResult(call.id, ToolStatus.BACKGROUNDED,
+                          f"Proposed to the user as {call.id}. You are woken with the outcome: "
+                          "the call's result if they approve it, or that they dismissed it. "
+                          "Carry on, or end your turn.")
+
+    def _wrap_up(self, call: ToolCall) -> ToolResult:
+        """Show the card; an option with a call is a card proposal pending with it."""
+        actions = [o for o in call.arguments.get("options", ()) if "call" in o]
+        if len(actions) > 1:
+            return ToolResult(call.id, ToolStatus.ERROR,
+                              "Not shown: at most one option may carry a call.")
+        self._log.decision("wrap_up", options=len(call.arguments.get("options", ())),
+                           action=bool(actions))
+        if not actions:
+            return ToolResult(call.id, ToolStatus.OK, "Shown to the user; your turn has ended.")
+        option = actions[0]
+        if error := self._make_proposal(call, option["call"], option["label"], card=True):
+            return ToolResult(call.id, ToolStatus.ERROR, f"Not shown: {error}")
+        return ToolResult(call.id, ToolStatus.BACKGROUNDED,
+                          f"Shown to the user; your turn has ended. If they click "
+                          f"{option['label']!r}, its call runs and you are woken with the "
+                          "result; if they write instead, it is withdrawn.")
+
+    def _make_proposal(self, call: ToolCall, raw: Mapping[str, Any], reason: str,
+                       card: bool = False) -> str | None:
+        """Start the operation `call.id` that runs `raw` once the user approves it; an error
+        instead if `raw` is not a call to propose."""
         proposed = ToolCall(f"{call.id}-call", raw["name"], dict(raw.get("arguments") or {}))
         if proposed.name not in self._tool_owner:
             what = ("is not a tool you can call" if proposed.name not in self._specs
                     else "needs no approval: call it directly")
-            return ToolResult(call.id, ToolStatus.ERROR,
-                              f"{proposed.name!r} {what}. Propose a call of an action tool.")
+            return f"{proposed.name!r} {what}. Propose a call of an action tool."
         if error := self._validate(proposed, self._specs):
-            return ToolResult(call.id, ToolStatus.ERROR, f"The proposed call: {error}")
-        proposal = Proposal(call.id, proposed, call.arguments["reason"])
+            return f"The proposed call: {error}"
+        proposal = Proposal(call.id, proposed, reason, card)
         decided: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         self._proposals[call.id] = (proposal, decided)
         self._proposal_ops.add(call.id)
@@ -1687,13 +1721,10 @@ class Runtime:
                           execute=lambda ctx: self._proposal_outcome(proposal, decided, spec,
                                                                      ctx))
         op.backgrounded = True
-        self._log.decision("proposal", call_id=call.id, tool=proposed.name)
+        self._log.decision("proposal", call_id=call.id, tool=proposed.name, card=card)
         self._emit(ProposalMade(proposal))
         self._emit(ToolBackgrounded(call.id))
-        return ToolResult(call.id, ToolStatus.BACKGROUNDED,
-                          f"Proposed to the user as {call.id}. You are woken with the outcome: "
-                          "the call's result if they approve it, or that they dismissed it. "
-                          "Carry on, or end your turn.")
+        return None
 
     async def _proposal_outcome(self, proposal: Proposal, decided: asyncio.Future[bool],
                                 spec: ToolSpec, ctx: Context) -> ToolOutput:
@@ -1734,8 +1765,9 @@ class Runtime:
         decided.set_result(accept)
         self._update_state()
 
-    async def _withdraw_proposals(self) -> None:
-        pending = [self._ops[i] for i in self._proposals if i in self._ops]
+    async def _withdraw_proposals(self, cards_only: bool = False) -> None:
+        pending = [self._ops[i] for i, (p, _) in self._proposals.items()
+                   if i in self._ops and (p.card or not cards_only)]
         for op in pending:
             op.request_cancel()
         supervisors = {op.supervisor for op in pending if op.supervisor is not None}
@@ -1868,9 +1900,6 @@ class Runtime:
                 self._emit(HelpNeeded(self._help))
                 return ToolStatus.OK, ("Asked. Your check-ins pause until your supervisor "
                                        "answers; end your turn.")
-            case "suggest_replies":
-                self._log.decision("replies_suggested", count=len(args["replies"]))
-                return ToolStatus.OK, "Shown to the user as buttons; your turn has ended."
             case "finish_goal":
                 duty = self._conversation.duty
                 if duty is None or duty.kind != DutyKind.GOAL:

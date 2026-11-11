@@ -62,7 +62,7 @@ another reason, the Settings window opens with the message.
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
 | Stop Kayden | Press the round button in the message box (it shows a square while Kayden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |
-| Answer with a click | When an answer ends with a question, buttons above the message box offer replies, Kayden's pick first. A click sends that reply. See [Suggested replies](using-kayden.md#suggested-replies). |
+| Answer with a click | When Kayden finishes work or needs a decision, a card above the message box recaps it and offers buttons, Kayden's pick first. A click sends that answer, or does what it says. ✕ closes the card. See [The wrap-up card](using-kayden.md#the-wrap-up-card). |
 | Answer a proposal | When Kayden proposes something of its own, a card above the message box says what and why: **Approve** runs it, **Dismiss** declines. See [Proposals](using-kayden.md#proposals). |
 | Cancel one task | Press **Cancel** on its card. |
 | See what a tool did | Steps between two replies fold into one line: the step under way while Kayden works ("Search the web for flights to Oslo"), then how many steps there were and any that failed ("4 steps · 1 failed"). Click it to see each step and the thinking between them; point at a step to see the tool and its exact input, and press its arrow for the result. A step without a sentence shows the tool and its input. |

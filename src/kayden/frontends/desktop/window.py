@@ -95,6 +95,7 @@ from kayden.frontends.common import (
     PERMISSION_LABELS,
     PERMISSION_SHORT,
     PLAN_HINT,
+    Card,
     call_parts,
     delete_details,
     dollars,
@@ -983,23 +984,44 @@ class ProposalCard(QFrame):
         self.resolve(proposal_id, accept)
 
 
-class ReplyButtons(QWidget):
-    """The agent's suggested replies under its answer, its pick first; a click sends one
-    as the user's message."""
+class WrapUpCard(QFrame):
+    """The card that ends the agent's turn: its recap, its question and the options, its pick
+    first. A click sends an option as the user's message, or runs its call while that is
+    pending; the close button puts the card away."""
 
-    def __init__(self, replies: Sequence[str], send: Callable[[str], None]) -> None:
+    def __init__(self, card: Card, live_action: bool, choose: Callable[[str], None],
+                 close: Callable[[], None]) -> None:
         super().__init__()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        for i, reply in enumerate(replies):
-            button = QPushButton(reply)
-            if i == 0:
-                _primary(button)
-            button.setToolTip("Send this reply")
-            button.clicked.connect(lambda _=False, text=reply: send(text))
-            layout.addWidget(button)
-        layout.addStretch()
-        self.setAccessibleName("Suggested replies")
+        self.setObjectName("prompt")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 8, 10)
+        top = QHBoxLayout()
+        text = QVBoxLayout()
+        if card.recap:
+            text.addWidget(_label(card.recap, tone="muted"))
+        if card.question:
+            text.addWidget(_label(card.question, role="strong"))
+        top.addLayout(text, 1)
+        dismiss = QToolButton(objectName="windowControl")
+        dismiss.setIcon(theme.icon("close", theme.current().muted))
+        dismiss.setToolTip("Close")
+        dismiss.setAccessibleName("Close")
+        dismiss.clicked.connect(close)
+        top.addWidget(dismiss, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(top)
+        if card.options:
+            buttons = QHBoxLayout()
+            for i, option in enumerate(card.options):
+                button = QPushButton(option)
+                if i == 0:
+                    _primary(button)
+                runs = live_action and option == card.action
+                button.setToolTip("Do this" if runs else "Send this reply")
+                button.clicked.connect(lambda _=False, text=option: choose(text))
+                buttons.addWidget(button)
+            buttons.addStretch()
+            layout.addLayout(buttons)
+        self.setAccessibleName(card.question or "Turn summary")
 
 
 class ConversationList(QListWidget):
@@ -1592,12 +1614,19 @@ class MainWindow(QMainWindow):
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
         for proposal in self.model.proposals.values():
-            self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
-        if self.model.replies:
-            self.prompts.addWidget(ReplyButtons(self.model.replies, self._send_reply))
+            if not proposal.card:
+                self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
+        if (card := self.model.card) is not None:
+            self.prompts.addWidget(WrapUpCard(card, card.call_id in self.model.proposals,
+                                              self._choose, self.model.close_card))
 
-    def _send_reply(self, text: str) -> None:
-        self.controller.send(text)
+    def _choose(self, option: str) -> None:
+        card = self.model.card
+        if card is not None and option == card.action and card.call_id in self.model.proposals:
+            self.controller.resolve_proposal(card.call_id, True)
+            self.model.close_card()
+        else:
+            self.controller.send(option)
         self.input.setFocus()
 
     def _show_empty_state(self) -> None:

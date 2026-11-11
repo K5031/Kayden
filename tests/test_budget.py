@@ -133,15 +133,15 @@ async def test_tool_refused_when_exhausted(make: Any) -> None:
 
 
 async def test_mid_stream_exhaustion(make: Any) -> None:
-    core = ScriptedCore([Step(text="stream", reports=[Usage(1000, 600)], hang=True)])
-    h: Harness = await make(core=core, budget=Budget(max_tokens=1500))
+    core = ScriptedCore([Step(text="stream", reports=[Usage(2500, 600)], hang=True)])
+    h: Harness = await make(core=core, budget=Budget(max_tokens=3000))
     await h.start()
     await h.runtime.send("go")
     await h.rec.wait_state(AgentState.FAILED, timeout=2)
     assert core.cancelled == 1
     assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
     usage = h.runtime.snapshot().usage.usage
-    assert usage.input_tokens >= 1000 and usage.output_tokens >= 600
+    assert usage.input_tokens >= 2500 and usage.output_tokens >= 600
 
 
 async def test_failed_request_charged(make: Any) -> None:

@@ -773,3 +773,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Signal | Memory marks its summarizing Completion call with `compacting=True`; the runtime emits `CompactionStarted` on it and `CompactionFinished` when maintain returns. `MaintenanceStarted` alone could not be used: upkeep runs after every answer. |
 | "Compacted" | maintain succeeded and returned True, and the compacting call's output was not empty. A summary Memory then rejects while saving something else counts as compacted; that needs a reply that parses to nothing, and it only mislabels one line. |
 | Look | A notice line in the transcript, "Compacting conversation…", changed to "Conversation compacted", or removed when nothing was compacted. Desktop and terminal app alike. Lines are not kept across restarts. |
+
+## Wrap-up card
+
+| Choice | Decision |
+|---|---|
+| Limits | `recap` up to 400 characters, `question` up to 100, one to three options with labels up to 40; at most one option carries a call |
+| Withdrawal | A user message cancels a pending card proposal before it is appended; the cancelled outcome goes in first and no wake-up of its own follows |
+| Close | ✕ clears the card in that window's model only; nothing is saved, so reopening shows it again |
+| Stale action | After a restart the card proposal is gone; its option then sends its label as a message |

@@ -51,6 +51,12 @@ waits on it.
 - A card where permission cards are: "Kayden proposes: <the call's step sentence>", the
   reason, **Approve** and **Dismiss**. The TUI: a prompt line, `/approve` and `/dismiss`.
 
+### The wrap-up card
+
+- An option of a [wrap-up card](2026-11-11-wrap-up-card.md) may carry a call: it is a
+  proposal with `card=True` and the `wrap_up` call's id, shown on that card instead of its
+  own, and a user message withdraws it.
+
 ### Sub-sessions
 
 - `start_session` has no mode of its own: when the user asked, the agent calls it; when it
