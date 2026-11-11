@@ -1,6 +1,7 @@
 # Kayden
 
 Modular AI agent application. Read before coding:
+- `PHILOSOPHY.md`: where Kayden is going: the base unit of a fleet (KFM) that works without supervision.
 - `SPEC.md`: product requirements (the MVP spec).
 - `src/kayden/api.py`: normative module contracts (Core, Memory, Tools, Frontend, RuntimeAPI). Spec section 16 summarizes the behavior it cannot express.
 
