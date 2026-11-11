@@ -54,6 +54,13 @@ carries on meanwhile. Approve runs exactly that step, without asking again, and 
 told the result; Dismiss tells it you said no. Proposals still open when you quit, stop the
 agent or switch conversations are withdrawn.
 
+### Suggested replies
+
+When an answer ends with a question for you (go ahead or not, which option), the agent may
+add up to three replies as buttons above the message box, its recommendation first. Click
+one to send it as your message, or type any other answer. The buttons go away once you send
+anything, and come back if you reopen the conversation before answering.
+
 ## Keys and commands
 
 | Key | Command | Does |

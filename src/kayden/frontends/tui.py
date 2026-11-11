@@ -139,6 +139,7 @@ from kayden.frontends.common import (
     plan_text,
     proposal_parts,
     provider_step,
+    replies_of,
     request_note,
     restart_notice,
 )
@@ -452,6 +453,24 @@ class ProposalPrompt(Vertical):
         for button in self.query(Button):
             button.disabled = True
         self.app.resolve_proposal(self.proposal.id, event.button.id == "approve")  # type: ignore[attr-defined]
+
+
+class ReplyButtons(Horizontal):
+    """The agent's suggested replies under its answer, its pick first; pressing one sends
+    it as the user's message."""
+
+    def __init__(self, replies: Sequence[str]) -> None:
+        super().__init__(classes="buttons")
+        self.replies = tuple(replies)
+
+    def compose(self) -> ComposeResult:
+        for i, reply in enumerate(self.replies):
+            yield Button(reply, variant="primary" if i == 0 else "default")
+
+    @on(Button.Pressed)
+    def _pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app.send_reply(str(event.button.label))  # type: ignore[attr-defined]
 
 
 # ── modal screens ────────────────────────────────────────────────────────
@@ -1556,6 +1575,7 @@ class KaydenApp(App[None]):
         self.notice = ""
         self._inbox: asyncio.Queue[EventEnvelope | _Resync | None] = asyncio.Queue()
         self._tool_entries: dict[str, ToolEntry] = {}
+        self._replies: ReplyButtons | None = None
         self._stream: list[AssistantEntry | ToolEntry] = []
         self._queued: dict[str, UserEntry] = {}
         self._rendered_ids: set[str] = set()
@@ -1677,6 +1697,7 @@ class KaydenApp(App[None]):
         self._rendered_ids.clear()
         self._prompts.clear()
         self._proposals.clear()
+        self._replies = None
         self.last_seq = snap.seq
         self.state = snap.state
         self.pending_ops = len(snap.operations)
@@ -1752,6 +1773,7 @@ class KaydenApp(App[None]):
                     self._stream.append(entry)
                 entry.stream_arguments(name, chunk)
             case MessageQueued(message_id=message_id, text=text):
+                await self._set_replies(())
                 if message_id not in self._queued and notice_of(text) is None:
                     entry = UserEntry(text, queued=True, message_id=message_id)
                     self._queued[message_id] = await self._mount(entry)
@@ -1858,6 +1880,9 @@ class KaydenApp(App[None]):
     async def _mount_step(self, entry: ToolEntry) -> ToolEntry:
         """Add a step to the group just before it, or start one, taking along the thinking
         that came right before the step."""
+        if entry.tool_name == "suggest_replies":  # shown as the reply buttons instead
+            entry.display = False
+            return await self._mount(entry)
         transcript = self.query_one("#transcript", VerticalScroll)
         children = list(transcript.children)
         end = (children.index(self._insert_before) if self._insert_before is not None
@@ -1933,6 +1958,8 @@ class KaydenApp(App[None]):
         """Mount a message's entries; returns its last assistant text entry, if any."""
         self._rendered_ids.add(message.id)
         if message.role is Role.USER:
+            if self._insert_before is None:  # not an earlier page
+                await self._set_replies(())
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             if (notice := notice_of(text)) is not None:
                 if "\n" in notice or len(notice) > 160:  # a new goal's brief: folded
@@ -1962,6 +1989,8 @@ class KaydenApp(App[None]):
                     current.refresh_content()
                 case ToolCall() as call:
                     await self._mount_tool(call)
+                    if (replies := replies_of(call)) and self._insert_before is None:
+                        await self._set_replies(replies)
                     current = None
                 case ToolResult() as result:
                     await self._finish_tool(result, None)
@@ -1987,6 +2016,19 @@ class KaydenApp(App[None]):
         prompt = ProposalPrompt(proposal)
         self._proposals[proposal.id] = prompt
         await self.query_one("#permissions", Vertical).mount(prompt)
+
+    async def _set_replies(self, replies: Sequence[str]) -> None:
+        if self._replies is not None and self._replies.replies == tuple(replies):
+            return
+        if self._replies is not None:
+            await self._replies.remove()
+            self._replies = None
+        if replies:
+            self._replies = ReplyButtons(replies)
+            await self.query_one("#permissions", Vertical).mount(self._replies)
+
+    def send_reply(self, text: str) -> None:
+        self._call(self.runtime.send(text))
 
     def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
         self._call(self.runtime.resolve_proposal(proposal_id, accept))

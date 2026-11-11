@@ -983,6 +983,25 @@ class ProposalCard(QFrame):
         self.resolve(proposal_id, accept)
 
 
+class ReplyButtons(QWidget):
+    """The agent's suggested replies under its answer, its pick first; a click sends one
+    as the user's message."""
+
+    def __init__(self, replies: Sequence[str], send: Callable[[str], None]) -> None:
+        super().__init__()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        for i, reply in enumerate(replies):
+            button = QPushButton(reply)
+            if i == 0:
+                _primary(button)
+            button.setToolTip("Send this reply")
+            button.clicked.connect(lambda _=False, text=reply: send(text))
+            layout.addWidget(button)
+        layout.addStretch()
+        self.setAccessibleName("Suggested replies")
+
+
 class ConversationList(QListWidget):
     """Right-click, the Menu key or Shift+F10 asks for an entry's menu."""
 
@@ -1574,6 +1593,12 @@ class MainWindow(QMainWindow):
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
         for proposal in self.model.proposals.values():
             self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
+        if self.model.replies:
+            self.prompts.addWidget(ReplyButtons(self.model.replies, self._send_reply))
+
+    def _send_reply(self, text: str) -> None:
+        self.controller.send(text)
+        self.input.setFocus()
 
     def _show_empty_state(self) -> None:
         self.empty_state.setVisible(self.model.conversation is not None and not self.model.items

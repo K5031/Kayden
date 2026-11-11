@@ -690,6 +690,9 @@ _CALL_ID = {"type": "string", "description": "Id of the tool call."}
 # before a restart are unknown, their outcome is the INTERRUPTED OperationResult from
 # resume repair. op_cancel waits for termination (bounded by the grace period) and
 # reports the final status; the outcome still arrives as an OperationResult.
+_REPLIES = {"type": "array", "minItems": 1, "maxItems": 3,
+            "items": {"type": "string", "minLength": 1, "maxLength": 80}}
+
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "op_status": ToolSpec(
         "op_status",
@@ -733,6 +736,17 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
             "required": ["call", "reason"],
         },
     ),
+    # Ends the turn when it is the only call in its message (no request follows); frontends
+    # read the replies from the transcript (see SUGGESTION_TOOLS).
+    "suggest_replies": ToolSpec(
+        "suggest_replies",
+        "Only when your answer ends with a question the user must decide (go ahead or not, "
+        "which option): offer 1 to 3 short replies they can click instead of typing, written "
+        "as the user would say them (\"Yes, push\", \"Fix the first one\", \"Not now\"), "
+        "your recommendation first. Call it alone, last, after your other work: your turn "
+        "ends with it. The user can still type any other answer.",
+        {"type": "object", "properties": {"replies": _REPLIES}, "required": ["replies"]},
+    ),
 }
 
 _PLAN_ITEM = {
@@ -766,8 +780,10 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         "ask_for_help",
         "When you are blocked and only your supervisor can unblock you (a decision, an "
         "approval, access you lack): ask one clear question. Your duty's check-ins pause "
-        "until they answer; finished background work still wakes you.",
-        {"type": "object", "properties": {"question": {"type": "string", "minLength": 1}},
+        "until they answer; finished background work still wakes you. Optionally offer 1 to "
+        "3 replies they can click, as with suggest_replies.",
+        {"type": "object",
+         "properties": {"question": {"type": "string", "minLength": 1}, "replies": _REPLIES},
          "required": ["question"]},
     ),
     "finish_goal": ToolSpec(
@@ -777,6 +793,10 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
          "required": ["report"]},
     ),
 }
+
+# Calls whose `replies` argument frontends show as buttons under the answer, while no user
+# message follows it; a click sends the reply as the user's message.
+SUGGESTION_TOOLS = frozenset({"suggest_replies", "ask_for_help"})
 
 # No module may declare these names.
 RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)

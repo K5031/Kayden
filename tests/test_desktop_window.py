@@ -685,10 +685,13 @@ async def test_a_replaced_streaming_reply_stays_hidden(make, qapp):
     window.show()
     controller.send("q")
     await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
-    await asyncio.sleep(0.2)  # past the redraw delay of the streamed bubble
-    qapp.processEvents()
-    shown = [b for b in window.findChildren(AssistantBubble) if b.isVisible()]
-    assert shown == widgets(window, AssistantBubble)
+
+    def settled() -> bool:  # past the redraw delay of the streamed bubble
+        qapp.processEvents()
+        shown = [b for b in window.findChildren(AssistantBubble) if b.isVisible()]
+        return shown == widgets(window, AssistantBubble)
+
+    await eventually(settled)
     window.close()
 
 

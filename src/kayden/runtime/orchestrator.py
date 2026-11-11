@@ -1130,7 +1130,9 @@ class Runtime:
                 return
             await self._flush_results()
             delivered = await self._deliver_inbox()
-            if calls or delivered:  # a queued user message authorizes the next turn
+            ended = (len(calls) == 1 and calls[0].name == "suggest_replies"
+                     and results[0].status == ToolStatus.OK)
+            if (calls and not ended) or delivered:  # a queued message authorizes the next turn
                 continue
             # After the answer: Memory saves what the exchange taught it.
             before = await self._note_versions()
@@ -1504,6 +1506,11 @@ class Runtime:
         tasks: dict[CallId, asyncio.Task[tuple[ToolResult, float]]] = {}
         barrier: asyncio.Task[Any] | None = None
         for call in calls:
+            if call.name == "suggest_replies" and len(calls) > 1:
+                results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, (
+                    "Not shown: call suggest_replies alone, in a message of its own after "
+                    "your other work.")), 0.0)
+                continue
             if error := self._validate(call, specs):
                 results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, error), 0.0)
                 continue
@@ -1861,6 +1868,9 @@ class Runtime:
                 self._emit(HelpNeeded(self._help))
                 return ToolStatus.OK, ("Asked. Your check-ins pause until your supervisor "
                                        "answers; end your turn.")
+            case "suggest_replies":
+                self._log.decision("replies_suggested", count=len(args["replies"]))
+                return ToolStatus.OK, "Shown to the user as buttons; your turn has ended."
             case "finish_goal":
                 duty = self._conversation.duty
                 if duty is None or duty.kind != DutyKind.GOAL:

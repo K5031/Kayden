@@ -94,6 +94,7 @@ from kayden.frontends.common import (
     notice_of,
     past_tense,
     provider_step,
+    replies_of,
 )
 from kayden.frontends.sessions import SubSessions
 
@@ -311,6 +312,7 @@ class ConversationModel:
         self.items: list[Item] = []
         self.prompts: dict[str, PermissionRequest] = {}
         self.proposals: dict[str, Proposal] = {}  # shown with the prompts
+        self.replies: tuple[str, ...] = ()  # the agent's suggested replies, as buttons
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
         self.pending_ops = 0
@@ -383,6 +385,7 @@ class ConversationModel:
         self.items.clear()
         self.prompts.clear()
         self.proposals.clear()
+        self.replies = ()
         self._tools.clear()
         self._stream.clear()
         self._queued.clear()
@@ -577,16 +580,25 @@ class ConversationModel:
         return item
 
     def _remove(self, item: Item) -> None:
-        self.items.remove(item)
-        self.on_change(Removed(item))
+        if item in self.items:  # a suggest_replies call is never shown
+            self.items.remove(item)
+            self.on_change(Removed(item))
 
     def _add_tool(self, call: ToolCall, *, streaming: bool = False) -> ToolItem:
         arguments = "" if streaming else json.dumps(call.arguments, ensure_ascii=False)
-        item = self._add(ToolItem(call.id, call.name, arguments))
+        item = ToolItem(call.id, call.name, arguments)
+        if call.name != "suggest_replies":  # shown as the reply buttons instead
+            self._add(item)
         self._tools[call.id] = item
         return item
 
+    def _set_replies(self, replies: tuple[str, ...]) -> None:
+        if replies != self.replies:
+            self.replies = replies
+            self.on_change(PromptsChanged())
+
     def _queue(self, event: MessageQueued) -> None:
+        self._set_replies(())
         if notice_of(event.text) is not None:
             return  # shown once it is committed, as a notice
         if event.message_id not in self._queued and event.message_id not in self._seen:
@@ -641,6 +653,8 @@ class ConversationModel:
         """Add a message's items; returns its last assistant text item, if any."""
         self._seen.add(message.id)
         if message.role is Role.USER:
+            if self._insert_at is None:  # not an earlier page
+                self._set_replies(())
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             if (notice := notice_of(text)) is not None:
                 self._add(NoticeItem(notice, "info"))
@@ -665,6 +679,8 @@ class ConversationModel:
                 case ToolCall() as call:
                     if call.id not in self._tools:
                         self._add_tool(call)
+                    if (replies := replies_of(call)) and self._insert_at is None:
+                        self._set_replies(replies)
                     current = None
                 case ToolResult() as result:
                     self._finish(result, None)

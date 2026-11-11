@@ -16,6 +16,7 @@ from typing import Any
 from kayden.api import (
     DESCRIPTION_ARG,
     NOTICE_PREFIX,
+    SUGGESTION_TOOLS,
     AgentState,
     Duty,
     DutyKind,
@@ -42,6 +43,13 @@ PERMISSION_LABELS = {
     PermissionPolicy.ASK: "Ask me before every action",
     PermissionPolicy.DENY: "Never run tools",
 }
+
+
+def replies_of(call: ToolCall) -> tuple[str, ...]:
+    """The replies a call offers as buttons, or none."""
+    replies = call.arguments.get("replies") if call.name in SUGGESTION_TOOLS else None
+    return tuple(r for r in replies if isinstance(r, str) and r) if isinstance(
+        replies, list) else ()
 
 
 def notice_of(text: str) -> str | None:
