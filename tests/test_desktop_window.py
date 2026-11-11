@@ -23,7 +23,6 @@ from kayden.api import (
     Budget,
     ConversationInfo,
     PermissionPolicy,
-    Role,
     SettingsUpdate,
     ShuttingDown,
 )
@@ -419,9 +418,8 @@ async def test_continue_in_a_new_conversation(make, qapp):
     await eventually(lambda: controller.model.conversation.seed_from == first.id)
 
 
-async def test_memory_dialog_add_edit_delete_notes(make, qapp):
-    from kayden.api import PROFILE
-    from kayden.frontends.desktop.window import NoteDialog
+async def test_memory_dialog_add_edit_delete_files(make, qapp):
+    from kayden.frontends.desktop.window import MemoryFileDialog
 
     h: Harness = await make()
     await h.start()
@@ -429,36 +427,39 @@ async def test_memory_dialog_add_edit_delete_notes(make, qapp):
     window.show()
     await window.check_memory()
     assert window.memory_action.isVisible()
-    await h.runtime.save_note(PROFILE, "", "Likes tea")
+    await h.runtime.write_memory_file("MEMORY.md", "- [Tea](tea.md) — likes tea\n")
     window.open_memory()
     dialog = await eventually(lambda: window.memory_dialog)
     await eventually(lambda: dialog.entries.count() == 1)
-    assert dialog.entries.item(0).text() == PROFILE
-    dialog.entries.setCurrentRow(0)
-    assert not dialog.forget_button.isEnabled()  # the profile stays
+    assert dialog.entries.item(0).text() == "MEMORY.md"
     dialog.add_button.click()
-    editor = visible(dialog, NoteDialog)
-    editor.title.setText("Trip")
-    editor.description.setText("The Oslo trip")
-    editor.text.setPlainText("Leaves Friday")
+    editor = visible(dialog, MemoryFileDialog)
+    assert "metadata:" in editor.text.toPlainText()  # Claude Code's header to fill in
+    editor.path.setText("tea.md")
+    editor.text.setPlainText("---\nname: tea\ndescription: Drinks green tea\n---\n\nGreen.\n")
     editor.save_button.click()
     await eventually(lambda: dialog.entries.count() == 2)
+    assert dialog.entries.item(1).text() == "tea"  # its name, with its description below
     dialog.entries.setCurrentRow(1)
     dialog.edit_button.click()
-    editor = visible(dialog, NoteDialog)
-    assert editor.text.toPlainText() == "Leaves Friday"
-    editor.text.setPlainText("Leaves Saturday")
+    editor = visible(dialog, MemoryFileDialog)
+    assert editor.path.isReadOnly() and "Green." in editor.text.toPlainText()
+    editor.text.setPlainText("Matcha.\n")
     editor.save_button.click()
-    await eventually(lambda: (h.store.notes()[1].text == "Leaves Saturday"))
+    await eventually(lambda: [f.text for f in await_files(h)][1:] == ["Matcha.\n"])
     await eventually(lambda: dialog.entries.count() == 2)
     dialog.entries.setCurrentRow(1)
     dialog.forget_button.click()
     box = visible(dialog, QMessageBox)
-    assert "stay until you delete their conversation" in box.informativeText()
     next(b for b in box.buttons() if b.text() == "Delete").click()
     await eventually(lambda: dialog.entries.count() == 1)
-    assert [n.title for n in await h.runtime.notes()] == [PROFILE]
+    assert [f.path for f in await h.runtime.memory_files()] == ["MEMORY.md"]
     window.close()
+
+
+def await_files(h: Harness) -> list:
+    """The open conversation's memory files, read straight from the fake store."""
+    return sorted(h.store.folder(None).values(), key=lambda f: (f.path != "MEMORY.md", f.path))
 
 
 async def test_unsupported_memory_hides_memory_and_delete(make, qapp):
@@ -785,34 +786,6 @@ async def test_a_server_list_read_before_a_save_does_not_replace_it(make, qapp, 
     release.set()
     await asyncio.sleep(0.05)
     assert dialog.servers.count() == 1  # the late, older list was ignored
-
-
-async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
-    from kayden.api import Completion
-    from kayden.frontends.desktop.window import NoticeLine
-
-    h: Harness = await make()
-
-    async def maintain(complete: Completion) -> bool:
-        conversation = h.runtime.snapshot().conversation
-        if (await h.memory.history(conversation.id))[-1].role is not Role.ASSISTANT:
-            return False
-        h.store.save("Trip", "The Oslo trip", "Leaves Friday", None, conversation.id)
-        return True
-
-    h.memory.maintain_override = maintain
-    h.core.add(Step(text="Have a good trip."))
-    await h.start()
-    window, controller, _ = await open_window(h)
-    window.show()
-    controller.send("I leave for Oslo on Friday")
-    line = await eventually(lambda: next(
-        (w for w in window._widgets.values() if isinstance(w, NoticeLine)), None))
-    assert "Memory updated: Trip" in line.text() and "Open memory" in line.text()
-    line.linkActivated.emit("memory")
-    await eventually(lambda: window.memory_dialog is not None
-                     and window.memory_dialog.isVisible())
-    window.close()
 
 
 async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):

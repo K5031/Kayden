@@ -19,12 +19,12 @@ import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from itertools import count
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from kayden.api import (
-    PROFILE,
     AssembledContext,
     BudgetExhausted,
     ContextRequest,
@@ -714,46 +714,45 @@ class MemoryConformance:
         assert tail[:-1] == messages[len(messages) - len(tail) + 1:]
         await assert_archived(memory, conv.id, messages + late)
 
-    # ── Long-term memory the user can change ──────────────────────────────
+    # ── Long-term memory: a folder of files per project ───────────────────
 
     async def editable(self, memory: Memory) -> None:
         try:
-            await memory.notes()
+            await memory.memory_files(None)
         except NotImplementedError:
-            pytest.skip("editing long-term memory is optional and not implemented")
+            pytest.skip("long-term memory files are optional and not implemented")
 
-    async def test_the_profile_is_seen_in_full_other_notes_by_title(
-            self, open_memory: MemoryFactory):
+    async def test_each_project_keeps_files_and_requests_see_its_index(
+            self, open_memory: MemoryFactory, tmp_path: Path):
         memory = open_memory()
         await self.editable(memory)
-        [profile] = await memory.notes()
-        assert profile.title == PROFILE and profile.text == ""
-        conv = await memory.create_conversation(title="test")
+        project = str(tmp_path / "project")
+        conv = await memory.create_conversation(title="test", folder=project)
+        other = await memory.create_conversation(title="other")
         await memory.append(conv.id, [text_message("tok0001")])
-        await memory.save_note(PROFILE, "", "Lives in Oslo.")
-        note = await memory.save_note("Kayden", "The user's AI agent project",
-                                      "Written in Python; the owner pushes to main.")
-        assert note.source_conversation_id is None
+        await memory.append(other.id, [text_message("tok0002")])
+        fact = "---\nname: tea\ndescription: Drinks tea\n---\n\nOnly green tea.\n"
+        await memory.write_memory_file(project, "tea.md", fact)
+        await memory.write_memory_file(project, "MEMORY.md", "- [Tea](tea.md) — drinks tea\n")
         text = await addendum(memory, conv.id)
-        assert "Lives in Oslo." in text and "Kayden" in text
-        assert "The user's AI agent project" in text and "pushes to main" not in text
+        assert "- [Tea](tea.md) — drinks tea" in text and "Only green tea." not in text
+        assert "drinks tea" not in await addendum(memory, other.id)  # another project
         await memory.aclose()
 
         memory = open_memory()
-        renamed = await memory.save_note("Kayden app", "", "Python.", note_id=note.id)
-        assert (renamed.id, renamed.description) == (note.id, "The user's AI agent project")
-        same = await memory.save_note("kayden APP", "", "Python 3.13.")  # case ignored
-        assert same.id == note.id and same.text == "Python 3.13."
-        assert [n.title for n in await memory.notes()] == [PROFILE, "Kayden app"]
-        with pytest.raises(ValueError):
-            await memory.save_note("Other", "", "x", note_id=profile.id)  # keeps its title
-        with pytest.raises(ValueError):
-            await memory.delete_note(profile.id)
-        await memory.delete_note(note.id)
-        assert [n.title for n in await memory.notes()] == [PROFILE]
-        assert "Kayden" not in await addendum(memory, conv.id)
+        files = await memory.memory_files(project)
+        assert [(f.path, f.text) for f in files] == [
+            ("MEMORY.md", "- [Tea](tea.md) — drinks tea\n"), ("tea.md", fact)]
+        assert await memory.memory_files(None) == []
+        await memory.write_memory_file(project, "tea.md", "Matcha.\n")
+        assert [f.text for f in await memory.memory_files(project)][1] == "Matcha.\n"
+        await memory.delete_memory_file(project, "tea.md")
+        assert [f.path for f in await memory.memory_files(project)] == ["MEMORY.md"]
         with pytest.raises(KeyError):
-            await memory.delete_note(note.id)
+            await memory.delete_memory_file(project, "tea.md")
+        for outside in ("../escape.md", "/etc/passwd", ""):
+            with pytest.raises(ValueError):
+                await memory.write_memory_file(project, outside, "x")
 
     # ── Continue from ─────────────────────────────────────────────────────
 
@@ -839,15 +838,13 @@ class MemoryConformance:
         await memory.aclose()
         assert (await open_memory().list_conversations())[-1].id == kept.id
 
-    async def test_memories_outlive_the_conversation_they_came_from(self, memory: Memory):
-        doomed = await memory.create_conversation()
+    async def test_memory_outlives_the_conversations_of_its_project(self, memory: Memory,
+                                                                    tmp_path: Path):
+        project = str(tmp_path / "project")
+        doomed = await memory.create_conversation(folder=project)
         try:
-            await memory.save_note("Diet", "What the user eats", "Is vegetarian",
-                                   conversation_id=doomed.id)
+            await memory.write_memory_file(project, "diet.md", "Is vegetarian.\n")
             await memory.delete_conversation(doomed.id)
         except NotImplementedError:
-            pytest.skip("editing memories and deleting conversations are optional")
-        kept = [n for n in await memory.notes() if n.title == "Diet"]
-        assert [(n.text, n.source_conversation_id) for n in kept] == [("Is vegetarian", None)]
-        with pytest.raises(KeyError):
-            await memory.save_note("x", "", "y", conversation_id="missing")
+            pytest.skip("memory files and deleting conversations are optional")
+        assert [f.text for f in await memory.memory_files(project)] == ["Is vegetarian.\n"]

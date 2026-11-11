@@ -22,6 +22,7 @@ from kayden.api import (
     Duty,
     DutyKind,
     McpServer,
+    MemoryFile,
     ModelInfo,
     ModuleChoice,
     PermissionPolicy,
@@ -405,6 +406,35 @@ def help_text(question: str) -> str:
 def _when(t: float) -> str:
     when = datetime.fromtimestamp(t)
     return when.strftime("%H:%M" if when.date() == datetime.now().date() else "%Y-%m-%d %H:%M")
+
+
+MEMORY_HINT = ("Kayden keeps a memory for each project: MEMORY.md, its index, which every "
+               "conversation in the project sees, and one file per memory, which Kayden opens "
+               "when it is relevant. Kayden writes them as it works; you can too.")
+MEMORY_TEMPLATE = """\
+---
+name: {name}
+description: One line on what this memory is about
+metadata:
+  type: user
+---
+
+"""
+
+
+def memory_label(file: MemoryFile) -> tuple[str, str]:
+    """A memory file's name and one-line description, from its frontmatter; the path and
+    nothing for MEMORY_INDEX and files without one."""
+    fields: dict[str, str] = {}
+    lines = file.text.splitlines()
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            key, _, value = line.partition(":")
+            if value.strip() and not line.startswith((" ", "\t")):
+                fields[key.strip()] = value.strip()
+    return fields.get("name") or file.path, fields.get("description", "")
 
 
 # Calls not shown as steps: the wrap-up card and the plan's checklist show them instead.

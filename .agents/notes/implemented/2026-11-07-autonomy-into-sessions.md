@@ -73,11 +73,11 @@ is the only time the agent acts without a user message.
 
 ### Long-term memory the user can see and change
 
-One set per store, shared by every conversation, which the user can see and edit and the
-agent writes. Its form (a profile and topic notes, saved after each answer) is decided in
-[memory as notes](2026-11-10-memory-notes.md). The `RuntimeAPI` commands (`notes`,
-`save_note`, `delete_note`) are allowed in any state, apply from the next assemble, emit
-`MemoriesChanged` and are logged by id, without text. They are optional in Memory: the
+Long-term memory the user can see and edit and the agent writes. Its form (a folder of
+Markdown files per project, as in Claude Code) is decided in
+[memory like Claude Code](2026-11-11-memory-like-claude-code.md). The `RuntimeAPI`
+commands (`memory_files`, `write_memory_file`, `delete_memory_file`) are allowed in any
+state, apply from the next assemble, emit `MemoriesChanged` and are logged without text. They are optional in Memory: the
 base class raises `NotImplementedError`, which the runtime re-raises as "this memory module
 cannot edit memories", and frontends hide the controls.
 
@@ -196,7 +196,7 @@ command-line flags of the per-mode versions.
   one small light-model call per conversation.
 - **Learning facts only during compaction.** Most conversations never grow long enough to
   be compacted; how memory learns is now decided in
-  [memory as notes](2026-11-10-memory-notes.md).
+  [memory like Claude Code](2026-11-11-memory-like-claude-code.md).
 - **Editing long-term memory rows in place.** Simpler, but an edit would silently replace
   what the agent had learned. Revisions keep each change visible and allow an undo later.
 - **Erasing what a conversation taught long-term memory with it.** Built first: deleting would leave

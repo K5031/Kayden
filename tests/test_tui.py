@@ -14,7 +14,6 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, Label, OptionList, Select, Static, Switch, TextArea
 
 from kayden.api import (
-    PROFILE,
     AgentConfig,
     AgentState,
     Budget,
@@ -26,7 +25,7 @@ from kayden.api import (
     Failure,
     FailureKind,
     MemoriesChanged,
-    MemoryNote,
+    MemoryFile,
     Message,
     MessageCommitted,
     MessageQueued,
@@ -71,9 +70,9 @@ from kayden.frontends.tui import (
     ConfirmScreen,
     ConversationsScreen,
     KaydenApp,
+    MemoryFileScreen,
     MemoryScreen,
     ModelScreen,
-    NoteScreen,
     OperationsScreen,
     PermissionPrompt,
     SettingsScreen,
@@ -94,8 +93,9 @@ OTHERS = [
     ConversationInfo("conv-4", "Old plans", 0.0, 0.0, archived=True),
 ]
 MODELS = [ModelInfo("m1", "Model One", 100_000), ModelInfo("m2", "Model Two", 200_000)]
-MEMORIES = [MemoryNote("1", PROFILE, "Who the user is", "Likes tea", "conv-1", 0.0),
-            MemoryNote("2", "Trip", "The Oslo trip", "Leaves Friday", None, 0.0)]
+MEMORIES = [MemoryFile("MEMORY.md", "- [Trip](trip.md) — the Oslo trip\n", 0.0),
+            MemoryFile("trip.md", "---\nname: trip\ndescription: The Oslo trip\n---\n\n"
+                       "Leaves Friday.\n", 0.0)]
 
 
 class StubRuntime:
@@ -162,7 +162,7 @@ class StubRuntime:
             self.conversation = info
         self.emit(ConversationUpdated(info))
 
-    def _memories(self) -> list[MemoryNote]:
+    def _memories(self) -> list[MemoryFile]:
         if self.entries is None:
             raise NotImplementedError("this memory module cannot edit memories")
         return self.entries
@@ -221,7 +221,7 @@ class StubRuntime:
     async def inspect_memory(self, conversation_id):
         return None
 
-    async def notes(self) -> Sequence[MemoryNote]:
+    async def memory_files(self) -> Sequence[MemoryFile]:
         return list(self._memories())
 
     async def start(self, options: StartOptions) -> ConversationInfo:
@@ -252,23 +252,16 @@ class StubRuntime:
         self.conversations = [c for c in self.conversations if c.id != conversation_id]
         self.emit(ConversationDeleted(conversation_id))
 
-    async def save_note(self, title: str, description: str, text: str, *,
-                        note_id: str | None = None) -> MemoryNote:
-        await self._record("save_note", title, description, text, note_id)
-        notes = self._memories()
-        if note_id is None:
-            note = MemoryNote(str(len(notes) + 1), title, description, text, None, 0.0)
-            notes.append(note)
-        else:
-            index = [n.id for n in notes].index(note_id)
-            note = notes[index] = replace(notes[index], title=title, description=description,
-                                          text=text)
+    async def write_memory_file(self, path: str, text: str) -> MemoryFile:
+        await self._record("write_memory_file", path, text)
+        file = MemoryFile(path, text, 0.0)
+        self.entries = [f for f in self._memories() if f.path != path] + [file]
         self.emit(MemoriesChanged())
-        return note
+        return file
 
-    async def delete_note(self, note_id: str) -> None:
-        await self._record("delete_note", note_id)
-        self.entries = [n for n in self._memories() if n.id != note_id]
+    async def delete_memory_file(self, path: str) -> None:
+        await self._record("delete_memory_file", path)
+        self.entries = [f for f in self._memories() if f.path != path]
         self.emit(MemoriesChanged())
 
     async def set_duty(self, duty) -> None:
@@ -1087,45 +1080,39 @@ def memory_rows(screen: MemoryScreen) -> list[str]:
     return [str(options.get_option_at_index(i).prompt) for i in range(options.option_count)]
 
 
-async def test_memory_screen_adds_edits_and_deletes_notes():
+async def test_memory_screen_adds_edits_and_deletes_files():
     stub = StubRuntime()
     app = make(stub)
     async with app.run_test(size=(120, 50), notifications=True) as pilot:
         screen = await open_memory(pilot, app, stub)
-        assert memory_rows(screen) == [f"{PROFILE}  · Who the user is",
-                                       "Trip  · The Oslo trip"]
+        assert memory_rows(screen) == ["MEMORY.md", "trip  · The Oslo trip"]
 
         screen.query_one("#add", Button).press()
-        await until(pilot, lambda: isinstance(app.screen, NoteScreen))
-        app.screen.query_one("#note-title", Input).value = "Units"
-        app.screen.query_one("#note-description", Input).value = "Measurements"
-        app.screen.query_one("#note-text", TextArea).text = "Prefers metric units"
+        await until(pilot, lambda: isinstance(app.screen, MemoryFileScreen))
+        assert "metadata:" in app.screen.query_one("#memory-text", TextArea).text
+        app.screen.query_one("#memory-path", Input).value = "units.md"
+        app.screen.query_one("#memory-text", TextArea).text = "Prefers metric units.\n"
         app.screen.query_one("#save", Button).press()
-        await until(pilot, lambda: ("save_note", "Units", "Measurements",
-                                    "Prefers metric units", None) in stub.calls)
+        await until(pilot, lambda: ("write_memory_file", "units.md", "Prefers metric units.\n")
+                    in stub.calls)
         await until(pilot, lambda: len(memory_rows(screen)) == 3)
 
-        highlight(screen, "1")
+        highlight(screen, "trip.md")
         screen.query_one("#edit", Button).press()
-        await until(pilot, lambda: isinstance(app.screen, NoteScreen))
-        assert app.screen.query_one("#note-text", TextArea).text == "Likes tea"
-        assert app.screen.query_one("#note-title", Input).disabled  # the profile's title stays
-        app.screen.query_one("#note-text", TextArea).text = "Likes green tea"
+        await until(pilot, lambda: isinstance(app.screen, MemoryFileScreen))
+        assert "Leaves Friday." in app.screen.query_one("#memory-text", TextArea).text
+        assert app.screen.query_one("#memory-path", Input).disabled  # the file keeps its name
+        app.screen.query_one("#memory-text", TextArea).text = "Leaves Saturday.\n"
         app.screen.query_one("#save", Button).press()
-        await until(pilot, lambda: ("save_note", PROFILE, "Who the user is", "Likes green tea",
-                                    "1") in stub.calls)
+        await until(pilot, lambda: ("write_memory_file", "trip.md", "Leaves Saturday.\n")
+                    in stub.calls)
 
-        highlight(screen, "1")
-        screen.query_one("#forget", Button).press()  # the profile cannot be deleted
-        await until(pilot, lambda: any("can be emptied" in n.message
-                                       for n in app._notifications))
-        highlight(screen, "2")
+        highlight(screen, "units.md")
         screen.query_one("#forget", Button).press()
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
-        message = plain(app.screen.query_one("#confirm-message"))
-        assert "Trip" in message and "stay until you delete their conversation" in message
+        assert "units.md" in plain(app.screen.query_one("#confirm-message"))
         app.screen.query_one("#confirm-yes", Button).press()
-        await until(pilot, lambda: ("delete_note", "2") in stub.calls)
+        await until(pilot, lambda: ("delete_memory_file", "units.md") in stub.calls)
         await until(pilot, lambda: len(memory_rows(screen)) == 2)
 
         await pilot.press("escape")
@@ -1252,17 +1239,6 @@ async def test_a_second_kayden_says_it_is_already_open_and_quits():
         await until(pilot, lambda: app.return_code is not None)
         assert app.return_code == 1
         assert not any(isinstance(s, SettingsScreen) for s in app.screen_stack)
-
-
-async def test_a_memory_update_after_an_answer_is_mentioned():
-    stub = StubRuntime()
-    app = make(stub)
-    async with app.run_test() as pilot:
-        stub.emit(MemoriesChanged(saved=("Trip", PROFILE)))
-        stub.emit(MemoriesChanged())  # the user's own edit: nothing to mention
-        await caught_up(pilot, app, stub)
-        [line] = entries(app, SystemEntry)
-        assert plain(line) == f"Memory updated: Trip, {PROFILE} (F4 to see it)"
 
 
 async def test_a_runtime_notice_is_a_system_line():

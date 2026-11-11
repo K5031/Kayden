@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from kayden.api import (
-    PROFILE,
     AgentState,
     Budget,
     ConversationInfo,
@@ -18,7 +17,6 @@ from kayden.api import (
     Failure,
     FailureKind,
     InstanceLockedError,
-    MemoryNote,
     Message,
     ModuleChoice,
     ModuleInfo,
@@ -38,6 +36,7 @@ from kayden.api import (
     Usage,
     UsageSnapshot,
 )
+from kayden.frontends.common import memory_label
 from kayden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     BUSY_MESSAGE,
@@ -56,7 +55,6 @@ from kayden.frontends.desktop.viewmodel import (
     conversation_label,
     conversation_preview,
     form_from,
-    memory_source,
     needs_welcome,
     newest_first,
     relative_date,
@@ -366,35 +364,32 @@ async def test_unsupported_memory_hides_its_controls(make):
     other = await h.start()
     await h.start()
     model, controller, _ = await attach(h)
-    assert await controller.notes() is None
+    assert await controller.memory_files() is None
     assert controller.can_delete
     await controller.delete(other.id)
     assert not controller.can_delete
     assert of(model, NoticeItem)[-1].text == NO_DELETE_MESSAGE
 
 
-async def test_memory_notes_add_edit_delete(make):
+async def test_memory_files_add_edit_delete(make):
     h: Harness = await make()
     await h.start()
     model, controller, _ = await attach(h)
-    assert [n.title for n in await controller.notes()] == [PROFILE]
+    assert await controller.memory_files() == []
     seen = changes(model)
-    await controller.save_note("Trip", "The Oslo trip", "  Leaves Friday ")
+    await controller.write_memory_file("trip.md", "---\nname: trip\ndescription: The Oslo "
+                                       "trip\n---\n\nLeaves Friday.\n")
     await eventually(lambda: any(isinstance(c, MemoryListChanged) for c in seen))
-    _profile, note = await controller.notes()
-    assert note.text == "Leaves Friday" and memory_source(note).startswith("Last written by you")
-    await controller.save_note("Trip", "The Oslo trip", "Leaves Saturday", note.id)
-    assert (await controller.notes())[1].text == "Leaves Saturday"
-    await controller.delete_note(note.id)
-    assert [n.title for n in await controller.notes()] == [PROFILE]
+    [file] = await controller.memory_files()
+    assert memory_label(file) == ("trip", "The Oslo trip")
+    await controller.write_memory_file("trip.md", "Leaves Saturday.\n")
+    [file] = await controller.memory_files()
+    assert file.text == "Leaves Saturday.\n" and memory_label(file) == ("trip.md", "")
+    await controller.delete_memory_file("trip.md")
+    assert await controller.memory_files() == []
     failed = []
-    await controller.save_note(" ", "", "x", failed=failed.append)
-    assert failed and "title" in str(failed[0])
-
-
-def test_memory_source_label():
-    learned = MemoryNote("2", "Trip", "", "x", "c1", 0.0)
-    assert memory_source(learned).startswith("Last written in a conversation")
+    await controller.write_memory_file("../outside.md", "x", failed=failed.append)
+    assert failed and "inside the memory folder" in str(failed[0])
 
 
 # ── pure model ────────────────────────────────────────────────────────────

@@ -736,7 +736,10 @@ async def test_message_committed_carries_stop_reason(make: Any) -> None:
                      (Role.TOOL, None), (Role.ASSISTANT, StopReason.END_TURN)]
 
 
-async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> None:
+async def test_memory_upkeep_runs_after_the_answer_and_saves_nothing_itself(
+        make: Any) -> None:
+    """Memory runs its upkeep (a title, compaction) once more after the answer; what to
+    remember is the agent's to write with the memory tool, so nothing is announced."""
     from kayden.api import Completion, MemoriesChanged
 
     h: Harness = await make()
@@ -745,34 +748,10 @@ async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> 
     async def maintain(complete: Completion) -> bool:
         transcript = await h.memory.history(h.runtime.snapshot().conversation.id)
         seen.append(transcript[-1].role.value)
-        return transcript[-1].role is Role.ASSISTANT  # the save pass wrote something
+        return True
 
     h.memory.maintain_override = maintain
     await h.start()
     await h.turn("go")
     assert seen == ["user", "assistant"]  # before the answer, then once after it
-    assert len(h.rec.of(MemoriesChanged)) == 1
-
-
-async def test_the_notes_saved_after_an_answer_are_named(make: Any) -> None:
-    from kayden.api import Completion, MemoriesChanged
-
-    h: Harness = await make()
-
-    async def maintain(complete: Completion) -> bool:
-        conversation = h.runtime.snapshot().conversation
-        transcript = await h.memory.history(conversation.id)
-        if transcript[-1].role is not Role.ASSISTANT:
-            return False
-        h.store.save("Trip", "The Oslo trip", "Leaves Friday", None, conversation.id)
-        return True
-
-    h.memory.maintain_override = maintain
-    await h.start()
-    await h.runtime.save_note("Diet", "", "Vegetarian")  # the user's own: no notice
-    await h.turn("I leave for Oslo on Friday")
-    changes = h.rec.of(MemoriesChanged)
-    assert [c.saved for c in changes] == [(), ("Trip",)]
-    log = h.data_dir / "events.jsonl"  # written off the loop: wait for it
-    await eventually(lambda: log.exists() and '"saved": 1' in log.read_text())
-    assert "Trip" not in log.read_text()  # how many notes, not their titles
+    assert h.rec.of(MemoriesChanged) == []

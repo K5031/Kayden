@@ -42,7 +42,6 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kayden.api import (
-    PROFILE,
     AgentConfig,
     AgentState,
     CompactionFinished,
@@ -65,7 +64,7 @@ from kayden.api import (
     MaintenanceStarted,
     McpServer,
     MemoriesChanged,
-    MemoryNote,
+    MemoryFile,
     Message,
     MessageCommitted,
     MessageQueued,
@@ -118,6 +117,8 @@ from kayden.frontends.common import (
     DUTY_KIND_LABELS,
     MCP_VARIABLES_HINT,
     MCP_WARNING,
+    MEMORY_HINT,
+    MEMORY_TEMPLATE,
     MODULE_LABELS,
     PERMISSION_LABELS,
     PLAN_HINT,
@@ -135,6 +136,7 @@ from kayden.frontends.common import (
     mcp_server,
     mcp_target,
     mcp_variables,
+    memory_label,
     model_label,
     module_options,
     needs_restart,
@@ -961,17 +963,17 @@ class ConversationsScreen(ListScreen):
 
 
 class MemoryScreen(ListScreen):
-    """Lists long-term memory notes, the profile first; adds, edits and deletes them."""
+    """The open conversation's project memory: MEMORY.md and one file per memory; adds,
+    edits and deletes them."""
 
     def __init__(self, runtime: RuntimeAPI) -> None:
         super().__init__(runtime)
-        self.entries: dict[str, MemoryNote] = {}
+        self.entries: dict[str, MemoryFile] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Long-term memory", classes="title")
-            yield Label(f'Every conversation sees "{PROFILE}" and the list of notes; Kayden '
-                        "opens a note when it is relevant.", classes="hint")
+            yield Label(MEMORY_HINT, classes="hint")
             yield OptionList(id="memories")
             with Horizontal(classes="buttons actions"):
                 yield Button("Add", variant="primary", id="add")
@@ -980,25 +982,29 @@ class MemoryScreen(ListScreen):
 
     async def _load(self) -> None:
         try:
-            notes = await self.runtime.notes()
+            files = await self.runtime.memory_files()
         except Exception as e:  # noqa: BLE001
             self.notify(str(e) or type(e).__name__, severity="error", markup=False)
             return
-        self.entries = {n.id: n for n in notes}
-        self._show([Option(f"{n.title}  · {n.description}" if n.description else n.title,
-                           id=n.id) for n in notes])
+        self.entries = {f.path: f for f in files}
+        options = []
+        for file in files:
+            name, description = memory_label(file)
+            options.append(Option(f"{name}  · {description}" if description else name,
+                                  id=file.path))
+        self._show(options)
 
-    def _selected(self) -> MemoryNote | None:
-        note_id = self._selected_id()
-        return None if note_id is None else self.entries.get(note_id)
+    def _selected(self) -> MemoryFile | None:
+        path = self._selected_id()
+        return None if path is None else self.entries.get(path)
 
     @on(Button.Pressed, "#add")
     def _add(self) -> None:
-        def added(note: tuple[str, str, str] | None) -> None:
-            if note is not None:
-                self._run(self.runtime.save_note(*note))
+        def added(file: tuple[str, str] | None) -> None:
+            if file is not None:
+                self._run(self.runtime.write_memory_file(*file))
 
-        self.app.push_screen(NoteScreen(None), added)
+        self.app.push_screen(MemoryFileScreen(None), added)
 
     @on(OptionList.OptionSelected)
     @on(Button.Pressed, "#edit")
@@ -1006,60 +1012,53 @@ class MemoryScreen(ListScreen):
         if (selected := self._selected()) is None:
             return
 
-        def edited(note: tuple[str, str, str] | None) -> None:
-            if note is not None:
-                self._run(self.runtime.save_note(*note, note_id=selected.id))
+        def edited(file: tuple[str, str] | None) -> None:
+            if file is not None:
+                self._run(self.runtime.write_memory_file(*file))
 
-        self.app.push_screen(NoteScreen(selected), edited)
+        self.app.push_screen(MemoryFileScreen(selected), edited)
 
     @on(Button.Pressed, "#forget")
     def _forget(self) -> None:
         if (selected := self._selected()) is None:
             return
-        if selected.title == PROFILE:
-            self.notify(f'"{PROFILE}" can be emptied but not deleted.', markup=False)
-            return
 
         def confirmed(yes: bool | None) -> None:
             if yes:
-                self._run(self.runtime.delete_note(selected.id))
+                self._run(self.runtime.delete_memory_file(selected.path))
 
         self.app.push_screen(ConfirmScreen(
-            f'Delete the note "{_clip(selected.title, 200)}"? Kayden won\'t use it again. The '
-            "messages it came from stay until you delete their conversation.",
-            yes="Delete", no="Cancel", danger=True), confirmed)
+            f'Delete "{_clip(memory_label(selected)[0], 200)}"? Kayden won\'t remember it in '
+            "this project any more.", yes="Delete", no="Cancel", danger=True), confirmed)
 
 
-class NoteScreen(ModalScreen[tuple[str, str, str] | None]):
-    """Add or edit one note: (title, description, text); the profile keeps its title."""
+class MemoryFileScreen(ModalScreen[tuple[str, str] | None]):
+    """Add a memory file, or edit one's text as it is: (path, text)."""
 
     BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Cancel")]
 
-    def __init__(self, note: MemoryNote | None) -> None:
+    def __init__(self, file: MemoryFile | None) -> None:
         super().__init__()
-        self.note = note
+        self.file = file
 
     def compose(self) -> ComposeResult:
-        note = self.note
+        file = self.file
         with Vertical(classes="dialog"):
-            yield Label("Edit note" if note else "Add a note", classes="title")
-            yield Label("Title")
-            yield Input(note.title if note else "", placeholder="A project, person or topic",
-                        id="note-title", disabled=note is not None and note.title == PROFILE)
-            yield Label("About")
-            yield Input(note.description if note else "",
-                        placeholder="One line: what the note is about", id="note-description")
-            yield Label("Note")
-            yield TextArea(note.text if note else "", id="note-text")
+            yield Label(f"Edit {file.path}" if file else "Add a memory", classes="title")
+            yield Label("File")
+            yield Input(file.path if file else "", placeholder="a-short-name.md",
+                        id="memory-path", disabled=file is not None)
+            yield Label("Text")
+            yield TextArea(file.text if file else MEMORY_TEMPLATE.format(name="a-short-name"),
+                           id="memory-text")
             with Horizontal(classes="buttons"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", id="cancel")
 
     @on(Button.Pressed, "#save")
     def _save(self) -> None:
-        self.dismiss((self.query_one("#note-title", Input).value,
-                      self.query_one("#note-description", Input).value,
-                      self.query_one("#note-text", TextArea).text))
+        self.dismiss((self.query_one("#memory-path", Input).value.strip(),
+                      self.query_one("#memory-text", TextArea).text))
 
     @on(Button.Pressed, "#cancel")
     def _cancel(self) -> None:
@@ -1856,10 +1855,7 @@ class KaydenApp(App[None]):
                 self._reload(ConversationsScreen)
             case ConversationDeleted():
                 self._reload(ConversationsScreen)
-            case MemoriesChanged(saved=saved):
-                if saved:  # Memory saved on its own after the answer: say so
-                    await self._mount(SystemEntry(
-                        f"Memory updated: {', '.join(saved)} (F4 to see it)"))
+            case MemoriesChanged():
                 self._reload(MemoryScreen)
             case DutyScheduled(wake_at=wake_at):
                 self.duty_wake_at = wake_at
@@ -2313,7 +2309,7 @@ class KaydenApp(App[None]):
         self._leave_session()
         async def open_screen() -> None:
             try:
-                await self.runtime.notes()
+                await self.runtime.memory_files()
             except NotImplementedError:
                 self.notify("This memory module cannot edit memories.", severity="warning")
                 return

@@ -1,10 +1,9 @@
-"""recall, read_around, read_note, save_note and forget_note: the tools a Memory module
-offers the model
+"""recall, read_around and memory: the tools a Memory module offers the model
 (Memory.list_tools, Memory.execute), built only on the Memory contract, so any module can use
 them as they are or offer its own.
 
-Notes are found by title, case ignored. Every request already shows the profile and each
-other note's title and description; read_note fetches a note's text.
+memory works on the open conversation's project memory folder (Memory.memory_files) with the
+commands of Anthropic's memory tool, which Claude models know.
 """
 
 from __future__ import annotations
@@ -14,10 +13,9 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from kayden.api import (
-    PROFILE,
+    MEMORY_INDEX,
     ArchiveHit,
     Memory,
-    MemoryNote,
     Message,
     OperationResult,
     ServerToolUse,
@@ -69,38 +67,36 @@ READ_AROUND = ToolSpec(
     },
     read_only=True,
 )
-READ_NOTE = ToolSpec(
-    "read_note",
-    "Read one of your memory notes, listed under Memory notes, when it is relevant to what "
-    "the user asks.",
-    {"type": "object", "properties": {"title": _TITLE}, "required": ["title"]},
-    read_only=True,
-)
-SAVE_NOTE = ToolSpec(
-    "save_note",
-    f"Write a memory note that every later conversation can use: \"{PROFILE}\" for who the "
-    "user is and how they want answers, or one note per project, person or topic. A note "
-    "with this title is replaced, so read it first and write its whole new text. Save when "
-    "the user asks you to remember something, or tells you something lasting; Kayden also "
-    "saves on its own after each answer. Never save passwords, keys or other secrets.",
-    {"type": "object", "properties": {
-        "title": _TITLE,
-        "description": {"type": "string", "description": "One line: what the note is about."},
-        "text": {"type": "string"}},
-     "required": ["title", "description", "text"]},
-)
-FORGET_NOTE = ToolSpec(
-    "forget_note",
-    "Delete a memory note, when the user asks or it is no longer true. To drop one fact, "
-    "save the note without it instead.",
-    {"type": "object", "properties": {"title": _TITLE}, "required": ["title"]},
+MEMORY = ToolSpec(
+    "memory",
+    "Read and write your long-term memory for this project: the memory folder whose index, "
+    f"{MEMORY_INDEX}, is in your instructions. Paths are relative to the folder. Commands: "
+    "view (a file with line numbers, or the folder's files when path is empty or \".\"), "
+    "create (a file with file_text, replacing one that exists), str_replace (old_str, which "
+    "must occur once, with new_str), insert (insert_text after line insert_line; 0 is the "
+    "top), delete, rename (old_path to new_path).",
+    {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "enum": ["view", "create", "str_replace", "insert",
+                                                   "delete", "rename"]},
+            "path": {"type": "string"},
+            "file_text": {"type": "string"},
+            "old_str": {"type": "string"},
+            "new_str": {"type": "string"},
+            "insert_line": {"type": "integer", "minimum": 0},
+            "insert_text": {"type": "string"},
+            "old_path": {"type": "string"},
+            "new_path": {"type": "string"},
+        },
+        "required": ["command"],
+    },
 )
 
 
 def memory_tools(*, editable: bool) -> tuple[ToolSpec, ...]:
-    """recall and read_around, plus the note tools when the module keeps notes."""
-    return ((RECALL, READ_AROUND, READ_NOTE, SAVE_NOTE, FORGET_NOTE) if editable
-            else (RECALL, READ_AROUND))
+    """recall and read_around, plus memory when the module keeps memory files."""
+    return (RECALL, READ_AROUND, MEMORY) if editable else (RECALL, READ_AROUND)
 
 
 async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> ToolOutput:
@@ -118,38 +114,82 @@ async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> T
             return await _read_around(memory, args.get("conversation_id") or ctx.conversation_id,
                                       args["message_id"], args.get("before", 3),
                                       args.get("after", 3))
-        case "read_note":
-            note = await _titled(memory, args["title"])
-            if note is None:
-                return await _missing(memory, args["title"])
-            return ToolOutput(f"# {note.title}\n{note.description}\n\n{note.text or '(empty)'}")
-        case "save_note":
+        case "memory":
+            folder = await _folder_of(memory, ctx.conversation_id)
             try:
-                note = await memory.save_note(args["title"], args["description"], args["text"],
-                                              conversation_id=ctx.conversation_id)
-            except ValueError as e:
-                return ToolOutput(str(e), is_error=True)
-            return ToolOutput(f"Saved {note.title!r}.")
-        case "forget_note":
-            note = await _titled(memory, args["title"])
-            if note is None:
-                return await _missing(memory, args["title"])
-            try:
-                await memory.delete_note(note.id)
-            except ValueError as e:
-                return ToolOutput(str(e), is_error=True)
-            return ToolOutput(f"Forgotten: {note.title}")
+                return ToolOutput(await _memory_command(memory, folder, args))
+            except (KeyError, ValueError) as e:
+                return ToolOutput(str(e.args[0] if e.args else e), is_error=True)
     return ToolOutput(f"Unknown tool {call.name!r}.", is_error=True)
 
 
-async def _titled(memory: Memory, title: str) -> MemoryNote | None:
-    key = " ".join(title.split()).casefold()
-    return next((n for n in await memory.notes() if n.title.casefold() == key), None)
+async def _folder_of(memory: Memory, conversation_id: str) -> str | None:
+    """The work folder of a conversation, whose project memory the tool works on."""
+    for info in await memory.list_conversations(include_archived=True):
+        if info.id == conversation_id:
+            return info.folder
+    return None
 
 
-async def _missing(memory: Memory, title: str) -> ToolOutput:
-    listed = "\n".join(f"- {n.title}" for n in await memory.notes())
-    return ToolOutput(f"No note is titled {title!r}. Notes:\n{listed}", is_error=True)
+async def _memory_command(memory: Memory, folder: str | None, args: dict) -> str:
+    """Run one memory command; KeyError or ValueError say what is wrong."""
+    command, path = args["command"], args.get("path", "").strip()
+
+    async def read(name: str) -> str:
+        for file in await memory.memory_files(folder):
+            if file.path == name:
+                return file.text
+        raise KeyError(f"No memory file {name}. Use view with an empty path to list them.")
+
+    def needs(*keys: str) -> None:
+        if missing := [k for k in keys if k not in args]:
+            raise ValueError(f"{command} needs {', '.join(missing)}.")
+
+    match command:
+        case "view" if path in ("", ".", "/"):
+            files = await memory.memory_files(folder)
+            return "\n".join(f"{f.path} ({len(f.text)} characters)" for f in files) or (
+                "The memory folder is empty.")
+        case "view":
+            lines = (await read(path)).splitlines()
+            return "\n".join(f"{i:6}\t{line}" for i, line in enumerate(lines, 1)) or "(empty)"
+        case "create":
+            needs("path", "file_text")
+            await memory.write_memory_file(folder, path, args["file_text"])
+            return f"Saved {path}."
+        case "str_replace":
+            needs("path", "old_str", "new_str")
+            text = await read(path)
+            count = text.count(args["old_str"])
+            if count != 1:
+                raise ValueError(f"old_str occurs {count} times in {path}; it must occur once.")
+            await memory.write_memory_file(folder, path,
+                                           text.replace(args["old_str"], args["new_str"]))
+            return f"Edited {path}."
+        case "insert":
+            needs("path", "insert_line", "insert_text")
+            lines = (await read(path)).splitlines(keepends=True)
+            at = args["insert_line"]
+            if at > len(lines):
+                raise ValueError(f"{path} has {len(lines)} lines.")
+            added = args["insert_text"] if args["insert_text"].endswith("\n") else (
+                args["insert_text"] + "\n")
+            if at and not lines[at - 1].endswith("\n"):
+                lines[at - 1] += "\n"
+            await memory.write_memory_file(folder, path, "".join([*lines[:at], added,
+                                                                    *lines[at:]]))
+            return f"Inserted into {path}."
+        case "delete":
+            needs("path")
+            await memory.delete_memory_file(folder, path)
+            return f"Deleted {path}."
+        case "rename":
+            needs("old_path", "new_path")
+            text = await read(args["old_path"])
+            await memory.write_memory_file(folder, args["new_path"], text)
+            await memory.delete_memory_file(folder, args["old_path"])
+            return f"Renamed {args['old_path']} to {args['new_path']}."
+    raise ValueError(f"Unknown command {command!r}.")
 
 
 async def _read_around(memory: Memory, conversation_id: str, message_id: str, before: int,

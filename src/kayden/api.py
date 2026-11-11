@@ -442,23 +442,16 @@ class ArchiveHit:
     score: float | None = None
 
 
-PROFILE = "About you"  # the note every request sees in full
+MEMORY_INDEX = "MEMORY.md"  # a memory folder's index, shown to every request
 
 
 @dataclass(frozen=True, slots=True)
-class MemoryNote:
-    """One long-term memory note at its latest revision: a project, person or topic, or the
-    profile (titled PROFILE: who the user is, how they want answers). Requests see the
-    profile in full and every other note's title and description; the text of those is
-    read on demand."""
+class MemoryFile:
+    """One file of a project's memory folder: MEMORY_INDEX, or one memory in Markdown with a
+    name, description and type in its frontmatter. `path` is relative to the folder."""
 
-    id: str
-    title: str  # unique, case ignored
-    description: str  # one line: what the note is about, for the index
+    path: str
     text: str
-    # The conversation that last wrote it; None = written by the user, or its conversation
-    # was deleted.
-    source_conversation_id: ConversationId | None
     updated_at: float
 
 
@@ -467,7 +460,7 @@ class MemoryView:
     """Read-only, display-oriented snapshot of what Memory currently holds."""
 
     summary: str
-    long_term: Sequence[str]  # the profile, then the index: what every request sees
+    long_term: Sequence[str]  # the memory index: what every request sees
 
 
 class BudgetExhausted(Exception):
@@ -645,25 +638,21 @@ class Memory(abc.ABC):
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         raise NotImplementedError
 
-    # Optional: long-term memory notes the user can see and change. The base class raises
+    # Optional: the long-term memory folder of a project (`folder`, a conversation's work
+    # folder; None for conversations without one), which the user can see and change. Paths
+    # are relative to it; ValueError for one that leaves it. The base class raises
     # NotImplementedError; the runtime then reports that memory cannot be edited.
 
-    async def notes(self) -> Sequence[MemoryNote]:
-        """The profile first, then the other notes, most recently written first."""
+    async def memory_files(self, folder: str | None) -> Sequence[MemoryFile]:
+        """MEMORY_INDEX first when it exists, then the other files by path."""
         raise NotImplementedError
 
-    async def save_note(self, title: str, description: str, text: str, *,
-                        note_id: str | None = None,
-                        conversation_id: ConversationId | None = None) -> MemoryNote:
-        """Write a note: the one `note_id` names (KeyError if unknown; its title may
-        change), else the one with this title (case ignored), else a new one. ValueError for
-        an empty title, a title another note has, or renaming the profile.
-        `conversation_id` is where the agent wrote it; None, the user."""
+    async def write_memory_file(self, folder: str | None, path: str, text: str) -> MemoryFile:
+        """Create or replace a file, with any folders it needs."""
         raise NotImplementedError
 
-    async def delete_note(self, note_id: str) -> None:
-        """Erase a note and its revisions. ValueError for the profile, which can only be
-        emptied."""
+    async def delete_memory_file(self, folder: str | None, path: str) -> None:
+        """KeyError if there is no such file."""
         raise NotImplementedError
 
     async def save_duty(self, conversation_id: ConversationId, duty: Duty | None,
@@ -675,8 +664,7 @@ class Memory(abc.ABC):
 
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
         """Optional. Erase a conversation: messages, summaries, search index entries,
-        and metadata. Notes it wrote stay, with no source conversation: they are managed in
-        long-term memory (delete_note).
+        and metadata. Long-term memory is the project's, not the conversation's: it stays.
         Conversations seeded from it keep their own summaries; their seed_from becomes
         None. The runtime never calls it for the open conversation."""
         raise NotImplementedError
@@ -1302,11 +1290,8 @@ class ConversationDeleted:
 
 @dataclass(frozen=True, slots=True)
 class MemoriesChanged:
-    """Long-term memory notes were added, edited or deleted; re-read notes(). `saved` names
-    the notes Memory saved on its own after an answer, for frontends to mention ("Memory
-    updated"); it is empty for changes the user or a tool made."""
-
-    saved: Sequence[str] = ()
+    """The open conversation's memory files changed, by the user or by the agent's memory
+    tool; re-read memory_files()."""
 
 @dataclass(frozen=True, slots=True)
 class DutyScheduled:
@@ -1480,7 +1465,8 @@ class RuntimeAPI(Protocol):
     which case it performs a full Stop.
 
     Conversation and memory management (rename_conversation, archive_conversation,
-    delete_conversation, notes, save_note, delete_note) is allowed in any state.
+    delete_conversation, memory_files, write_memory_file, delete_memory_file) is allowed in
+    any state.
     Changes apply from the next turn or assemble. Each emits ConversationUpdated,
     ConversationDeleted or MemoriesChanged and is logged without any text. The memory
     commands raise NotImplementedError ("this memory module cannot ...") when the Memory
@@ -1529,7 +1515,8 @@ class RuntimeAPI(Protocol):
         """conversation_id None searches every conversation, archived ones included."""
 
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None: ...
-    async def notes(self) -> Sequence[MemoryNote]: ...
+    async def memory_files(self) -> Sequence[MemoryFile]:
+        """The open conversation's project memory (see Memory.memory_files)."""
 
     # Control
 
@@ -1599,13 +1586,11 @@ class RuntimeAPI(Protocol):
         RuntimeStateError for the open conversation; switch away first. Frontends must
         ask the user to confirm and say it cannot be undone."""
 
-    async def save_note(self, title: str, description: str, text: str, *,
-                        note_id: str | None = None) -> MemoryNote:
-        """Write a note as the user (see Memory.save_note)."""
+    async def write_memory_file(self, path: str, text: str) -> MemoryFile:
+        """Write a file of the open conversation's project memory, as the user."""
 
-    async def delete_note(self, note_id: str) -> None:
-        """Erase the note with its revisions. The messages it came from stay until their
-        conversation is deleted."""
+    async def delete_memory_file(self, path: str) -> None:
+        """Delete a file of the open conversation's project memory, as the user."""
 
     async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
         """Approve or dismiss a pending proposal, in any state; RuntimeStateError when it is

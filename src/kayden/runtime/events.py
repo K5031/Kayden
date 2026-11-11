@@ -21,7 +21,6 @@ from kayden.api import (
     BLOCK_TYPES,
     ConversationUpdated,
     EventEnvelope,
-    MemoriesChanged,
     MessageCommitted,
     MessageQueued,
     OpaqueBlock,
@@ -65,8 +64,6 @@ def _logged(event: RuntimeEvent) -> dict[str, Any]:
     match event:
         case SettingsChanged():
             data["settings"]["system_prompt_chars"] = len(data["settings"].pop("system_prompt"))
-        case MemoriesChanged():
-            data["saved"] = len(data["saved"])  # how many notes, not their titles
         case ConversationUpdated():
             del data["info"]["title"], data["info"]["preview"]
     return data

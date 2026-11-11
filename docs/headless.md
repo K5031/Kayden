@@ -43,12 +43,12 @@ and the terminal app drive their sub-sessions this way:
 | `snapshot` | none |
 | `history` | `conversation_id`, optional `before`, `limit` |
 | `list_conversations` | optional `include_archived` |
-| `list_models`, `list_tools`, `settings`, `notes` | none |
+| `list_models`, `list_tools`, `settings`, `memory_files` | none |
 | `update_settings` | `update`: a `SettingsUpdate` object |
 | `rename_conversation`, `archive_conversation`, `delete_conversation` | `conversation_id`, and `title` or `archived` |
 | `search_archive` | `query`, optional `conversation_id`, `limit` |
 | `inspect_memory` | `conversation_id` |
-| `save_note`, `delete_note` | `title`, `description`, `text`, optional `note_id`; or `note_id` |
+| `write_memory_file`, `delete_memory_file` | `path` and `text`; or `path` (the open conversation's project memory) |
 
 A refusal (asking before `start`, a duty without a spending limit, an unknown
 conversation) is error `-32000` with the runtime's message and `data.type`, such as

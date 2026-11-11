@@ -203,15 +203,15 @@ Recent conversation messages and tool interactions preserved in their original f
 A compact representation of older conversation history.
 The summary has a fixed token budget and is automatically carried into subsequent inference requests.
 3. Long-Term Memory
-Important durable information maintained by the Memory module, as notes: a profile (who the user is, how they want answers) and one note per project, person or topic, each with a one-line description. Every request sees the profile and the notes' titles and descriptions; the model reads a note's text on demand with the read_note tool the Memory module offers, and writes or deletes notes with save_note and forget_note. After each answer, Memory saves what the exchange taught (maintain is called once more before the agent goes idle). The user can see and edit notes. Notes outlive the conversation that wrote them.
+Important durable information, kept by the Memory module as Claude Code keeps it: a folder of Markdown files per project (a conversation's work folder; one folder for conversations without one). MEMORY.md is the index, one line per memory; every other file holds one memory with a name, a one-line description and a type (user, feedback, project, reference) in its frontmatter. Every request's system prompt carries the memory rules and the project's MEMORY.md; the model opens a memory file when it is relevant, and writes, edits and deletes files with the memory tool the Memory module offers, while it works. Nothing is saved without the model calling that tool. The user can see and edit the files. Memory outlives the conversations of its project.
 4. Permanent Verbatim Archive
 Original conversation messages and tool interactions are retained for historical retrieval until the user deletes their conversation.
 Information removed from active inference context is not deleted from the archive.
-The archive is append-only. The one exception is deletion the user explicitly asks for: deleting a conversation erases its messages, summaries, search index entries and metadata, so that the erased content is not recoverable from Kayden's store. Memory notes it wrote stay until the user deletes them, like any note. Deletion cannot reach copies outside Kayden's data directory, such as backups, nor what a model provider has already received.
+The archive is append-only. The one exception is deletion the user explicitly asks for: deleting a conversation erases its messages, summaries, search index entries and metadata, so that the erased content is not recoverable from Kayden's store. Long-term memory belongs to the project, not the conversation, and stays. Deletion cannot reach copies outside Kayden's data directory, such as backups, nor what a model provider has already received.
 8.2 Shared Memory Foundation
 All conversations use the same memory architecture, with configurable compaction policies, following Codex-inspired conversation persistence and context compaction.
-Long-term memory is one set of notes per instance, shared by every conversation, while individual conversation histories remain distinct.
-The user can see the notes and add, edit and delete them. Edits keep earlier revisions; deleting erases the note with its revisions; the profile can be emptied but not deleted. Deleting a note does not delete the messages it came from.
+Long-term memory is one folder per project, shared by the conversations in that project, while individual conversation histories remain distinct.
+The user can see the open conversation's memory files and add, edit and delete them. Deleting a file does not delete the messages it came from.
 8.3 Compaction
 When active context reaches its configured threshold:
 Select an older portion of active messages at message boundaries.

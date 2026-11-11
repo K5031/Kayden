@@ -253,7 +253,7 @@ async def test_the_setup_runtime_saves_what_needs_no_core(tmp_path, monkeypatch)
         assert runtime.snapshot().conversation is None
         with pytest.raises(ValueError, match="once Kayden has started"):
             await runtime.update_settings(SettingsUpdate(model="fake-1"))
-        for call in (runtime.list_conversations(), runtime.list_models(), runtime.notes(),
+        for call in (runtime.list_conversations(), runtime.list_models(), runtime.memory_files(),
                      runtime.send("hi")):
             with pytest.raises(RuntimeStateError, match="'gone' is not installed"):
                 await call
