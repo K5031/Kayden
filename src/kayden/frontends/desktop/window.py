@@ -156,6 +156,7 @@ from kayden.frontends.sessions import SubSession, SubSessions
 LINE_HEIGHT_PERCENT = 118  # reply text, of the font's line spacing (itself ~1.35 em)
 CODE_SCALE = 0.88  # inline code, of the text size: monospace looks larger at the same size
 PARAGRAPH_SPACING = 10  # px below a reply paragraph
+TURN_GAP = 18  # px more below your message, before Kayden's reply, than between its steps
 LIST_ITEM_SPACING = 4  # px below a list item
 ZOOM_SAVE_DELAY_S = 0.4
 HEADING_SPACING = 6  # px above a heading, on top of the paragraph below the previous block
@@ -530,7 +531,7 @@ class UserBubble(QWidget):
         super().__init__()
         self.item = item
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(0, TURN_GAP // 3, 0, TURN_GAP)  # a turn starts here
         row.addStretch(1)
         self.bubble = QFrame(objectName="user")
         layout = QVBoxLayout(self.bubble)
