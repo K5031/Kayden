@@ -202,6 +202,16 @@ summary of the thinking to be streamed, so you see it under **Thinking** as it h
 To change that, set `thinking` in the Core's options for that model, for example
 `thinking = { type = "adaptive", display = "omitted" }`.
 
+With Claude, Kayden asks Anthropic to cache each conversation, so every request after the
+first pays about a tenth or less for what was already sent. The cache lasts five minutes
+after the last request. For work with longer pauses (a duty that checks in every half
+hour), keep it for an hour instead, at a higher price for the first request:
+
+```toml
+[core.options.options]
+cache_control = { type = "ephemeral", ttl = "1h" }
+```
+
 ## API keys
 
 Kayden looks for a key in the environment first (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`,

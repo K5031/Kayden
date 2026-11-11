@@ -475,3 +475,44 @@ async def test_thinking_is_shown_by_default_on_models_that_always_think(
                                                    max_output_tokens=256))
     await anthropic.core.aclose()
     assert anthropic.stub.bodies[-1].get("thinking") == sent
+
+
+@pytest.mark.parametrize("options, maintenance, sent", [
+    # A conversation resends everything said so far with each request: cached, the
+    # earlier part is read at a fraction of the price.
+    ({}, False, {"type": "ephemeral"}),
+    # What the configuration says stands.
+    ({"cache_control": {"type": "ephemeral", "ttl": "1h"}}, False,
+     {"type": "ephemeral", "ttl": "1h"}),
+    # A one-off request (a title, a summary, a review): nothing would read what it wrote.
+    ({}, True, None),
+])
+async def test_a_conversation_is_cached_by_default(
+        options: dict, maintenance: bool, sent: dict | None) -> None:
+    anthropic = AnthropicDriver(options=options)
+    anthropic.queue_text()
+    await collect(anthropic.core, InferenceRequest(MODEL, "", [user("hi")], [],
+                                                   max_output_tokens=256,
+                                                   maintenance=maintenance))
+    await anthropic.core.aclose()
+    assert anthropic.stub.bodies[-1].get("cache_control") == sent
+
+
+@pytest.mark.parametrize("options, premium", [({}, 0.25), (
+    {"cache_control": {"type": "ephemeral", "ttl": "1h"}}, 1.0)])
+async def test_writing_the_cache_is_charged_its_premium(options: dict, premium: float) -> None:
+    """Written tokens count as input, at the input price; the premium on top (a quarter of
+    it, or as much again for an hour's cache) is an extra cost."""
+    anthropic = AnthropicDriver(options=options, models={MODEL: ModelConfig(
+        context_window=200_000, input_usd_per_mtok=4.0, output_usd_per_mtok=20.0,
+        cached_input_usd_per_mtok=0.2)})
+    start = message_start()
+    start[1]["message"]["usage"].update(input_tokens=12, cache_read_input_tokens=5,
+                                        cache_creation_input_tokens=1000)
+    anthropic.stub.queue(Reply(events=[start, *text_block(0, ["Hi"]), *finish("end_turn")]))
+    events = await collect(anthropic.core, InferenceRequest(MODEL, "", [user("hi")], [],
+                                                            max_output_tokens=256))
+    await anthropic.core.aclose()
+    usage = events[-1].usage
+    assert (usage.input_tokens, usage.cached_tokens) == (1017, 5)
+    assert usage.extra_cost_usd == pytest.approx(1000 * 4.0 * premium / 1_000_000)

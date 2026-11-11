@@ -864,3 +864,13 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Reread | With every request and every `RuntimeAPI.skills()` call, in a thread |
 | Tool | `skill`, read-only, never gated or counted; a leading `/` in the name is dropped; an unknown name answers ERROR with the names |
 | Prompt | The section follows the user's instructions and precedes Memory's addendum and the duty, so the stable part of the prompt comes first |
+
+## Prompt caching (Anthropic)
+
+| Choice | Decision |
+|---|---|
+| Default | Every turn request carries top-level `cache_control: {"type": "ephemeral"}` (`anthropic._cached`): the API marks the end of the request, so the next one reads the conversation so far from the cache. Measured on Opus 5.5: a second turn's 11.5k tokens of prompt cost $0.003 instead of $0.046 |
+| Not cached | The runtime's one-off requests (`InferenceRequest.maintenance`: titles, summaries, the save pass, permission reviews): nothing would read what they wrote, so they would only pay the write premium |
+| Configured | A `cache_control` in the Core's or the model's options is sent as it is (`ttl = "1h"`) |
+| Cost | Written tokens count as input at the input price; the premium (25 %, or 100 % for an hour's cache) is added as `Usage.extra_cost_usd`, from the model's input price |
+| Limit | The plan, the duty and Memory's addendum are in the system prompt, which comes before the messages: when one changes, the next request writes the conversation again instead of reading it |

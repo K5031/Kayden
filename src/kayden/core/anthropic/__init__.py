@@ -89,6 +89,12 @@ WEB_SEARCH = ToolSpec(
 )
 MAX_SEARCHES = 5  # per request
 SEARCH_USD = 0.01
+# Automatic prompt caching: the API marks the end of each request, so the next one reads
+# the conversation so far at the cached price and writes only what was added.
+CACHED = {"type": "ephemeral"}
+# What writing the cache costs on top of the input price, as a share of it, by lifetime.
+_WRITE_PREMIUM = {"1h": 1.0}
+_WRITE_PREMIUM_DEFAULT = 0.25  # five minutes
 MAX_CONTINUATIONS = 5  # of a turn the API paused (pause_turn)
 _DYNAMIC_FILTERING = ("claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7",
                       "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6")
@@ -126,6 +132,14 @@ def _thinking_shown(model: str, body: dict[str, Any]) -> dict[str, Any]:
     if "thinking" in body or not _ALWAYS_THINKS.match(model):
         return body
     return {**body, "thinking": dict(SHOWN_THINKING)}
+
+
+def _cached(body: dict[str, Any], request: InferenceRequest) -> dict[str, Any]:
+    """The request options with the conversation cached, unless the configuration says
+    how. The runtime's one-off requests are left alone: nothing reads what they write."""
+    if "cache_control" in body or request.maintenance:
+        return body
+    return {**body, "cache_control": dict(CACHED)}
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> AnthropicCore:
@@ -210,15 +224,17 @@ class AnthropicCore(Core):
             "model": request.model,
             "messages": turns,
             "max_tokens": request.max_output_tokens or self._default_max_tokens,
-            "extra_body": _thinking_shown(
+            "extra_body": _cached(_thinking_shown(
                 request.model, request_options(self._options, self._models.get(request.model))),
+                request),
         }
         if request.system:
             params["system"] = request.system
         if tools:
             params["tools"] = tools
 
-        turn = _Turn(request.model, bound)
+        turn = _Turn(request.model, bound, self._write_premium(request.model,
+                                                               params["extra_body"]))
         try:
             for continuation in range(MAX_CONTINUATIONS + 1):
                 response = await self._open(params, request)
@@ -238,6 +254,15 @@ class AnthropicCore(Core):
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
         yield turn.completed()
+
+    def _write_premium(self, model: str, body: dict[str, Any]) -> float:
+        """USD per token written to the cache, beyond the input price it is counted at."""
+        config = self._models.get(model)
+        control = body.get("cache_control")
+        if config is None or config.input_usd_per_mtok is None or not isinstance(control, dict):
+            return 0.0
+        share = _WRITE_PREMIUM.get(control.get("ttl", ""), _WRITE_PREMIUM_DEFAULT)
+        return config.input_usd_per_mtok * share / 1_000_000
 
     async def _open(self, params: dict[str, Any], request: InferenceRequest) -> Any:
         """Start the stream; on a 400 the request can do without, again without it."""
@@ -284,9 +309,10 @@ class _Turn:
     """Accumulates raw stream events into Kayden events and the final message. A turn the
     API paused goes on in further responses (next_response), whose blocks follow."""
 
-    def __init__(self, model: str, bound: str) -> None:
+    def __init__(self, model: str, bound: str, write_premium_usd: float = 0.0) -> None:
         self.model = model
         self.bound = bound  # Prefix of the request: what this turn's reasoning is bound to
+        self.write_premium_usd = write_premium_usd  # per token written to the cache
         self.blocks: list[_Block] = []
         self._index: dict[int, _Block] = {}  # this response's block indices
         self.counts = dict.fromkeys(("input_tokens", "output_tokens", "cache_read_input_tokens",
@@ -364,7 +390,8 @@ class _Turn:
                           + c["cache_creation_input_tokens"]),
             output_tokens=c["output_tokens"],
             cached_tokens=c["cache_read_input_tokens"],
-            extra_cost_usd=c["web_search_requests"] * SEARCH_USD,
+            extra_cost_usd=(c["web_search_requests"] * SEARCH_USD
+                            + c["cache_creation_input_tokens"] * self.write_premium_usd),
         )
 
     def content(self) -> list[JSON]:

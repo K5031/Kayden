@@ -212,8 +212,8 @@ class Usage:
     output_tokens: int = 0
     cached_tokens: int = 0
     cost_usd: float | None = None  # None when the provider doesn't report it
-    # What the provider charges beyond tokens (its own tools' uses), added to the cost
-    # whether or not cost_usd is reported.
+    # What the provider charges beyond the token prices (its own tools' uses, the premium
+    # for writing its prompt cache), added to the cost whether or not cost_usd is reported.
     extra_cost_usd: float = 0.0
 
 
