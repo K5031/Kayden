@@ -55,6 +55,7 @@ from kayden.api import (
     Failure,
     Frontend,
     FrontendInfo,
+    HelpNeeded,
     InstancePaths,
     MaintenanceFinished,
     MaintenanceStarted,
@@ -114,6 +115,7 @@ from kayden.frontends.common import (
     duty_status,
     folder_path,
     group_title,
+    help_text,
     loosening,
     mcp_server,
     mcp_target,
@@ -1332,6 +1334,7 @@ class KaydenApp(App[None]):
         self.model: str | None = None
         self.usage: UsageSnapshot | None = None
         self.duty_wake_at: float | None = None
+        self.help_needed: str | None = None
         self.notice = ""
         self._inbox: asyncio.Queue[EventEnvelope | _Resync | None] = asyncio.Queue()
         self._tool_entries: dict[str, ToolEntry] = {}
@@ -1426,6 +1429,7 @@ class KaydenApp(App[None]):
         self.model = snap.model
         self.usage = snap.usage
         self.duty_wake_at = snap.duty_wake_at
+        self.help_needed = snap.help_needed
         self._oldest_id = history[0].id if history else None
         if len(history) == HISTORY_PAGE:
             await self._mount(LoadEarlier())
@@ -1530,6 +1534,10 @@ class KaydenApp(App[None]):
                 self._reload(MemoryScreen)
             case DutyScheduled(wake_at=wake_at):
                 self.duty_wake_at = wake_at
+            case HelpNeeded(question=question):
+                self.help_needed = question
+                if question is not None:
+                    await self._mount(SystemEntry(help_text(question), severity="warning"))
             case MaintenanceStarted():
                 self.notice = "Tidying up memory…"
             case MaintenanceFinished():
@@ -1719,7 +1727,7 @@ class KaydenApp(App[None]):
                     + ", ".join(f"{k} {v:g}" for k, v in self.usage.budget_remaining.items())
                 )
         if self.conversation is not None and (duty := duty_status(
-                self.conversation.duty, self.duty_wake_at, self.state)):
+                self.conversation.duty, self.duty_wake_at, self.state, self.help_needed)):
             parts.append(duty)
         if self.notice:
             parts.append(self.notice)

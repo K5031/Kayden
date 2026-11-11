@@ -723,7 +723,8 @@ _PLAN_ITEM = {
 }
 
 # Runtime built-ins offered while the open conversation has a duty or a plan
-# (update_plan), or a goal (finish_goal). Like BUILTIN_TOOLS, never gated and not counted.
+# (update_plan), a duty (ask_for_help) or a goal (finish_goal). Like BUILTIN_TOOLS, never
+# gated and not counted.
 DUTY_TOOLS: Mapping[str, ToolSpec] = {
     "update_plan": ToolSpec(
         "update_plan",
@@ -732,6 +733,14 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         {"type": "object",
          "properties": {"items": {"type": "array", "items": _PLAN_ITEM}},
          "required": ["items"]},
+    ),
+    "ask_for_help": ToolSpec(
+        "ask_for_help",
+        "When you are blocked and only your supervisor can unblock you (a decision, an "
+        "approval, access you lack): ask one clear question. Your duty's check-ins pause "
+        "until they answer; finished background work still wakes you.",
+        {"type": "object", "properties": {"question": {"type": "string", "minLength": 1}},
+         "required": ["question"]},
     ),
     "finish_goal": ToolSpec(
         "finish_goal",
@@ -1085,6 +1094,7 @@ class RuntimeSnapshot:
     pending_permissions: Sequence[PermissionRequest]
     queued_messages: Sequence[MessageQueued]
     duty_wake_at: float | None = None  # see DutyScheduled
+    help_needed: str | None = None  # see HelpNeeded
 
 
 # Runtime events. TextDelta / ReasoningDelta / ToolCallDelta are reused from Core's stream.
@@ -1217,6 +1227,16 @@ class DutyScheduled:
 
 
 @dataclass(frozen=True, slots=True)
+class HelpNeeded:
+    """The agent asked its supervisor (the user, or whoever drives this instance) for help
+    with ask_for_help: the duty's check-ins pause until a message, an activation or a change
+    of duty. None: the question is answered or dropped. Not kept across a restart, which
+    pauses the duty anyway."""
+
+    question: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceStarted:
     """Emitted when Memory first uses inference during maintain()."""
 
@@ -1276,6 +1296,7 @@ type RuntimeEvent = (
     | ConversationDeleted
     | MemoriesChanged
     | DutyScheduled
+    | HelpNeeded
     | MaintenanceStarted
     | MaintenanceFinished
     | StopStalled

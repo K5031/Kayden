@@ -369,3 +369,18 @@ async def test_an_unreadable_plan_is_shown_and_nothing_is_saved():
         await save(pilot, app)
         assert "status must be" in str(app.screen.query_one("#duty-error").render())
         assert not any(c[0] in ("set_duty", "set_plan") for c in stub.calls)
+
+
+async def test_a_question_for_help_is_shown():
+    from kayden.api import HelpNeeded
+    from kayden.frontends.tui import SystemEntry
+    from tests.test_tui import entries, plain
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        stub.emit(HelpNeeded("Which account?"))
+        await caught_up(pilot, app, stub)
+        assert "Which account?" in plain(entries(app, SystemEntry)[-1])
+        assert app.help_needed == "Which account?"

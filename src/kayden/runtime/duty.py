@@ -45,7 +45,9 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
             "background work finishes, when an open plan item falls due, and at least "
             f"every {_span(duty.max_interval_s)}. To react to something outside (new mail, "
             "a webhook, a file), start a tool that waits for it; when it finishes it wakes "
-            "you. Wake-up notices give the time.")
+            "you. Wake-up notices give the time. If you are blocked and only your supervisor "
+            "can unblock you, call ask_for_help and end your turn; solve what you can "
+            "yourself first.")
     if plan:
         lines = [f"- [{i.status}] {i.text}" + (f" (due {local(i.due)})" if i.due else "")
                  + (f" — {i.note}" if i.note else "") for i in plan]

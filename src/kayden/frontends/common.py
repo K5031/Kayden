@@ -309,15 +309,22 @@ PLAN_HINT = ("One step per line: [todo], [doing], [done] or [dropped], the step,
 _PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")
 
 
-def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState) -> str | None:
+def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
+                help_needed: str | None = None) -> str | None:
     """The duty's state for a status line, None without a duty."""
     if duty is None:
         return None
+    if help_needed is not None and state in (AgentState.IDLE, AgentState.STOPPED):
+        return "Duty waiting for your answer"
     if wake_at is not None:
         return f"Duty: next check-in {_when(wake_at)}"
     if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
         return "Duty paused: activate to resume"
     return "Duty: working"
+
+
+def help_text(question: str) -> str:
+    return f"Kayden needs your help to go on with its duty: {question}"
 
 
 def _when(t: float) -> str:

@@ -21,6 +21,7 @@ from kayden.api import (
     DutyScheduled,
     Failure,
     FailureKind,
+    HelpNeeded,
     PlanItem,
     PlanStatus,
     RuntimeStateError,
@@ -310,3 +311,48 @@ async def test_continue_from_does_not_copy_the_duty(make):
     source = h.conversation.id
     seeded = await h.start(seed_from=source)
     assert seeded.duty is None and h.runtime.snapshot().duty_wake_at is None
+
+
+# ── Asking for help ──
+
+
+async def test_asking_for_help_pauses_the_duty_until_the_user_answers(make):
+    h = await duty_harness(make, [
+        Step(calls=[call("ask_for_help", {"question": "Which account should I post from?"},
+                         id="ask")]),
+        Step(text="Waiting for you."), Step(text="Posting from the main account.")])
+    await h.runtime.set_duty(Duty("Run socials", min_interval_s=0.05, max_interval_s=0.2))
+    await idle(h, 2)
+    assert "ask_for_help" in [t.name for t in h.core.requests[0].tools]
+    assert (await h.results())["ask"].status == ToolStatus.OK
+    await h.rec.wait_for(lambda r: HelpNeeded("Which account should I post from?")
+                         in r.of(HelpNeeded))
+    snap = h.runtime.snapshot()
+    assert snap.help_needed == "Which account should I post from?"
+    assert snap.duty_wake_at is None
+    await asyncio.sleep(0.4)
+    assert len(h.core.requests) == 2  # no check-ins while it waits
+    await h.turn("The main one.")
+    await h.rec.wait_for(lambda r: r.of(HelpNeeded)[-1] == HelpNeeded(None))
+    assert h.runtime.snapshot().help_needed is None
+    assert h.runtime.snapshot().duty_wake_at is not None  # the schedule is back
+
+
+async def test_finished_work_still_wakes_an_agent_waiting_for_help(make):
+    tools = FakeTools()
+    tools.slow("watch", 0.3)
+    h = await duty_harness(make, [
+        Step(calls=[call("watch", id="w"),
+                    call("ask_for_help", {"question": "Login code?"})]),
+        Step(text="Waiting."), Step(text="The watcher fired.")], tools=tools)
+    await h.runtime.set_duty(QUIET)
+    await idle(h, 3)
+    assert "background work finished" in notices(h.core.requests[2])[-1]
+    assert h.runtime.snapshot().help_needed == "Login code?"  # still unanswered
+
+
+async def test_ask_for_help_needs_a_duty(make):
+    h = await duty_harness(make)
+    await h.runtime.set_plan([PlanItem("x")])  # a plan alone offers update_plan only
+    await h.turn("hi")
+    assert "ask_for_help" not in [t.name for t in h.core.requests[0].tools]

@@ -593,3 +593,19 @@ async def test_a_tool_the_provider_ran_is_a_finished_step(make):
     (step,) = of(model, ToolItem)
     assert step.summary == "Searched the web for “worlds”" and step.status is ToolStatus.OK
     assert "w.example" in step.content
+
+
+async def test_a_question_for_help_is_shown_and_named_in_the_status(make):
+    from kayden.api import Budget, Duty
+
+    h: Harness = await make(budget=Budget(max_cost_usd=5))
+    h.core.add(Step(calls=[call("ask_for_help", {"question": "Which account?"})]),
+               Step(text="Waiting for you."))
+    await h.start()
+    model, controller, _ = await attach(h)
+    await h.runtime.set_duty(Duty("Run socials"))
+    await eventually(lambda: any("Which account?" in n.text for n in of(model, NoticeItem)))
+    await until_state(h, controller, AgentState.IDLE)
+    assert "Duty waiting for your answer" in model.status_text
+    controller.send("The main one.")
+    await eventually(lambda: model.help_needed is None)

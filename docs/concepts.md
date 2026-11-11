@@ -52,6 +52,11 @@ or turn it off; the conversation keeps everything said so far.
 - **It pauses** when you press Stop, when the limit is reached, after an error, and after
   Kayden restarts, so a crash never quietly repeats an action. Send a message or activate
   the conversation (Ctrl+R) to resume it.
+- **It asks when it is stuck.** When only you can unblock it (a decision, an approval,
+  access it lacks), the agent asks you a question and stops checking in until you
+  answer. The question appears in the conversation and the status line says the duty is
+  waiting for you. Your reply resumes it; finished background tasks still wake it
+  meanwhile.
 - **Permissions still apply.** An action that would ask you waits for you, so a duty that
   runs unattended needs permissions that cover what it does.
 - **Continue from** does not copy a duty.

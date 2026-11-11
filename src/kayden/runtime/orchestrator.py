@@ -45,6 +45,7 @@ from kayden.api import (
     Failure,
     FailureKind,
     FrontendInfo,
+    HelpNeeded,
     InferenceRequest,
     MaintenanceFinished,
     MaintenanceStarted,
@@ -298,6 +299,7 @@ class Runtime:
         self._duty_timer: asyncio.Task[None] | None = None
         self._duty_wake_at: float | None = None
         self._duty_cause: str | None = None  # why the next cycle was requested for a duty
+        self._help: str | None = None  # the agent's open question (ask_for_help)
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._duration_task: asyncio.Task[None] | None = None
         self._inbox_before_stop = 0
@@ -323,6 +325,7 @@ class Runtime:
             pending_permissions=[req for req, _ in self._prompts.values()],
             queued_messages=list(self._inbox),
             duty_wake_at=self._duty_wake_at,
+            help_needed=self._help,
         )
 
     async def list_models(self) -> Sequence[ModelInfo]:
@@ -401,6 +404,7 @@ class Runtime:
         # A resumed conversation has no pending wake-up: it waits for the user.
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
         self._cancel_duty()
+        self._answered()
         self._backlog.clear()
         if resumed:
             await self._repair()
@@ -447,6 +451,7 @@ class Runtime:
             raise RuntimeStateError(f"budget exhausted: {reason}")
         queued = MessageQueued(_new_id(), text)
         self._inbox.append(queued)
+        self._answered()
         if state in _RUNNING or state == AgentState.STOPPING:
             self._emit(queued)
         else:
@@ -459,6 +464,7 @@ class Runtime:
                 raise RuntimeStateError(f"budget exhausted: {reason}")
         elif state not in (AgentState.IDLE, AgentState.STOPPED):
             raise RuntimeStateError(f"cannot activate while {state}")
+        self._answered()
         self._request_cycle("user activation")
 
     async def stop(self) -> None:
@@ -561,6 +567,7 @@ class Runtime:
                 raise ValueError("a duty needs a spending limit: set one in the settings")
         turned_on = duty is not None and self._conversation.duty is None
         await self._save_duty(duty, self._conversation.plan)
+        self._answered()
         self._log.decision("duty", on=duty is not None,
                            kind=duty.kind if duty is not None else None)
         state = self._state()
@@ -828,6 +835,8 @@ class Runtime:
         conversation = self._conversation
         if conversation is not None and (conversation.duty is not None or conversation.plan):
             specs["update_plan"] = DUTY_TOOLS["update_plan"]
+            if conversation.duty is not None:
+                specs["ask_for_help"] = DUTY_TOOLS["ask_for_help"]
             if conversation.duty is not None and conversation.duty.kind == DutyKind.GOAL:
                 specs["finish_goal"] = DUTY_TOOLS["finish_goal"]
         self._memory_tools, self._tool_owner = set(), {}
@@ -1126,6 +1135,9 @@ class Runtime:
         duty = self._conversation.duty if self._conversation is not None else None
         if duty is None or not self._waiting():
             return
+        if self._help is not None:
+            self._log.decision("duty_paused", reason="waiting for help")
+            return
         if self._config.budget.max_cost_usd is None:
             self._log.decision("duty_paused", reason="no spending limit")
             self._failure(FailureKind.BUDGET,
@@ -1137,6 +1149,11 @@ class Runtime:
         self._duty_wake_at = time.time() + delay
         self._log.decision("duty_scheduled", in_s=round(delay, 3), cause=cause)
         self._emit(DutyScheduled(self._duty_wake_at))
+
+    def _answered(self) -> None:
+        if self._help is not None:
+            self._help = None
+            self._emit(HelpNeeded(None))
 
     def _cancel_duty(self) -> None:
         if self._duty_timer is not None:
@@ -1688,6 +1705,14 @@ class Runtime:
                 await self._save_duty(self._conversation.duty, plan)
                 self._log.decision("plan", items=len(plan), by="model")
                 return ToolStatus.OK, f"Plan saved. It is now {duties.local(now)}."
+            case "ask_for_help":
+                if self._conversation.duty is None:
+                    return ToolStatus.ERROR, "There is no duty to pause."
+                self._help = args["question"]
+                self._log.decision("help_requested", question_chars=len(self._help))
+                self._emit(HelpNeeded(self._help))
+                return ToolStatus.OK, ("Asked. Your check-ins pause until your supervisor "
+                                       "answers; end your turn.")
             case "finish_goal":
                 duty = self._conversation.duty
                 if duty is None or duty.kind != DutyKind.GOAL:

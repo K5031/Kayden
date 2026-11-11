@@ -31,6 +31,7 @@ from kayden.api import (
     EventEnvelope,
     Failure,
     FailureKind,
+    HelpNeeded,
     InstanceLockedError,
     MaintenanceFinished,
     MaintenanceStarted,
@@ -81,6 +82,7 @@ from kayden.frontends.common import (
     call_parts,
     duty_status,
     group_title,
+    help_text,
     money,
     past_tense,
     provider_step,
@@ -303,6 +305,7 @@ class ConversationModel:
         self.model: str | None = None
         self.usage: UsageSnapshot | None = None
         self.duty_wake_at: float | None = None
+        self.help_needed: str | None = None
         self.notice = ""  # transient status text: retries, maintenance, stop stalled
         self.failure: Failure | None = None  # shown as a banner until the next cycle
         self.has_earlier = False
@@ -329,7 +332,7 @@ class ConversationModel:
             parts.append(f"{background} task{'s' if background != 1 else ''} running in the "
                          "background")
         if self.conversation is not None and (duty := duty_status(
-                self.conversation.duty, self.duty_wake_at, self.state)):
+                self.conversation.duty, self.duty_wake_at, self.state, self.help_needed)):
             parts.append(duty)
         if self.notice:
             parts.append(self.notice)
@@ -364,6 +367,7 @@ class ConversationModel:
         self.model = snapshot.model
         self.usage = snapshot.usage
         self.duty_wake_at = snapshot.duty_wake_at
+        self.help_needed = snapshot.help_needed
         self.notice = ""
         self.failure = None
         self.has_earlier = len(history) >= page
@@ -475,6 +479,11 @@ class ConversationModel:
                 self.on_change(ConversationListChanged())
             case DutyScheduled(wake_at=wake_at):
                 self.duty_wake_at = wake_at
+                self.on_change(StatusChanged())
+            case HelpNeeded(question=question):
+                self.help_needed = question
+                if question is not None:
+                    self._add(NoticeItem(help_text(question), "warning"))
                 self.on_change(StatusChanged())
             case ConversationDeleted():
                 self.on_change(ConversationListChanged())
