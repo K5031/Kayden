@@ -250,8 +250,6 @@ QFrame#user {{ background: {c.bubble}; border-radius: 14px; }}
 QFrame#user QLabel {{ color: {c.text}; }}
 QFrame#user:disabled {{ background: transparent; border: 1px dashed {c.line}; }}
 QFrame#user QLabel:disabled {{ color: {c.muted}; }}
-QLabel#bigAvatar {{ background: {c.accent_soft}; color: {c.accent_text}; border-radius: 24px;
-    font-size: {heading}; font-weight: 600; }}
 QFrame#tool {{ background: transparent; border: none; }}
 QFrame#stepsHeader {{ border-radius: 6px; }}
 QFrame#stepsHeader:hover {{ background: {c.card}; }}

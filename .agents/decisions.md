@@ -765,6 +765,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Settings window | Frameless, its own title and ✕ (dragged by its title row); sections down the left (General, Spending, Permissions, Instructions, Memory, Tool servers) and rows with a name and a one-line explanation on the left and the control on the right. Memory and Tool servers are the old dialogs embedded as pages; the profile menu's Memory and Tool servers open Settings at them. Save and Cancel stay |
 | Status | No status line under the message box: Stop is the send button, working sub-sessions are dots in the sidebar, notices say the rest. A duty's next check-in (or that it is paused) is a small note beside the title |
 | Start | The window opens maximized |
+| Mascot | A new chat shows the owner's mascot peeking (`desktop/assets/mascot-peek.png`, 200 px wide, scaled for the screen's density), in place of the K avatar. Cut from the owner's character sheet: the pose cropped and the white around it made transparent by filling in from the edges, so its white fur stays |
 | Folder picker | In the middle of a new chat, under its greeting, as an outlined button with the folder icon; only before its first message (and only when the Tools take a folder): the folder's name; its menu lists that folder (checked) and those of recent conversations, newest first, six in all, then Choose folder…. Picking one starts the new chat there |
 | Sidebar | Starts 320 px wide at 100% zoom, scaled with it; the divider can be dragged, and the width is not saved |
 

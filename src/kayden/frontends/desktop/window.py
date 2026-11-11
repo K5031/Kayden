@@ -31,6 +31,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPen,
+    QPixmap,
     QShortcut,
     QTextBlockFormat,
     QTextCursor,
@@ -169,6 +170,8 @@ EMPTY_HINT = "Ask a question or describe a task."
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
 COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
 RECENT_FOLDERS = 6  # a new chat's folder menu: its own and recent ones
+MASCOT_WIDTH = 200  # px: the new chat's mascot
+ASSETS = Path(__file__).parent / "assets"
 SIDEBAR_WIDTH = 320  # px at 100%: room for a title and a sub-session's under it
 TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
@@ -215,6 +218,18 @@ def _label(text: str = "", *, wrap: bool = True, selectable: bool = True,
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setProperty("tone", tone)
     label.setProperty("role", role)
+    return label
+
+
+def _mascot(width: int) -> QLabel:
+    """Kayden's mascot, peeking: sharp on high-density screens."""
+    label = QLabel(objectName="mascot")
+    ratio = label.devicePixelRatioF() or 1.0
+    pixmap = QPixmap(str(ASSETS / "mascot-peek.png")).scaledToWidth(
+        round(width * ratio), Qt.TransformationMode.SmoothTransformation)
+    pixmap.setDevicePixelRatio(ratio)
+    label.setPixmap(pixmap)
+    label.setAccessibleName("Kayden")
     return label
 
 
@@ -486,14 +501,6 @@ class MarkdownView(QTextBrowser):
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)
         self._fit()
-
-
-def _avatar(size: int, name: str) -> QLabel:
-    avatar = QLabel("K", objectName=name)
-    avatar.setFixedSize(size, size)
-    avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    avatar.setAccessibleName("Kayden")
-    return avatar
 
 
 class UserBubble(QWidget):
@@ -1269,7 +1276,7 @@ class MainWindow(QMainWindow):
         self.empty_state = QWidget()
         empty = QVBoxLayout(self.empty_state)
         empty.addStretch(2)
-        empty.addWidget(_avatar(48, "bigAvatar"), 0, Qt.AlignmentFlag.AlignHCenter)
+        empty.addWidget(_mascot(MASCOT_WIDTH), 0, Qt.AlignmentFlag.AlignHCenter)
         for line in (_label(EMPTY_TITLE, selectable=False, role="title"),
                      _label(EMPTY_HINT, selectable=False, tone="muted")):
             line.setAlignment(Qt.AlignmentFlag.AlignHCenter)

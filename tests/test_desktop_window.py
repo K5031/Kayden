@@ -1410,3 +1410,14 @@ async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path
     controller.send("hello")
     await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
     assert button.isHidden()  # chosen with the first message; the header shows it after
+
+
+async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
+    from PySide6.QtWidgets import QLabel
+
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    [mascot] = [w for w in window.empty_state.findChildren(QLabel)
+                if w.objectName() == "mascot"]
+    assert not mascot.pixmap().isNull() and mascot.accessibleName() == "Kayden"
