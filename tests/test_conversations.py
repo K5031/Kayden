@@ -214,7 +214,7 @@ async def test_automatic_title_is_written_once(make: Any) -> None:
     assert h.runtime.snapshot().conversation.title == "Lighthouse trip"
     await settled(h)
     assert len([r for r in h.core.requests if r.maintenance]) == 1
-    assert [e.info.title for e in h.rec.of(ConversationUpdated)] == ["Lighthouse trip"]
+    assert [e.info.title for e in h.rec.of(ConversationUpdated)] == [None, "Lighthouse trip"]
 
 
 async def test_users_title_is_never_overwritten(make: Any) -> None:
@@ -234,27 +234,29 @@ async def test_failed_title_call_changes_nothing(make: Any) -> None:
     await h.start()
     await h.turn("hello")
     assert h.runtime.snapshot().conversation.title is None
-    assert not h.rec.of(ConversationUpdated)
+    assert [e.info.title for e in h.rec.of(ConversationUpdated)] == [None]  # stored only
 
 
 async def test_rename_and_clear_a_title(make: Any) -> None:
     h: Harness = await make()
     first = await h.start()
-    await h.start()
     await h.runtime.rename_conversation(first.id, "Groceries")
+    await h.start()
     [listed] = [c for c in await h.runtime.list_conversations() if c.id == first.id]
     assert listed.title == "Groceries"
     await h.runtime.rename_conversation(first.id, "   ")  # whitespace only counts as empty
     [listed] = [c for c in await h.runtime.list_conversations() if c.id == first.id]
     assert listed.title is None
     await settled(h)
-    assert [e.info.title for e in h.rec.of(ConversationUpdated)] == ["Groceries", None]
+    assert [e.info.title for e in h.rec.of(ConversationUpdated)] == [None, "Groceries", None]
 
 
 async def test_archived_conversations_leave_the_list(make: Any) -> None:
     h: Harness = await make()
     old = await h.start()
+    await h.runtime.rename_conversation(old.id, "Old")
     current = await h.start()
+    await h.runtime.rename_conversation(current.id, "Current")
     await h.runtime.archive_conversation(old.id, True)
     assert [c.id for c in await h.runtime.list_conversations()] == [current.id]
     assert old.id in [c.id for c in await h.runtime.list_conversations(include_archived=True)]
@@ -315,3 +317,50 @@ async def test_usage_lock_and_log_are_per_data_folder(make: Any, tmp_path: Path)
         await other.start()
 
 
+
+
+# ── a new chat is stored with its first use ──────────────────────────────
+
+
+async def test_a_new_chat_is_stored_only_with_its_first_message(make):
+    h: Harness = await make()
+    h.core.add(Step(text="hi"))
+    new = await h.start()
+    assert await h.runtime.list_conversations() == []
+    assert await h.runtime.history(new.id) == []
+    assert await h.runtime.inspect_memory(new.id) is None
+    assert h.runtime.snapshot().conversation.id == new.id
+    await h.turn("hello")
+    [stored] = await h.runtime.list_conversations()
+    assert stored.id == new.id and stored.preview == "hello"
+    assert any(e.info.id == new.id for e in h.rec.of(ConversationUpdated))
+
+
+async def test_leaving_an_unused_chat_leaves_nothing_behind(make):
+    h: Harness = await make()
+    await h.start()
+    await h.runtime.start(StartOptions())
+    await h.runtime.start(StartOptions())
+    assert await h.runtime.list_conversations() == []
+
+
+async def test_naming_a_new_chat_or_giving_it_a_duty_stores_it(make):
+    from kayden.api import Budget, Duty
+
+    h: Harness = await make(budget=Budget(max_cost_usd=5.0))
+    named = await h.start()
+    await h.runtime.rename_conversation(named.id, "Trip")
+    assert [c.title for c in await h.runtime.list_conversations()] == ["Trip"]
+    dutiful = await h.runtime.start(StartOptions())
+    await h.runtime.set_duty(Duty("Watch the inbox", min_interval_s=60, max_interval_s=120))
+    assert dutiful.id in [c.id for c in await h.runtime.list_conversations()]
+
+
+async def test_activating_a_new_chat_stores_it(make):
+    h: Harness = await make()
+    h.core.add(Step(text="Hello!"))
+    new = await h.start()
+    await h.runtime.activate()
+    await h.rec.wait_for(lambda r: len(h.core.requests) == 1)
+    await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
+    assert [c.id for c in await h.runtime.list_conversations()] == [new.id]

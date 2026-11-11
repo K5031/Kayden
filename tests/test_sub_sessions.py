@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 import tomli_w
 
-from kayden.api import OperationResult, PermissionPolicy, ToolResult, ToolStatus
+from kayden.api import AgentState, OperationResult, PermissionPolicy, ToolResult, ToolStatus
 from kayden.frontends.sessions import SubSessions
 from kayden.runtime import InstanceConfig, ModuleSpec, RuntimeConfig, run_instance
 from tests.conftest import Harness, eventually
@@ -191,8 +191,8 @@ async def test_a_cancelled_open_leaves_the_child_running(make, tmp_path, child_e
         Step(text="Started.")],
         [{"hang": True}])
     await h.turn("Go")
-    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state
-                             == "working" and sessions.sessions[0], timeout=30)
+    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].agent_state
+                             == AgentState.THINKING and sessions.sessions[0], timeout=30)
     opening = asyncio.create_task(sessions.open(child))
     await asyncio.sleep(0)
     opening.cancel()

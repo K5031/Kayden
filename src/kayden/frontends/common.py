@@ -19,7 +19,6 @@ from kayden.api import (
     NOTICE_PREFIX,
     SUGGESTION_TOOLS,
     AgentState,
-    ConversationInfo,
     Duty,
     DutyKind,
     McpServer,
@@ -45,13 +44,6 @@ PERMISSION_LABELS = {
     PermissionPolicy.ASK: "Ask me before every action",
     PermissionPolicy.DENY: "Never run tools",
 }
-
-
-def is_blank(info: ConversationInfo) -> bool:
-    """A chat nothing has happened in yet: no message, title, duty or earlier chat it
-    continues. Lists leave it out, and leaving it deletes it."""
-    return (info.preview is None and not info.title and info.duty is None
-            and info.seed_from is None)
 
 
 @dataclass(frozen=True, slots=True)

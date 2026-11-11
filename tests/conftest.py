@@ -85,6 +85,13 @@ class Harness:
         )
         return self.conversation
 
+    async def chat(self, title: str = "Chat", **options: Any) -> ConversationInfo:
+        """Start a new chat and store it, as its first use would (a new chat is stored
+        only then)."""
+        info = await self.start(**options)
+        await self.runtime.rename_conversation(info.id, title)
+        return info
+
     async def transcript(self) -> list[Message]:
         assert self.conversation is not None
         return list(await self.runtime.history(self.conversation.id))

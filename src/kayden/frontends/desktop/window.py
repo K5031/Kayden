@@ -101,7 +101,6 @@ from kayden.frontends.common import (
     dollars,
     duty_status,
     folder_path,
-    is_blank,
     loosening,
     mcp_server,
     mcp_target,
@@ -1703,8 +1702,7 @@ class MainWindow(QMainWindow):
         archived = self.show_archived.isChecked()
         groups: dict[str | None, list[ConversationInfo]] = {}
         for info in self._conversations.values():
-            if not is_blank(info):  # a new chat joins with its first message
-                groups.setdefault(info.folder, []).append(info)
+            groups.setdefault(info.folder, []).append(info)
         headed = len(groups) > 1 or None not in groups
         self.conversation_list.clear()
         for folder, members in groups.items():

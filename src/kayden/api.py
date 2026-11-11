@@ -525,11 +525,14 @@ class Memory(abc.ABC):
         title: str | None = None,
         seed_from: ConversationId | None = None,
         folder: str | None = None,
+        conversation_id: ConversationId | None = None,
     ) -> ConversationInfo:
         """seed_from (KeyError if unknown) starts a conversation that continues another:
         on its first maintain, Memory writes its initial rolling summary from the
         source's current summary and verbatim tail. The source is not changed. folder is
-        stored as given (ConversationInfo.folder)."""
+        stored as given (ConversationInfo.folder). conversation_id: the id to use (the
+        runtime names a new chat before storing it); ValueError if it exists. None: Memory
+        picks one."""
 
     @abc.abstractmethod
     async def list_conversations(

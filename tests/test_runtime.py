@@ -255,7 +255,7 @@ async def test_snapshot_recovery(make: Any) -> None:
     late = h.runtime.events()
     snap = h.runtime.snapshot()
     assert snap.seq == h.runtime.snapshot().seq
-    assert snap.state == AgentState.RUNNING_TOOLS and snap.conversation == conv
+    assert snap.state == AgentState.RUNNING_TOOLS and snap.conversation.id == conv.id
     assert [(o.call.id, o.last_progress) for o in snap.operations] == [("w", "step 1")]
     assert [q.text for q in snap.queued_messages] == ["later"]
     assert snap.model == "fake-1"

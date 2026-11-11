@@ -316,7 +316,7 @@ async def test_continue_from(make):
 
 async def test_rename_and_archive_keep_the_list_current(make):
     h: Harness = await make()
-    other = await h.start()
+    other = await h.chat()
     await h.start()
     model, controller, _ = await attach(h)
     seen = changes(model)
@@ -338,8 +338,8 @@ async def test_rename_and_archive_keep_the_list_current(make):
 
 async def test_delete_erases_another_conversation(make):
     h: Harness = await make()
-    other = await h.start()
-    current = await h.start()
+    other = await h.chat()
+    current = await h.chat()
     model, controller, _ = await attach(h)
     seen = changes(model)
     await controller.delete(other.id)
@@ -350,14 +350,14 @@ async def test_delete_erases_another_conversation(make):
 
 async def test_deleting_the_open_conversation_opens_a_new_chat(make):
     h: Harness = await make()
-    other = await h.start()
-    current = await h.start()
+    other = await h.chat()
+    current = await h.chat()
     model, controller, _ = await attach(h)
     await controller.delete(current.id)
     await eventually(lambda: model.conversation is not None
                      and model.conversation.id not in (current.id, other.id))
     ids = [c.id for c in await controller.conversations()]
-    assert current.id not in ids and other.id in ids and model.conversation.id in ids
+    assert ids == [other.id]  # the new chat is stored once used
 
 
 async def test_unsupported_memory_hides_its_controls(make):

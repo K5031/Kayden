@@ -128,7 +128,6 @@ from kayden.frontends.common import (
     folder_path,
     group_title,
     help_text,
-    is_blank,
     loosening,
     mcp_server,
     mcp_target,
@@ -862,7 +861,7 @@ class ConversationsScreen(ListScreen):
         self._show([
             Option(("● " if c.id == self.open_id else "  ") + conversation_label(c)
                    + ("  · archived" if c.archived else ""), id=c.id)
-            for c in listed if not is_blank(c)
+            for c in listed
         ])
         self.conversations = {c.id: c for c in listed}
         self._sync_archive_label()
@@ -933,7 +932,7 @@ class ConversationsScreen(ListScreen):
         """The open conversation is first replaced by a new chat."""
         if conversation_id == self.open_id:
             assert isinstance(self.app, KaydenApp)
-            await self.app.start_conversation(StartOptions(), discard_blank=False)
+            await self.app.start_conversation(StartOptions())
             self.open_id = self.app.conversation.id
         await self.runtime.delete_conversation(conversation_id)
         if (sessions := getattr(self.app, "sessions", None)) is not None:
@@ -1459,7 +1458,7 @@ class StartScreen(ModalScreen[StartOptions | None]):
     async def _load_conversations(self) -> None:
         conversations = await self.runtime.list_conversations()
         self.conversations = {c.id: c for c in conversations}
-        labels = [(conversation_label(c), c.id) for c in conversations if not is_blank(c)]
+        labels = [(conversation_label(c), c.id) for c in conversations]
         self.query_one("#conversation", Select).set_options(
             [("New conversation", NEW_CONVERSATION), *labels])
         self.query_one("#seed-from", Select).set_options(
@@ -2130,27 +2129,13 @@ class KaydenApp(App[None]):
         return False
 
     def _on_start_chosen(self, options: StartOptions | None) -> None:
-        if options is not None and not (options == StartOptions() and self._blank()):
-            self._call(self.start_conversation(options))  # a blank chat is already new
+        if options is not None:
+            self._call(self.start_conversation(options))
 
-    async def start_conversation(self, options: StartOptions, *,
-                                 discard_blank: bool = True) -> None:
-        """Open a chat. A blank one left behind is deleted, so lists never fill with chats
-        nobody wrote in."""
-        blank = self._blank() if discard_blank else None
+    async def start_conversation(self, options: StartOptions) -> None:
         self.conversation = await self.runtime.start(options)
         await self._inbox.put(RESYNC)
         self._deliver_notes()
-        if blank is not None and blank.id != self.conversation.id:
-            with contextlib.suppress(NotImplementedError):
-                await self.runtime.delete_conversation(blank.id)
-
-    def _blank(self) -> ConversationInfo | None:
-        """The open chat, if nothing has happened in it yet."""
-        info = self.conversation
-        if info is None or self._rendered_ids:
-            return None
-        return info if info.duty is None and info.seed_from is None and not info.title else None
 
     @on(Input.Submitted, "#prompt")
     def _submitted(self, event: Input.Submitted) -> None:

@@ -115,8 +115,7 @@ written there. A new conversation gets the folder from Settings (**Folder for ne
 or the one you type in the start screen; it keeps that folder when you come back to it,
 even after you change the setting. The status line shows it.
 
-`/folder PATH` starts a chat in another folder. If the open chat has no messages yet, it is
-replaced, so no empty chat is left behind. **Continue from** keeps the earlier
+`/folder PATH` starts a chat in another folder. **Continue from** keeps the earlier
 conversation's folder.
 
 ## The web

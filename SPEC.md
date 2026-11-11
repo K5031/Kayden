@@ -86,7 +86,7 @@ Conversations have explicit boundaries; a user may have many and reopen any of t
 The runtime manages conversation flow and tool calls.
 Conversation histories persist across application restarts.
 Inference restarts without a user message only when background work the agent started has finished (4.2), or for a duty (4.4).
-A new conversation is a fresh start: no messages and no summary, with long-term memory included. "Continue from" starts a new conversation that knows where an earlier one left off: on its first maintenance, Memory writes its initial rolling summary from the earlier conversation's summary and recent messages, and the earlier conversation is unchanged.
+A new conversation is a fresh start: no messages and no summary, with long-term memory included. It is stored only with its first use (a message, an activation, a duty or a name); one left before that leaves nothing behind. "Continue from" starts a new conversation that knows where an earlier one left off: on its first maintenance, Memory writes its initial rolling summary from the earlier conversation's summary and recent messages, and the earlier conversation is unchanged.
 Conversations get a title automatically from their first message unless the user sets one. The user can rename, archive (hide from the list and from cross-conversation recall) and delete conversations.
 Each conversation has its own work folder, chosen when it starts (by default the folder set in the settings; "Continue from" keeps the earlier conversation's). The runtime hands it to the Tools whenever the conversation is opened, so reopening a conversation puts the agent back in the same folder.
 4.2 Waking Up

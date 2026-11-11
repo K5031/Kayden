@@ -36,6 +36,7 @@ async def harness(make: Any, folders: dict[str, Path], tools: FakeTools | None =
 async def test_a_new_conversation_gets_the_default_folder_and_keeps_it(make, folders):
     h = await harness(make, folders)
     first = await h.start()
+    await h.runtime.rename_conversation(first.id, "First")  # stored: a new chat is not
     assert first.folder == str(folders["default"])
     assert h.tools.folders == [folders["default"]]
     await h.runtime.update_settings(SettingsUpdate(work_folder=str(folders["other"])))
@@ -52,6 +53,7 @@ async def test_a_new_conversation_can_get_another_folder(make, folders):
     info = await h.start(folder=str(folders["project"]))
     assert info.folder == str(folders["project"].resolve())
     assert h.tools.folders == [folders["project"].resolve()]
+    await h.runtime.rename_conversation(info.id, "Project")
     [listed] = await h.runtime.list_conversations()
     assert listed.folder == info.folder
 
@@ -59,6 +61,7 @@ async def test_a_new_conversation_can_get_another_folder(make, folders):
 async def test_continue_from_keeps_the_source_folder(make, folders):
     h = await harness(make, folders)
     source = await h.start(folder=str(folders["project"]))
+    await h.runtime.rename_conversation(source.id, "Source")
     seeded = await h.start(seed_from=source.id)
     assert seeded.folder == source.folder
     elsewhere = await h.start(seed_from=source.id, folder=str(folders["other"]))

@@ -310,15 +310,19 @@ class SqliteMemory(Memory):
         title: str | None = None,
         seed_from: ConversationId | None = None,
         folder: str | None = None,
+        conversation_id: ConversationId | None = None,
     ) -> ConversationInfo:
         now = time.time()
-        info = ConversationInfo(uuid.uuid4().hex, title or None, now, now,
+        info = ConversationInfo(conversation_id or uuid.uuid4().hex, title or None, now, now,
                                 seed_from=seed_from, folder=folder)
 
         def run(conn: sqlite3.Connection) -> None:
             with _transaction(conn):
                 if seed_from is not None:
                     _require_conversation(conn, seed_from)
+                if conn.execute("SELECT 1 FROM conversations WHERE id = ?",
+                                (info.id,)).fetchone():
+                    raise ValueError(f"conversation {info.id} exists")
                 conn.execute(
                     f"INSERT INTO conversations ({_NEW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (info.id, info.title, now, now, False, seed_from, folder),

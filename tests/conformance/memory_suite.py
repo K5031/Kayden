@@ -265,6 +265,13 @@ class MemoryConformance:
         [reopened] = [c for c in await open_memory().list_conversations() if c.id == conv.id]
         assert reopened.seed_from == source.id and reopened.folder == "/work/trip"
 
+    async def test_a_conversation_can_be_created_with_a_given_id(self, memory: Memory):
+        conv = await memory.create_conversation(conversation_id="chosen1", folder="/work")
+        assert (conv.id, conv.folder) == ("chosen1", "/work")
+        assert [c.id for c in await memory.list_conversations()] == ["chosen1"]
+        with pytest.raises(ValueError):
+            await memory.create_conversation(conversation_id="chosen1")
+
     async def test_update_conversation(self, memory: Memory):
         conv = await memory.create_conversation()
         renamed = await memory.update_conversation(conv.id, title="Trip")

@@ -295,6 +295,7 @@ class Runtime:
         self._lock = lock  # taken before the first Memory call (_hold_lock)
         self._agent_config: AgentConfig | None = None
         self._conversation: ConversationInfo | None = None
+        self._draft = False  # the open conversation is new and not stored yet
         self._models: dict[str, ModelInfo] = {}
         self._model: str | None = config.model
         self._calibration: dict[str, float] = {}
@@ -383,17 +384,23 @@ class Runtime:
     async def history(self, conversation_id: ConversationId, *, before: str | None = None,
                       limit: int | None = None) -> Sequence[Message]:
         self._hold_lock()
+        if self._is_draft(conversation_id):
+            return []
         return await self._memory.history(conversation_id, before=before, limit=limit)
 
     async def search_archive(self, query: str, *,
                              conversation_id: ConversationId | None = None,
                              limit: int = 10) -> Sequence[ArchiveHit]:
         self._hold_lock()
+        if conversation_id is not None and self._is_draft(conversation_id):
+            return []
         scope = None if conversation_id is None else [conversation_id]
         return await self._memory.search(query, conversation_ids=scope, limit=limit)
 
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None:
         self._hold_lock()
+        if self._is_draft(conversation_id):
+            return None
         return await self._memory.inspect(conversation_id)
 
     async def notes(self) -> Sequence[MemoryNote]:
@@ -441,6 +448,7 @@ class Runtime:
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
         self._conversation = conversation
+        self._draft = not resumed and options.seed_from is None
         self._model = model
         self._agent_config = AgentConfig(self._config.budget, self._permissions)
         # A resumed conversation has no pending wake-up: it waits for the user.
@@ -544,6 +552,8 @@ class Runtime:
 
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
         self._hold_lock()
+        if self._is_draft(conversation_id):
+            await self._save_draft()
         info = await self._memory.update_conversation(conversation_id, title=title)
         self._log.decision("rename_conversation", conversation=conversation_id,
                            cleared=info.title is None)
@@ -552,6 +562,8 @@ class Runtime:
     async def archive_conversation(self, conversation_id: ConversationId,
                                    archived: bool) -> None:
         self._hold_lock()
+        if self._is_draft(conversation_id):
+            await self._save_draft()
         info = await self._memory.update_conversation(conversation_id, archived=archived)
         self._log.decision("archive_conversation", conversation=conversation_id,
                            archived=archived)
@@ -588,6 +600,23 @@ class Runtime:
             return await call
         except NotImplementedError:
             raise NotImplementedError(_NO_MEMORY_EDITING) from None
+
+    def _is_draft(self, conversation_id: ConversationId) -> bool:
+        return (self._draft and self._conversation is not None
+                and conversation_id == self._conversation.id)
+
+    async def _save_draft(self) -> None:
+        """Store the open conversation on its first use: a message, a duty or a name. Until
+        then a new chat leaves nothing behind."""
+        if not self._draft:
+            return
+        assert self._conversation is not None
+        draft = self._conversation
+        info = await self._memory.create_conversation(conversation_id=draft.id,
+                                                      folder=draft.folder)
+        self._draft = False
+        self._log.decision("conversation_stored", conversation=info.id)
+        self._conversation_updated(info)
 
     def _conversation_updated(self, info: ConversationInfo) -> None:
         if self._conversation is not None and info.id == self._conversation.id:
@@ -631,6 +660,7 @@ class Runtime:
 
     async def _save_duty(self, duty: Duty | None, plan: Sequence[PlanItem]) -> None:
         assert self._conversation is not None
+        await self._save_draft()
         try:
             info = await self._memory.save_duty(self._conversation.id, duty, tuple(plan))
         except NotImplementedError:
@@ -936,6 +966,9 @@ class Runtime:
             if options.folder is not None:
                 raise ValueError("these tools work in one fixed folder")
             folder = None
+        if options.seed_from is None:  # stored with its first use (_save_draft)
+            now = time.time()
+            return ConversationInfo(_new_id(), None, now, now, folder=folder), False
         try:
             info = await self._memory.create_conversation(seed_from=options.seed_from,
                                                           folder=folder)
@@ -1005,6 +1038,7 @@ class Runtime:
             while self._backlog:
                 msg, after, reason = self._backlog[0]
                 try:
+                    await self._save_draft()
                     await self._memory.append(self._conversation.id, [msg])
                 except Exception as e:
                     self._failure(FailureKind.INTERNAL, f"Memory.append failed: {e}")
@@ -1040,7 +1074,8 @@ class Runtime:
         """A cycle without a new user message starts with a runtime notice when the
         transcript is empty or ends on an assistant message."""
         assert self._conversation is not None
-        newest = await self._memory.history(self._conversation.id, limit=1)
+        newest = [] if self._draft else await self._memory.history(self._conversation.id,
+                                                                    limit=1)
         if not newest or newest[-1].role == Role.ASSISTANT:
             self._log.decision("activation_notice")
             await self._append(

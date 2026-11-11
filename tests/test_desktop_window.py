@@ -386,7 +386,7 @@ async def test_delete_asks_with_cancel_as_the_default(make, qapp):
     h: Harness = await make()
     other = await h.start()
     await h.runtime.rename_conversation(other.id, "Old notes")
-    current = await h.start()
+    current = await h.chat()
     window, _controller, _ = await open_window(h)
     await window.fill_sidebar()
     action(window.conversation_menu(window.conversation_info(current.id)), "Delete…").trigger()
@@ -410,7 +410,7 @@ async def test_delete_asks_with_cancel_as_the_default(make, qapp):
 
 async def test_continue_in_a_new_conversation(make, qapp):
     h: Harness = await make()
-    first = await h.start()
+    first = await h.chat()
     window, controller, _ = await open_window(h)
     await window.fill_sidebar()
     action(window.conversation_menu(window.conversation_info(first.id)),
@@ -462,7 +462,7 @@ async def test_memory_dialog_add_edit_delete_notes(make, qapp):
 
 async def test_unsupported_memory_hides_memory_and_delete(make, qapp):
     h: Harness = await make(memory_kw={"editable": False})
-    other = await h.start()
+    other = await h.chat()
     await h.start()
     window, controller, _ = await open_window(h)
     await window.check_memory()
@@ -489,11 +489,11 @@ async def test_the_folder_is_shown_and_choosing_another_starts_a_chat_there(make
     await eventually(lambda: str(default) in window.title_label.toolTip())
     assert window.folder_action.isVisible()
 
-    window.folder_chosen(str(project))  # an empty chat moves: no blank entry is left
+    window.folder_chosen(str(project))  # a new chat there; the unused one leaves nothing
     await eventually(lambda: controller.model.conversation.folder == str(project))
     await eventually(lambda: str(project) in window.title_label.toolTip())
-    listed = await h.runtime.list_conversations()
-    assert [c.id for c in listed] == [controller.model.conversation.id] != [empty.id]
+    assert controller.model.conversation.id != empty.id
+    assert await h.runtime.list_conversations() == []
 
     controller.send("hello")
     await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
@@ -950,8 +950,9 @@ async def test_a_notice_from_a_child_wakes_the_open_conversation(make, qapp, tmp
     assert window.home is controller
     sessions.notes[info.id] = ["[Runtime notice] Sub-session 1 (x) ended a turn: done."]
     sessions._notify()
-    await eventually(lambda: any("Sub-session 1 (x) ended a turn" in str(m.blocks)
-                                 for m in h.store.conversations[info.id].messages))
+    await eventually(lambda: info.id in h.store.conversations and any(
+        "Sub-session 1 (x) ended a turn" in str(m.blocks)
+        for m in h.store.conversations[info.id].messages))
     assert sessions.notes == {}
 
 
@@ -1167,7 +1168,7 @@ async def test_a_new_chat_stays_out_of_the_sidebar_until_its_first_message(make,
     await eventually(lambda: entries(window) == ["hello there"])
 
 
-async def test_leaving_an_empty_chat_deletes_it(make, qapp):
+async def test_leaving_an_unused_chat_leaves_nothing(make, qapp):
     h: Harness = await make()
     talked = await h.start()
     await h.turn("Pack for Oslo")
@@ -1175,12 +1176,8 @@ async def test_leaving_an_empty_chat_deletes_it(make, qapp):
     await window.fill_sidebar()
     window.new_action.trigger()
     await eventually(lambda: controller.model.conversation.id != talked.id)
-    empty = controller.model.conversation.id
-    window.new_action.trigger()  # already in a new chat: nothing else is created
-    await asyncio.sleep(0.1)
-    assert controller.model.conversation.id == empty
-    assert len(await h.runtime.list_conversations()) == 2
+    await window.fill_sidebar()
+    assert entries(window) == ["Pack for Oslo"]
     window.open_conversation(talked.id)
     await eventually(lambda: controller.model.conversation.id == talked.id)
-    await eventually(lambda: empty not in h.store.conversations)
     assert [c.id for c in await h.runtime.list_conversations()] == [talked.id]
