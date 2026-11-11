@@ -219,6 +219,14 @@ QPushButton#nav:hover {{ background: {c.select}; }}
 QToolButton#menu {{ padding: 4px 8px; font-size: {title}; }}
 QToolButton#profile {{ color: {c.text}; padding: 6px 8px; }}
 QToolButton#windowControl {{ padding: 6px; border-radius: 6px; }}
+QDialog#settings {{ border: 1px solid {c.line}; }}
+QFrame#settingsHeader {{ border-bottom: 1px solid {c.line}; }}
+QFrame#settingRow {{ border-bottom: 1px solid {c.line}; }}
+QWidget#settingsPage {{ background: {c.bg}; }}
+QListWidget#settingsNav {{ margin-top: 12px; }}
+QListWidget#settingsNav::item {{ padding: 0 10px; border-radius: 8px; }}
+QListWidget#settingsNav::item:selected, QListWidget#settingsNav::item:hover {{
+    background: {c.select}; color: {c.text}; }}
 QToolButton#windowControl:hover {{ background: {c.select}; }}
 QToolButton#windowClose {{ padding: 6px; border-radius: 6px; }}
 QToolButton#windowClose:hover {{ background: {c.error}; }}

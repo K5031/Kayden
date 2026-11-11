@@ -71,14 +71,14 @@ another reason, the Settings window opens with the message.
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **☰ → View → Show archived conversations** to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
-| See what Kayden remembers | your name at the bottom left → **Memory…**: About you and the notes it keeps across conversations; add, edit or delete them. |
-| Give Kayden more tools | your name at the bottom left → **Tool servers (MCP)…**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
+| See what Kayden remembers | **Settings → Memory** (or your name at the bottom left → **Memory…**): About you and the notes it keeps across conversations; add, edit or delete them. |
+| Give Kayden more tools | **Settings → Tool servers**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
 | Open work Kayden handed off | Its sub-sessions are listed under the conversation, with a dot while they work: click one to open it there, talk to it, approve its steps or stop it. Click the conversation to go back. Right-click one to resume, change its spending limit, rename, archive or delete it; the limit for new ones is in **Settings**. See [Sub-sessions](concepts.md#sub-sessions). |
 | Fold a project | Conversations are grouped by their folder; click a folder's name to fold or unfold it. |
 | Give a conversation standing work | **☰ → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
 | Change the model | Click the model's name under the message box, or **☰ → Model**. |
 | Change what Kayden may do on its own | Click the mode under the message box (Auto, Work folder, Read only, Ask first, No tools). Letting it do more asks you first. See [Permissions](settings.md#permissions). |
-| Change settings | the gear at the bottom left, or **Ctrl+,**. |
+| Change settings | The gear at the bottom left, or **Ctrl+,**. Settings has sections down the left: General, Spending, Permissions, Instructions, Memory and Tool servers. |
 | Make everything larger or smaller | **Ctrl +** and **Ctrl −** (also in **☰ → View**); **Ctrl+0** goes back to normal. Kayden remembers the size. |
 
 Each conversation in the list shows its name, when it was last used, and the start of its
@@ -96,10 +96,9 @@ deletion does not reach.
 
 Hover the conversation's title to see its folder. What Kayden has spent, across all
 conversations, is at the top of the menu under your name; when you pass 80% of your
-spending limit, a notice in the conversation says so. Under the message box are what Kayden is doing (when it is doing something), how many tasks run
-in the background, when a duty checks in next, and the model.
+spending limit, a notice in the conversation says so. Under the message box are the permission mode and the model. A conversation with a duty shows when it checks in next, next to its title.
 
-At start the app reopens your most recent conversation, or the one you were in when you
+At start the app opens maximized and reopens your most recent conversation, or the one you were in when you
 switched from the terminal app.
 
 ## Settings

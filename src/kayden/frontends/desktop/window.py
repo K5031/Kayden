@@ -98,6 +98,7 @@ from kayden.frontends.common import (
     call_parts,
     delete_details,
     dollars,
+    duty_status,
     folder_path,
     loosening,
     mcp_server,
@@ -146,7 +147,7 @@ from kayden.frontends.desktop.viewmodel import (
     user_message,
 )
 from kayden.frontends.remote import RemoteRuntime
-from kayden.frontends.sessions import SubSession, SubSessions, working_text
+from kayden.frontends.sessions import SubSession, SubSessions
 
 LINE_HEIGHT_PERCENT = 145  # reply text, of the font's line spacing
 PARAGRAPH_SPACING = 10  # px below a reply paragraph
@@ -739,6 +740,49 @@ def is_long(text: str) -> bool:
     return "\n" in text or len(text) > 160
 
 
+MODULE_HINTS = {"tools": "What Kayden can do on this computer.",
+                "frontend": "How Kayden looks: this window or the terminal."}
+
+
+def _setting(title: str, description: str, control: QWidget | QHBoxLayout, *,
+             below: bool = False) -> QWidget:
+    """One row of Settings: its name and what it does on the left, the control on the
+    right (or under them, for a big one)."""
+    row = QFrame(objectName="settingRow")
+    layout = QVBoxLayout(row) if below else QHBoxLayout(row)
+    layout.setContentsMargins(0, 12, 0, 12)
+    layout.setSpacing(16 if not below else 8)
+    text = QVBoxLayout()
+    text.setSpacing(2)
+    text.addWidget(_label(title, selectable=False))
+    text.addWidget(_label(description, selectable=False, role="small"))
+    layout.addLayout(text, 1)
+    if isinstance(control, QHBoxLayout):
+        holder = QWidget()
+        holder.setLayout(control)
+        control = holder
+    if not below:
+        control.setFixedWidth(300)
+    layout.addWidget(control)
+    return row
+
+
+def _page(title: str, *rows: QWidget) -> QScrollArea:
+    page = QWidget(objectName="settingsPage")
+    layout = QVBoxLayout(page)
+    layout.setContentsMargins(4, 16, 18, 4)
+    layout.setSpacing(0)
+    layout.addWidget(_label(title, selectable=False, role="title"))
+    layout.addSpacing(6)
+    for row in rows:
+        layout.addWidget(row)
+    layout.addStretch()
+    scroll = QScrollArea(widgetResizable=True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setWidget(page)
+    return scroll
+
+
 class DragArea(QFrame):
     """Where the window is grabbed: dragging moves it, a double-click maximizes or restores
     it, as a title bar would. Buttons and fields inside it work as usual."""
@@ -1116,7 +1160,11 @@ class MainWindow(QMainWindow):
         head.setSpacing(4)
         self.title_label = ElidedLabel()
         self.title_label.setProperty("role", "title")
+        self.duty_label = _label(wrap=False, selectable=False, role="small")
+        self.duty_label.hide()  # only with a duty: when it checks in next, or paused
         head.addWidget(self.title_label, 1)
+        head.addWidget(self.duty_label)
+        head.addSpacing(8)
         self.window_buttons: dict[str, QToolButton] = {}
         for name, tip, command in (("minimize", "Minimize", self.showMinimized),
                                    ("maximize", "Maximize", self._toggle_maximized),
@@ -1186,7 +1234,6 @@ class MainWindow(QMainWindow):
         actions.addStretch()
         actions.addWidget(self.send_button)
         composer.addLayout(actions)
-        self.status_label = _label(wrap=False, selectable=False, role="small")
         self.model_button = QToolButton(objectName="modelPicker")
         self.model_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.model_button.setToolTip("Change the model")
@@ -1204,7 +1251,7 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _=False, p=policy: self.choose_permissions(p))
             self.permission_actions[policy] = action
         self.permissions_button.setMenu(permissions_menu)
-        footer.addWidget(self.status_label, 1)
+        footer.addStretch(1)
         footer.addWidget(self.permissions_button)
         footer.addWidget(self.model_button)
         bottom_column = QWidget()
@@ -1534,11 +1581,10 @@ class MainWindow(QMainWindow):
 
     def _refresh_status(self) -> None:
         model = self.model
-        status = model.status_text
-        if self.sessions is not None and model.conversation is not None and (
-                working := working_text(self.sessions.of(model.conversation.id))):
-            status = f"{status} · {working}"
-        self.status_label.setText("" if status == "Ready" else status)  # say only news
+        duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state,
+                            model.help_needed) if model.conversation is not None else None)
+        self.duty_label.setText(duty or "")
+        self.duty_label.setVisible(duty is not None)
         known = () if self._models is None or isinstance(self._models, str) else self._models
         names = {m.id: m.name for m in known}
         self.model_button.setText(names.get(model.model or "", model.model or ""))
@@ -1714,10 +1760,7 @@ class MainWindow(QMainWindow):
             failed=lambda e: self.model.notify(f"Kayden could not be added to the app menu: {e}"))
 
     def open_memory(self) -> None:
-        if self.memory_dialog is None:
-            self.memory_dialog = MemoryDialog(self, self.home)
-        self.memory_dialog.refresh()
-        self.memory_dialog.open()
+        self.open_settings("Memory")
 
     def _notice_link(self, link: str) -> None:
         if link == "memory":
@@ -1863,10 +1906,7 @@ class MainWindow(QMainWindow):
         DutyDialog(self, self.controller, self.model.conversation).open()
 
     def open_tool_servers(self) -> None:
-        if self.mcp_dialog is None:
-            self.mcp_dialog = McpDialog(self, self.runtime, self.home)
-        self.mcp_dialog.refresh()
-        self.mcp_dialog.open()
+        self.open_settings("Tool servers")
 
     # ── commands ──────────────────────────────────────────────────────────
 
@@ -1910,7 +1950,8 @@ class MainWindow(QMainWindow):
             action.setChecked(info.id == self.model.model)
             action.triggered.connect(lambda _=False, m=info.id: self.controller.select_model(m))
 
-    def open_settings(self) -> None:
+    def open_settings(self, page: str | None = None) -> None:
+        """The Settings window, at `page` (a section's name) or its first."""
         async def load() -> None:
             settings = await self.runtime.settings()
             try:
@@ -1918,9 +1959,13 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001 - e.g. no key yet; the provider can still change
                 models = []
             spent = self.runtime.snapshot().usage.usage.cost_usd or 0.0
-            self._dialog = SettingsDialog(self, self.runtime, self.home, settings, models,
-                                          spent, self.sessions)
-            self._dialog.open()
+            dialog = SettingsDialog(self, self.runtime, self.home, settings, models, spent,
+                                    self.sessions)
+            self._dialog = dialog
+            self.memory_dialog, self.mcp_dialog = dialog.memory, dialog.servers
+            if page is not None:
+                dialog.show_page(page)
+            dialog.open()
 
         self.controller.command(load())
 
@@ -1936,14 +1981,18 @@ class MemoryDialog(QDialog):
     """What Kayden remembers across conversations: the profile and notes, which the user
     adds, edits and deletes."""
 
-    def __init__(self, parent: QWidget, controller: Controller) -> None:
+    def __init__(self, parent: QWidget, controller: Controller, *, embedded: bool = False
+                 ) -> None:
         super().__init__(parent)
         self.controller = controller
+        if embedded:  # a page of Settings
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle("Memory")
         self.setMinimumSize(560, 460)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 16)
-        layout.addWidget(_label("Memory", selectable=False, role="heading"))
+        layout.setContentsMargins(*((4, 16, 18, 4) if embedded else (20, 18, 20, 16)))
+        layout.addWidget(_label("Memory", selectable=False,
+                                role="title" if embedded else "heading"))
         layout.addWidget(_label(
             f"Every conversation sees “{PROFILE}” and the list of notes; Kayden opens a note "
             "when it is relevant. Kayden writes them as you talk, and you can too.",
@@ -1963,13 +2012,14 @@ class MemoryDialog(QDialog):
         self.edit_button.clicked.connect(self._edit)
         self.forget_button = QPushButton("Delete…")
         self.forget_button.clicked.connect(self._forget)
-        close = QPushButton("Close")
-        close.clicked.connect(self.accept)
         row = QHBoxLayout()
         for button in (self.add_button, self.edit_button, self.forget_button):
             row.addWidget(button)
         row.addStretch()
-        row.addWidget(close)
+        if not embedded:
+            close = QPushButton("Close")
+            close.clicked.connect(self.accept)
+            row.addWidget(close)
         layout.addLayout(row)
         self._selection_changed()
 
@@ -2128,16 +2178,20 @@ class McpDialog(QDialog):
     """The MCP servers whose tools Kayden offers. Changes are saved at once and start with
     the next start, which Restart now brings."""
 
-    def __init__(self, parent: QWidget, runtime: RuntimeAPI, controller: Controller) -> None:
+    def __init__(self, parent: QWidget, runtime: RuntimeAPI, controller: Controller, *,
+                 embedded: bool = False) -> None:
         super().__init__(parent)
         self.runtime, self.controller = runtime, controller
+        if embedded:  # a page of Settings
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.saved: list[McpServer] = []
         self._changes = 0  # saves made here; a list read before the latest one is stale
         self.setWindowTitle("Tool servers")
         self.setMinimumSize(520, 400)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 16)
-        layout.addWidget(_label("Tool servers (MCP)", selectable=False, role="heading"))
+        layout.setContentsMargins(*((4, 16, 18, 4) if embedded else (20, 18, 20, 16)))
+        layout.addWidget(_label("Tool servers (MCP)", selectable=False,
+                                role="title" if embedded else "heading"))
         layout.addWidget(_label("Each server gives Kayden more tools, such as GitHub, a "
                                 "database or your calendar.", tone="muted"))
         self.servers = QListWidget()
@@ -2162,14 +2216,15 @@ class McpDialog(QDialog):
         self.restart_button.clicked.connect(
             lambda: (self.accept(), self.controller.command(self.runtime.restart())))
         self.restart_button.hide()
-        close = QPushButton("Close")
-        close.clicked.connect(self.accept)
         row = QHBoxLayout()
         for button in (self.add_button, self.edit_button, self.remove_button):
             row.addWidget(button)
         row.addStretch()
         row.addWidget(self.restart_button)
-        row.addWidget(close)
+        if not embedded:
+            close = QPushButton("Close")
+            close.clicked.connect(self.accept)
+            row.addWidget(close)
         layout.addLayout(row)
         self._selection_changed()
 
@@ -2323,12 +2378,9 @@ class SettingsDialog(QDialog):
         self.runtime, self.controller, self.settings = runtime, controller, settings
         self.sessions = sessions
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(560)
-        form = QFormLayout(self)
-        form.setContentsMargins(20, 18, 20, 16)
-        form.setVerticalSpacing(10)
-        form.setHorizontalSpacing(14)
-        form.addRow(_label("Settings", selectable=False, role="heading"))
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("settings")
+        self.resize(900, 640)
 
         self.startup_error = _label(f"Kayden could not start: {settings.startup_error}")
         theme.mark(self.startup_error, "tone", "error")
@@ -2393,25 +2445,87 @@ class SettingsDialog(QDialog):
         self.restart_button.setVisible(settings.restart_needed
                                        or settings.startup_error is not None)
 
-        form.addRow(self.startup_error)
-        form.addRow("AI provider", self.modules["core"])
-        form.addRow("API key", self.api_key)
-        form.addRow("Model", self.model)
-        form.addRow("Model for memory upkeep", self.light)
-        form.addRow("", self.model_note)
-        form.addRow("Spending limit (US$)", self.limit)
-        form.addRow("", _label(f"{dollars(spent)} spent so far", selectable=False, role="small"))
-        if sessions is not None:
-            form.addRow("Limit per sub-session (US$)", self.child_limit)
-        form.addRow("What the agent may do", self.permissions)
-        form.addRow("Instructions", self.instructions)
-        form.addRow("Folder for new chats", folder_row)
-        for kind in ("tools", "frontend"):
-            form.addRow(MODULE_LABELS[kind], self.modules[kind])
-        form.addRow(_label(AT_RESTART, selectable=False, role="small"))
-        form.addRow(self.notice)
-        form.addRow(self.error)
-        form.addRow(buttons)
+        self.memory = MemoryDialog(self, controller, embedded=True)
+        self.servers = McpDialog(self, runtime, controller, embedded=True)
+        self.pages: dict[str, QWidget] = {
+            "General": _page(
+                "General", self.startup_error,
+                _setting("AI provider", "Which company's models Kayden uses.",
+                         self.modules["core"]),
+                _setting("API key", "Your key for that provider, kept in the system keychain.",
+                         self.api_key),
+                _setting("Model", "Writes the answers.", self.model),
+                _setting("Model for memory upkeep", "Summarizes and saves memory; a cheaper "
+                         "one is fine.", self.light),
+                self.model_note,
+                *(_setting(MODULE_LABELS[kind], MODULE_HINTS[kind], self.modules[kind])
+                  for kind in ("tools", "frontend")),
+                _label(AT_RESTART, selectable=False, role="small")),
+            "Spending": _page(
+                "Spending", _setting("Spending limit (US$)", f"Kayden stops when it reaches it. "
+                         f"{dollars(spent)} spent so far.", self.limit),
+                *((_setting("Limit per sub-session (US$)", "What a sub-session may spend "
+                            "unless the agent gives it less; not part of your own limit.",
+                            self.child_limit),) if sessions is not None else ())),
+            "Permissions": _page(
+                "Permissions", _setting("What the agent may do", "When it asks you before acting.",
+                         self.permissions),
+                _setting("Folder for new chats", "Where new conversations work.",
+                         folder_row)),
+            "Instructions": _page(
+                "Instructions", _setting("Instructions", "What Kayden is told at the start of every "
+                         "conversation.", self.instructions, below=True)),
+            "Memory": self.memory,
+            "Tool servers": self.servers,
+        }
+        self.nav = QListWidget(objectName="settingsNav")
+        self.nav.setFixedWidth(190)
+        self.stack = QStackedWidget()
+        for name, page in self.pages.items():
+            item = QListWidgetItem(name)
+            item.setSizeHint(QSize(0, 34))
+            self.nav.addItem(item)
+            self.stack.addWidget(page)
+        self.nav.currentRowChanged.connect(self._page_changed)
+        self.nav.setCurrentRow(0)
+
+        header = DragArea(objectName="settingsHeader")
+        top = QHBoxLayout(header)
+        top.setContentsMargins(18, 10, 10, 10)
+        top.addWidget(_label("Settings", selectable=False, role="title"), 1)
+        close = QToolButton(objectName="windowControl")
+        close.setIcon(theme.icon("close", theme.current().muted))
+        close.setToolTip("Close")
+        close.setAccessibleName("Close")
+        close.clicked.connect(self.reject)
+        top.addWidget(close)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(18, 8, 18, 14)
+        notes = QVBoxLayout()
+        notes.addWidget(self.notice)
+        notes.addWidget(self.error)
+        footer.addLayout(notes, 1)
+        footer.addWidget(buttons)
+        body = QHBoxLayout()
+        body.setContentsMargins(12, 0, 0, 0)
+        body.setSpacing(12)
+        body.addWidget(self.nav)
+        body.addWidget(self.stack, 1)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(header)
+        outer.addLayout(body, 1)
+        outer.addLayout(footer)
+
+    def show_page(self, name: str) -> None:
+        self.nav.setCurrentRow(list(self.pages).index(name))
+
+    def _page_changed(self, row: int) -> None:
+        self.stack.setCurrentIndex(row)
+        page = self.stack.currentWidget()
+        if page is self.memory or page is self.servers:
+            page.refresh()
 
     def _module_box(self, kind: str) -> QComboBox:
         choice = self.settings.modules[kind]

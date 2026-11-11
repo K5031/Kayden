@@ -78,7 +78,7 @@ class DesktopFrontend(Frontend):
                   if self.data_dir is not None else None)
         closed = asyncio.Event()
         window.closed.connect(closed.set)
-        window.show()
+        window.showMaximized()  # the whole screen, as other chat apps open
         events = asyncio.create_task(controller.run())
         controller.command(window.begin(self.conversation_id))
         waiter = asyncio.create_task(closed.wait())

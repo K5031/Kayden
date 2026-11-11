@@ -93,7 +93,7 @@ async def test_a_turn_is_rendered(make, qapp):
     assert tool.state.text().startswith("done") and not tool.cancel.isVisibleTo(tool)
     (reply,) = widgets(window, AssistantBubble)
     assert "Title" in reply.body.toPlainText()
-    assert window.status_label.text() == "" and window.send_button.text() == "Send"
+    assert window.send_button.text() == "Send"
 
 
 async def test_permission_card_buttons_answer_the_prompt(make, qapp):
@@ -712,9 +712,9 @@ async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
     await h.start()
     window, _controller, _ = await open_window(h)
     window.show()  # dialogs and their confirmations need a visible parent
-    window.open_tool_servers()
-    dialog = window.mcp_dialog
-    assert isinstance(dialog, McpDialog)
+    window.open_tool_servers()  # the Tool servers page of Settings
+    dialog = await eventually(lambda: window.mcp_dialog)
+    assert isinstance(dialog, McpDialog) and dialog.isVisible()
     await eventually(lambda: dialog.empty.isVisible())
     dialog.add_button.click()
     server = dialog.findChild(ServerDialog)
@@ -819,7 +819,7 @@ async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
     assert info.duty == Duty("Keep the inbox answered", DutyKind.GOAL, 60, 1800)
     assert [(i.text, i.status) for i in info.plan] == [
         ("Read mail", PlanStatus.DOING), ("Reply", PlanStatus.TODO)]
-    await eventually(lambda: "Duty" in window.status_label.text())
+    await eventually(lambda: "Duty" in window.duty_label.text())
     window.open_duty()
     dialog = [d for d in window.findChildren(DutyDialog) if d.isVisible()][-1]
     [off] = buttons(dialog, "Turn off")
@@ -1104,3 +1104,17 @@ async def test_deleting_a_conversation_deletes_its_sub_sessions(make, qapp, tmp_
     delete.click()
     await eventually(lambda: not sessions.sessions, timeout=20)
     assert not child.data_dir.exists()
+
+
+async def test_settings_has_sections_with_memory_and_tool_servers(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
+    assert [dialog.nav.item(i).text() for i in range(dialog.nav.count())] == [
+        "General", "Spending", "Permissions", "Instructions", "Memory", "Tool servers"]
+    assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+    dialog.show_page("Memory")
+    assert dialog.stack.currentWidget() is dialog.memory
+    dialog.show_page("Instructions")
+    assert dialog.instructions.isVisibleTo(dialog.stack.currentWidget())
