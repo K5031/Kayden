@@ -8,6 +8,7 @@ the qasync loop that also runs the runtime.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -653,17 +654,28 @@ def _detach(widget: QWidget) -> None:
                        if (child := layout.itemAt(i).layout()) is not None)
 
 
+NOTICE_LINKS = {"memory": "Open memory"}
+
+
 class NoticeLine(QLabel):
+    """A line from Kayden itself; with a link, linkActivated carries the item's link."""
+
     def __init__(self, item: NoticeItem) -> None:
-        super().__init__(item.text)
+        super().__init__()
         self.item = item
         self.setWordWrap(True)
-        self.setTextFormat(Qt.TextFormat.PlainText)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setProperty("tone", "muted" if item.severity == "info" else item.severity)
+        self.refresh()
 
     def refresh(self) -> None:
-        self.setText(self.item.text)
+        if self.item.link is None:
+            self.setTextFormat(Qt.TextFormat.PlainText)
+            self.setText(self.item.text)
+            return
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setText(f"{html.escape(self.item.text)} · "
+                     f'<a href="{self.item.link}">{NOTICE_LINKS[self.item.link]}</a>')
 
 
 class PermissionCard(QFrame):
@@ -1098,7 +1110,9 @@ class MainWindow(QMainWindow):
             case ToolItem():
                 return ToolCard(item, self.controller.cancel)
             case NoticeItem():
-                return NoticeLine(item)
+                line = NoticeLine(item)
+                line.linkActivated.connect(self._notice_link)
+                return line
 
     def _rebuild(self) -> None:
         for widget in (*self._widgets.values(), *self._groups.values()):
@@ -1279,6 +1293,10 @@ class MainWindow(QMainWindow):
             self.memory_dialog = MemoryDialog(self, self.controller)
         self.memory_dialog.refresh()
         self.memory_dialog.open()
+
+    def _notice_link(self, link: str) -> None:
+        if link == "memory":
+            self.open_memory()
 
     def bring_forward(self) -> None:
         """Another launch of Kayden asked for this window."""

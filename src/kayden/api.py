@@ -1119,8 +1119,11 @@ class ConversationDeleted:
 
 @dataclass(frozen=True, slots=True)
 class MemoriesChanged:
-    """Long-term memory entries were added, edited or forgotten; re-read memories()."""
+    """Long-term memory notes were added, edited or deleted; re-read notes(). `saved` names
+    the notes Memory saved on its own after an answer, for frontends to mention ("Memory
+    updated"); it is empty for changes the user or a tool made."""
 
+    saved: Sequence[str] = ()
 
 @dataclass(frozen=True, slots=True)
 class MaintenanceStarted:

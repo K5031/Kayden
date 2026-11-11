@@ -1438,7 +1438,10 @@ class KaydenApp(App[None]):
                 self._reload(ConversationsScreen)
             case ConversationDeleted():
                 self._reload(ConversationsScreen)
-            case MemoriesChanged():
+            case MemoriesChanged(saved=saved):
+                if saved:  # Memory saved on its own after the answer: say so
+                    await self._mount(SystemEntry(
+                        f"Memory updated: {', '.join(saved)} (F4 to see it)"))
                 self._reload(MemoryScreen)
             case MaintenanceStarted():
                 self.notice = "Tidying up memory…"

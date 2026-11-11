@@ -1013,8 +1013,11 @@ class Runtime:
             if calls or delivered:  # a queued user message authorizes the next turn
                 continue
             # After the answer: Memory saves what the exchange taught it.
+            before = await self._note_versions()
             if await self._maintain(list(specs.values())):
-                self._emit(MemoriesChanged())
+                after = await self._note_versions()
+                saved = tuple(title for key, title in after.items() if key not in before)
+                self._emit(MemoriesChanged(saved))
             if self._stopping:
                 return
             self._enter_idle()
@@ -1068,6 +1071,16 @@ class Runtime:
         self._emit(UsageUpdated(self._budget.snapshot()))
 
     # ── Maintenance ──────────────────────────────────────────────────────
+
+    async def _note_versions(self) -> dict[tuple[str, float], str]:
+        """Each note's (id, last written) -> title; empty when Memory keeps no notes."""
+        try:
+            return {(n.id, n.updated_at): n.title for n in await self._memory.notes()}
+        except NotImplementedError:
+            return {}
+        except Exception:  # module calls are wrapped; no notice is no harm
+            logger.exception("Memory.notes failed")
+            return {}
 
     async def _maintain(self, tools: Sequence[ToolSpec]) -> bool:
         """Whether Memory acted."""

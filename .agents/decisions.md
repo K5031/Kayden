@@ -567,7 +567,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offere
 | Prompt | Profile in full, then "title: description" of the other notes, most recently written first, within `long_term_fraction` (5 %) of the context budget |
 | Tools | `read_note(title)`, `save_note(title, description, text)` (replaces the whole text; an empty description keeps the old one), `forget_note(title)`; a missing title answers ERROR listing the notes |
 | Save pass | In `maintain` when the newest message is an answer calling no tool and comes after the last saved one; reads the messages since (the newest part when long), the profile, notes' texts within 5 % of the light model's window (most recently written first, stopping at the first that does not fit) and the rest as an index; writes `<save>` (whole text) and `<append>` changes; up to 1 024 output tokens; a CoreError is logged and the exchange is read again after the next answer |
-| Runtime | `maintain` is called once more after a cycle's last answer, before IDLE; when it acted, `MemoriesChanged` is emitted |
+| Runtime | `maintain` is called once more after a cycle's last answer, before IDLE; when it acted, `MemoriesChanged(saved)` names the notes whose latest revision is new (read with `notes()` before and after); the event log keeps their number, not their titles |
+| Notice | Frontends show a non-empty `saved` as a line after the answer: "Memory updated: Trip, About you", with an "Open memory" link in the desktop app and "(F4 to see it)" in the TUI. Saves by the agent's tools show as steps, and the user's own edits are not announced |
 | Compaction | Writes the summary only; facts are the save pass's |
 | Checked | Against Claude Haiku 5.5 (2026-11-10): a self-introduction made a profile and a project note, small talk saved nothing, a later plan was appended to the project note; about one cent for three turns |
 

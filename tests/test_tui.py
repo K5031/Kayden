@@ -1231,3 +1231,14 @@ async def test_a_second_kayden_says_it_is_already_open_and_quits():
         await until(pilot, lambda: app.return_code is not None)
         assert app.return_code == 1
         assert not any(isinstance(s, SettingsScreen) for s in app.screen_stack)
+
+
+async def test_a_memory_update_after_an_answer_is_mentioned():
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        stub.emit(MemoriesChanged(saved=("Trip", PROFILE)))
+        stub.emit(MemoriesChanged())  # the user's own edit: nothing to mention
+        await caught_up(pilot, app, stub)
+        [line] = entries(app, SystemEntry)
+        assert plain(line) == f"Memory updated: Trip, {PROFILE} (F4 to see it)"

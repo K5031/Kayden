@@ -17,7 +17,7 @@ from PySide6.QtGui import QAction, QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
 
-from kayden.api import Budget, PermissionPolicy, SettingsUpdate, ShuttingDown
+from kayden.api import Budget, PermissionPolicy, Role, SettingsUpdate, ShuttingDown
 from kayden.frontends.desktop import app_menu, theme
 from kayden.frontends.desktop import window as window_module
 from kayden.frontends.desktop.viewmodel import AssistantItem, Controller, ConversationModel
@@ -769,3 +769,31 @@ async def test_a_server_list_read_before_a_save_does_not_replace_it(make, qapp, 
     release.set()
     await asyncio.sleep(0.05)
     assert dialog.servers.count() == 1  # the late, older list was ignored
+
+
+async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
+    from kayden.api import Completion
+    from kayden.frontends.desktop.window import NoticeLine
+
+    h: Harness = await make()
+
+    async def maintain(complete: Completion) -> bool:
+        conversation = h.runtime.snapshot().conversation
+        if (await h.memory.history(conversation.id))[-1].role is not Role.ASSISTANT:
+            return False
+        h.store.save("Trip", "The Oslo trip", "Leaves Friday", None, conversation.id)
+        return True
+
+    h.memory.maintain_override = maintain
+    h.core.add(Step(text="Have a good trip."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    window.show()
+    controller.send("I leave for Oslo on Friday")
+    line = await eventually(lambda: next(
+        (w for w in window._widgets.values() if isinstance(w, NoticeLine)), None))
+    assert "Memory updated: Trip" in line.text() and "Open memory" in line.text()
+    line.linkActivated.emit("memory")
+    await eventually(lambda: window.memory_dialog is not None
+                     and window.memory_dialog.isVisible())
+    window.close()

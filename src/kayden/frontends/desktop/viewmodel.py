@@ -188,6 +188,7 @@ class ToolItem:
 class NoticeItem:
     text: str
     severity: str = "info"  # info | warning | error
+    link: str | None = None  # a link after the text: "memory" opens the Memory window
 
 
 type Item = UserItem | AssistantItem | ToolItem | NoticeItem
@@ -464,7 +465,9 @@ class ConversationModel:
                 self.on_change(ConversationListChanged())
             case ConversationDeleted():
                 self.on_change(ConversationListChanged())
-            case MemoriesChanged():
+            case MemoriesChanged(saved=saved):
+                if saved:  # Memory saved on its own after the answer: say so, as Claude does
+                    self._add(NoticeItem(f"Memory updated: {', '.join(saved)}", link="memory"))
                 self.on_change(MemoryListChanged())
             case Failure():
                 self.failure = event

@@ -724,3 +724,27 @@ async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> 
     await h.turn("go")
     assert seen == ["user", "assistant"]  # before the answer, then once after it
     assert len(h.rec.of(MemoriesChanged)) == 1
+
+
+async def test_the_notes_saved_after_an_answer_are_named(make: Any) -> None:
+    from kayden.api import Completion, MemoriesChanged
+
+    h: Harness = await make()
+
+    async def maintain(complete: Completion) -> bool:
+        conversation = h.runtime.snapshot().conversation
+        transcript = await h.memory.history(conversation.id)
+        if transcript[-1].role is not Role.ASSISTANT:
+            return False
+        h.store.save("Trip", "The Oslo trip", "Leaves Friday", None, conversation.id)
+        return True
+
+    h.memory.maintain_override = maintain
+    await h.start()
+    await h.runtime.save_note("Diet", "", "Vegetarian")  # the user's own: no notice
+    await h.turn("I leave for Oslo on Friday")
+    changes = h.rec.of(MemoriesChanged)
+    assert [c.saved for c in changes] == [(), ("Trip",)]
+    log = h.data_dir / "events.jsonl"  # written off the loop: wait for it
+    await eventually(lambda: log.exists() and '"saved": 1' in log.read_text())
+    assert "Trip" not in log.read_text()  # how many notes, not their titles

@@ -46,6 +46,8 @@ Kayden keeps every message of every conversation until you delete the conversati
   agent opens a note when it is relevant, so memory stays cheap as it grows.
 - After each answer, Kayden's cheaper upkeep model reads the exchange and saves what will
   matter later (decisions, plans, lasting facts) into the notes; small talk is skipped.
+  When it saves something, a line under the answer says so ("Memory updated: Trip"), with
+  a link to Memory in the app (F4 in the terminal).
   The agent also saves when you ask it to remember something, and deletes a note when you
   say it is no longer true. It never keeps passwords or keys on purpose. You can read, add,
   edit and **delete** notes in Memory. Notes stay when the conversation that wrote them is
