@@ -8,7 +8,6 @@ the qasync loop that also runs the runtime.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import html
 import json
 from collections.abc import Callable, Sequence
@@ -140,6 +139,7 @@ from kayden.frontends.desktop.viewmodel import (
     step_segments,
     user_message,
 )
+from kayden.frontends.remote import RemoteRuntime
 from kayden.frontends.sessions import SubSession, SubSessions, working_text
 
 LINE_HEIGHT_PERCENT = 145  # reply text, of the font's line spacing
@@ -164,7 +164,8 @@ TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDON
 TITLE_ROLE = Qt.ItemDataRole.UserRole + 1
 PREVIEW_ROLE = Qt.ItemDataRole.UserRole + 2
 DATE_ROLE = Qt.ItemDataRole.UserRole + 3
-FLAGS_ROLE = Qt.ItemDataRole.UserRole + 4  # {"archived"}
+FLAGS_ROLE = Qt.ItemDataRole.UserRole + 4  # {"archived"}, {"folded"}, {"working"}
+KIND_ROLE = Qt.ItemDataRole.UserRole + 5  # sidebar rows: "group", "conversation", "session"
 
 
 def _spawn(coro: Any) -> asyncio.Task[Any]:
@@ -280,9 +281,12 @@ class Switch(QCheckBox):
 
 class RowDelegate(QStyledItemDelegate):
     """Draws a list row as a title, an optional muted second line and a date on the right.
-    With `wrap`, the title wraps instead of ending in "…"."""
+    With `wrap`, the title wraps instead of ending in "…". In the sidebar (KIND_ROLE) a
+    project heading is a small foldable label, and a sub-session is indented under its
+    conversation with a tree line."""
 
     PAD = QSize(10, 7)
+    INDENT = 22  # a sub-session under its conversation
 
     def __init__(self, view: QListWidget, *, wrap: bool = False) -> None:
         super().__init__(view)
@@ -311,14 +315,64 @@ class RowDelegate(QStyledItemDelegate):
         return metrics.boundingRect(0, 0, max(width, 40), 10_000, flags, title).height()
 
     def sizeHint(self, option: QStyleOptionViewItem, index: Any) -> QSize:
+        if index.data(KIND_ROLE) == "group":
+            height = QFontMetrics(self._small_font(option)).height()
+            return QSize(self.view.viewport().width(), height + 2 * self.PAD.height() + 4)
         title, preview, _, _ = self._texts(index)
         width = self.view.viewport().width() - 2 * self.PAD.width()
+        if index.data(KIND_ROLE) == "session":
+            width -= self.INDENT
         height = self._title_height(option, title, width)
         if preview:
             height += 2 + QFontMetrics(self._small_font(option)).height()
         return QSize(width, height + 2 * self.PAD.height() + 2)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: Any) -> None:
+        kind = index.data(KIND_ROLE)
+        if kind == "group":
+            self._paint_group(painter, option, index)
+            return
+        if kind == "session":
+            option = self._paint_branch(painter, option, index)
+        self._paint_row(painter, option, index)
+
+    def _paint_group(self, painter: QPainter, option: QStyleOptionViewItem, index: Any) -> None:
+        """A project heading: its name and whether it is folded."""
+        colors = theme.current()
+        folded = "folded" in (index.data(FLAGS_ROLE) or set())
+        font = self._small_font(option)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.save()
+        painter.setFont(font)
+        painter.setPen(QColor(colors.muted))
+        text = f"{'▸' if folded else '▾'}  {index.data(Qt.ItemDataRole.DisplayRole)}"
+        painter.drawText(option.rect.adjusted(self.PAD.width(), self.PAD.height() + 2, 0, 0),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, text)
+        painter.restore()
+
+    def _paint_branch(self, painter: QPainter, option: QStyleOptionViewItem, index: Any
+                      ) -> QStyleOptionViewItem:
+        """A sub-session's tree line, and a dot while it works; the row's option, moved
+        right of them."""
+        colors = theme.current()
+        rect = option.rect
+        x = rect.left() + self.INDENT // 2
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor(colors.line))
+        painter.drawLine(x, rect.top(), x, rect.center().y())
+        painter.drawLine(x, rect.center().y(), rect.left() + self.INDENT - 2, rect.center().y())
+        if "working" in (index.data(FLAGS_ROLE) or set()):
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors.accent))
+            painter.drawEllipse(QRectF(rect.right() - 16, rect.top() + self.PAD.height() + 5,
+                                       6, 6))
+        painter.restore()
+        moved = QStyleOptionViewItem(option)
+        moved.rect = rect.adjusted(self.INDENT, 0, 0, 0)
+        return moved
+
+    def _paint_row(self, painter: QPainter, option: QStyleOptionViewItem, index: Any) -> None:
         colors = theme.current()
         title, preview, date, flags = self._texts(index)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
@@ -783,6 +837,9 @@ class MainWindow(QMainWindow):
         self.runtime = runtime
         self.controller = controller
         self.sessions = sessions  # the sub-sessions this window hosts
+        self.home = controller  # this window's own runtime; `controller` is the one shown
+        self._viewing: tuple[SubSession, RemoteRuntime, asyncio.Task[None]] | None = None
+        self._collapsed: set[str] = set()  # sidebar groups the user folded
         self.zoom_file = zoom_file  # where the zoom is remembered; None: not remembered
         self._zoom_saver: asyncio.Task[None] | None = None
         self.model: ConversationModel = controller.model
@@ -826,7 +883,8 @@ class MainWindow(QMainWindow):
         self.conversation_list.itemActivated.connect(self._conversation_chosen)
         self.conversation_list.itemClicked.connect(self._conversation_chosen)
         self.conversation_list.menu_requested.connect(
-            lambda entry, at: self.conversation_menu(self._info_of(entry)).popup(at))
+            lambda entry, at: (info := self._info_of(entry)) is not None
+            and self.conversation_menu(info).popup(at))
         for keys, command in ((QKeySequence("F2"), self.rename_conversation),
                               (QKeySequence.StandardKey.Delete, self.delete_conversation)):
             shortcut = QShortcut(keys, self.conversation_list,
@@ -840,17 +898,6 @@ class MainWindow(QMainWindow):
         side.addWidget(self.conversation_list, 1)
         side.addWidget(self.show_archived)
         side.addWidget(self.switch_reason)
-        self.sessions_label = _label("Sub-sessions", selectable=False, role="small")
-        self.session_list = QListWidget()
-        self.session_list.setAccessibleName("Sub-sessions")
-        self.session_list.setToolTip("Work the agent handed off. Click one to watch it.")
-        self.session_list.setMaximumHeight(160)
-        self.session_list.itemClicked.connect(self._session_chosen)
-        self.session_list.itemActivated.connect(self._session_chosen)
-        side.addWidget(self.sessions_label)
-        side.addWidget(self.session_list)
-        self.sessions_label.hide()
-        self.session_list.hide()
 
         main = QWidget()
         column = QVBoxLayout(main)
@@ -987,7 +1034,7 @@ class MainWindow(QMainWindow):
         if not folder or (self.model.conversation is not None
                           and folder == self.model.conversation.folder):
             return
-        task = self.controller.new_in_folder(folder)
+        task = self.home.new_in_folder(folder)
         task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar())))
 
     def changeEvent(self, event: QEvent) -> None:
@@ -1073,7 +1120,7 @@ class MainWindow(QMainWindow):
         await self.check_memory()
         if self.runtime.snapshot().conversation is None:
             if conversation_id is None:
-                conversations = await self.controller.conversations()
+                conversations = await self.home.conversations()
                 conversation_id = conversations[0].id if conversations else None
             self.open_conversation(conversation_id)
 
@@ -1083,6 +1130,11 @@ class MainWindow(QMainWindow):
 
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
+        if self._viewing is not None:
+            self._leave_session()
+            own = self.model.conversation
+            if own is not None and conversation_id == own.id and seed_from is None:
+                return
         if reason := self.controller.can_switch():
             self.model.notify(reason)
             _spawn(self.fill_sidebar())  # select the open conversation again
@@ -1126,7 +1178,8 @@ class MainWindow(QMainWindow):
             case StatusChanged():
                 self._refresh_status()
             case Closed():
-                self.close()
+                if self.controller is self.home:
+                    self.close()
 
     def _widget_for(self, item: Item) -> QWidget:
         match item:
@@ -1239,41 +1292,88 @@ class MainWindow(QMainWindow):
 
     async def fill_sidebar(self) -> None:
         try:
-            conversations = await self.controller.conversations(
+            conversations = await self.home.conversations(
                 include_archived=self.show_archived.isChecked())
         except Exception as e:  # noqa: BLE001 - shown, never fatal
             self.model.notify(user_message(e))
             return
-        current = self.model.conversation.id if self.model.conversation else None
         self._conversations = {info.id: info for info in conversations}
+        self._render_sidebar()
+
+    def _render_sidebar(self) -> None:
+        """Conversations grouped by project (their folder), newest first, each with its
+        sub-sessions under it. A folded group shows only its heading."""
+        own = self.home.model.conversation
+        viewing = self._viewing[0].id if self._viewing is not None else None
+        groups: dict[str | None, list[ConversationInfo]] = {}
+        for info in self._conversations.values():
+            groups.setdefault(info.folder, []).append(info)
+        headed = len(groups) > 1 or None not in groups
         self.conversation_list.clear()
-        for info in conversations:
-            title = conversation_label(info)
-            entry = QListWidgetItem(title + ("  (archived)" if info.archived else ""))
-            entry.setData(Qt.ItemDataRole.UserRole, info.id)
-            entry.setData(TITLE_ROLE, title)
-            entry.setData(PREVIEW_ROLE, conversation_preview(info))
-            entry.setData(DATE_ROLE, relative_date(info.updated_at))
-            entry.setData(FLAGS_ROLE, {"archived"} if info.archived else set())
-            self.conversation_list.addItem(entry)
-            if info.id == current:
-                self.conversation_list.setCurrentItem(entry)
+        for folder, members in groups.items():
+            key = folder or ""
+            if headed:
+                heading = QListWidgetItem(Path(folder).name if folder else "Other")
+                heading.setData(KIND_ROLE, "group")
+                heading.setData(Qt.ItemDataRole.UserRole, key)
+                heading.setData(FLAGS_ROLE, {"folded"} if key in self._collapsed else set())
+                heading.setToolTip(folder_path(folder) if folder else "")
+                heading.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.conversation_list.addItem(heading)
+                if key in self._collapsed:
+                    continue
+            for info in members:
+                title = conversation_label(info)
+                entry = QListWidgetItem(title + ("  (archived)" if info.archived else ""))
+                entry.setData(KIND_ROLE, "conversation")
+                entry.setData(Qt.ItemDataRole.UserRole, info.id)
+                entry.setData(TITLE_ROLE, title)
+                entry.setData(PREVIEW_ROLE, conversation_preview(info))
+                entry.setData(DATE_ROLE, relative_date(info.updated_at))
+                entry.setData(FLAGS_ROLE, {"archived"} if info.archived else set())
+                self.conversation_list.addItem(entry)
+                if viewing is None and own is not None and info.id == own.id:
+                    self.conversation_list.setCurrentItem(entry)
+                for session in (self.sessions.of(info.id) if self.sessions else ()):
+                    row = QListWidgetItem(session.task)
+                    row.setData(KIND_ROLE, "session")
+                    row.setData(Qt.ItemDataRole.UserRole, session.id)
+                    row.setData(TITLE_ROLE, session.task)
+                    row.setData(PREVIEW_ROLE, session.summary)
+                    row.setData(FLAGS_ROLE, {"working"} if session.running else set())
+                    row.setToolTip(session.task)
+                    self.conversation_list.addItem(row)
+                    if session.id == viewing:
+                        self.conversation_list.setCurrentItem(row)
         self._refresh_status()
 
     def conversation_info(self, conversation_id: str) -> ConversationInfo:
         return self._conversations[conversation_id]
 
-    def _info_of(self, entry: QListWidgetItem) -> ConversationInfo:
+    def _info_of(self, entry: QListWidgetItem) -> ConversationInfo | None:
+        if entry.data(KIND_ROLE) not in (None, "conversation"):
+            return None
         return self._conversations[entry.data(Qt.ItemDataRole.UserRole)]
 
     def _on_current(self, command: Callable[[ConversationInfo], None]) -> None:
-        if (entry := self.conversation_list.currentItem()) is not None:
-            command(self._info_of(entry))
+        entry = self.conversation_list.currentItem()
+        if entry is not None and (info := self._info_of(entry)) is not None:
+            command(info)
 
     def _conversation_chosen(self, entry: QListWidgetItem) -> None:
-        conversation_id = entry.data(Qt.ItemDataRole.UserRole)
-        if self.model.conversation is None or conversation_id != self.model.conversation.id:
-            self.open_conversation(conversation_id)
+        match entry.data(KIND_ROLE):
+            case "group":
+                key = entry.data(Qt.ItemDataRole.UserRole)
+                self._collapsed.symmetric_difference_update({key})
+                self._render_sidebar()
+            case "session":
+                self._session_chosen(entry.data(Qt.ItemDataRole.UserRole))
+            case _:
+                conversation_id = entry.data(Qt.ItemDataRole.UserRole)
+                own = self.home.model.conversation
+                if (self._viewing is not None or own is None
+                        or conversation_id != own.id):
+                    self.open_conversation(conversation_id)
 
     def conversation_menu(self, info: ConversationInfo) -> QMenu:
         menu = QMenu(self)
@@ -1283,10 +1383,10 @@ class MainWindow(QMainWindow):
                                lambda: self.open_conversation(None, seed_from=info.id))
         go_on.setToolTip("Start a new conversation that knows where this one left off.")
         menu.addAction("Unarchive" if info.archived else "Archive",
-                       lambda: self.controller.archive(info.id, not info.archived))
+                       lambda: self.home.archive(info.id, not info.archived))
         menu.addSeparator()
         menu.addAction("Delete…", lambda: self.delete_conversation(info)).setVisible(
-            self.controller.can_delete)
+            self.home.can_delete)
         return menu
 
     def rename_conversation(self, info: ConversationInfo) -> None:
@@ -1294,20 +1394,20 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("Rename conversation")
         dialog.setLabelText("New name (leave it empty to let Kayden name it):")
         dialog.setTextValue(info.title or "")
-        dialog.textValueSelected.connect(lambda title: self.controller.rename(info.id, title))
+        dialog.textValueSelected.connect(lambda title: self.home.rename(info.id, title))
         dialog.open()
 
     def delete_conversation(self, info: ConversationInfo) -> None:
         box = QMessageBox(QMessageBox.Icon.NoIcon, "Delete conversation",
                           f"Delete “{conversation_label(info)}”?", parent=self)
-        box.setInformativeText(delete_details(self.controller.is_open(info.id)))
+        box.setInformativeText(delete_details(self.home.is_open(info.id)))
         cancel = box.addButton(QMessageBox.StandardButton.Cancel)
         delete = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
         delete.setProperty("danger", True)
         delete.style().polish(delete)
         box.setDefaultButton(cancel)
         box.buttonClicked.connect(lambda button: button is delete
-                                  and self.controller.delete(info.id))
+                                  and self.home.delete(info.id))
         box.open()
 
     def _add_to_app_menu(self) -> None:
@@ -1321,7 +1421,7 @@ class MainWindow(QMainWindow):
 
     def open_memory(self) -> None:
         if self.memory_dialog is None:
-            self.memory_dialog = MemoryDialog(self, self.controller)
+            self.memory_dialog = MemoryDialog(self, self.home)
         self.memory_dialog.refresh()
         self.memory_dialog.open()
 
@@ -1337,27 +1437,49 @@ class MainWindow(QMainWindow):
 
     def _sessions_changed(self) -> None:
         self._refresh_status()
+        self._render_sidebar()
+
+    def _session_chosen(self, session_id: str) -> None:
         if self.sessions is None:
             return
-        conversation = self.model.conversation
-        listed = self.sessions.of(conversation.id if conversation is not None else None)
-        current = self.session_list.currentRow()
-        self.session_list.clear()
-        for session in listed:
-            item = QListWidgetItem(f"{session.task[:60]}\n{session.summary}")
-            item.setData(Qt.ItemDataRole.UserRole, session.id)
-            self.session_list.addItem(item)
-        if 0 <= current < len(listed):
-            self.session_list.setCurrentRow(current)
-        self.sessions_label.setVisible(bool(listed))
-        self.session_list.setVisible(bool(listed))
-
-    def _session_chosen(self, item: QListWidgetItem) -> None:
-        assert self.sessions is not None
-        session_id = item.data(Qt.ItemDataRole.UserRole)
         session = next((s for s in self.sessions.sessions if s.id == session_id), None)
-        if session is not None:
-            SessionWindow(self, self.sessions, session).show()
+        if session is None or (self._viewing is not None and self._viewing[0] is session):
+            return
+        _spawn(self.open_session(session))
+
+    async def open_session(self, session: SubSession) -> None:
+        """Show a sub-session in the conversation area, as its own conversation: its
+        messages, steps and prompts, and the message box talks to it."""
+        assert self.sessions is not None
+        try:
+            remote = await self.sessions.open(session)
+        except Exception as e:  # noqa: BLE001 - shown, never fatal
+            self.model.notify(f"The sub-session could not be opened: {user_message(e)}")
+            return
+        self._leave_session()
+        controller = Controller(remote, ConversationModel())
+        pump = asyncio.create_task(controller.run())
+        self._viewing = (session, remote, pump)
+        self._show(controller)
+
+    def _leave_session(self) -> None:
+        """Back to this window's own conversation; the sub-session keeps working."""
+        if self._viewing is None:
+            return
+        session, remote, pump = self._viewing
+        self._viewing = None
+        pump.cancel()
+        assert self.sessions is not None
+        self.sessions.release(session, remote)
+        self._show(self.home)
+
+    def _show(self, controller: Controller) -> None:
+        self.model.on_change = lambda change: None
+        self.controller = controller
+        self.model = controller.model
+        self.model.on_change = self._changed
+        self._rebuild()
+        self._render_sidebar()
 
     def open_duty(self) -> None:
         if self.model.conversation is None:
@@ -1367,7 +1489,7 @@ class MainWindow(QMainWindow):
 
     def open_tool_servers(self) -> None:
         if self.mcp_dialog is None:
-            self.mcp_dialog = McpDialog(self, self.runtime, self.controller)
+            self.mcp_dialog = McpDialog(self, self.runtime, self.home)
         self.mcp_dialog.refresh()
         self.mcp_dialog.open()
 
@@ -1555,49 +1677,6 @@ class NoteDialog(QDialog):
             self.title.text(), self.description.text(), self.text.toPlainText(),
             self.note.id if self.note else None, failed=failed,
             done=lambda _: self.accept())
-
-
-class SessionWindow(QDialog):
-    """One sub-session's work as it happens, with a Stop button."""
-
-    def __init__(self, parent: QWidget, sessions: SubSessions, session: SubSession) -> None:
-        super().__init__(parent)
-        self.sessions, self.session = sessions, session
-        self.setWindowTitle(f"Sub-session: {session.task[:60]}")
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.resize(640, 560)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 16)
-        layout.addWidget(_label(session.task, role="heading"))
-        self.state = _label(tone="muted")
-        layout.addWidget(self.state)
-        self.work = QPlainTextEdit(readOnly=True)
-        self.work.setAccessibleName("What the sub-session did")
-        layout.addWidget(self.work, 1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.close)
-        self.stop_button = buttons.addButton("Stop", QDialogButtonBox.ButtonRole.DestructiveRole)
-        self.stop_button.clicked.connect(lambda: sessions.stop(session))
-        layout.addWidget(buttons)
-        sessions.listeners.append(self.refresh)
-        self.finished.connect(lambda _: self._forget())
-        self.refresh()
-
-    def _forget(self) -> None:
-        with contextlib.suppress(ValueError):
-            self.sessions.listeners.remove(self.refresh)
-
-    def refresh(self) -> None:
-        session = self.session
-        self.state.setText(session.summary)
-        text = "\n\n".join(f"{who}: {line}" for who, line in session.lines())
-        if text != self.work.toPlainText():
-            at_end = (self.work.verticalScrollBar().value()
-                      >= self.work.verticalScrollBar().maximum())
-            self.work.setPlainText(text)
-            if at_end:
-                self.work.verticalScrollBar().setValue(self.work.verticalScrollBar().maximum())
-        self.stop_button.setEnabled(session.running)
 
 
 class DutyDialog(QDialog):

@@ -12,9 +12,11 @@ from kayden.frontends.tui import (
     SettingsScreen,
     StartScreen,
 )
+from tests.conftest import eventually
 from tests.fakes.settings import chosen
 from tests.fakes.settings import settings as fake_settings
 from tests.test_tui import StubRuntime, caught_up, make, type_text, until
+from tests.test_tui import make as make_app
 
 
 async def open_settings(pilot, app: KaydenApp, stub: StubRuntime, how: str = "f2") -> None:
@@ -386,38 +388,38 @@ async def test_a_question_for_help_is_shown():
         assert app.help_needed == "Which account?"
 
 
-def fake_sessions(tmp_path, conversation_id: str):
-    from kayden.frontends.sessions import SubSession, SubSessions
-
-    sessions = SubSessions(tmp_path)
-    child = SubSession("1", "Write a haiku", conversation_id, tmp_path / "s1")
-    child.state, child.step, child.spent = "working", "Searching the web", 0.04
-    child.messages = [{"role": "assistant", "blocks": [{"type": "Text", "text": "Drafting."}]}]
-    sessions.sessions.append(child)
-    return sessions, child
-
-
-async def test_the_sessions_screen_shows_a_child_and_stops_it(tmp_path):
+async def test_the_sessions_screen_opens_a_child_to_approve_and_talk_to(
+        make, tmp_path, child_env):
     from kayden.frontends.tui import SessionsScreen
-    from tests.test_tui import CONVERSATION
+    from tests.fakes.core import Step, call
+    from tests.test_sub_sessions import finish, parent
 
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Look it up"}, id="s")]),
+        Step(text="Started."), Step(text="Reported.")],
+        [{"calls": [{"name": "lookup"}]}, finish("Looked it up."), {"text": "Done."},
+         {"text": "Noted."}],
+        child_runtime={"runtime": {"permissions": "ask"}})
+    await h.turn("Go")
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].approvals, timeout=30)
     stub = StubRuntime()
-    sessions, child = fake_sessions(tmp_path, CONVERSATION.id)
-    stopped = []
-    sessions.stop = stopped.append  # no process to stop here
-    app = make(stub, sessions=sessions)
-    async with app.run_test(size=(100, 40)) as pilot:
+    app = make_app(stub, sessions=sessions)
+    async with app.run_test(size=(100, 50)) as pilot:
         await caught_up(pilot, app, stub)
-        assert "1 sub-session working" in str(app.query_one("#status").render())
-        await type_text(pilot, "/sessions")
+        app.push_screen(SessionsScreen(sessions, h.conversation.id))
+        await until(pilot, lambda: app.screen.query("#session-approve")
+                    and app.screen.query_one("#session-approve").display, timeout=10)
+        assert "lookup" in str(app.screen.query_one("#session-approval").render())
+        app.screen.query_one("#allow-session", Button).press()
+        await until(pilot, lambda: sessions.sessions[0].state == "done", timeout=20)
+        await until(pilot, lambda: "Done." in str(
+            app.screen.query_one("#session-lines").render()), timeout=10)
+        box = app.screen.query_one("#session-message", Input)
+        box.focus()
+        box.value = "Thanks"
         await pilot.press("enter")
-        await until(pilot, lambda: isinstance(app.screen, SessionsScreen))
+        await until(pilot, lambda: "Thanks" in str(
+            app.screen.query_one("#session-lines").render()), timeout=10)
+        app.screen.dismiss(None)
         await pilot.pause()
-        assert "Drafting." in str(app.screen.query_one("#session-lines").render())
-        child.messages.append({"role": "assistant",
-                               "blocks": [{"type": "Text", "text": "Finished the draft."}]})
-        sessions._notify()  # what the manager does on every child event
-        await pilot.pause()
-        assert "Finished the draft." in str(app.screen.query_one("#session-lines").render())
-        app.screen.query_one("#stop-session", Button).press()
-        await until(pilot, lambda: stopped == [child])
+    await sessions.aclose()

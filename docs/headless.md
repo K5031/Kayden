@@ -25,7 +25,9 @@ Kayden writes nothing else to stdout: anything else the process prints goes to s
 so do Kayden's own errors, such as a duty that cannot start. Closing Kayden's stdin quits it
 the way closing the window does.
 
-**Requests** have the names and parameters of the runtime's commands:
+**Requests** have the names and parameters of the runtime's commands, every one but
+`restart`. Objects may be sent with their `"type"`, as Kayden sends them; the desktop app
+and the terminal app drive their sub-sessions this way:
 
 | Method | Params |
 |---|---|
@@ -40,7 +42,12 @@ the way closing the window does.
 | `snapshot` | none |
 | `history` | `conversation_id`, optional `before`, `limit` |
 | `list_conversations` | optional `include_archived` |
-| `list_models`, `settings` | none |
+| `list_models`, `list_tools`, `settings`, `notes` | none |
+| `update_settings` | `update`: a `SettingsUpdate` object |
+| `rename_conversation`, `archive_conversation`, `delete_conversation` | `conversation_id`, and `title` or `archived` |
+| `search_archive` | `query`, optional `conversation_id`, `limit` |
+| `inspect_memory` | `conversation_id` |
+| `save_note`, `delete_note` | `title`, `description`, `text`, optional `note_id`; or `note_id` |
 
 A refusal (asking before `start`, a duty without a spending limit, an unknown
 conversation) is error `-32000` with the runtime's message and `data.type`, such as

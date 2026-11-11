@@ -14,14 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import json
 import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable, Mapping
-from enum import Enum
-from pathlib import Path
 from typing import IO, Any
 
 from kayden.api import (
@@ -35,29 +32,16 @@ from kayden.api import (
     PlanStatus,
     RuntimeAPI,
     RuntimeStateError,
+    SettingsUpdate,
     StartOptions,
 )
+from kayden.frontends.wire import from_json, to_json
 
 logger = logging.getLogger(__name__)
 
 PARSE_ERROR, INVALID_REQUEST, NO_METHOD, INVALID_PARAMS = -32700, -32600, -32601, -32602
 REFUSED = -32000  # the runtime refused: RuntimeStateError, ValueError, KeyError, ...
 _LINE_LIMIT = 16 * 1024 * 1024
-
-
-def to_json(value: Any) -> Any:
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {"type": type(value).__name__,
-                **{f.name: to_json(getattr(value, f.name)) for f in dataclasses.fields(value)}}
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, Mapping):
-        return {str(k): to_json(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [to_json(v) for v in value]
-    if isinstance(value, Path):
-        return str(value)
-    return value
 
 
 def _duty(raw: Mapping[str, Any] | None) -> Duty | None:
@@ -97,6 +81,20 @@ REQUESTS: dict[str, Handler] = {
     "list_conversations": lambda r, p: r.list_conversations(**p),
     "list_models": lambda r, p: r.list_models(**p),
     "settings": lambda r, p: r.settings(**p),
+    "list_tools": lambda r, p: r.list_tools(**p),
+    "search_archive": lambda r, p: r.search_archive(_arg(p, "query"), **p),
+    "inspect_memory": lambda r, p: r.inspect_memory(_arg(p, "conversation_id"), **p),
+    "notes": lambda r, p: r.notes(**p),
+    "save_note": lambda r, p: r.save_note(
+        _arg(p, "title"), _arg(p, "description"), _arg(p, "text"), **p),
+    "delete_note": lambda r, p: r.delete_note(_arg(p, "note_id"), **p),
+    "rename_conversation": lambda r, p: r.rename_conversation(
+        _arg(p, "conversation_id"), _arg(p, "title"), **p),
+    "archive_conversation": lambda r, p: r.archive_conversation(
+        _arg(p, "conversation_id"), _arg(p, "archived"), **p),
+    "delete_conversation": lambda r, p: r.delete_conversation(_arg(p, "conversation_id"), **p),
+    "update_settings": lambda r, p: r.update_settings(
+        from_json(_arg(p, "update"), SettingsUpdate), **p),
 }
 
 

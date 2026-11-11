@@ -75,14 +75,16 @@ step. Several can run at once.
 
 - **Each has its own spending limit,** which the agent sets when it starts one (a dollar
   unless it says otherwise). It is not counted in your own limit.
-- **It works on its own.** A step that would need your approval is refused, since nobody is
-  watching it; the report says so. If it needs a decision, its question comes back to the
-  agent, which can answer it or ask you.
-- **You can watch it.** The open conversation's sub-sessions are listed under the
-  conversations in the desktop app (`/sessions` in the terminal app). Open one to see its
-  work as it happens, or stop it.
-- **It ends with the window.** Quitting Kayden stops every sub-session, and the list shows
-  only those of the current run. Their work stays in `sessions/` in the data folder.
+- **It asks you for approvals.** A step that needs your OK waits for you, as in your own
+  conversation; the sidebar says the sub-session needs your approval. If it needs a
+  decision, its question comes back to the agent, which can answer it or ask you.
+- **You can open it.** The desktop app lists each conversation's sub-sessions under it in
+  the sidebar. Click one to open it in place of the conversation: its messages and steps,
+  its approvals, Stop, and a message box that talks to it. Click the conversation to go
+  back; the sub-session keeps working. In the terminal app, `/sessions` does the same.
+- **It is kept.** Quitting Kayden stops sub-sessions that are working, but they stay listed.
+  Opening one that is not running starts it again on its own conversation. Their work is in
+  `sessions/` in the data folder.
 
 ## Memory
 

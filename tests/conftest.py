@@ -192,6 +192,12 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
+def child_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Child Kayden processes (sub-sessions) import the test fakes their config names."""
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
+
+
+@pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     # Record the variable so whatever the runtime exports is undone after the test.
     monkeypatch.setenv(PERMISSION_CEILING_ENV, "allow_read_only")

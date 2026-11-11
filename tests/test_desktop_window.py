@@ -17,7 +17,14 @@ from PySide6.QtGui import QAction, QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
 
-from kayden.api import Budget, PermissionPolicy, Role, SettingsUpdate, ShuttingDown
+from kayden.api import (
+    Budget,
+    ConversationInfo,
+    PermissionPolicy,
+    Role,
+    SettingsUpdate,
+    ShuttingDown,
+)
 from kayden.frontends.desktop import app_menu, theme
 from kayden.frontends.desktop import window as window_module
 from kayden.frontends.desktop.viewmodel import AssistantItem, Controller, ConversationModel
@@ -846,33 +853,63 @@ async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
     assert dialog.isVisible() and dialog.save_button.isEnabled()
 
 
-async def test_sub_sessions_are_listed_and_watched(make, qapp, tmp_path):
-    from kayden.frontends.desktop.window import SessionWindow
-    from kayden.frontends.sessions import SubSession, SubSessions
+async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
+        make, qapp, tmp_path, child_env):
+    from kayden.frontends.desktop.window import KIND_ROLE
+    from tests.test_sub_sessions import finish, parent
 
-    h: Harness = await make()
-    info = await h.start()
-    sessions = SubSessions(tmp_path)
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(text="Started."), Step(text="Got it.")],
+        [finish("Haiku written."), {"text": "Here is the haiku."}, {"text": "Shorter now."}])
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, sessions=sessions)
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     window.show()
-    assert window.session_list.isHidden()
-    child = SubSession("1", "Write a haiku", info.id, tmp_path / "s1")
-    child.state, child.step = "working", "Drafting"
-    child.messages = [{"role": "assistant", "blocks": [{"type": "Text", "text": "Drafting."}]}]
-    sessions.sessions.append(child)
-    sessions._notify()
-    assert window.session_list.count() == 1 and window.session_list.isVisible()
-    assert "1 sub-session working" in window.status_label.text()
-    window._session_chosen(window.session_list.item(0))
-    [watching] = window.findChildren(SessionWindow)
-    assert "Drafting." in watching.work.toPlainText()
-    child.messages.append({"role": "assistant", "blocks": [{"type": "Text", "text": "Done!"}]})
-    child.state = "done"
-    sessions._notify()
-    assert "Done!" in watching.work.toPlainText() and not watching.stop_button.isEnabled()
-    watching.close()
-    await asyncio.sleep(0)
-    sessions._notify()  # the closed window no longer listens
+    await h.turn("Get me a haiku")
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done",
+                     timeout=30)
+    await window.fill_sidebar()
+    kinds = [window.conversation_list.item(i).data(KIND_ROLE)
+             for i in range(window.conversation_list.count())]
+    assert kinds == ["group", "conversation", "session"]  # the project, then the tree
+    row = window.conversation_list.item(2)
+    assert row.text() == "Write a haiku" and "Done" in row.data(PREVIEW_ROLE)
+    window._conversation_chosen(row)
+    await eventually(lambda: window.controller is not window.home
+                     and any(isinstance(i, AssistantItem) and "Here is the haiku." in i.text
+                             for i in window.model.items), timeout=15)
+    current = window.conversation_list.currentItem()
+    assert (current.data(KIND_ROLE), current.text()) == ("session", "Write a haiku")
+    replies = sum(isinstance(i, AssistantItem) for i in window.model.items)
+    window.input.setPlainText("Make it shorter")
+    window._send()  # to the sub-session, started again on its conversation
+    await eventually(lambda: sum(isinstance(i, AssistantItem) and bool(i.text)
+                                 for i in window.model.items) > replies, timeout=15)
+    assert any(getattr(i, "text", None) == "Make it shorter" for i in window.model.items)
+    window._conversation_chosen(window.conversation_list.item(1))  # back to the parent
+    assert window.controller is window.home
+    assert window.model.conversation.id == h.conversation.id
+
+
+async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
+    from kayden.frontends.desktop.window import KIND_ROLE
+
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    one, two = tmp_path / "alpha", tmp_path / "beta"
+    window._conversations = {
+        "a": ConversationInfo("a", "First", 1.0, 3.0, folder=str(one)),
+        "b": ConversationInfo("b", "Second", 1.0, 2.0, folder=str(two)),
+        "c": ConversationInfo("c", "Third", 1.0, 1.0, folder=str(one))}
+    window._render_sidebar()
+    rows = [(window.conversation_list.item(i).data(KIND_ROLE),
+             window.conversation_list.item(i).text())
+            for i in range(window.conversation_list.count())]
+    assert rows == [("group", "alpha"), ("conversation", "First"), ("conversation", "Third"),
+                    ("group", "beta"), ("conversation", "Second")]
+    window._conversation_chosen(window.conversation_list.item(0))  # fold alpha
+    assert [window.conversation_list.item(i).text()
+            for i in range(window.conversation_list.count())] == ["alpha", "beta", "Second"]

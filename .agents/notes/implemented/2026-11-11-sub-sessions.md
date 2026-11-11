@@ -1,6 +1,6 @@
 # Agent Note: Sub-sessions
 
-Status: implemented — the frontend hosts sub-sessions: it starts headless Kayden children for the agent, shows them, and lets the user watch their work
+Status: implemented — the frontend hosts sub-sessions: it starts headless Kayden children for the agent, lists them under their conversation, and opens each like a conversation of its own
 
 ## Problem
 
@@ -46,26 +46,39 @@ How a child runs:
 - The manager starts its conversation and gives it the task as a goal, with short
   intervals (it checks in at least every 2 minutes), so a child that ends its turn
   without finishing continues soon.
-- A permission prompt in the child is refused: nobody watches it yet. The refusal is shown
-  in the session and in its report. A child does what its policy allows on its own.
+- A permission prompt in the child waits for the user, as in the parent; the parent's call
+  keeps waiting meanwhile.
 - Cancelling the call (Stop, `op_cancel`) or `stop_session` stops the child; closing the
-  parent stops every child.
+  parent stops every child that is working. A child that is done or stopped is closed
+  once no view has it open.
+- Each child's record (`session.json` in its folder) keeps it listed after a restart.
+  Opening one that is not running starts it again on its own conversation.
 - While it runs the call's progress line is the child's current step, so the step card in
   the parent conversation shows it live.
 
+### Opening a child
+
+`SubSessions.open(child)` returns a `RemoteRuntime` (`kayden.frontends.remote`): a
+RuntimeAPI over the child's channel. Every command but `restart` is a request;
+`snapshot()`, which must answer at once, is read on opening and kept current from the
+events. `kayden.frontends.wire` turns the channel's JSON back into API values. A frontend
+therefore shows a child with the same code as its own conversation.
+
 ### What the user sees
 
-- The manager keeps, per child, its task, state (working, waiting for an answer, done,
-  failed, stopped), current step, spending and conversation as it arrives.
-- **Desktop app:** a **Sub-sessions** list under the conversation list, for the open
-  conversation, shown once there is one; clicking one opens a window with its
-  conversation as text, updated live, and a Stop button. The status line counts the
-  children working.
-- **TUI:** `/sessions` lists them with the highlighted one's conversation and a Stop
-  button; the status line counts the children working.
+- **Desktop app:** the sidebar is a tree, as in the Claude app. Conversations are grouped
+  by project (their folder) under headings that fold, and each conversation's children
+  are listed under it, with a dot while they work and their state as the second line.
+  Clicking a child shows it in the conversation area: its messages and steps, its
+  permission cards, Stop, and a message box that talks to it. Clicking a conversation goes
+  back; the child keeps working. Memory, tool servers and settings stay the window's own.
+- **TUI:** a terminal app shows one screen, so `/sessions` lists the children with the
+  highlighted one's conversation, its open prompt with Allow once and Deny, a message box
+  and Stop.
+- Both status lines count the children working; the parent conversation shows each child
+  as a step, with its report as the result.
 
 Choices are in `.agents/decisions.md` (Sub-sessions).
-- The parent conversation shows each child as a step, its report as the result.
 
 ## Alternatives considered
 
@@ -79,21 +92,27 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
   one window wants the Claude app's behaviour now.
 - **Children in the same process.** Faster to start, but SPEC 4.3 has one agent per
   process, and a child's crash or runaway loop would take the parent with it.
-- **Forwarding a child's permission prompts to the user.** Better, but every frontend
-  would need a prompt UI for another agent's calls; refusing keeps the first version
-  small.
+- **Refusing a child's permission prompts,** since nobody watches it. Simpler, and shipped
+  first, but a child could then do only what its policy allowed, and the owner wanted the
+  Claude app's behaviour, where a session asks the user.
+- **A window per child,** or a plain text view of its work. Less code than switching the
+  conversation area, but not what the Claude app does, and the plain view could not show
+  steps, prompts or a message box.
+- **A real tree widget** for the sidebar. Native folding, but the rows' drawing, menus and
+  shortcuts are built on a list; headings and indented rows in the same list keep them.
 
 ## Consequences
 
 - The agent can run side tasks in parallel without filling its own context, and the user
-  watches and stops them as in the Claude app.
+  opens, talks to, approves and stops each as in the Claude app.
 - **Cost.** Each child is a full agent with its own context. Its spending limit caps it,
   and the parent's own limit does not include it.
-- **Unattended children do less.** A step that would prompt is refused; a child does only
-  what its policy allows. Forwarding prompts is the KFM's escalation, not built.
-- **Lost on quit.** Children stop with the window, and the list shows only children of
-  this run; their data folders stay on disk.
-- **Plain view.** A child's conversation is shown as text lines, not with the main view's
-  bubbles and step groups.
+- **Children wait for approvals.** A child whose step needs the user's OK waits until the
+  user opens it; the sidebar says so. Routing prompts to a supervisor agent is the KFM's
+  escalation, not built.
+- **Stopped on quit.** Working children stop with the window; they stay listed and start
+  again when opened, but do not resume their goal by themselves.
+- **The channel protocol carries all of RuntimeAPI,** so it is a larger contract: a
+  renamed API type or field breaks reopening a child run by an older Kayden.
 - **Bundles.** A child is started as `python -m kayden` with the parent's interpreter; a
   packaged app whose interpreter cannot do that cannot start children.

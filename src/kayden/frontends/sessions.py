@@ -1,40 +1,71 @@
 """Sub-sessions: a Tools module a frontend offers (Frontend.tools) so the agent can hand
 self-contained tasks to children, headless Kayden processes it starts and drives over
 their channel (kayden.frontends.headless). The frontend hosts them, as an app hosts its
-sessions: it lists them and shows their work from `SubSessions.sessions`. No UI code here.
+sessions: it lists them from `SubSessions.sessions` and opens one with `open`, which gives
+a RuntimeAPI for it (kayden.frontends.remote). No UI code here.
 
-A child gets its own data folder (<data dir>/sessions/<id>) with the parent's config.toml
-and settings.toml, its spending limit and the conversation's work folder, and works on its
-task as a goal. A permission prompt in a child is refused: nobody watches it.
+A child gets its own data folder (<data dir>/sessions/<conversation>-<id>) with the parent's
+config.toml and settings.toml, its spending limit and the conversation's work folder, and
+works on its task as a goal. Its permission prompts wait for the user, who answers them
+where the child is open. Each child's record (session.json) keeps it listed after a
+restart; opening a child that is not running starts it again on its conversation.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import itertools
 import json
 import logging
 import math
 import shutil
 import sys
 import tomllib
-from collections import deque
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import tomli_w
 
-from kayden.api import DESCRIPTION_ARG, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kayden.api import (
+    DESCRIPTION_ARG,
+    AgentState,
+    ConversationUpdated,
+    EventEnvelope,
+    Failure,
+    HelpNeeded,
+    Message,
+    MessageCommitted,
+    PermissionRequested,
+    PermissionResolved,
+    ReasoningDelta,
+    Role,
+    StateChanged,
+    Text,
+    TextDelta,
+    ToolCall,
+    ToolCallDelta,
+    ToolContext,
+    ToolOutput,
+    ToolProgress,
+    ToolResult,
+    Tools,
+    ToolSpec,
+    ToolStatus,
+    UsageUpdated,
+)
+from kayden.frontends.remote import Channel, RemoteRuntime
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BUDGET_USD = 1.0
 CHECK_IN_S = (5.0, 120.0)  # a child's duty intervals: it continues soon after a turn ends
 STOP_GRACE_S = 10.0  # after stdin closes, before the child is killed
-_STDERR_LINES = 20
+RECORD = "session.json"
 _SESSION = {"type": "string", "description": "The sub-session's id."}
+_ACTIVE = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
+_QUIET = (TextDelta, ReasoningDelta, ToolCallDelta, ToolProgress)
 
 START = ToolSpec(
     "start_session",
@@ -42,7 +73,7 @@ START = ToolSpec(
     "working in the same folder with your tools, so long side work does not fill your "
     "conversation. Describe the task fully: it sees nothing of this conversation. It runs in "
     "the background and returns its report when done, or a question if it needs one. "
-    "Several can run at once.",
+    "Several can run at once; the user can open and talk to each.",
     {"type": "object",
      "properties": {
          "task": {"type": "string", "minLength": 1},
@@ -67,10 +98,9 @@ STOP = ToolSpec(
     {"type": "object", "properties": {"session": _SESSION}, "required": ["session"]},
 )
 
-
 STATE_LABELS = {"starting": "Starting", "working": "Working",
-                "waiting": "Waiting for an answer", "done": "Done", "failed": "Failed",
-                "stopped": "Stopped"}
+                "waiting": "Waiting for an answer", "idle": "Ready", "done": "Done",
+                "failed": "Failed", "stopped": "Stopped"}
 
 
 def working_text(sessions: Sequence[SubSession]) -> str | None:
@@ -79,35 +109,62 @@ def working_text(sessions: Sequence[SubSession]) -> str | None:
     return f"{count} sub-session{'s' if count != 1 else ''} working" if count else None
 
 
-class SubSession:
-    """One child as the frontend shows it. `state`: starting, working, waiting (for an
-    answer), done, failed or stopped."""
+def message_lines(messages: Sequence[Message]) -> list[tuple[str, str]]:
+    """(who, text) for each part of a conversation, for a plain text view."""
+    shown = []
+    for message in messages:
+        for block in message.blocks:
+            match block:
+                case Text(text=text) if text.strip():
+                    who = {Role.USER: "You", Role.ASSISTANT: "Agent"}.get(message.role,
+                                                                        message.role)
+                    if text.startswith("[Runtime notice]"):
+                        who = "Kayden"
+                    shown.append((who, text))
+                case ToolCall(name=name, arguments=args):
+                    shown.append(("Step", args.get(DESCRIPTION_ARG) or name))
+                case ToolResult(status=ToolStatus.REFUSED, content=content):
+                    shown.append(("Step", f"refused: {content}"))
+    return shown
 
-    def __init__(self, session_id: str, task: str, conversation_id: str, data_dir: Path
-                 ) -> None:
-        self.id, self.task = session_id, task
-        self.conversation_id, self.data_dir = conversation_id, data_dir
-        self.state = "starting"
-        self.step: str | None = None  # what it is doing now
-        self.spent = 0.0
-        self.report: str | None = None
-        self.question: str | None = None
-        self.failure: str | None = None
-        self.refused: list[str] = []
-        self.returncode: int | None = None
-        self.messages: list[dict[str, Any]] = []  # as the channel sends them
-        self._goal_ended = False
-        self._changed = asyncio.Condition()
+
+@dataclass
+class SubSession:
+    """One child as the frontend lists it. `state`: starting, working, waiting (for an
+    answer to its question), idle (reopened, nothing to do), done, failed or stopped."""
+
+    id: str
+    task: str
+    conversation_id: str  # the parent conversation
+    data_dir: Path
+    state: str = "starting"
+    report: str | None = None
+    question: str | None = None
+    failure: str | None = None
+    spent: float = 0.0
+    child_conversation_id: str | None = None
+    step: str | None = field(default=None, compare=False)  # what it is doing now
+    approvals: int = field(default=0, compare=False)  # permission prompts open
+    messages: list[Message] = field(default_factory=list, compare=False)
+    returncode: int | None = field(default=None, compare=False)
+    has_goal: bool = field(default=False, compare=False)
+    _changed: asyncio.Condition | None = field(default=None, compare=False, repr=False)
 
     @property
     def running(self) -> bool:
         return self.state in ("starting", "working", "waiting")
 
     @property
+    def changed(self) -> asyncio.Condition:
+        if self._changed is None:
+            self._changed = asyncio.Condition()
+        return self._changed
+
+    @property
     def summary(self) -> str:
         """Its state for a list row: "Working · Searching the web · $0.04"."""
-        parts = [STATE_LABELS[self.state]]
-        if self.running and self.step:
+        parts = ["Needs your approval" if self.approvals else STATE_LABELS[self.state]]
+        if self.state == "working" and self.step and not self.approvals:
             parts.append(self.step)
         if self.state == "failed" and self.failure:
             parts.append(self.failure)
@@ -115,106 +172,64 @@ class SubSession:
         return " · ".join(parts)
 
     def lines(self) -> list[tuple[str, str]]:
-        """(who, text) for each part of its conversation, for a frontend to show."""
-        shown = []
-        for message in self.messages:
-            role = message["role"]
-            for block in message["blocks"]:
-                match block["type"]:
-                    case "Text" if block["text"].strip():
-                        who = {"user": "Task", "assistant": "Agent"}.get(role, role)
-                        if block["text"].startswith("[Runtime notice]"):
-                            who = "Kayden"
-                        shown.append((who, block["text"]))
-                    case "ToolCall":
-                        args = block["arguments"]
-                        shown.append(("Step", args.get(DESCRIPTION_ARG) or block["name"]))
-                    case "ToolResult" if block["status"] == "refused":
-                        shown.append(("Step", f"refused: {block['content']}"))
-        return shown
+        """(who, text) for each part of its conversation this run, for a plain view."""
+        return message_lines(self.messages)
 
-
-class _Child:
-    """The child's process and its JSON-RPC channel."""
-
-    def __init__(self, process: asyncio.subprocess.Process,
-                 on_event: Callable[[dict[str, Any]], None]) -> None:
-        self.process = process
-        self._on_event = on_event
-        self._ids = itertools.count(1)
-        self._pending: dict[int, asyncio.Future[Any]] = {}
-        self.stderr: deque[str] = deque(maxlen=_STDERR_LINES)
-        self.reader = asyncio.create_task(self._read())
-        self.errors = asyncio.create_task(self._read_stderr())
-
-    async def request(self, method: str, **params: Any) -> Any:
-        request_id = next(self._ids)
-        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
-        assert self.process.stdin is not None
-        line = json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method,
-                           "params": params})
-        self.process.stdin.write(line.encode() + b"\n")
-        await self.process.stdin.drain()
-        return await future
-
-    async def _read(self) -> None:
-        assert self.process.stdout is not None
-        while line := await self.process.stdout.readline():
-            message = json.loads(line)
-            if message.get("method") == "event":
-                self._on_event(message["params"]["event"])
-            elif (future := self._pending.pop(message.get("id"), None)) is not None:
-                if "error" in message:
-                    future.set_exception(RuntimeError(message["error"]["message"]))
-                else:
-                    future.set_result(message.get("result"))
-        for future in self._pending.values():
-            future.set_exception(RuntimeError("the sub-session ended"))
-
-    async def _read_stderr(self) -> None:
-        assert self.process.stderr is not None
-        while line := await self.process.stderr.readline():
-            self.stderr.append(line.decode(errors="replace").rstrip())
-
-    async def close(self) -> int:
-        """Close its stdin (it quits as on closing the window); kill it after the grace."""
-        if self.process.stdin is not None and not self.process.stdin.is_closing():
-            self.process.stdin.close()
-        try:
-            await asyncio.wait_for(self.process.wait(), STOP_GRACE_S)
-        except TimeoutError:
-            self.process.kill()
-            await self.process.wait()
-        await asyncio.gather(self.reader, self.errors, return_exceptions=True)
-        assert self.process.returncode is not None
-        return self.process.returncode
+    def record(self) -> dict[str, Any]:
+        """What session.json keeps."""
+        return {k: getattr(self, k) for k in (
+            "id", "task", "conversation_id", "state", "report", "question", "failure",
+            "spent", "child_conversation_id")}
 
 
 class SubSessions(Tools):
     def __init__(self, data_dir: Path, command: Sequence[str] = (sys.executable, "-m", "kayden"),
                  check_in_s: tuple[float, float] = CHECK_IN_S) -> None:
         self.data_dir = data_dir
-        self.check_in_s = check_in_s
         self.command = list(command)
-        self.sessions: list[SubSession] = []
+        self.check_in_s = check_in_s
         self.listeners: list[Callable[[], None]] = []  # told of every change
-        self._children: dict[str, _Child] = {}
+        self.sessions = self._load()
+        self._channels: dict[str, Channel] = {}
+        self._viewers: dict[str, int] = {}
         self._folder: Path | None = None
-        self._ids = itertools.count(1)
+        self._next = max((int(s.id) for s in self.sessions if s.id.isdigit()), default=0) + 1
         self._closing: set[asyncio.Task[None]] = set()
+        self._saved: dict[str, dict[str, Any]] = {s.id: s.record() for s in self.sessions}
+        self._write: asyncio.Future[None] | None = None
 
     def of(self, conversation_id: str | None) -> list[SubSession]:
         return [s for s in self.sessions if s.conversation_id == conversation_id]
 
+    # ── For frontends ─────────────────────────────────────────────────────
+
+    async def open(self, session: SubSession) -> RemoteRuntime:
+        """A RuntimeAPI for the child, starting it again when it is not running; call
+        release() with it when the view closes."""
+        channel = self._channels.get(session.id)
+        if channel is None:
+            channel = await self._spawn(session, resume=True)
+            self._set(session, state="idle", failure=None)
+        self._viewers[session.id] = self._viewers.get(session.id, 0) + 1
+        remote = RemoteRuntime(channel)
+        try:
+            return await remote.attach()
+        except BaseException:  # cancelled too: the view never got it
+            self.release(session, remote)
+            raise
+
+    def release(self, session: SubSession, runtime: RemoteRuntime | None) -> None:
+        if runtime is not None:
+            runtime.detach()
+        self._viewers[session.id] = max(0, self._viewers.get(session.id, 0) - 1)
+        if not self._viewers[session.id] and not session.running:
+            self._close_channel(session)
+
     def stop(self, session: SubSession) -> None:
-        """Stop a child; for the frontend's Stop button and stop_session."""
+        """Stop a child: the frontend's Stop and stop_session."""
         if session.running:
             self._set(session, state="stopped")
-        if (child := self._children.pop(session.id, None)) is not None:
-            task = asyncio.create_task(self._close(session, child))
-            self._closing.add(task)
-            task.add_done_callback(self._closing.discard)
+        self._close_channel(session)
 
     # ── Tools ─────────────────────────────────────────────────────────────
 
@@ -238,48 +253,44 @@ class SubSessions(Tools):
         if call.name == STOP.name:
             self.stop(session)
             return ToolOutput(f"Sub-session {session.id} stopped.")
-        child = self._children.get(session.id)
-        if child is None or session.state != "waiting" and session.state != "working":
-            return ToolOutput(f"Sub-session {session.id} is {session.state}; start a new "
-                              "one for more work.", is_error=True)
+        channel = self._channels.get(session.id)
+        if channel is None or session.state not in ("waiting", "working", "idle"):
+            return ToolOutput(f"Sub-session {session.id} is {STATE_LABELS[session.state].lower()};"
+                              " start a new one for more work.", is_error=True)
         self._set(session, state="working", question=None)
-        await child.request("send", text=args["text"])
+        await channel.request("send", text=args["text"])
         return await self._wait(session, ctx)
 
     async def aclose(self) -> None:
-        for session in list(self.sessions):
-            self.stop(session)
+        for session in self.sessions:
+            if session.running:
+                self._set(session, state="stopped")
+            self._close_channel(session)
         if self._closing:
             await asyncio.wait(self._closing)
+        if self._write is not None:
+            await asyncio.gather(self._write, return_exceptions=True)
 
     # ── Children ──────────────────────────────────────────────────────────
 
     async def _start(self, task: str, budget: float, conversation_id: str) -> SubSession:
-        session_id = str(next(self._ids))
+        session_id = str(self._next)
+        self._next += 1
         folder = self.data_dir / "sessions" / f"{conversation_id[:8]}-{session_id}"
-        session = SubSession(session_id, task, conversation_id, folder)
+        session = SubSession(session_id, task, conversation_id, folder, has_goal=True)
         self.sessions.append(session)
-        self._notify()
+        self._set(session)
         try:
             await asyncio.to_thread(self._prepare, folder, budget)
-            process = await asyncio.create_subprocess_exec(
-                *self.command, "--headless", "--data-dir", str(folder),
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, cwd=self._folder or folder,
-                limit=16 * 1024 * 1024)
-        except OSError as e:
-            self._set(session, state="failed", failure=f"it could not start: {e}")
-            return session
-        child = _Child(process, lambda event: self._event(session, event))
-        self._children[session_id] = child
-        try:
-            await child.request("start")
-            await child.request("set_duty", duty={
+            channel = await self._spawn(session, resume=False)
+            info = await channel.request("start")
+            session.child_conversation_id = info["id"]
+            await channel.request("set_duty", duty={
                 "instruction": task, "kind": "goal",
                 "min_interval_s": self.check_in_s[0], "max_interval_s": self.check_in_s[1]})
-        except RuntimeError as e:
-            self._set(session, state="failed", failure=self._why(child, e))
-            self.stop(session)
+        except (OSError, RuntimeError, ValueError) as e:
+            self._set(session, state="failed", failure=self._why(session, e))
+            self._close_channel(session)
             return session
         if session.state == "starting":
             self._set(session, state="working")
@@ -298,105 +309,167 @@ class SubSessions(Tools):
             settings["work_folder"] = str(self._folder)
         (folder / "settings.toml").write_text(tomli_w.dumps(settings))
 
+    async def _spawn(self, session: SubSession, *, resume: bool) -> Channel:
+        command = [*self.command, "--headless", "--data-dir", str(session.data_dir)]
+        if resume and session.child_conversation_id is not None:
+            command += ["--conversation", session.child_conversation_id]
+        process = await asyncio.create_subprocess_exec(
+            *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, cwd=self._folder or session.data_dir,
+            limit=16 * 1024 * 1024)
+        channel = Channel(process)
+        channel.listeners.append(lambda envelope: self._event(session, channel, envelope))
+        self._channels[session.id] = channel
+        return channel
+
     async def _wait(self, session: SubSession, ctx: ToolContext) -> ToolOutput:
         """Until it reports, asks, fails or stops; its current step is the progress line."""
         shown = None
         try:
-            async with session._changed:
+            async with session.changed:
                 while session.state in ("starting", "working"):
-                    if session.step and session.step != shown:
-                        shown = session.step
-                        ctx.progress(shown)
-                    await session._changed.wait()
+                    step = "Needs your approval" if session.approvals else session.step
+                    if step and step != shown:
+                        shown = step
+                        ctx.progress(step)
+                    await session.changed.wait()
         except asyncio.CancelledError:
             self.stop(session)
             raise
-        if session.state == "done":
-            self.stop(session)
+        if session.state == "done" and not self._viewers.get(session.id):
+            self._close_channel(session)
         return ToolOutput(self._outcome(session), is_error=session.state == "failed")
 
     def _outcome(self, session: SubSession) -> str:
-        refused = (f"\nSteps refused, since nobody could approve them: "
-                   f"{', '.join(session.refused)}."
-                   if session.refused else "")
         match session.state:
             case "done":
-                return f"Sub-session {session.id} finished. Report: {session.report}{refused}"
+                return f"Sub-session {session.id} finished. Report: {session.report}"
             case "waiting":
                 return (f"Sub-session {session.id} asks: {session.question}\nAnswer with "
-                        f"message_session(session=\"{session.id}\", text=...).{refused}")
+                        f"message_session(session=\"{session.id}\", text=...).")
             case "stopped":
-                return f"Sub-session {session.id} was stopped.{refused}"
-        return f"Sub-session {session.id} failed: {session.failure}{refused}"
+                return f"Sub-session {session.id} was stopped."
+        return f"Sub-session {session.id} failed: {session.failure}"
 
-    def _event(self, session: SubSession, event: dict[str, Any]) -> None:
-        match event["type"]:
-            case "MessageCommitted":
-                message = event["message"]
+    def _event(self, session: SubSession, channel: Channel,
+               envelope: EventEnvelope | None) -> None:
+        if envelope is None:  # the process ended
+            if self._channels.get(session.id) is channel:
+                del self._channels[session.id]
+                task = asyncio.create_task(self._ended(session, channel))
+                self._closing.add(task)
+                task.add_done_callback(self._closing.discard)
+            return
+        if isinstance(envelope.event, _QUIET):
+            return  # streaming: nothing a list shows
+        match envelope.event:
+            case MessageCommitted(message=message):
                 session.messages.append(message)
-                for block in message["blocks"]:
-                    if block["type"] == "ToolCall":
-                        if block["name"] == "finish_goal":
-                            session.report = block["arguments"].get("report")
-                        session.step = (block["arguments"].get(DESCRIPTION_ARG)
-                                        or block["name"])
-                    elif block["type"] == "Text" and message["role"] == "assistant":
-                        session.step = block["text"].strip().splitlines()[0][:120] or None
-            case "PermissionRequested":
-                request = event["request"]
-                session.refused.append(request["call"]["name"])
-                child = self._children.get(session.id)
-                if child is not None:
-                    task = asyncio.create_task(child.request(
-                        "resolve_permission", request_id=request["id"], decision="deny"))
-                    task.add_done_callback(lambda t: t.exception())
-            case "HelpNeeded" if event["question"] is not None:
-                session.question = event["question"]
-            case "ConversationUpdated" if event["info"]["duty"] is None:
-                session._goal_ended = True
-            case "UsageUpdated":
-                session.spent = event["snapshot"]["usage"]["cost_usd"] or 0.0
-            case "Failure":
-                session.failure = event["message"]
-            case "StateChanged" if session.running:
-                state = event["state"]
-                if state in ("idle", "stopped") and session._goal_ended:
-                    session.state = "done"
-                elif state == "idle" and session.question is not None:
-                    session.state = "waiting"
-                elif state == "failed":
-                    session.state = "failed"
-        self._changed_now(session)
+                for block in message.blocks:
+                    if isinstance(block, ToolCall):
+                        if block.name == "finish_goal":
+                            session.report = block.arguments.get("report")
+                        session.step = block.arguments.get(DESCRIPTION_ARG) or block.name
+                    elif isinstance(block, Text) and message.role == Role.ASSISTANT:
+                        session.step = block.text.strip().splitlines()[0][:120] or None
+            case PermissionRequested():
+                session.approvals += 1
+            case PermissionResolved():
+                session.approvals = max(0, session.approvals - 1)
+            case HelpNeeded(question=question) if question is not None:
+                session.question = question
+            case ConversationUpdated(info=info) if info.id == session.child_conversation_id:
+                session.has_goal = info.duty is not None
+            case UsageUpdated(snapshot=usage):
+                session.spent = usage.usage.cost_usd or 0.0
+            case Failure(message=message):
+                session.failure = message
+            case StateChanged(state=state):
+                session.state = self._state_after(session, state)
+        self._set(session)
 
-    async def _close(self, session: SubSession, child: _Child) -> None:
-        session.returncode = await child.close()
+    def _state_after(self, session: SubSession, state: AgentState) -> str:
+        if session.state == "stopped":
+            return "stopped"
+        if state in _ACTIVE:
+            return "working"
+        if state == AgentState.FAILED:
+            return "failed"
+        if state in (AgentState.IDLE, AgentState.STOPPED):
+            if session.question is not None and session.has_goal:
+                return "waiting"
+            if session.has_goal:
+                return "working"  # between a goal's check-ins
+            return "done" if session.report is not None else "idle"
+        return session.state
+
+    async def _ended(self, session: SubSession, channel: Channel) -> None:
+        session.returncode = await channel.close(STOP_GRACE_S)
         if session.running:  # it ended by itself
-            self._set(session, state="failed", failure=self._why(child, None))
-        self._changed_now(session)
+            self._set(session, state="failed", failure=self._why(session, None, channel))
+        session.approvals = 0
+        self._set(session)
 
-    def _why(self, child: _Child, error: Exception | None) -> str:
-        tail = [line for line in child.stderr if line.startswith("kayden:")]
+    def _close_channel(self, session: SubSession) -> None:
+        if (channel := self._channels.pop(session.id, None)) is not None:
+            task = asyncio.create_task(self._ended(session, channel))
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
+
+    def _why(self, session: SubSession, error: Exception | None,
+             channel: Channel | None = None) -> str:
+        channel = channel or self._channels.get(session.id)
+        tail = [line for line in (channel.stderr if channel else ()) if line.startswith("kayden:")]
         if tail:
             return tail[-1].removeprefix("kayden:").strip()
         return str(error) if error is not None else "the process ended"
 
+    # ── Records and listeners ─────────────────────────────────────────────
+
+    def _load(self) -> list[SubSession]:
+        sessions = []
+        for record in sorted((self.data_dir / "sessions").glob(f"*/{RECORD}")):
+            try:
+                data = json.loads(record.read_text())
+                session = SubSession(data_dir=record.parent, **data)
+            except (OSError, ValueError, TypeError):
+                logger.warning("unreadable sub-session record %s", record)
+                continue
+            if session.running:  # it stopped with the last run
+                session.state = "stopped"
+            sessions.append(session)
+        return sorted(sessions, key=lambda s: int(s.id) if s.id.isdigit() else 0)
+
     def _set(self, session: SubSession, **changes: Any) -> None:
         for name, value in changes.items():
             setattr(session, name, value)
-        self._changed_now(session)
+        record = session.record()
+        if record != self._saved.get(session.id) and session.data_dir.exists():
+            self._saved[session.id] = record
+            path = session.data_dir / RECORD
+            self._write = asyncio.ensure_future(self._save(self._write, path, record))
 
-    def _changed_now(self, session: SubSession) -> None:
         async def wake() -> None:
-            async with session._changed:
-                session._changed.notify_all()
+            async with session.changed:
+                session.changed.notify_all()
 
         with contextlib.suppress(RuntimeError):  # no loop: nothing waits
             asyncio.get_running_loop().create_task(wake())
-        self._notify()
-
-    def _notify(self) -> None:
-        for listener in self.listeners:
+        for listener in list(self.listeners):
             try:
                 listener()
             except Exception:
                 logger.exception("sub-session listener failed")
+
+    @staticmethod
+    async def _save(previous: asyncio.Future[None] | None, path: Path,
+                    record: dict[str, Any]) -> None:
+        """Write a record after the one before it, off the event loop."""
+        if previous is not None:
+            await asyncio.gather(previous, return_exceptions=True)
+        with contextlib.suppress(OSError):  # a record is for listing only
+            await asyncio.to_thread(path.write_text, json.dumps(record))
+
+    def _notify(self) -> None:
+        for listener in list(self.listeners):
+            listener()

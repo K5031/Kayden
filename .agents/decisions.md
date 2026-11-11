@@ -689,10 +689,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-sub-sessions.md).
 | Choice | Value |
 |---|---|
 | Tools | `start_session(task, budget_usd=1.0)`, `message_session(session, text)` (both with no timeout: the child's spending limit bounds them), `stop_session(session)`. Not confined: reviewed under AUTO, asked under stricter policies |
-| Child | `<sys.executable> -m kayden --headless --data-dir <data>/sessions/<first 8 of conversation id>-<n>`, cwd the work folder; config.toml copied, settings.toml copied with `budget = {max_cost_usd = budget_usd}` and `work_folder`; then `start` and `set_duty` (goal, check-ins every 5 s to 2 minutes) |
-| Ids | "1", "2", … per run of the frontend |
-| Done | When its goal ended (duty cleared) and it is idle or stopped; the report is `finish_goal`'s; then its stdin closes, and it is killed if it has not exited after 10 s |
-| Question | `HelpNeeded` then idle: the call returns the question; `message_session` sends the answer and waits again |
-| Prompts | Every `PermissionRequested` is answered `deny`; the tool names are listed in the result |
-| Cancel | Cancelling the call, `stop_session`, the frontend's Stop button and closing the manager (runtime shutdown) stop the child |
-| Shown | Per child: task, state, current step (its latest step sentence or the first line of its latest reply), dollars spent, its messages as the channel sent them; frontends are told through `SubSessions.listeners` |
+| Child | `<sys.executable> -m kayden --headless --data-dir <data>/sessions/<first 8 of conversation id>-<n>`, cwd the work folder; config.toml copied, settings.toml copied with `budget = {max_cost_usd = budget_usd}` and `work_folder`; then `start` and `set_duty` (goal, check-ins every 5 s to 2 minutes). Reopening: the same with `--conversation <its conversation>` |
+| Ids | "1", "2", … per data folder, continuing after the highest recorded |
+| Record | `session.json` in the child's folder: id, task, parent conversation, state, report, question, failure, spent, child conversation; written off the loop when it changes. At start a record whose state was running becomes "stopped" |
+| States | starting, working (also between a goal's check-ins), waiting (its question, after `HelpNeeded` and idle), idle (reopened with nothing to do), done (goal ended and idle; the report is `finish_goal`'s), failed, stopped; "Needs your approval" while a prompt is open |
+| Prompts | Wait for the user, who answers them where the child is open; the parent's call keeps waiting |
+| Process | Closed (stdin, then killed after 10 s) when it is done or stopped and no view has it open; cancelling the call, `stop_session`, Stop and closing the manager stop it |
+| Proxy | `kayden.frontends.remote.RemoteRuntime` over `Channel` (JSON-RPC client): every RuntimeAPI command but `restart`; `snapshot()` is read once and kept current from the events (state, conversation, model, usage, duty wake, help, operations, prompts, queue). A reply to a cancelled request is ignored. `kayden.frontends.wire` encodes and decodes the values |
+| Desktop | The sidebar groups conversations by folder (a heading with the folder's name, folded by a click; "Other" for none) and lists each conversation's children under it (indented, a tree line, a dot while working, the summary as second line). Clicking a child shows it in the conversation area through its own Controller and model; clicking a conversation returns. Memory, tool servers and settings stay the window's own |
+| TUI | `/sessions`: the list, the highlighted child's conversation (re-read on each change), its prompt with Allow once and Deny, a message box, Stop |

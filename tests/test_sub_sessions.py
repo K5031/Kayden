@@ -7,7 +7,6 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-import pytest
 import tomli_w
 
 from kayden.api import OperationResult, PermissionPolicy, ToolResult, ToolStatus
@@ -21,12 +20,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def finish(report: str) -> dict[str, Any]:
     return {"calls": [{"name": "finish_goal", "arguments": {"report": report}}]}
-
-
-@pytest.fixture
-def child_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Children import the test fakes named in the copied config.toml."""
-    monkeypatch.setenv("PYTHONPATH", str(ROOT))
 
 
 async def parent(make: Any, tmp_path: Path, steps: list[Step], child_script: list[Any],
@@ -106,17 +99,48 @@ async def test_cancelling_the_call_stops_the_child(make, tmp_path, child_env):
     assert child.state == "stopped"
 
 
-async def test_a_childs_permission_prompt_is_refused_and_reported(make, tmp_path, child_env):
+async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, child_env):
+    from kayden.api import Decision
+
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("start_session", {"task": "Look it up"}, id="s")]),
         Step(text="Started."), Step(text="Reported.")],
-        [{"calls": [{"name": "lookup"}]}, finish("Could not look it up."), {"text": "Done."}],
+        [{"calls": [{"name": "lookup"}]}, finish("Looked it up."), {"text": "Done."}],
         child_runtime={"runtime": {"permissions": "ask"}})
     await h.turn("Go")
+    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].approvals
+                             and sessions.sessions[0], timeout=30)
+    assert child.summary.startswith("Needs your approval")
+    remote = await sessions.open(child)
+    [request] = remote.snapshot().pending_permissions
+    assert request.call.name == "lookup"
+    await remote.resolve_permission(request.id, Decision.ALLOW_ONCE)
     result = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                               .messages, "s"), timeout=30)
-    assert "refused" in result.content and "lookup" in result.content
-    assert any("refused" in text for _, text in sessions.sessions[0].lines())
+    assert "Looked it up." in result.content
+    sessions.release(child, remote)
+
+
+async def test_a_child_is_listed_after_a_restart_and_opens_again(make, tmp_path, child_env):
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(text="Started."), Step(text="Got it.")],
+        [finish("Haiku written."), {"text": "Done."}])
+    await h.turn("Go")
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done",
+                     timeout=30)
+    await h.close()
+    again = SubSessions(h.data_dir)
+    [child] = again.sessions
+    assert (child.task, child.state, child.report) == ("Write a haiku", "done",
+                                                       "Haiku written.")
+    remote = await again.open(child)  # starts it again on its conversation
+    history = await remote.history(child.child_conversation_id)
+    assert any("Done." in str(m.blocks) for m in history)
+    assert remote.snapshot().conversation.id == child.child_conversation_id
+    again.release(child, remote)
+    await again.aclose()
+    assert child.returncode is not None
 
 
 async def test_unknown_sessions_are_errors(make, tmp_path, child_env):
@@ -156,3 +180,23 @@ async def test_a_frontend_offers_its_tools(tmp_path, clean_env):
         del fakes.tools_factory  # type: ignore[attr-defined]
     assert seen.index("from_the_frontend") > seen.index("lookup")
     assert extra.closed
+
+
+async def test_a_cancelled_open_leaves_the_child_running(make, tmp_path, child_env):
+    import asyncio
+
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Think forever"}, id="s")]),
+        Step(text="Started.")],
+        [{"hang": True}])
+    await h.turn("Go")
+    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state
+                             == "working" and sessions.sessions[0], timeout=30)
+    opening = asyncio.create_task(sessions.open(child))
+    await asyncio.sleep(0)
+    opening.cancel()
+    await asyncio.gather(opening, return_exceptions=True)
+    remote = await sessions.open(child)  # the reply to the cancelled request is ignored
+    assert remote.snapshot().state.value == "thinking"
+    sessions.release(child, remote)
+    assert child.state == "working"

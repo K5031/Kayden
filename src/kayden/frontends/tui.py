@@ -132,7 +132,8 @@ from kayden.frontends.common import (
     request_note,
     restart_notice,
 )
-from kayden.frontends.sessions import SubSession, SubSessions, working_text
+from kayden.frontends.remote import RemoteRuntime
+from kayden.frontends.sessions import SubSession, SubSessions, message_lines, working_text
 
 STATE_LABELS = {
     AgentState.NOT_STARTED: "Not started",
@@ -1170,14 +1171,15 @@ class DutyScreen(ModalScreen[DutyChoice | None]):
 
 
 class SessionsScreen(ModalScreen[None]):
-    """The open conversation's sub-sessions and, for the highlighted one, its work as it
-    happens."""
+    """The open conversation's sub-sessions. The highlighted one is open: its
+    conversation as it happens, a message box that talks to it, its approvals and Stop."""
 
     BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Close")]
 
     def __init__(self, sessions: SubSessions, conversation_id: ConversationId | None) -> None:
         super().__init__()
         self.sessions, self.conversation_id = sessions, conversation_id
+        self.opened: tuple[SubSession, RemoteRuntime] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
@@ -1186,6 +1188,11 @@ class SessionsScreen(ModalScreen[None]):
             yield Static("", id="session-empty", classes="hint")
             with VerticalScroll(id="session-work"):
                 yield Static("", id="session-lines", markup=False)
+            yield Static("", id="session-approval", markup=False)
+            with Horizontal(classes="buttons", id="session-approve"):
+                yield Button("Allow once", id="allow-session", variant="primary")
+                yield Button("Deny", id="deny-session")
+            yield Input(placeholder="Message this sub-session", id="session-message")
             with Horizontal(classes="buttons"):
                 yield Button("Stop", id="stop-session", variant="error")
                 yield Button("Close", id="close")
@@ -1197,6 +1204,7 @@ class SessionsScreen(ModalScreen[None]):
     def on_unmount(self) -> None:
         with contextlib.suppress(ValueError):
             self.sessions.listeners.remove(self.refresh_view)
+        self._release()
 
     def _selected(self) -> SubSession | None:
         option = self.query_one(OptionList).highlighted_option
@@ -1214,15 +1222,68 @@ class SessionsScreen(ModalScreen[None]):
         self.query_one("#session-empty", Static).update(
             "" if listed else "No sub-sessions in this conversation. The agent starts one "
             "when it hands off a task.")
-        self._show_work()
+        self.run_worker(self._show, group="session", exclusive=True)
 
     @on(OptionList.OptionHighlighted)
-    def _show_work(self) -> None:
+    def _highlighted(self) -> None:
+        self.run_worker(self._show, group="session", exclusive=True)
+
+    async def _show(self) -> None:
         session = self._selected()
-        lines = session.lines() if session is not None else []
+        if session is None:
+            self._release()
+        elif self.opened is None or self.opened[0] is not session:
+            self._release()
+            try:
+                self.opened = (session, await self.sessions.open(session))
+            except Exception as e:  # noqa: BLE001 - shown, never fatal
+                self.notify(f"The sub-session could not be opened: {e}", severity="error")
+        lines: list[tuple[str, str]] = []
+        pending = None
+        if self.opened is not None:
+            remote = self.opened[1]
+            conversation = remote.snapshot().conversation
+            if conversation is not None:
+                with contextlib.suppress(Exception):
+                    lines = message_lines(await remote.history(conversation.id))
+            pending = next(iter(remote.snapshot().pending_permissions), None)
         self.query_one("#session-lines", Static).update(
             "\n\n".join(f"{who}: {text}" for who, text in lines))
+        self.query_one("#session-approval", Static).update(
+            f"It asks to run {pending.call.name}: {call_parts(pending.call.arguments)[1]}"
+            if pending is not None else "")
+        self.query_one("#session-approve").display = pending is not None
         self.query_one("#stop-session", Button).disabled = session is None or not session.running
+
+    def _release(self) -> None:
+        if self.opened is not None:
+            child, remote = self.opened
+            self.opened = None
+            self.sessions.release(child, remote)
+
+    async def _command(self, awaitable: Awaitable[Any]) -> None:
+        try:
+            await awaitable
+        except Exception as e:  # noqa: BLE001 - shown, never fatal
+            self.notify(str(e) or type(e).__name__, severity="error", markup=False)
+
+    @on(Input.Submitted, "#session-message")
+    def _message(self, event: Input.Submitted) -> None:
+        event.stop()
+        text = event.value.strip()
+        event.input.clear()
+        if text and self.opened is not None:
+            self.run_worker(self._command(self.opened[1].send(text)))
+
+    @on(Button.Pressed, "#allow-session, #deny-session")
+    def _approve(self, event: Button.Pressed) -> None:
+        if self.opened is None:
+            return
+        remote = self.opened[1]
+        pending = next(iter(remote.snapshot().pending_permissions), None)
+        if pending is not None:
+            decision = Decision.ALLOW_ONCE if event.button.id == "allow-session" else Decision.DENY
+            self.run_worker(self._command(remote.resolve_permission(pending.id, decision)))
 
     @on(Button.Pressed, "#stop-session")
     def _stop(self) -> None:
