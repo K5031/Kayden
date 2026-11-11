@@ -1530,6 +1530,21 @@ def test_a_long_message_wraps_inside_its_bubble(qapp):
     bubble.close()
 
 
+async def test_a_line_says_kayden_is_thinking_before_anything_streams(make, qapp):
+    from kayden.api import ReasoningDelta, StateChanged
+
+    h = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    assert window.waiting_line.isHidden()
+    controller.model.apply(StateChanged(AgentState.THINKING))
+    assert not window.waiting_line.isHidden() and window.waiting_line.text() == "Thinking…"
+    controller.model.apply(ReasoningDelta("Looking at the files"))
+    assert window.waiting_line.isHidden()  # the reply's own Thinking… line shows now
+    controller.model.apply(StateChanged(AgentState.IDLE))
+    assert window.waiting_line.isHidden()
+
+
 def test_thinking_says_so_while_it_streams(qapp):
     item = AssistantItem(reasoning="Looking at the files")
     bubble = AssistantBubble(item)

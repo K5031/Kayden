@@ -346,6 +346,12 @@ class ConversationModel:
         return self.state in BUSY_STATES
 
     @property
+    def waiting(self) -> bool:
+        """The model works on its next step and nothing of it shows yet: before the first
+        token, which a thinking model can take long to send."""
+        return self.state is AgentState.THINKING and not self._stream
+
+    @property
     def status_text(self) -> str:
         parts = [STATE_LABELS[self.state]]
         if background := sum(1 for t in self._tools.values()

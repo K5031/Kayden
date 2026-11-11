@@ -1423,6 +1423,9 @@ class MainWindow(QMainWindow):
         empty.addStretch(3)
         outer.addWidget(self.load_earlier, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addLayout(self.items_layout)
+        self.waiting_line = _label("Thinking…", selectable=False, tone="muted")
+        self.waiting_line.hide()
+        outer.addWidget(self.waiting_line)
         outer.addWidget(self.empty_state, 1)
         outer.addStretch()
         self.scroll.setWidget(content)
@@ -1862,6 +1865,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_status(self) -> None:
         model = self.model
+        self.waiting_line.setVisible(model.waiting)
         duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state,
                             model.help_needed) if model.conversation is not None else None)
         self.duty_label.setText(duty or "")

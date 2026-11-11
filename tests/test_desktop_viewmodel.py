@@ -24,6 +24,7 @@ from kayden.api import (
     ModuleInfo,
     PermissionPolicy,
     PermissionRequested,
+    ReasoningDelta,
     Role,
     RuntimeSnapshot,
     RuntimeStateError,
@@ -406,6 +407,19 @@ def _snapshot(seq: int = 0) -> RuntimeSnapshot:
     return RuntimeSnapshot(seq=seq, state=AgentState.IDLE, conversation=CONVERSATION,
                            config=None, model="m", usage=UsageSnapshot(Usage(), 0, 0.0),
                            operations=(), pending_permissions=(), queued_messages=())
+
+
+def test_waiting_until_something_of_the_next_step_shows():
+    """The model can think for a long time before its first token arrives."""
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    assert not model.waiting
+    model.apply(StateChanged(AgentState.THINKING))
+    assert model.waiting
+    model.apply(ReasoningDelta("Looking"))  # the reply's own Thinking… line takes over
+    assert not model.waiting
+    model.apply(StateChanged(AgentState.IDLE))
+    assert not model.waiting
 
 
 def test_failure_banner_until_the_next_cycle():
