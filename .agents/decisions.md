@@ -666,3 +666,18 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 |---|---|
 | Stamp | In the request only, the first text block of every USER message (the user's, runtime notices, the activation notice) starts with `[Sent Wed 2026-11-11 10:15 +01:00] `: its `created_at` in local time with weekday and offset. Tool results and operation results are not stamped |
 | Why there | Computed from the stored time, so a message reads the same in every request and the provider's prompt cache holds; the transcript, the frontends and search keep the text as typed |
+
+## Headless frontend
+
+Design: [Agent Note](notes/implemented/2026-11-11-headless-units.md).
+
+| Choice | Value |
+|---|---|
+| Launch | `kayden --headless` replaces the frontend for that run with `kayden.frontends.headless:factory`, whatever is saved, and never hands over to the window; it is not an installed frontend, so Settings never offers it. `--duty` / `--goal` (one of them, with `--headless`, not with `--conversation`) become the frontend options `start`, `duty`, `goal` |
+| Channel | JSON-RPC 2.0, one message per line, lines up to 16 MiB. At start the frontend keeps duplicates of fds 0 and 1 for the channel, points fd 0 at /dev/null and fd 1 at stderr, and sets `sys.stdout` to stderr |
+| Requests | `REQUESTS` in `kayden.frontends.headless`: each handled in its own task, so a slow one blocks nothing; a request without an id gets no reply. Errors: -32700 bad JSON, -32600 not a request, -32601 unknown method, -32602 missing or unexpected parameters, -32000 refused by the runtime (`data.type` the exception's class) |
+| Encoding | Dataclasses as objects with `"type": <class name>` and their fields; enums as values; tuples as lists. Requests take plain JSON (a duty and plan items as objects without `type`) |
+| Events | Every envelope, deltas included, as an `event` notification with `seq` |
+| Start-up | With `start` the frontend starts (a new conversation with a duty); a failure is written to stderr as `kayden: <message>` and the unit quits |
+| Prompts | `interactive_permissions=True`: prompts wait for `resolve_permission` like a person's |
+| Quit | stdin closing: requests already read are answered, then `run()` returns |

@@ -64,6 +64,7 @@ Navigation and interaction patterns.
 UI frameworks.
 Rendering and presentation.
 The frontend communicates with Kayden through its supported runtime API.
+A headless frontend lets another program drive an instance: JSON-RPC 2.0 over the process's stdin and stdout, each request a runtime command, each runtime event a notification. Permission prompts and the agent's questions go to that program. Launch options can start an instance on a duty.
 It can submit messages, access conversation information, select models, receive execution updates, present permission requests, and control agent execution.
 3.1 Tool Presentation
 Tools exist primarily for the model, not for the user interface.
@@ -275,7 +276,7 @@ Budgets.
 A crash in one instance should not directly terminate other instances.
 10.1 Instance Creation
 Instances are launched through ordinary application or OS mechanisms.
-An agent with authorized terminal access may launch another Kayden process.
+An agent with authorized terminal access may launch another Kayden process. A program can launch and drive one through the headless frontend (section 3); the fleet manager in PHILOSOPHY.md is such a program, a separate project.
 No dedicated agent-spawning API is required.
 10.2 Instance Communication
 Agents communicate through ordinary available tools and external services.

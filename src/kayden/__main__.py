@@ -65,6 +65,8 @@ RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_p
 SECRET_WORDS = ("key", "token", "secret", "password")
 # The frontend each launcher falls back to: its own kind's built-in one.
 LAUNCHER_FRONTENDS = {TERMINAL: "tui", WINDOW: "desktop"}
+# Not an installed frontend: a person never chooses it in Settings; --headless runs it.
+HEADLESS_FACTORY = "kayden.frontends.headless:factory"
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
               "system_prompt", "work_folder", "budget", "mcp_servers")
 BUDGET_INTS = ("max_tokens", "max_tool_calls")
@@ -208,6 +210,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--maintenance-model", help="cheaper model for memory maintenance")
     parser.add_argument("--permissions", choices=[p.value for p in PermissionPolicy],
                         help="tool permission policy (default: auto)")
+    parser.add_argument("--headless", action="store_true",
+                        help="be driven by another program: JSON-RPC on stdin and stdout")
+    duty = parser.add_mutually_exclusive_group()
+    duty.add_argument("--duty", help="with --headless: start a new conversation on this duty")
+    duty.add_argument("--goal", help="with --headless: start a new conversation on this goal")
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
     return parser.parse_args(argv)
@@ -215,6 +222,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def start_options(args: argparse.Namespace) -> dict[str, Any] | None:
     """Frontend options that start right away, or None to let the frontend ask."""
+    if args.duty is not None or args.goal is not None:
+        if not args.headless:
+            raise SystemExit("kayden: --duty and --goal need --headless")
+        if args.conversation is not None:
+            raise SystemExit("kayden: a duty starts a new conversation; leave out --conversation")
+        return {"start": True, "duty": args.duty or args.goal, "goal": args.goal is not None}
     if args.conversation is None:
         return None
     return {"start": True, "conversation_id": args.conversation}
@@ -302,8 +315,11 @@ def load_config(args: argparse.Namespace, *, default_root: Path | None = None,
             continue
         modules[kind], running[kind] = ModuleSpec(target), chosen[kind]
     want = restart.frontend if restart is not None else chosen["frontend"]
-    running["frontend"], modules["frontend"] = choose_frontend(want, modules["frontend"],
-                                                               launcher)
+    if args.headless:
+        running["frontend"], modules["frontend"] = None, ModuleSpec(HEADLESS_FACTORY)
+    else:
+        running["frontend"], modules["frontend"] = choose_frontend(want, modules["frontend"],
+                                                                   launcher)
 
     tools = modules["tools"]
     if running["tools"] == "shell-files" and "root" not in tools.options:
@@ -433,7 +449,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.show_config:
         print(show_config(config, config_path(args)), end="")
         return
-    window, notice = saved_window(config)
+    window, notice = (None, None) if args.headless else saved_window(config)
     if window is not None:
         hand_over(args, Restart(window, WINDOW, args.conversation),
                   message="Kayden opens in the desktop app.")
