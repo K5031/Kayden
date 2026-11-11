@@ -364,3 +364,13 @@ async def test_activating_a_new_chat_stores_it(make):
     await h.rec.wait_for(lambda r: len(h.core.requests) == 1)
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
     assert [c.id for c in await h.runtime.list_conversations()] == [new.id]
+
+
+async def test_switching_conversations_does_not_list_the_models_again(make):
+    h: Harness = await make()
+    first = await h.chat()
+    await h.chat()
+    listed = h.core.listed
+    await h.start(first.id)
+    await h.start()
+    assert h.core.listed == listed  # a provider round trip per switch felt as lag

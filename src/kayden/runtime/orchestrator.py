@@ -427,8 +427,11 @@ class Runtime:
         if options.folder is not None and not Path(options.folder).expanduser().is_dir():
             raise ValueError(f"{options.folder} is not a folder")
         self._hold_lock()
-        await self._refresh_models()
+        if not self._models:
+            await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
+        if model is not None and model not in self._models:
+            await self._refresh_models()  # one the provider added since: ask again
         if model is None:
             raise ValueError("Core lists no models")
         self._check_model(model)

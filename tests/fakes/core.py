@@ -96,6 +96,7 @@ class ScriptedCore(Core):
         self.count_tokens_result: int | None = None
         self.options: dict[str, Any] = {}
         self.list_error: Exception | None = None
+        self.listed = 0  # list_models calls
         self.closed = False
         self.tools: list[ToolSpec] = []  # tools the provider runs itself (list_tools)
 
@@ -103,6 +104,7 @@ class ScriptedCore(Core):
         self.steps.extend(steps)
 
     async def list_models(self) -> Sequence[ModelInfo]:
+        self.listed += 1
         if self.list_error is not None:
             raise self.list_error
         return self.models

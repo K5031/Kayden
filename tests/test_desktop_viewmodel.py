@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -660,3 +661,23 @@ def test_passing_80_percent_of_the_limit_gives_one_warning():
     spend(9.0)
     [warning] = of(model, NoticeItem)
     assert warning.severity == "warning" and "$8.10 of your $10 limit" in warning.text
+
+
+async def test_opening_a_conversation_finishes_once_it_is_shown(make):
+    h: Harness = await make()
+    other = await h.chat()
+    await h.chat()
+    model, controller, _ = await attach(h)
+    history = h.runtime.history
+
+    async def slow_history(*args: Any, **kwargs: Any) -> Any:  # as SQLite, in a thread
+        await asyncio.sleep(0.05)
+        return await history(*args, **kwargs)
+
+    h.runtime.history = slow_history  # type: ignore[method-assign]
+    seen: list[str] = []
+    task = controller.open_conversation(other.id)
+    task.add_done_callback(lambda _: seen.append(model.conversation.id))  # as the window
+    await task
+    await asyncio.sleep(0)
+    assert seen == [other.id]  # the sidebar refreshed then highlights the new one

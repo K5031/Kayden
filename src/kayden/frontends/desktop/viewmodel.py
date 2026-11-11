@@ -983,9 +983,24 @@ class Controller:
     def _switch(self, options: StartOptions) -> asyncio.Task[None]:
         async def start() -> None:
             await self.runtime.start(options)
-            await self._inbox.put(self.recover)
+            await self._shown()
 
         return self.command(start())
+
+    async def _shown(self) -> None:
+        """Load the conversation now open, in order with events, and return once it is in
+        the model: what runs after a switch (the sidebar) then sees the new one."""
+        loaded: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+        async def recover() -> None:
+            try:
+                await self.recover()
+            finally:
+                if not loaded.done():
+                    loaded.set_result(None)
+
+        await self._inbox.put(recover)
+        await loaded
 
     async def conversations(self, *, include_archived: bool = False) -> list[ConversationInfo]:
         return newest_first(await self.runtime.list_conversations(
@@ -1015,7 +1030,7 @@ class Controller:
         async def erase() -> None:
             if self.is_open(conversation_id):
                 await self.runtime.start(StartOptions())
-                await self._inbox.put(self.recover)
+                await self._shown()
             await self.runtime.delete_conversation(conversation_id)
             if self.sessions is not None:
                 await self.sessions.delete_of(conversation_id)

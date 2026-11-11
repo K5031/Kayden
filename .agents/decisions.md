@@ -788,6 +788,8 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 
 | Choice | Decision |
 |---|---|
+| Models at start | `start` asks the Core for its models only the first time, or when the chosen model is not in the list it has: a provider round trip on every switch was felt as lag |
+| Switching in the desktop app | `Controller` returns from opening a conversation once it is loaded into the model, so the sidebar refreshed after it highlights the new one |
 | Draft | `start` without a conversation id or `seed_from` opens a draft: the runtime names it (`_new_id`) and keeps its info, folder included, without calling Memory. `history`, `search_archive` and `inspect_memory` answer for it as for an empty conversation |
 | Stored | On first use: the first append (a message, an activation notice), a duty or plan, a rename or an archive. The runtime calls `Memory.create_conversation(conversation_id=…)` with the draft's id and emits `ConversationUpdated`, which refreshes lists |
 | Continue from | Stored at once: Memory needs the source to seed the summary, and the chat is not blank anyway |
