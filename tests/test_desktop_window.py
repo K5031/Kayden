@@ -1511,3 +1511,19 @@ async def test_sidebar_tooltips_show_only_the_full_title(make, qapp, tmp_path):
     tips = [lst.item(i).toolTip() for i in range(lst.count())]
     assert tips == ["A long first message that reads as the title of this conversation",
                     "Research the full bracket"]  # the brief's first line, not all of it
+
+
+def test_a_long_message_wraps_inside_its_bubble(qapp):
+    from kayden.frontends.desktop.viewmodel import UserItem
+
+    text = ("ayo i jus added a planning tool like u can make a roadmap while working on "
+            "some task and it shows as a checklist")
+    bubble = UserBubble(UserItem(text, "m1"))
+    bubble.resize(600, 200)
+    bubble.show()
+    qapp.processEvents()
+    padding = bubble.bubble.layout().contentsMargins()
+    room = bubble.bubble.width() - padding.left() - padding.right()
+    assert bubble.text.width() <= room  # nothing cut at the right edge
+    assert bubble.text.minimumWidth() <= room
+    bubble.close()

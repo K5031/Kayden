@@ -574,7 +574,7 @@ class UserBubble(QWidget):
     def _fit(self) -> None:
         """As wide as its longest line, up to BUBBLE_SHARE of the transcript."""
         widest = int(self.width() * BUBBLE_SHARE)
-        margins = self.bubble.contentsMargins()
+        margins = self.bubble.layout().contentsMargins()  # the padding around the text
         natural = max(self.text.fontMetrics().horizontalAdvance(line)
                       for line in self.text.text().split("\n")) + 2
         self.text.setMinimumWidth(min(natural, widest - margins.left() - margins.right()))
