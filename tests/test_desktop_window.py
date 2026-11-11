@@ -1010,12 +1010,25 @@ async def test_a_long_notice_is_folded(make, qapp):
     assert isinstance(window._widget_for(NoticeItem("Time to check in.")), NoticeLine)
 
 
-async def test_the_menus_live_behind_one_button_and_their_shortcuts_still_work(make, qapp):
+async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(make, qapp):
+    import getpass
+
     h: Harness = await make()
     await h.start()
     window, _controller, _ = await open_window(h)
     assert window.menuBar().isHidden()
-    menu = window.menu_button.menu()
-    assert [a.text() for a in menu.actions()] == ["&Kayden", "&View", "&Model"]
+    texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
+    assert texts == ["&New chat", "&Duty…", "S&top", "&View", "&Model"]
+    profile = window.profile_button.menu()
+    window._fill_profile_header()
+    texts = [a.text() for a in profile.actions() if a.text() and a.isVisible()]
+    assert texts[0].startswith(getpass.getuser())
+    assert texts[1:4] == ["&Settings…", "&Memory…", "&Tool servers (MCP)…"]
+    assert texts[-2:] == ["&Help", "&Quit"]
     shortcuts = {s.toString() for a in window.actions() for s in a.shortcuts()}
     assert {"Ctrl+N", "Ctrl+,", "Esc"} <= shortcuts
+    opened: list[bool] = []
+    window.open_settings = lambda: opened.append(True)  # type: ignore[method-assign]
+    window._build_menus()  # reconnect to the replaced method
+    window.gear_button.click()
+    assert opened

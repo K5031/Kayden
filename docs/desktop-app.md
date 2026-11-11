@@ -29,7 +29,7 @@ cd Kayden
 uv run --python 3.13 --extra desktop kayden
 ```
 
-On Linux, choose **☰ → Kayden → Add to App Menu** once the app is open. Kayden then appears in
+On Linux, choose your name at the bottom left → **Add to App Menu** once the app is open. Kayden then appears in
 your app menu with its own icon and starts without a terminal. The menu item is there only
 while the app menu has no entry for this install.
 
@@ -57,7 +57,7 @@ another reason, the Settings window opens with the message.
 
 | To | Do this |
 |---|---|
-| Find the menus | The **☰** button at the top of the sidebar opens Kayden, View and Model. Their shortcuts work without opening it. |
+| Find the menus | **☰** at the top of the sidebar: new chat, duty, stop, view (zoom, archived conversations) and model. Your name at the bottom left: settings, memory, tool servers, help and quit; the gear next to it opens Settings. Shortcuts work without opening a menu. |
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
 | Stop Kayden | Press the round button in the message box (it shows a square while Kayden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |
@@ -68,15 +68,15 @@ another reason, the Settings window opens with the message.
 | Start over | **New chat** (**Ctrl+N**). |
 | Work in another folder | Click the folder above the conversation and choose one. A chat with no messages yet moves there; otherwise a new chat starts in it. See [Folders](using-kayden.md#folders). |
 | Go back to a conversation | Click it in the list. |
-| Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **Show archived** under the list to see hidden ones. |
+| Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **☰ → View → Show archived conversations** to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
-| See what Kayden remembers | **☰ → Kayden → Memory…**: About you and the notes it keeps across conversations; add, edit or delete them. |
-| Give Kayden more tools | **☰ → Kayden → Tool servers (MCP)…**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
+| See what Kayden remembers | your name at the bottom left → **Memory…**: About you and the notes it keeps across conversations; add, edit or delete them. |
+| Give Kayden more tools | your name at the bottom left → **Tool servers (MCP)…**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
 | Open work Kayden handed off | Its sub-sessions are listed under the conversation, with a dot while they work: click one to open it there, talk to it, approve its steps or stop it. Click the conversation to go back. Right-click one to resume, change its spending limit, rename, archive or delete it; the limit for new ones is in **Settings**. See [Sub-sessions](concepts.md#sub-sessions). |
 | Fold a project | Conversations are grouped by their folder; click a folder's name to fold or unfold it. |
-| Give a conversation standing work | **☰ → Kayden → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
+| Give a conversation standing work | **☰ → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
 | Change the model | **☰ → Model**. |
-| Change settings | **☰ → Kayden → Settings** (**Ctrl+,**). |
+| Change settings | the gear at the bottom left, or **Ctrl+,**. |
 | Make everything larger or smaller | **Ctrl +** and **Ctrl −** (also in **☰ → View**); **Ctrl+0** goes back to normal. Kayden remembers the size. |
 
 Each conversation in the list shows its name, when it was last used, and the start of its

@@ -8,6 +8,7 @@ the qasync loop that also runs the runtime.
 from __future__ import annotations
 
 import asyncio
+import getpass
 import html
 import json
 from collections.abc import Callable, Sequence
@@ -968,9 +969,21 @@ class MainWindow(QMainWindow):
             shortcut = QShortcut(keys, self.conversation_list,
                                  context=Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(lambda c=command: self._on_current(c))
-        self.show_archived = Switch("Show archived")
+        self.show_archived = QAction("Show &archived conversations", self, checkable=True)
         self.show_archived.toggled.connect(lambda _: _spawn(self.fill_sidebar()))
         self.switch_reason = _label(selectable=False, role="small")
+        self.user_name = getpass.getuser()
+        self.profile_button = QToolButton(objectName="profile", text=f" {self.user_name}")
+        self.profile_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.profile_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.profile_button.setIconSize(QSize(22, 22))
+        self.profile_button.setAccessibleName("Profile and settings")
+        self.profile_button.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                          QSizePolicy.Policy.Fixed)
+        self.gear_button = QToolButton(objectName="gear")
+        self.gear_button.setToolTip("Settings (Ctrl+,)")
+        self.gear_button.setAccessibleName("Settings")
+        self.gear_button.setIconSize(QSize(18, 18))
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 6)
         top.addWidget(self.menu_button)
@@ -979,8 +992,12 @@ class MainWindow(QMainWindow):
         side.addWidget(self.new_button)
         side.addSpacing(10)
         side.addWidget(self.conversation_list, 1)
-        side.addWidget(self.show_archived)
         side.addWidget(self.switch_reason)
+        profile_row = QHBoxLayout()
+        profile_row.setContentsMargins(0, 6, 0, 0)
+        profile_row.addWidget(self.profile_button, 1)
+        profile_row.addWidget(self.gear_button)
+        side.addLayout(profile_row)
 
         main = QWidget()
         column = QVBoxLayout(main)
@@ -1114,6 +1131,8 @@ class MainWindow(QMainWindow):
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.on_accent))
         self.folder_button.setIcon(theme.icon("folder", colors.muted))
+        self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
+        self.profile_button.setIcon(theme.avatar(self.user_name))
 
     def _choose_folder(self) -> None:
         if reason := self.controller.can_switch():
@@ -1136,12 +1155,11 @@ class MainWindow(QMainWindow):
             self._paint_icons()
 
     def _build_menus(self) -> None:
-        """One menu behind the sidebar's menu button; a window shows no menu bar. Every
-        action is also the window's, so its shortcut works without the menu open."""
+        """No menu bar. The ☰ menu holds what is about the conversation (new chat, duty,
+        stop, view, model); the profile menu at the bottom holds the app (settings, memory,
+        tool servers, help, quit). Every action is also the window's, so its shortcut works
+        with the menus closed."""
         self.menuBar().hide()
-        main_menu = QMenu(self)
-        self.menu_button.setMenu(main_menu)
-        file_menu = main_menu.addMenu("&Kayden")
         settings = QAction("&Settings…", self)
         settings.setShortcuts([QKeySequence("Ctrl+,")])  # Preferences is unbound on Linux
         settings.triggered.connect(self.open_settings)
@@ -1161,12 +1179,13 @@ class MainWindow(QMainWindow):
         self.app_menu_action.setStatusTip("Start Kayden from your app menu, with its own icon.")
         self.app_menu_action.triggered.connect(self._add_to_app_menu)
         self.app_menu_action.setVisible(app_menu.supported() and not app_menu.is_current())
-        for action in (self.new_action, self.duty_action, None, self.memory_action, servers,
-                       settings, self.app_menu_action, None, stop, quit_action):
-            if action is None:
-                file_menu.addSeparator()
-            else:
-                file_menu.addAction(action)
+        help_action = QAction("&Help", self, shortcut=QKeySequence.StandardKey.HelpContents)
+        help_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(DOCS_URL)))
+
+        main_menu = QMenu(self)
+        self.menu_button.setMenu(main_menu)
+        main_menu.addActions([self.new_action, self.duty_action, stop])
+        main_menu.addSeparator()
         view_menu = main_menu.addMenu("&View")
         for text, keys, steps in (
                 ("Zoom &In", [QKeySequence.StandardKey.ZoomIn, QKeySequence("Ctrl+=")], 1),
@@ -1176,11 +1195,30 @@ class MainWindow(QMainWindow):
             action.setShortcuts(keys)
             action.triggered.connect(lambda _=False, s=steps: self.zoom(s))
             view_menu.addAction(action)
+        view_menu.addSeparator()
+        view_menu.addAction(self.show_archived)
         self.model_menu = main_menu.addMenu("&Model")
         self.model_menu.aboutToShow.connect(self._fill_model_menu)
         self._fill_model_menu()
-        for menu in (file_menu, view_menu):
-            self.addActions(menu.actions())
+
+        profile_menu = QMenu(self)
+        self.profile_button.setMenu(profile_menu)
+        self.profile_header = profile_menu.addAction(self.user_name)
+        self.profile_header.setEnabled(False)
+        profile_menu.aboutToShow.connect(self._fill_profile_header)
+        profile_menu.addSeparator()
+        profile_menu.addActions([settings, self.memory_action, servers])
+        profile_menu.addSeparator()
+        profile_menu.addActions([self.app_menu_action, help_action])
+        profile_menu.addSeparator()
+        profile_menu.addAction(quit_action)
+        self.gear_button.clicked.connect(settings.trigger)
+        for menu in (main_menu, view_menu, profile_menu):
+            self.addActions([a for a in menu.actions() if not a.menu()])
+
+    def _fill_profile_header(self) -> None:
+        spent = self.model.spending_text
+        self.profile_header.setText(f"{self.user_name} · {spent}" if spent else self.user_name)
 
     def zoom(self, steps: int) -> None:
         """Make everything larger (steps > 0), smaller, or its normal size (0)."""

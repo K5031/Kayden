@@ -9,6 +9,7 @@ font size in the style sheet.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -212,6 +213,9 @@ QPushButton#nav {{ background: transparent; border: none; color: {c.text};
     padding: 7px 10px; text-align: left; }}
 QPushButton#nav:hover {{ background: {c.select}; }}
 QToolButton#menu {{ padding: 4px 8px; font-size: {title}; }}
+QToolButton#profile {{ color: {c.text}; padding: 6px 8px; }}
+QToolButton#profile:hover, QToolButton#gear:hover {{ background: {c.select}; }}
+QToolButton#profile::menu-indicator {{ image: none; width: 0; }}
 QToolButton#menu::menu-indicator {{ image: none; width: 0; }}
 QFrame#headerGroup {{ background: {c.card}; border-radius: 8px; }}
 QFrame#banner {{ background: {c.error_bg}; border-radius: 8px; }}
@@ -245,7 +249,7 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
-    """A line icon: "send" (an up arrow), "stop" (a square) or "folder"."""
+    """A line icon: "send" (an up arrow), "stop" (a square), "folder" or "gear"."""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.setDevicePixelRatio(scale)
@@ -276,5 +280,42 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
             path.lineTo(s * 0.88, s * 0.78)
             path.closeSubpath()
             painter.drawPath(path)
+        case "gear":  # eight square teeth around a ring, and the hole
+            painter.setPen(QPen(QColor(color), size / 11, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            centre = QPointF(s / 2, s / 2)
+            outer, inner, teeth = s * 0.44, s * 0.33, 8
+            path = QPainterPath()
+            for i in range(teeth * 4):
+                angle = math.radians(i * 360 / (teeth * 4) - 90 + 360 / (teeth * 8))
+                radius = outer if i % 4 in (1, 2) else inner
+                point = QPointF(centre.x() + radius * math.cos(angle),
+                                centre.y() + radius * math.sin(angle))
+                path.moveTo(point) if i == 0 else path.lineTo(point)
+            path.closeSubpath()
+            painter.drawPath(path)
+            painter.drawEllipse(centre, s * 0.13, s * 0.13)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def avatar(letter: str, size: int = 22) -> QIcon:
+    """A round badge with a letter: the profile picture of someone without one."""
+    c = _current
+    scale = 2
+    pixmap = QPixmap(size * scale, size * scale)
+    pixmap.setDevicePixelRatio(scale)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(c.accent))
+    painter.drawEllipse(QRectF(0, 0, size, size))
+    font = QFont(painter.font())
+    font.setPixelSize(int(size * 0.5))
+    font.setWeight(QFont.Weight.DemiBold)
+    painter.setFont(font)
+    painter.setPen(QColor(c.on_accent))
+    painter.drawText(QRectF(0, 0, size, size), Qt.AlignmentFlag.AlignCenter, letter[:1].upper())
     painter.end()
     return QIcon(pixmap)

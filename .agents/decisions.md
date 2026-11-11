@@ -744,5 +744,5 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Column | The conversation, the prompt cards and the message box sit in a centred column at most 780 px wide (`COLUMN_WIDTH`) |
 | Bubbles | Your messages are a neutral bubble (`Palette.bubble`) with ordinary text, not the accent colour; a queued one is outlined |
 | Sidebar | A ☰ menu button and a plain "+ New chat" row on top; conversation and sub-session rows are one line in normal weight (preview, date and state on hover); the open one is a subtle grey (`Palette.select`) |
-| Menus | No menu bar: Kayden, View and Model sit behind ☰. Every action is also the window's, so shortcuts work with the menu closed; Settings is Ctrl+, explicitly (Qt's Preferences key is unbound on Linux) |
+| Menus | No menu bar. ☰ holds the conversation's actions (New chat, Duty, Stop, View with zoom and Show archived conversations, Model); the profile chip at the bottom left (a letter avatar and the OS user name, `getpass.getuser()`, with spending in its header) holds the app's (Settings, Memory, Tool servers, Add to App Menu, Help → the docs, Quit), and the gear beside it opens Settings. Every action is also the window's, so shortcuts work with the menu closed; Settings is Ctrl+, explicitly (Qt's Preferences key is unbound on Linux) |
 | Replies | List items have no top margin, only `LIST_ITEM_SPACING` below |
