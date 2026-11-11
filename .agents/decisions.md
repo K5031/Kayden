@@ -736,3 +736,13 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 |---|---|
 | Marker | `api.NOTICE_PREFIX` ("[Runtime notice] ") starts every USER message Kayden writes for the model: the activation notice, a duty's wake-up, a sub-session's report to its parent |
 | Shown | Frontends show such a message as a notice line without the prefix (desktop `NoticeItem`, TUI `SystemEntry`), never as the user's bubble; a long one (several lines or over 160 characters, such as a new goal's brief) is folded to its first line, with Show all on the desktop and a collapsed entry in the TUI; a queued one is shown once it is committed. A conversation whose first message is a notice is labelled "New chat" until it gets a title |
+
+## Desktop look (a calmer, more professional window)
+
+| Choice | Value |
+|---|---|
+| Column | The conversation, the prompt cards and the message box sit in a centred column at most 780 px wide (`COLUMN_WIDTH`) |
+| Bubbles | Your messages are a neutral bubble (`Palette.bubble`) with ordinary text, not the accent colour; a queued one is outlined |
+| Sidebar | A ☰ menu button and a plain "+ New chat" row on top; conversation and sub-session rows are one line in normal weight (preview, date and state on hover); the open one is a subtle grey (`Palette.select`) |
+| Menus | No menu bar: Kayden, View and Model sit behind ☰. Every action is also the window's, so shortcuts work with the menu closed; Settings is Ctrl+, explicitly (Qt's Preferences key is unbound on Linux) |
+| Replies | List items have no top margin, only `LIST_ITEM_SPACING` below |

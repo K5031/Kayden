@@ -48,6 +48,8 @@ class Palette:
     error: str
     error_bg: str
     error_text: str
+    bubble: str  # your messages
+    select: str  # the open conversation in the sidebar
 
 
 LIGHT = Palette(
@@ -55,13 +57,13 @@ LIGHT = Palette(
     line="#E3E3E8", track="#C9C9D2", text="#1B1B1F", muted="#6C6C78", accent="#5B5BD6",
     accent_hover="#4C4CC4", accent_soft="#EDEDFC", accent_text="#3E3EA8", on_accent="#FFFFFF",
     ok="#1F8A5B", warning="#9A5B00", error="#C62828", error_bg="#FDECEC",
-    error_text="#8E1B1B")
+    error_text="#8E1B1B", bubble="#EFEFF3", select="#E7E7EC")
 DARK = Palette(
     dark=True, bg="#1A1A1E", side="#131316", card="#232328", field="#202025",
     line="#2F2F36", track="#4A4A55", text="#ECECF0", muted="#9A9AA6", accent="#8C8CF5",
     accent_hover="#A3A3F8", accent_soft="#2A2A48", accent_text="#C9C9FF", on_accent="#14142B",
     ok="#4CC38A", warning="#F3C773", error="#F28B82", error_bg="#3B1F22",
-    error_text="#F7B4AE")
+    error_text="#F7B4AE", bubble="#2B2B31", select="#26262C")
 
 ICONS = Path(__file__).parent / "icons"
 
@@ -205,18 +207,22 @@ QScrollBar::handle:vertical {{ background: {c.track}; border-radius: 3px; min-he
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 
-QFrame#header {{ border-bottom: 1px solid {c.line}; }}
+QFrame#header {{ border: none; }}
+QPushButton#nav {{ background: transparent; border: none; color: {c.text};
+    padding: 7px 10px; text-align: left; }}
+QPushButton#nav:hover {{ background: {c.select}; }}
+QToolButton#menu {{ padding: 4px 8px; font-size: {title}; }}
+QToolButton#menu::menu-indicator {{ image: none; width: 0; }}
 QFrame#headerGroup {{ background: {c.card}; border-radius: 8px; }}
 QFrame#banner {{ background: {c.error_bg}; border-radius: 8px; }}
 QFrame#banner QLabel {{ color: {c.error_text}; }}
-QFrame#composer {{ background: {c.field}; border: 1px solid {c.line}; border-radius: 21px; }}
+QFrame#composer {{ background: {c.field}; border: 1px solid {c.line}; border-radius: 16px; }}
 QFrame#composer[focused="true"] {{ border-color: {c.accent}; }}
 QFrame#composer QPlainTextEdit {{ background: transparent; border: none; padding: 0; }}
-QFrame#user {{ background: {c.accent}; border-radius: 14px;
-    border-bottom-right-radius: 4px; }}
-QFrame#user QLabel {{ color: {c.on_accent}; }}
-QFrame#user:disabled {{ background: {c.accent_soft}; }}
-QFrame#user QLabel:disabled {{ color: {c.accent_text}; }}
+QFrame#user {{ background: {c.bubble}; border-radius: 14px; }}
+QFrame#user QLabel {{ color: {c.text}; }}
+QFrame#user:disabled {{ background: transparent; border: 1px dashed {c.line}; }}
+QFrame#user QLabel:disabled {{ color: {c.muted}; }}
 QLabel#bigAvatar {{ background: {c.accent_soft}; color: {c.accent_text}; border-radius: 24px;
     font-size: {heading}; font-weight: 600; }}
 QFrame#tool {{ background: transparent; border: none; }}

@@ -160,6 +160,7 @@ DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
 EMPTY_TITLE = "Start a conversation"
 EMPTY_HINT = "Ask a question or describe a task."
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
+COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
 TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
 # Item data the sidebar and memory rows are drawn from.
@@ -290,18 +291,24 @@ class RowDelegate(QStyledItemDelegate):
     PAD = QSize(10, 7)
     INDENT = 22  # a sub-session under its conversation
 
-    def __init__(self, view: QListWidget, *, wrap: bool = False) -> None:
+    def __init__(self, view: QListWidget, *, wrap: bool = False, compact: bool = False
+                 ) -> None:
         super().__init__(view)
-        self.view, self.wrap = view, wrap
+        self.view, self.wrap, self.compact = view, wrap, compact
+        if compact:
+            self.PAD = QSize(10, 6)
 
     def _texts(self, index: Any) -> tuple[str, str, str, set[str]]:
         title = index.data(TITLE_ROLE) or index.data(Qt.ItemDataRole.DisplayRole) or ""
-        return (title, index.data(PREVIEW_ROLE) or "", index.data(DATE_ROLE) or "",
-                index.data(FLAGS_ROLE) or set())
+        flags = index.data(FLAGS_ROLE) or set()
+        if index.data(KIND_ROLE) is not None:  # the sidebar: one line, details on hover
+            return title, "", "", flags
+        return (title, index.data(PREVIEW_ROLE) or "", index.data(DATE_ROLE) or "", flags)
 
     def _title_font(self, option: QStyleOptionViewItem) -> QFont:
         font = QFont(option.font)
-        font.setWeight(QFont.Weight.DemiBold if not self.wrap else QFont.Weight.Normal)
+        font.setWeight(QFont.Weight.DemiBold if not self.wrap and not self.compact
+                       else QFont.Weight.Normal)
         return font
 
     def _small_font(self, option: QStyleOptionViewItem) -> QFont:
@@ -384,7 +391,8 @@ class RowDelegate(QStyledItemDelegate):
         box = QRectF(option.rect).adjusted(0, 1, 0, -1)
         if selected or hovered:
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(colors.accent_soft if selected else colors.card))
+            painter.setBrush(QColor(colors.select if self.compact else
+                                    colors.accent_soft if selected else colors.card))
             painter.drawRoundedRect(box, 8, 8)
         inner = option.rect.adjusted(self.PAD.width(), self.PAD.height() + 1,
                                      -self.PAD.width(), -self.PAD.height() - 1)
@@ -403,7 +411,7 @@ class RowDelegate(QStyledItemDelegate):
         title_font = self._title_font(option)
         painter.setFont(title_font)
         muted = "archived" in flags
-        painter.setPen(QColor(colors.accent_text if selected else
+        painter.setPen(QColor(colors.accent_text if selected and not self.compact else
                               colors.muted if muted else colors.text))
         title_height = self._title_height(option, title, right - left)
         if self.wrap:
@@ -453,6 +461,7 @@ class MarkdownView(QTextBrowser):
             fmt.setLineHeight(LINE_HEIGHT_PERCENT,
                               QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
             if block.textList() is not None:
+                fmt.setTopMargin(0)
                 fmt.setBottomMargin(LIST_ITEM_SPACING)
             else:
                 fmt.setBottomMargin(PARAGRAPH_SPACING)
@@ -931,15 +940,20 @@ class MainWindow(QMainWindow):
     def _build(self) -> None:
         sidebar = QWidget(objectName="sidebar")
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(10, 12, 10, 10)
-        side.setSpacing(8)
+        side.setContentsMargins(8, 8, 8, 10)
+        side.setSpacing(2)
         self.new_action = QAction("&New chat", self, shortcut=QKeySequence.StandardKey.New)
         self.new_action.triggered.connect(lambda: self.open_conversation(None))
-        self.new_button = _primary(QPushButton("New chat"))
+        self.menu_button = QToolButton(objectName="menu", text="☰")
+        self.menu_button.setToolTip("Menu")
+        self.menu_button.setAccessibleName("Menu")
+        self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.new_button = QPushButton("+   New chat", objectName="nav")
+        self.new_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new_button.setToolTip("Start a new conversation (Ctrl+N)")
         self.new_button.clicked.connect(self.new_action.trigger)
         self.conversation_list = ConversationList()
-        self.conversation_list.setItemDelegate(RowDelegate(self.conversation_list))
+        self.conversation_list.setItemDelegate(RowDelegate(self.conversation_list, compact=True))
         self.conversation_list.setMouseTracking(True)
         self.conversation_list.setVerticalScrollMode(
             QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -957,8 +971,13 @@ class MainWindow(QMainWindow):
         self.show_archived = Switch("Show archived")
         self.show_archived.toggled.connect(lambda _: _spawn(self.fill_sidebar()))
         self.switch_reason = _label(selectable=False, role="small")
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 6)
+        top.addWidget(self.menu_button)
+        top.addStretch()
+        side.addLayout(top)
         side.addWidget(self.new_button)
-        side.addWidget(_label("Conversations", selectable=False, role="small"))
+        side.addSpacing(10)
         side.addWidget(self.conversation_list, 1)
         side.addWidget(self.show_archived)
         side.addWidget(self.switch_reason)
@@ -1005,8 +1024,13 @@ class MainWindow(QMainWindow):
         self.scroll = QScrollArea(widgetResizable=True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget(objectName="transcript")
-        outer = QVBoxLayout(content)
-        outer.setContentsMargins(20, 16, 20, 16)
+        centred = QHBoxLayout(content)
+        centred.setContentsMargins(24, 16, 24, 24)
+        reading = QWidget()
+        reading.setMaximumWidth(COLUMN_WIDTH)
+        centred.addWidget(reading)
+        outer = QVBoxLayout(reading)
+        outer.setContentsMargins(0, 0, 0, 0)
         self.load_earlier = QPushButton("Load earlier messages")
         self.load_earlier.clicked.connect(self._load_earlier)
         self.load_earlier.hide()
@@ -1032,10 +1056,10 @@ class MainWindow(QMainWindow):
         bar.rangeChanged.connect(lambda _lo, hi: self._at_end and bar.setValue(hi))
 
         self.prompts = QVBoxLayout()
-        self.prompts.setContentsMargins(20, 0, 20, 8)
+        self.prompts.setContentsMargins(0, 0, 0, 8)
         self.composer = QFrame(objectName="composer")
         composer = QHBoxLayout(self.composer)
-        composer.setContentsMargins(14, 5, 5, 5)
+        composer.setContentsMargins(16, 10, 8, 8)
         composer.setSpacing(8)
         self.input = MessageBox()
         self.input.setPlaceholderText("Message Kayden")
@@ -1056,11 +1080,17 @@ class MainWindow(QMainWindow):
         footer.setContentsMargins(10, 4, 10, 0)
         footer.addWidget(self.status_label, 1)
         footer.addWidget(self.usage_label)
-        bottom = QVBoxLayout()
-        bottom.setContentsMargins(20, 0, 20, 8)
+        bottom_column = QWidget()
+        bottom_column.setMaximumWidth(COLUMN_WIDTH)
+        bottom = QVBoxLayout(bottom_column)
+        bottom.setContentsMargins(0, 0, 0, 0)
         bottom.setSpacing(0)
+        bottom.addLayout(self.prompts)
         bottom.addWidget(self.composer)
         bottom.addLayout(footer)
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(24, 0, 24, 10)
+        bottom_row.addWidget(bottom_column)
 
         column.addWidget(header)
         banner_row = QVBoxLayout()
@@ -1068,8 +1098,7 @@ class MainWindow(QMainWindow):
         banner_row.addWidget(self.banner)
         column.addLayout(banner_row)
         column.addWidget(self.scroll, 1)
-        column.addLayout(self.prompts)
-        column.addLayout(bottom)
+        column.addLayout(bottom_row)
 
         splitter = QSplitter()
         splitter.setHandleWidth(1)
@@ -1107,8 +1136,14 @@ class MainWindow(QMainWindow):
             self._paint_icons()
 
     def _build_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("&Kayden")
-        settings = QAction("&Settings…", self, shortcut=QKeySequence.StandardKey.Preferences)
+        """One menu behind the sidebar's menu button; a window shows no menu bar. Every
+        action is also the window's, so its shortcut works without the menu open."""
+        self.menuBar().hide()
+        main_menu = QMenu(self)
+        self.menu_button.setMenu(main_menu)
+        file_menu = main_menu.addMenu("&Kayden")
+        settings = QAction("&Settings…", self)
+        settings.setShortcuts([QKeySequence("Ctrl+,")])  # Preferences is unbound on Linux
         settings.triggered.connect(self.open_settings)
         stop = QAction("S&top", self, shortcut=QKeySequence("Esc"))
         stop.triggered.connect(self.controller.stop)
@@ -1132,7 +1167,7 @@ class MainWindow(QMainWindow):
                 file_menu.addSeparator()
             else:
                 file_menu.addAction(action)
-        view_menu = self.menuBar().addMenu("&View")
+        view_menu = main_menu.addMenu("&View")
         for text, keys, steps in (
                 ("Zoom &In", [QKeySequence.StandardKey.ZoomIn, QKeySequence("Ctrl+=")], 1),
                 ("Zoom &Out", [QKeySequence.StandardKey.ZoomOut], -1),
@@ -1141,9 +1176,11 @@ class MainWindow(QMainWindow):
             action.setShortcuts(keys)
             action.triggered.connect(lambda _=False, s=steps: self.zoom(s))
             view_menu.addAction(action)
-        self.model_menu = self.menuBar().addMenu("&Model")
+        self.model_menu = main_menu.addMenu("&Model")
         self.model_menu.aboutToShow.connect(self._fill_model_menu)
         self._fill_model_menu()
+        for menu in (file_menu, view_menu):
+            self.addActions(menu.actions())
 
     def zoom(self, steps: int) -> None:
         """Make everything larger (steps > 0), smaller, or its normal size (0)."""
@@ -1401,6 +1438,8 @@ class MainWindow(QMainWindow):
                 entry.setData(PREVIEW_ROLE, conversation_preview(info))
                 entry.setData(DATE_ROLE, relative_date(info.updated_at))
                 entry.setData(FLAGS_ROLE, {"archived"} if info.archived else set())
+                entry.setToolTip("\n".join(p for p in (title, conversation_preview(info),
+                                                       relative_date(info.updated_at)) if p))
                 self.conversation_list.addItem(entry)
                 if viewing is None and own is not None and info.id == own.id:
                     self.conversation_list.setCurrentItem(entry)
@@ -1414,7 +1453,7 @@ class MainWindow(QMainWindow):
                     row.setData(PREVIEW_ROLE, session.summary)
                     row.setData(FLAGS_ROLE, {"working"} if session.running else
                                 {"archived"} if session.archived else set())
-                    row.setToolTip(session.task)
+                    row.setToolTip(f"{session.task}\n{session.summary}")
                     self.conversation_list.addItem(row)
                     if session.id == viewing:
                         self.conversation_list.setCurrentItem(row)

@@ -3,7 +3,7 @@
 ## The settings screen
 
 Press **F2** (or type `/settings`); in the [desktop app](desktop-app.md), choose
-**Kayden → Settings**. Change what you need and choose **Save**; only what you
+**☰ → Kayden → Settings**. Change what you need and choose **Save**; only what you
 changed is saved.
 
 | Setting | Notes | Applies |

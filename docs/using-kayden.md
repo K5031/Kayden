@@ -126,7 +126,7 @@ Tool servers give Kayden more tools: GitHub, a database, your calendar, and many
 They use MCP, the Model Context Protocol, which most AI apps support; servers are listed on
 their makers' sites and at github.com/modelcontextprotocol/servers.
 
-To add one, open **Kayden → Tool servers (MCP)…** in the desktop app, or `/mcp` in the
+To add one, open **☰ → Kayden → Tool servers (MCP)…** in the desktop app, or `/mcp` in the
 terminal, and give it:
 
 - a **name**, such as `github`; its tools appear as `mcp__github__…`;

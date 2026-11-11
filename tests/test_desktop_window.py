@@ -1008,3 +1008,14 @@ async def test_a_long_notice_is_folded(make, qapp):
     folded = window._widget_for(NoticeItem(brief))
     assert folded.label.text() == "New goal: Research Gen.G's path through Worlds.…"
     assert isinstance(window._widget_for(NoticeItem("Time to check in.")), NoticeLine)
+
+
+async def test_the_menus_live_behind_one_button_and_their_shortcuts_still_work(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    assert window.menuBar().isHidden()
+    menu = window.menu_button.menu()
+    assert [a.text() for a in menu.actions()] == ["&Kayden", "&View", "&Model"]
+    shortcuts = {s.toString() for a in window.actions() for s in a.shortcuts()}
+    assert {"Ctrl+N", "Ctrl+,", "Esc"} <= shortcuts
