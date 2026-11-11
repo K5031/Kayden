@@ -828,6 +828,6 @@ was used.
   one Kayden instance, and ranks and teams stay out of it. What a unit needs is added to
   the spec as it is built: duties
   ([note](notes/implemented/2026-11-11-duties.md)),
-  then a headless frontend.
+  then a headless frontend ([proposed note](notes/proposed/2026-11-11-headless-units.md)).
 - **Fix:** SPEC 1 and 13 point to PHILOSOPHY.md for the fleet and name what Kayden
   provides toward it.
