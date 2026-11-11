@@ -385,24 +385,25 @@ class RowDelegate(QStyledItemDelegate):
 
     def _paint_branch(self, painter: QPainter, option: QStyleOptionViewItem, index: Any
                       ) -> QStyleOptionViewItem:
-        """A sub-session's tree line, and a dot while it works; the row's option, moved
-        right of them."""
+        """A sub-session's guide line, one thin line down its conversation's sub-sessions,
+        and a dot while it works; the row's option, moved right of them."""
         colors = theme.current()
         rect = option.rect
         x = rect.left() + self.INDENT // 2
+        below = index.model().index(index.row() + 1, 0)
+        last = not below.isValid() or below.data(KIND_ROLE) != "session"
         painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QColor(colors.line))
-        painter.drawLine(x, rect.top(), x, rect.center().y())
-        painter.drawLine(x, rect.center().y(), rect.left() + self.INDENT - 2, rect.center().y())
-        if "working" in (index.data(FLAGS_ROLE) or set()):
+        painter.setPen(QPen(QColor(colors.line), 1))
+        painter.drawLine(x, rect.top(), x, rect.center().y() + 6 if last else rect.bottom())
+        working = "working" in (index.data(FLAGS_ROLE) or set())
+        if working:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(colors.accent))
             painter.drawEllipse(QRectF(rect.right() - 16, rect.top() + self.PAD.height() + 5,
                                        6, 6))
         painter.restore()
         moved = QStyleOptionViewItem(option)
-        moved.rect = rect.adjusted(self.INDENT, 0, 0, 0)
+        moved.rect = rect.adjusted(self.INDENT, 0, -12 if working else 0, 0)  # clear of the dot
         return moved
 
     def _paint_row(self, painter: QPainter, option: QStyleOptionViewItem, index: Any) -> None:
@@ -1161,15 +1162,18 @@ class MainWindow(QMainWindow):
         side.setSpacing(2)
         self.new_action = QAction("&New chat", self, shortcut=QKeySequence.StandardKey.New)
         self.new_action.triggered.connect(lambda: self.open_conversation(None))
-        self.menu_button = QToolButton(objectName="menu", text="☰")
+        self.menu_button = QToolButton(objectName="menu")
+        self.menu_button.setIconSize(QSize(18, 18))
         self.menu_button.setToolTip("Menu")
         self.menu_button.setAccessibleName("Menu")
         self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.new_button = QPushButton("+   New chat", objectName="nav")
+        self.new_button = QPushButton("  New chat", objectName="nav")
+        self.new_button.setIconSize(QSize(16, 16))
         self.new_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new_button.setToolTip("Start a new conversation (Ctrl+N)")
         self.new_button.clicked.connect(self.new_action.trigger)
         self.conversation_list = ConversationList()
+        self.conversation_list.setObjectName("conversations")
         self.conversation_list.setItemDelegate(RowDelegate(self.conversation_list, compact=True))
         self.conversation_list.setMouseTracking(True)
         self.conversation_list.setVerticalScrollMode(
@@ -1234,7 +1238,7 @@ class MainWindow(QMainWindow):
         head.setContentsMargins(18, 0, 0, 0)  # the window buttons reach the top and right
         head.setSpacing(4)
         self.title_label = ElidedLabel()
-        self.title_label.setProperty("role", "title")
+        self.title_label.setProperty("role", "header")
         self.duty_label = _label(wrap=False, selectable=False, role="small")
         self.duty_label.hide()  # only with a duty: when it checks in next, or paused
         titles = QHBoxLayout()
@@ -1383,6 +1387,8 @@ class MainWindow(QMainWindow):
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.text))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
+        self.menu_button.setIcon(theme.icon("menu", colors.muted, 18))
+        self.new_button.setIcon(theme.icon("plus", colors.text, 16))
         self.folder_button.setIcon(theme.icon("folder", colors.text, 18))
         maximized = self.isMaximized()
         for name, button in self.window_buttons.items():

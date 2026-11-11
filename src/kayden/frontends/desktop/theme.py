@@ -137,7 +137,8 @@ def qt_palette(c: Palette) -> QPalette:
 
 
 def style_sheet(c: Palette, base_pt: float) -> str:
-    small, title, heading = (f"{base_pt * f:.1f}pt" for f in (0.85, 1.15, 1.45))
+    small, side, title, heading = (f"{base_pt * f:.1f}pt" for f in (0.85, 0.92, 1.15, 1.45))
+    body = f"{base_pt:.1f}pt"
     chevron = (ICONS / f"chevron-{'dark' if c.dark else 'light'}.svg").as_posix()
     return f"""
 QMainWindow, QDialog {{ background: {c.bg}; }}
@@ -220,9 +221,12 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 
 QFrame#header {{ border: none; }}
 QPushButton#nav {{ background: transparent; border: none; color: {c.text};
-    padding: 7px 10px; text-align: left; }}
+    padding: 7px 10px; text-align: left; font-size: {side}; border-radius: 8px; }}
+QListWidget#conversations {{ font-size: {side}; }}
+QLabel[role="header"] {{ font-size: {body}; font-weight: 600; }}
 QPushButton#nav:hover {{ background: {c.select}; }}
-QToolButton#menu {{ padding: 4px 8px; font-size: {title}; }}
+QToolButton#menu {{ padding: 6px; border-radius: 8px; }}
+QToolButton#menu:hover {{ background: {c.select}; }}
 QToolButton#profile {{ color: {c.text}; padding: 6px 8px; }}
 QToolButton#windowControl {{ padding: 6px; border-radius: 6px; }}
 QDialog#settings {{ border: 1px solid {c.line}; }}
@@ -270,8 +274,8 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
-    """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", or a window
-    control: "minimize", "maximize", "restore", "close"."""
+    """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", "menu" (three
+    lines), "plus", or a window control: "minimize", "maximize", "restore", "close"."""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.setDevicePixelRatio(scale)
@@ -317,6 +321,16 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
             path.closeSubpath()
             painter.drawPath(path)
             painter.drawEllipse(centre, s * 0.13, s * 0.13)
+        case "menu":
+            painter.setPen(QPen(QColor(color), size / 12, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap))
+            for y in (0.3, 0.5, 0.7):
+                painter.drawLine(QPointF(s * 0.2, s * y), QPointF(s * 0.8, s * y))
+        case "plus":
+            painter.setPen(QPen(QColor(color), size / 11, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap))
+            painter.drawLine(QPointF(s * 0.5, s * 0.22), QPointF(s * 0.5, s * 0.78))
+            painter.drawLine(QPointF(s * 0.22, s * 0.5), QPointF(s * 0.78, s * 0.5))
         case "minimize":
             painter.drawLine(QPointF(s * 0.25, s * 0.5), QPointF(s * 0.75, s * 0.5))
         case "maximize":
