@@ -681,3 +681,18 @@ Design: [Agent Note](notes/implemented/2026-11-11-headless-units.md).
 | Start-up | With `start` the frontend starts (a new conversation with a duty); a failure is written to stderr as `kayden: <message>` and the unit quits |
 | Prompts | `interactive_permissions=True`: prompts wait for `resolve_permission` like a person's |
 | Quit | stdin closing: requests already read are answered, then `run()` returns |
+
+## Sub-sessions
+
+Design: [Agent Note](notes/implemented/2026-11-11-sub-sessions.md).
+
+| Choice | Value |
+|---|---|
+| Tools | `start_session(task, budget_usd=1.0)`, `message_session(session, text)` (both with no timeout: the child's spending limit bounds them), `stop_session(session)`. Not confined: reviewed under AUTO, asked under stricter policies |
+| Child | `<sys.executable> -m kayden --headless --data-dir <data>/sessions/<first 8 of conversation id>-<n>`, cwd the work folder; config.toml copied, settings.toml copied with `budget = {max_cost_usd = budget_usd}` and `work_folder`; then `start` and `set_duty` (goal, check-ins every 5 s to 2 minutes) |
+| Ids | "1", "2", … per run of the frontend |
+| Done | When its goal ended (duty cleared) and it is idle or stopped; the report is `finish_goal`'s; then its stdin closes, and it is killed if it has not exited after 10 s |
+| Question | `HelpNeeded` then idle: the call returns the question; `message_session` sends the answer and waits again |
+| Prompts | Every `PermissionRequested` is answered `deny`; the tool names are listed in the result |
+| Cancel | Cancelling the call, `stop_session`, the frontend's Stop button and closing the manager (runtime shutdown) stop the child |
+| Shown | Per child: task, state, current step (its latest step sentence or the first line of its latest reply), dollars spent, its messages as the channel sent them; frontends are told through `SubSessions.listeners` |

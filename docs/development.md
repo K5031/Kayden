@@ -54,7 +54,7 @@ src/kayden/runtime/       orchestration, duties, budgets, operations, settings, 
 src/kayden/core/          Cores
 src/kayden/memory/        SQLite Memory
 src/kayden/tools/         shell and file Tools
-src/kayden/frontends/     terminal app, headless.py (for programs); common.py holds what every frontend shares
+src/kayden/frontends/     terminal app, headless.py (for programs), sessions.py (sub-sessions a frontend hosts); common.py holds what every frontend shares
 src/kayden/frontends/desktop/  desktop app: viewmodel.py (no Qt), window.py, launcher.py
 src/kayden_desktop/       the module a Briefcase bundle runs
 src/kayden/__main__.py    the `kayden` command: config, saved settings, restarts

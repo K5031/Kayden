@@ -844,3 +844,35 @@ async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
     await eventually(lambda: dialog.error.isVisible())
     assert "spending limit" in dialog.error.text()
     assert dialog.isVisible() and dialog.save_button.isEnabled()
+
+
+async def test_sub_sessions_are_listed_and_watched(make, qapp, tmp_path):
+    from kayden.frontends.desktop.window import SessionWindow
+    from kayden.frontends.sessions import SubSession, SubSessions
+
+    h: Harness = await make()
+    info = await h.start()
+    sessions = SubSessions(tmp_path)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, sessions=sessions)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.show()
+    assert window.session_list.isHidden()
+    child = SubSession("1", "Write a haiku", info.id, tmp_path / "s1")
+    child.state, child.step = "working", "Drafting"
+    child.messages = [{"role": "assistant", "blocks": [{"type": "Text", "text": "Drafting."}]}]
+    sessions.sessions.append(child)
+    sessions._notify()
+    assert window.session_list.count() == 1 and window.session_list.isVisible()
+    assert "1 sub-session working" in window.status_label.text()
+    window._session_chosen(window.session_list.item(0))
+    [watching] = window.findChildren(SessionWindow)
+    assert "Drafting." in watching.work.toPlainText()
+    child.messages.append({"role": "assistant", "blocks": [{"type": "Text", "text": "Done!"}]})
+    child.state = "done"
+    sessions._notify()
+    assert "Done!" in watching.work.toPlainText() and not watching.stop_button.isEnabled()
+    watching.close()
+    await asyncio.sleep(0)
+    sessions._notify()  # the closed window no longer listens

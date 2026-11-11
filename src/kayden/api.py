@@ -1509,5 +1509,11 @@ class Frontend(abc.ABC):
         calls end as by Stop: CANCELLED when confirmed within the grace period, ABANDONED
         otherwise; only a crash produces INTERRUPTED."""
 
+    def tools(self) -> Sequence[Tools]:
+        """Optional: Tools modules the frontend runs, such as those only an interface can
+        host (kayden.frontends.sessions). Asked for once, before the runtime is built; they
+        are offered after every other module's and closed with them."""
+        return ()
+
     async def aclose(self) -> None:
         pass

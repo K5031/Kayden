@@ -66,6 +66,24 @@ or turn it off; the conversation keeps everything said so far.
 
 The status line says when the duty checks in next, or that it is paused.
 
+## Sub-sessions
+
+The agent can hand a self-contained task to a sub-session: a separate agent with its own
+context, working in the same folder with the same tools and settings. It runs in the
+background while the conversation goes on, and its report comes back as the result of that
+step. Several can run at once.
+
+- **Each has its own spending limit,** which the agent sets when it starts one (a dollar
+  unless it says otherwise). It is not counted in your own limit.
+- **It works on its own.** A step that would need your approval is refused, since nobody is
+  watching it; the report says so. If it needs a decision, its question comes back to the
+  agent, which can answer it or ask you.
+- **You can watch it.** The open conversation's sub-sessions are listed under the
+  conversations in the desktop app (`/sessions` in the terminal app). Open one to see its
+  work as it happens, or stop it.
+- **It ends with the window.** Quitting Kayden stops every sub-session, and the list shows
+  only those of the current run. Their work stays in `sessions/` in the data folder.
+
 ## Memory
 
 Kayden keeps every message of every conversation until you delete the conversation.

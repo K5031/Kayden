@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from kayden.api import Frontend, FrontendInfo, InstancePaths, RuntimeAPI
+from kayden.api import Frontend, FrontendInfo, InstancePaths, RuntimeAPI, Tools
 from kayden.frontends.desktop import single
 from kayden.frontends.desktop.loop import run_on_qt
+from kayden.frontends.sessions import SubSessions
 
 # PySide6 6.12 on Python 3.15 breaks reading a lazily imported module attribute (PEP 810)
 # from another module once Qt is loaded. asyncio.to_thread reads this one, so resolve it
@@ -44,6 +46,10 @@ class DesktopFrontend(Frontend):
         self.conversation_id = conversation_id
         self.data_dir = data_dir  # None: no zoom remembered, no single window
         self.zoom_file = data_dir / ZOOM_FILE if data_dir is not None else None
+        self.sessions = SubSessions(data_dir) if data_dir is not None else None
+
+    def tools(self) -> Sequence[Tools]:
+        return [self.sessions] if self.sessions is not None else []
 
     @property
     def info(self) -> FrontendInfo:
@@ -66,7 +72,7 @@ class DesktopFrontend(Frontend):
         if self.zoom_file is not None:
             theme.set_zoom(app, await load_zoom(self.zoom_file))
         controller = Controller(runtime, ConversationModel())
-        window = MainWindow(runtime, controller, self.zoom_file)
+        window = MainWindow(runtime, controller, self.zoom_file, self.sessions)
         server = (await single.listen(self.data_dir, window.bring_forward)
                   if self.data_dir is not None else None)
         closed = asyncio.Event()

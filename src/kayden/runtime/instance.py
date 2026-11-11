@@ -120,6 +120,7 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
     runtime: Runtime | SetupRuntime
     if error is None:
         core, memory, *tools = built
+        tools.extend(frontend.tools())
         runtime = Runtime(core=core, memory=memory, tools=tools, frontend=frontend.info,
                           config=runtime_config, lock=lock)
     else:

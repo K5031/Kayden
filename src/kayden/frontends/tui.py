@@ -23,6 +23,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import (
@@ -94,6 +95,7 @@ from kayden.api import (
     ToolFinished,
     ToolProgress,
     ToolResult,
+    Tools,
     ToolStarted,
     ToolStatus,
     UsageSnapshot,
@@ -130,6 +132,7 @@ from kayden.frontends.common import (
     request_note,
     restart_notice,
 )
+from kayden.frontends.sessions import SubSession, SubSessions, working_text
 
 STATE_LABELS = {
     AgentState.NOT_STARTED: "Not started",
@@ -164,7 +167,7 @@ DECISION_ALIASES = {
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
     "/conversations (F3), /memory (F4), /mcp (tool servers), /folder [path], "
-    "/duty [instruction|off] (F5), /goal [instruction], "
+    "/duty [instruction|off] (F5), /goal [instruction], /sessions, "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -1166,6 +1169,71 @@ class DutyScreen(ModalScreen[DutyChoice | None]):
         self.dismiss(None)
 
 
+class SessionsScreen(ModalScreen[None]):
+    """The open conversation's sub-sessions and, for the highlighted one, its work as it
+    happens."""
+
+    BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Close")]
+
+    def __init__(self, sessions: SubSessions, conversation_id: ConversationId | None) -> None:
+        super().__init__()
+        self.sessions, self.conversation_id = sessions, conversation_id
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label("Sub-sessions", classes="title")
+            yield OptionList(id="sessions")
+            yield Static("", id="session-empty", classes="hint")
+            with VerticalScroll(id="session-work"):
+                yield Static("", id="session-lines", markup=False)
+            with Horizontal(classes="buttons"):
+                yield Button("Stop", id="stop-session", variant="error")
+                yield Button("Close", id="close")
+
+    def on_mount(self) -> None:
+        self.sessions.listeners.append(self.refresh_view)
+        self.refresh_view()
+
+    def on_unmount(self) -> None:
+        with contextlib.suppress(ValueError):
+            self.sessions.listeners.remove(self.refresh_view)
+
+    def _selected(self) -> SubSession | None:
+        option = self.query_one(OptionList).highlighted_option
+        return next((s for s in self.sessions.sessions if option and s.id == option.id), None)
+
+    def refresh_view(self) -> None:
+        listed = self.sessions.of(self.conversation_id)
+        option_list = self.query_one(OptionList)
+        current = option_list.highlighted
+        option_list.clear_options()
+        option_list.add_options([Option(f"{s.task[:70]}\n  {s.summary}", id=s.id)
+                                 for s in listed])
+        if listed:
+            option_list.highlighted = min(current or 0, len(listed) - 1)
+        self.query_one("#session-empty", Static).update(
+            "" if listed else "No sub-sessions in this conversation. The agent starts one "
+            "when it hands off a task.")
+        self._show_work()
+
+    @on(OptionList.OptionHighlighted)
+    def _show_work(self) -> None:
+        session = self._selected()
+        lines = session.lines() if session is not None else []
+        self.query_one("#session-lines", Static).update(
+            "\n\n".join(f"{who}: {text}" for who, text in lines))
+        self.query_one("#stop-session", Button).disabled = session is None or not session.running
+
+    @on(Button.Pressed, "#stop-session")
+    def _stop(self) -> None:
+        if (session := self._selected()) is not None:
+            self.sessions.stop(session)
+
+    @on(Button.Pressed, "#close")
+    def _close(self) -> None:
+        self.dismiss(None)
+
+
 class StartScreen(ModalScreen[StartOptions | None]):
     """Chooses the conversation and model, and how a new conversation starts."""
 
@@ -1322,10 +1390,14 @@ class KaydenApp(App[None]):
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
 
-    def __init__(self, runtime: RuntimeAPI, start_options: StartOptions | None = None) -> None:
+    def __init__(self, runtime: RuntimeAPI, start_options: StartOptions | None = None,
+                 sessions: SubSessions | None = None) -> None:
         super().__init__()
         self.runtime = runtime
         self.start_options = start_options
+        self.sessions = sessions
+        if sessions is not None:
+            sessions.listeners.append(self._sessions_changed)
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
         self.pending_ops = 0
@@ -1708,6 +1780,10 @@ class KaydenApp(App[None]):
         self._prompts[request.id] = prompt
         await self.query_one("#permissions", Vertical).mount(prompt)
 
+    def _sessions_changed(self) -> None:
+        with contextlib.suppress(NoMatches):  # before the status line is mounted
+            self._render_status()
+
     def _render_status(self) -> None:
         state = STATE_LABELS[self.state]
         parts = [state + (f" · {self.pending_ops} running" if self.pending_ops else "")]
@@ -1729,6 +1805,9 @@ class KaydenApp(App[None]):
         if self.conversation is not None and (duty := duty_status(
                 self.conversation.duty, self.duty_wake_at, self.state, self.help_needed)):
             parts.append(duty)
+        if self.sessions is not None and self.conversation is not None and (
+                working := working_text(self.sessions.of(self.conversation.id))):
+            parts.append(working)
         if self.notice:
             parts.append(self.notice)
         style = {
@@ -1807,6 +1886,12 @@ class KaydenApp(App[None]):
                 self._call(self.runtime.set_duty(duty))
             case "duty" | "goal" | "plan":
                 self.action_duty()
+            case "sessions":
+                if self.sessions is None:
+                    self.notify("Sub-sessions are not available here.", severity="warning")
+                else:
+                    open_id = self.conversation.id if self.conversation is not None else None
+                    self.push_screen(SessionsScreen(self.sessions, open_id))
             case "folder" if arg:
                 self.new_in_folder(str(Path(arg).expanduser()))
             case "folder":
@@ -1977,10 +2062,11 @@ class KaydenApp(App[None]):
 def factory(options: dict[str, Any], paths: InstancePaths) -> TuiFrontend:
     """Options: start, conversation_id, model. With start true the agent starts right away
     with the others; otherwise the start screen asks."""
+    data_dir = paths.data_dir if paths is not None else None
     if not options.get("start"):
-        return TuiFrontend()
+        return TuiFrontend(data_dir=data_dir)
     return TuiFrontend(StartOptions(conversation_id=options.get("conversation_id"),
-                                    model=options.get("model")))
+                                    model=options.get("model")), data_dir)
 
 
 factory.display_name = "Terminal (TUI)"  # type: ignore[attr-defined]
@@ -1988,8 +2074,13 @@ factory.kind = "terminal"  # type: ignore[attr-defined]
 
 
 class TuiFrontend(Frontend):
-    def __init__(self, start_options: StartOptions | None = None) -> None:
+    def __init__(self, start_options: StartOptions | None = None,
+                 data_dir: Path | None = None) -> None:
         self.start_options = start_options
+        self.sessions = SubSessions(data_dir) if data_dir is not None else None
+
+    def tools(self) -> Sequence[Tools]:
+        return [self.sessions] if self.sessions is not None else []
 
     @property
     def info(self) -> FrontendInfo:
@@ -1997,4 +2088,4 @@ class TuiFrontend(Frontend):
 
     async def run(self, runtime: RuntimeAPI) -> None:
         """Returns when the user quits or the runtime's event stream ends."""
-        await KaydenApp(runtime, self.start_options).run_async()
+        await KaydenApp(runtime, self.start_options, self.sessions).run_async()

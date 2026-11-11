@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from kayden.api import (
@@ -14,6 +14,7 @@ from kayden.api import (
     RuntimeAPI,
     RuntimeEvent,
     StateChanged,
+    Tools,
 )
 
 
@@ -94,6 +95,9 @@ class ScriptedFrontend(Frontend):
         self.attach(runtime)
         if self.script is not None:
             await self.script(runtime, self)
+
+    def tools(self) -> Sequence[Tools]:
+        return self.options.get("tools", ())
 
     async def aclose(self) -> None:
         if self.recorder is not None:

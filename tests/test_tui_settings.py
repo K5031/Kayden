@@ -384,3 +384,40 @@ async def test_a_question_for_help_is_shown():
         await caught_up(pilot, app, stub)
         assert "Which account?" in plain(entries(app, SystemEntry)[-1])
         assert app.help_needed == "Which account?"
+
+
+def fake_sessions(tmp_path, conversation_id: str):
+    from kayden.frontends.sessions import SubSession, SubSessions
+
+    sessions = SubSessions(tmp_path)
+    child = SubSession("1", "Write a haiku", conversation_id, tmp_path / "s1")
+    child.state, child.step, child.spent = "working", "Searching the web", 0.04
+    child.messages = [{"role": "assistant", "blocks": [{"type": "Text", "text": "Drafting."}]}]
+    sessions.sessions.append(child)
+    return sessions, child
+
+
+async def test_the_sessions_screen_shows_a_child_and_stops_it(tmp_path):
+    from kayden.frontends.tui import SessionsScreen
+    from tests.test_tui import CONVERSATION
+
+    stub = StubRuntime()
+    sessions, child = fake_sessions(tmp_path, CONVERSATION.id)
+    stopped = []
+    sessions.stop = stopped.append  # no process to stop here
+    app = make(stub, sessions=sessions)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await caught_up(pilot, app, stub)
+        assert "1 sub-session working" in str(app.query_one("#status").render())
+        await type_text(pilot, "/sessions")
+        await pilot.press("enter")
+        await until(pilot, lambda: isinstance(app.screen, SessionsScreen))
+        await pilot.pause()
+        assert "Drafting." in str(app.screen.query_one("#session-lines").render())
+        child.messages.append({"role": "assistant",
+                               "blocks": [{"type": "Text", "text": "Finished the draft."}]})
+        sessions._notify()  # what the manager does on every child event
+        await pilot.pause()
+        assert "Finished the draft." in str(app.screen.query_one("#session-lines").render())
+        app.screen.query_one("#stop-session", Button).press()
+        await until(pilot, lambda: stopped == [child])

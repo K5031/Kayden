@@ -176,15 +176,22 @@ class ScriptedCore(Core):
 
 def factory(options: dict[str, Any], paths: Any) -> ScriptedCore:
     """Options: steps, default, maintenance, models (ids; each gets a 100k window and
-    prices), and
-    list_error (a message: list_models raises CoreError, like a rejected key)."""
+    prices), list_error (a message: list_models raises CoreError, like a rejected key), and
+    script: steps as plain data for config.toml ({text, calls: [{name, arguments}], hang});
+    with a script, maintenance requests get an empty answer and use none of it."""
     models = DEFAULT_MODELS
     if "models" in options:
         models = tuple(ModelInfo(m, m, context_window=100_000, max_output_tokens=1_000,
                                  input_usd_per_mtok=1.0, output_usd_per_mtok=2.0)
                        for m in options["models"])
-    core = ScriptedCore(options.get("steps", ()), models=models, default=options.get("default"),
-                        maintenance=options.get("maintenance"))
+    steps, maintenance = options.get("steps", ()), options.get("maintenance")
+    if "script" in options:
+        steps = [Step(text=s.get("text", ""), hang=s.get("hang", False),
+                      calls=[call(c["name"], c.get("arguments", {})) for c in s.get("calls", ())])
+                 for s in options["script"]]
+        maintenance = maintenance or Step(text="")
+    core = ScriptedCore(steps, models=models, default=options.get("default"),
+                        maintenance=maintenance)
     core.options = dict(options)
     if "list_error" in options:
         core.list_error = CoreError(options["list_error"])

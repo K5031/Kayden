@@ -70,6 +70,7 @@ another reason, the Settings window opens with the message.
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |
 | See what Kayden remembers | **Kayden → Memory…**: About you and the notes it keeps across conversations; add, edit or delete them. |
 | Give Kayden more tools | **Kayden → Tool servers (MCP)…**: add GitHub, a database and the like. See [More tools](using-kayden.md#more-tools-mcp). |
+| Watch work Kayden handed off | The **Sub-sessions** list under the conversations: click one to see its work as it happens, or stop it. See [Sub-sessions](concepts.md#sub-sessions). |
 | Give a conversation standing work | **Kayden → Duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
 | Change the model | The **Model** menu. |
 | Change settings | **Kayden → Settings** (**Ctrl+,**). |

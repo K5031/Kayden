@@ -64,6 +64,7 @@ Navigation and interaction patterns.
 UI frameworks.
 Rendering and presentation.
 The frontend communicates with Kayden through its supported runtime API.
+A frontend may offer Tools modules of its own, offered after every other module's. The desktop app and the terminal app host sub-sessions this way: the agent hands a self-contained task to a child instance it starts headless, in its own data folder with the parent's settings, the conversation's work folder and a spending limit the agent sets; the child's report or question is the call's result, its permission prompts are refused, and the frontend lists the open conversation's children and shows their work as it happens. Children stop with the parent.
 A headless frontend lets another program drive an instance: JSON-RPC 2.0 over the process's stdin and stdout, each request a runtime command, each runtime event a notification. Permission prompts and the agent's questions go to that program. Launch options can start an instance on a duty.
 It can submit messages, access conversation information, select models, receive execution updates, present permission requests, and control agent execution.
 3.1 Tool Presentation

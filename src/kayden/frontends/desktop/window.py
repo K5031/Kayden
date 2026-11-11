@@ -8,6 +8,7 @@ the qasync loop that also runs the runtime.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
 import json
 from collections.abc import Callable, Sequence
@@ -139,6 +140,7 @@ from kayden.frontends.desktop.viewmodel import (
     step_segments,
     user_message,
 )
+from kayden.frontends.sessions import SubSession, SubSessions, working_text
 
 LINE_HEIGHT_PERCENT = 145  # reply text, of the font's line spacing
 PARAGRAPH_SPACING = 10  # px below a reply paragraph
@@ -776,10 +778,11 @@ class MainWindow(QMainWindow):
     closed = Signal()
 
     def __init__(self, runtime: RuntimeAPI, controller: Controller,
-                 zoom_file: Path | None = None) -> None:
+                 zoom_file: Path | None = None, sessions: SubSessions | None = None) -> None:
         super().__init__()
         self.runtime = runtime
         self.controller = controller
+        self.sessions = sessions  # the sub-sessions this window hosts
         self.zoom_file = zoom_file  # where the zoom is remembered; None: not remembered
         self._zoom_saver: asyncio.Task[None] | None = None
         self.model: ConversationModel = controller.model
@@ -797,6 +800,8 @@ class MainWindow(QMainWindow):
         self._build()
         self._build_menus()
         self._refresh_status()
+        if sessions is not None:
+            sessions.listeners.append(self._sessions_changed)
 
     # ── layout ────────────────────────────────────────────────────────────
 
@@ -835,6 +840,17 @@ class MainWindow(QMainWindow):
         side.addWidget(self.conversation_list, 1)
         side.addWidget(self.show_archived)
         side.addWidget(self.switch_reason)
+        self.sessions_label = _label("Sub-sessions", selectable=False, role="small")
+        self.session_list = QListWidget()
+        self.session_list.setAccessibleName("Sub-sessions")
+        self.session_list.setToolTip("Work the agent handed off. Click one to watch it.")
+        self.session_list.setMaximumHeight(160)
+        self.session_list.itemClicked.connect(self._session_chosen)
+        self.session_list.itemActivated.connect(self._session_chosen)
+        side.addWidget(self.sessions_label)
+        side.addWidget(self.session_list)
+        self.sessions_label.hide()
+        self.session_list.hide()
 
         main = QWidget()
         column = QVBoxLayout(main)
@@ -1182,7 +1198,11 @@ class MainWindow(QMainWindow):
 
     def _refresh_status(self) -> None:
         model = self.model
-        self.status_label.setText(model.status_text)
+        status = model.status_text
+        if self.sessions is not None and model.conversation is not None and (
+                working := working_text(self.sessions.of(model.conversation.id))):
+            status = f"{status} · {working}"
+        self.status_label.setText(status)
         self.usage_label.setText(model.model or "")
         conversation = model.conversation
         if conversation is not None:
@@ -1314,6 +1334,30 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+
+    def _sessions_changed(self) -> None:
+        self._refresh_status()
+        if self.sessions is None:
+            return
+        conversation = self.model.conversation
+        listed = self.sessions.of(conversation.id if conversation is not None else None)
+        current = self.session_list.currentRow()
+        self.session_list.clear()
+        for session in listed:
+            item = QListWidgetItem(f"{session.task[:60]}\n{session.summary}")
+            item.setData(Qt.ItemDataRole.UserRole, session.id)
+            self.session_list.addItem(item)
+        if 0 <= current < len(listed):
+            self.session_list.setCurrentRow(current)
+        self.sessions_label.setVisible(bool(listed))
+        self.session_list.setVisible(bool(listed))
+
+    def _session_chosen(self, item: QListWidgetItem) -> None:
+        assert self.sessions is not None
+        session_id = item.data(Qt.ItemDataRole.UserRole)
+        session = next((s for s in self.sessions.sessions if s.id == session_id), None)
+        if session is not None:
+            SessionWindow(self, self.sessions, session).show()
 
     def open_duty(self) -> None:
         if self.model.conversation is None:
@@ -1511,6 +1555,49 @@ class NoteDialog(QDialog):
             self.title.text(), self.description.text(), self.text.toPlainText(),
             self.note.id if self.note else None, failed=failed,
             done=lambda _: self.accept())
+
+
+class SessionWindow(QDialog):
+    """One sub-session's work as it happens, with a Stop button."""
+
+    def __init__(self, parent: QWidget, sessions: SubSessions, session: SubSession) -> None:
+        super().__init__(parent)
+        self.sessions, self.session = sessions, session
+        self.setWindowTitle(f"Sub-session: {session.task[:60]}")
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.resize(640, 560)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.addWidget(_label(session.task, role="heading"))
+        self.state = _label(tone="muted")
+        layout.addWidget(self.state)
+        self.work = QPlainTextEdit(readOnly=True)
+        self.work.setAccessibleName("What the sub-session did")
+        layout.addWidget(self.work, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.close)
+        self.stop_button = buttons.addButton("Stop", QDialogButtonBox.ButtonRole.DestructiveRole)
+        self.stop_button.clicked.connect(lambda: sessions.stop(session))
+        layout.addWidget(buttons)
+        sessions.listeners.append(self.refresh)
+        self.finished.connect(lambda _: self._forget())
+        self.refresh()
+
+    def _forget(self) -> None:
+        with contextlib.suppress(ValueError):
+            self.sessions.listeners.remove(self.refresh)
+
+    def refresh(self) -> None:
+        session = self.session
+        self.state.setText(session.summary)
+        text = "\n\n".join(f"{who}: {line}" for who, line in session.lines())
+        if text != self.work.toPlainText():
+            at_end = (self.work.verticalScrollBar().value()
+                      >= self.work.verticalScrollBar().maximum())
+            self.work.setPlainText(text)
+            if at_end:
+                self.work.verticalScrollBar().setValue(self.work.verticalScrollBar().maximum())
+        self.stop_button.setEnabled(session.running)
 
 
 class DutyDialog(QDialog):

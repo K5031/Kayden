@@ -31,8 +31,9 @@ Only two places offered tools: the one Tools module, and the runtime's built-ins
   that offers nothing gets no memory tools.
 - **Tools modules**, any number of them, in configured order.
 
-Core and Frontend tools are not built: nothing needs them yet. The same optional pair fits
-them when something does.
+Core tools are offered by `Core.list_tools` ([provider web search](2026-11-10-provider-web-search.md)).
+A Frontend offers whole Tools modules with `Frontend.tools()`, after every other module's
+([sub-sessions](2026-11-11-sub-sessions.md)).
 
 ### The runtime routes
 
