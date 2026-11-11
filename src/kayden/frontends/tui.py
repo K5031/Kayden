@@ -1238,6 +1238,8 @@ class SessionsScreen(ModalScreen[str | None]):
         return next((s for s in self.sessions.sessions if option and s.id == option.id), None)
 
     def refresh_view(self) -> None:
+        if not self.is_attached:  # told of a change while closing
+            return
         archived = self.query_one("#show-archived", Checkbox).value
         listed = self.sessions.of(self.conversation_id, include_archived=archived)
         option_list = self.query_one(OptionList)
@@ -1259,6 +1261,8 @@ class SessionsScreen(ModalScreen[str | None]):
 
     @on(OptionList.OptionHighlighted)
     def _buttons(self) -> None:
+        if not self.is_attached:
+            return
         session = self._selected()
         shown = {
             "#open-session": session is not None,
@@ -1571,6 +1575,7 @@ class KaydenApp(App[None]):
         self._leave_session()
         self.viewing = (session, remote)
         self._show(remote)
+        self._render_status()
 
     def _leave_session(self) -> None:
         if self.viewing is not None:

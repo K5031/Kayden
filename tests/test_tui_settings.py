@@ -410,9 +410,9 @@ async def test_a_child_opens_in_place_to_approve_and_talk_to(make, tmp_path, chi
         await pilot.pause()
         assert "Needs your approval" in str(app.screen.query_one("#sessions").get_option_at_index(0).prompt)
         app.screen.query_one("#open-session", Button).press()
-        await until(pilot, lambda: app.viewing is not None and app.query(PermissionPrompt),
+        await until(pilot, lambda: app.viewing is not None and app.query(PermissionPrompt)
+                    and "Sub-session: Look it up" in str(app.query_one("#status").render()),
                     timeout=10)
-        assert "Sub-session: Look it up" in str(app.query_one("#status").render())
         await type_text(pilot, "/allow")
         await pilot.press("enter")
         await until(pilot, lambda: sessions.sessions[0].state == "done", timeout=20)

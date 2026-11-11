@@ -272,3 +272,28 @@ async def test_children_are_renamed_archived_and_deleted(tmp_path):
     assert again.of("conv") == [] and again.of("conv", include_archived=True) == [kept]
     await again.delete(kept)
     assert again.sessions == [] and not folder.exists()
+
+
+async def test_cancelling_while_a_child_starts_stops_it(tmp_path):
+    """The child's first requests are still unanswered: the call is cancelled there."""
+    import asyncio
+    import sys
+
+    from kayden.api import ToolCall
+
+    class Ctx:
+        conversation_id = "conv"
+
+        def progress(self, text: str) -> None:
+            pass
+
+    silent = [sys.executable, "-c", "import sys; sys.stdin.read()"]  # quits on EOF
+    sessions = SubSessions(tmp_path, command=silent)
+    call_ = ToolCall("c", "start_session", {"task": "Anything"})
+    running = asyncio.create_task(sessions.execute(call_, Ctx()))
+    await eventually(lambda: sessions._channels, timeout=10)  # started, not answering
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    [child] = sessions.sessions
+    await eventually(lambda: child.returncode is not None, timeout=20)
+    assert child.state == "stopped"

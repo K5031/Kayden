@@ -157,7 +157,7 @@ class SubSession:
     returncode: int | None = field(default=None, compare=False)
     awaited: int = field(default=0, compare=False)  # parent calls waiting on it
     agent_state: AgentState | None = field(default=None, compare=False)
-    _changed: asyncio.Condition | None = field(default=None, compare=False, repr=False)
+    _changed: asyncio.Event | None = field(default=None, compare=False, repr=False)
 
     @property
     def running(self) -> bool:
@@ -173,9 +173,10 @@ class SubSession:
         return self.state in ("stopped", "failed", "idle") and self.has_goal
 
     @property
-    def changed(self) -> asyncio.Condition:
+    def changed(self) -> asyncio.Event:
+        """Set on every change; a waiter clears it before it looks again."""
         if self._changed is None:
-            self._changed = asyncio.Condition()
+            self._changed = asyncio.Event()
         return self._changed
 
     @property
@@ -295,7 +296,11 @@ class SubSessions(Tools):
         if call.name == START.name:
             session = await self._new(args["task"], args.get("budget_usd", DEFAULT_BUDGET_USD),
                                       ctx.conversation_id)
-            await self._launch(session)
+            try:
+                await self._launch(session)
+            except asyncio.CancelledError:  # stopped while it was starting
+                self.stop(session)
+                raise
             if session.state == "failed":
                 return ToolOutput(self._outcome(session), is_error=True)
             return await self._wait(session, ctx)
@@ -307,9 +312,13 @@ class SubSessions(Tools):
             return ToolOutput(f"Sub-session {session.id} stopped.")
         if session.child_conversation_id is None:
             return ToolOutput(f"Sub-session {session.id} never started.", is_error=True)
-        channel = self._channels.get(session.id) or await self._spawn(session, resume=True)
-        self._set(session, state="working", question=None, failure=None)
-        await channel.request("send", text=args["text"])
+        try:
+            channel = self._channels.get(session.id) or await self._spawn(session, resume=True)
+            self._set(session, state="working", question=None, failure=None)
+            await channel.request("send", text=args["text"])
+        except asyncio.CancelledError:
+            self.stop(session)
+            raise
         return await self._wait(session, ctx)
 
     async def aclose(self) -> None:
@@ -383,13 +392,13 @@ class SubSessions(Tools):
         shown = None
         session.awaited += 1
         try:
-            async with session.changed:
-                while session.state in ("starting", "working"):
-                    step = "Needs your approval" if session.approvals else session.step
-                    if step and step != shown:
-                        shown = step
-                        ctx.progress(step)
-                    await session.changed.wait()
+            while session.state in ("starting", "working"):
+                session.changed.clear()
+                step = "Needs your approval" if session.approvals else session.step
+                if step and step != shown:
+                    shown = step
+                    ctx.progress(step)
+                await session.changed.wait()
         except asyncio.CancelledError:
             self.stop(session)
             raise
@@ -529,13 +538,7 @@ class SubSessions(Tools):
             self._saved[session.id] = record
             path = session.data_dir / RECORD
             self._write = asyncio.ensure_future(self._save(self._write, path, record))
-
-        async def wake() -> None:
-            async with session.changed:
-                session.changed.notify_all()
-
-        with contextlib.suppress(RuntimeError):  # no loop: nothing waits
-            asyncio.get_running_loop().create_task(wake())
+        session.changed.set()
         for listener in list(self.listeners):
             try:
                 listener()
