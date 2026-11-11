@@ -872,9 +872,12 @@ async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
     row = window.conversation_list.item(2)
     assert row.text() == "Write a haiku" and "Done" in row.data(PREVIEW_ROLE)
     window._conversation_chosen(row)
+    window._conversation_chosen(row)  # KDE activates on the same click: opened once
     await eventually(lambda: window.controller is not window.home
                      and any(isinstance(i, AssistantItem) and "Here is the haiku." in i.text
                              for i in window.model.items), timeout=15)
+    await asyncio.sleep(0.1)
+    assert sessions._viewers[sessions.sessions[0].id] == 1
     current = window.conversation_list.currentItem()
     assert (current.data(KIND_ROLE), current.text()) == ("session", "Write a haiku")
     replies = sum(isinstance(i, AssistantItem) for i in window.model.items)
@@ -1215,3 +1218,26 @@ async def test_nothing_is_highlighted_while_a_new_chat_opens(make, qapp):
     window.open_conversation(None)
     window._render_sidebar()
     assert window.conversation_list.currentItem() is None
+
+
+async def test_one_click_switches_once_where_a_click_also_activates(make, qapp):
+    h: Harness = await make()
+    target = await h.chat("Target")
+    await h.chat("Current")
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    starts: list[Any] = []
+    start = h.runtime.start
+
+    async def counting(options: Any) -> Any:
+        starts.append(options)
+        return await start(options)
+
+    h.runtime.start = counting  # type: ignore[method-assign]
+    lst = window.conversation_list
+    row = next(lst.item(i) for i in range(lst.count()) if lst.item(i).text() == "Target")
+    lst.itemClicked.emit(row)
+    lst.itemActivated.emit(row)  # KDE activates on a single click too
+    await eventually(lambda: controller.model.conversation.id == target.id)
+    await asyncio.sleep(0.05)
+    assert len(starts) == 1

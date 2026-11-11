@@ -1107,6 +1107,7 @@ class MainWindow(QMainWindow):
         self._conversations: dict[str, ConversationInfo] = {}
         # While a conversation opens: its id (None for a new chat, which is not listed).
         self._opening: tuple[str | None] | None = None
+        self._opening_session: SubSession | None = None
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
         self.setWindowTitle("Kayden")
         # No title bar from the desktop: the header and the sidebar's top row move the
@@ -1505,6 +1506,8 @@ class MainWindow(QMainWindow):
 
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
+        if self._opening is not None:
+            return  # one switch at a time: a click can also activate (KDE) and ask twice
         if self._viewing is not None:
             self._leave_session()
             own = self.model.conversation
@@ -1941,11 +1944,16 @@ class MainWindow(QMainWindow):
         """Show a sub-session in the conversation area, as its own conversation: its
         messages, steps and prompts, and the message box talks to it."""
         assert self.sessions is not None
+        if self._opening_session is session:
+            return  # a click can also activate (KDE) and ask twice
+        self._opening_session = session
         try:
             remote = await self.sessions.open(session)
         except Exception as e:  # noqa: BLE001 - shown, never fatal
             self.model.notify(f"The sub-session could not be opened: {user_message(e)}")
             return
+        finally:
+            self._opening_session = None
         self._leave_session()
         controller = Controller(remote, ConversationModel())
         pump = asyncio.create_task(controller.run())
