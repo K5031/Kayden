@@ -34,7 +34,7 @@ import httpx2
 import jsonschema
 
 from kayden.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
-from kayden.tools import web
+from kayden.tools.shell_files import web
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks

@@ -9,7 +9,7 @@ budgets, background tasks, settings and the event log. It drives four swappable
 | Module | Provides | Built in |
 |---|---|---|
 | Core | Model inference, one provider per implementation | Anthropic; OpenAI-compatible (OpenAI, DeepSeek) |
-| Memory | Conversation archive, context, long-term memory | SQLite (full-text search) |
+| Memory | Conversation archive, context, long-term memory | SQLite notes (the default); Claude Code-style files per project |
 | Tools | The actions the agent can take | Shell commands and files |
 | Frontend | The user interface | Terminal app (Textual); desktop app (PySide6) |
 
@@ -48,19 +48,34 @@ package does not import is not listed. Launchers may pass a frontend the options
 
 ## Layout
 
+Each module is a folder named after it (its Python name), in the folder for its kind:
+`src/kayden/<kind>/<module>/`, whose `__init__.py` exports `factory`. A module's own
+helpers and assets live in its folder. Code that several modules of a kind share sits in
+the kind folder beside them, not in a module.
+
 ```
-src/kayden/api.py         module contracts (normative)
-src/kayden/runtime/       orchestration, duties, budgets, operations, settings, event log, lock
-src/kayden/core/          Cores
-src/kayden/memory/        SQLite Memory
-src/kayden/tools/         shell and file Tools
-src/kayden/frontends/     terminal app, headless.py (for programs), sessions.py (sub-sessions a frontend hosts); common.py holds what every frontend shares
-src/kayden/frontends/desktop/  desktop app: viewmodel.py (no Qt), window.py, launcher.py
-src/kayden_desktop/       the module a Briefcase bundle runs
-src/kayden/__main__.py    the `kayden` command: config, saved settings, restarts
-tests/                    tests; fakes/ and conformance/ hold shared test modules
-SPEC.md                   product spec
-.agents/                  design records (see below)
+src/kayden/api.py                     module contracts (normative)
+src/kayden/runtime/                   orchestration, duties, budgets, operations, settings, event log, lock
+src/kayden/core/                      Cores; _common.py is what the providers share
+  anthropic/                          Anthropic
+  openai_compat/                      OpenAI-compatible providers (openai, deepseek)
+src/kayden/memory/                    Memories; tools.py is the recall and note tools they share
+  sqlite/                             notes in SQLite (the default); SqliteArchive, the archive both build on
+  files/                              Claude Code-style memory folders per project
+src/kayden/tools/                     Tools
+  shell_files/                        shell commands, files, web search and fetch
+  mcp/                                tools of MCP servers
+src/kayden/frontends/                 Frontends; common.py is what every frontend shows the same way,
+                                      headless.py, remote.py and wire.py the headless channel,
+                                      sessions.py the sub-sessions a frontend hosts
+  tui/                                terminal app (Textual)
+  desktop/                            desktop app: viewmodel.py (no Qt), window.py, assets
+src/kayden/window.py                  the window launcher
+src/kayden_desktop/                   the module a Briefcase bundle runs
+src/kayden/__main__.py                the `kayden` command: config, saved settings, restarts
+tests/                                tests; fakes/ and conformance/ hold shared test modules
+SPEC.md                               product spec
+.agents/                              design records (see below)
 ```
 
 ## Working on the code

@@ -103,7 +103,7 @@ Code: `api.py` (`Settings`, `SettingsUpdate`, `ModuleChoice`, `ModuleInfo`,
 ## Consequences
 
 - Every frontend gets settings through the contract it already uses. The TUI has a
-  settings screen (F2 or `/settings`, `SettingsScreen` in `frontends/tui.py`): it sends only
+  settings screen (F2 or `/settings`, `SettingsScreen` in `frontends/tui/`): it sends only
   the fields that changed, and a `ConfirmScreen` asks before loosening permissions,
   raising or removing the spending limit, or switching Memory. It edits only the cost
   limit; other budget dimensions stay as configured. The desktop app's Settings window

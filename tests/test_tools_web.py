@@ -5,8 +5,7 @@ import httpx2
 import pytest
 
 from kayden.api import ToolCall
-from kayden.tools import web
-from kayden.tools.shell_files import ShellFilesTools
+from kayden.tools.shell_files import ShellFilesTools, web
 from tests.conformance.tools_suite import RecordingContext
 
 ARTICLE = """<html><head><title>Asyncio notes</title></head><body>

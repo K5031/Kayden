@@ -63,6 +63,9 @@ Status: proposed | implemented | rejected — <one-line reason>
 - Never edit a note into a different decision. Write a new note, link both ways, and set the old one's status accordingly.
 - State current facts only. No "previously" or "no longer", no commit or PR history.
 
+## Layout
+Each module is a folder named after it in the folder for its kind (`src/kayden/<kind>/<module>/`, `__init__.py` exports `factory`). Code shared by several modules of a kind sits in the kind folder, not in a module. See `docs/development.md#layout`.
+
 ## Code style
 Professional, typed, concise. Comments only where needed to understand the code.
 

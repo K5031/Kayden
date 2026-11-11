@@ -56,7 +56,7 @@ Live results: `.agents/decisions.md`, "OpenAI-compatible profiles".
 - **Omitting the field when no reasoning is known.** Live, an omitted field is rejected
   whenever the server no longer has the call's reasoning; `""` was accepted everywhere tried.
 - **Changing `_common.py` so configured prices survive.** Left alone on request; merging
-  happens inside `openai_compat.py`.
+  happens inside `kayden.core.openai_compat`.
 
 ## Consequences
 

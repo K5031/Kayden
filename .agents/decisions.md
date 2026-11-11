@@ -258,7 +258,7 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 
 Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-profiles.md).
 
-- A `Profile` is plain data in `openai_compat.py`; generic code reads its fields and never
+- A `Profile` is plain data in `kayden.core.openai_compat`; generic code reads its fields and never
   a provider name. `"openai"` (default) is stock behavior. `models` entries in the
   configuration merge over the profile's field by field.
 - A profile with its own `base_url` takes nothing from the OpenAI environment: no

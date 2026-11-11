@@ -13,7 +13,7 @@ came from.
 ## Decision
 
 Two tools in the built-in Tools module (`shell-files`, shown as "Shell, files and web"),
-in `kayden/tools/web.py`:
+in `kayden/tools/shell_files/web.py`:
 
 | Tool | Does | Returns |
 |---|---|---|
