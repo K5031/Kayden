@@ -1149,7 +1149,7 @@ class MainWindow(QMainWindow):
         banner.setContentsMargins(12, 8, 8, 8)
         self.banner_text = _label()
         self.banner_settings = QPushButton("Open Settings")
-        self.banner_settings.clicked.connect(self.open_settings)
+        self.banner_settings.clicked.connect(lambda: self.open_settings())
         banner.addWidget(self.banner_text, 1)
         banner.addWidget(self.banner_settings)
         self.banner.hide()
@@ -1345,7 +1345,7 @@ class MainWindow(QMainWindow):
         self.menuBar().hide()
         settings = QAction("&Settings…", self)
         settings.setShortcuts([QKeySequence("Ctrl+,")])  # Preferences is unbound on Linux
-        settings.triggered.connect(self.open_settings)
+        settings.triggered.connect(lambda: self.open_settings())
         stop = QAction("S&top", self, shortcut=QKeySequence("Esc"))
         stop.triggered.connect(self.controller.stop)
         quit_action = QAction("&Quit", self, shortcut=QKeySequence.StandardKey.Quit)

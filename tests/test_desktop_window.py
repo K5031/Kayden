@@ -1019,11 +1019,10 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     assert texts[-2:] == ["&Help", "&Quit"]
     shortcuts = {s.toString() for a in window.actions() for s in a.shortcuts()}
     assert {"Ctrl+N", "Ctrl+,", "Esc"} <= shortcuts
-    opened: list[bool] = []
-    window.open_settings = lambda: opened.append(True)  # type: ignore[method-assign]
-    window._build_menus()  # reconnect to the replaced method
-    window.gear_button.click()
-    assert opened
+    window.gear_button.click()  # the click's `checked` is not a page name
+    dialog = await eventually(lambda: window._dialog)
+    await eventually(dialog.isVisible)
+    assert dialog.stack.currentIndex() == 0
 
 
 async def test_the_window_draws_its_own_title_bar(make, qapp):
