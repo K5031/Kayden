@@ -61,7 +61,8 @@ The permission level is set in [Settings](settings.md#permissions).
 | F5 | `/duty`, `/plan` | Open the duty and plan of this conversation ([Duties](concepts.md#duties)) |
 | | `/duty <what to do>`, `/goal <what to do>` | Give this conversation a duty that keeps going, or one that ends when done |
 | | `/duty off` | End the duty; the plan stays |
-| | `/sessions` | Open this conversation's [sub-sessions](concepts.md#sub-sessions): watch, message, approve or stop one |
+| | `/sessions` | This conversation's [sub-sessions](concepts.md#sub-sessions): open one in place, start or dismiss a proposal, resume, stop, rename, archive or delete |
+| | `/back` | Leave the sub-session you opened, back to your conversation |
 | | `/folder [path]` | Show the work folder, or start a chat in another one |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
 | Ctrl+Q | `/quit` | Quit |

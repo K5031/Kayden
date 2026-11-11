@@ -16,7 +16,6 @@ from tests.conftest import eventually
 from tests.fakes.settings import chosen
 from tests.fakes.settings import settings as fake_settings
 from tests.test_tui import StubRuntime, caught_up, make, type_text, until
-from tests.test_tui import make as make_app
 
 
 async def open_settings(pilot, app: KaydenApp, stub: StubRuntime, how: str = "f2") -> None:
@@ -388,38 +387,41 @@ async def test_a_question_for_help_is_shown():
         assert app.help_needed == "Which account?"
 
 
-async def test_the_sessions_screen_opens_a_child_to_approve_and_talk_to(
-        make, tmp_path, child_env):
-    from kayden.frontends.tui import SessionsScreen
+async def test_a_child_opens_in_place_to_approve_and_talk_to(make, tmp_path, child_env):
+    from kayden.frontends.tui import KaydenApp, PermissionPrompt, SessionsScreen
     from tests.fakes.core import Step, call
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Look it up"}, id="s")]),
+        Step(calls=[call("start_session", {"task": "Look it up", "initiation": "user_asked"},
+                         id="s")]),
         Step(text="Started."), Step(text="Reported.")],
         [{"calls": [{"name": "lookup"}]}, finish("Looked it up."), {"text": "Done."},
          {"text": "Noted."}],
         child_runtime={"runtime": {"permissions": "ask"}})
     await h.turn("Go")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].approvals, timeout=30)
-    stub = StubRuntime()
-    app = make_app(stub, sessions=sessions)
+    app = KaydenApp(h.runtime, sessions=sessions)
     async with app.run_test(size=(100, 50)) as pilot:
-        await caught_up(pilot, app, stub)
-        app.push_screen(SessionsScreen(sessions, h.conversation.id))
-        await until(pilot, lambda: app.screen.query("#session-approve")
-                    and app.screen.query_one("#session-approve").display, timeout=10)
-        assert "lookup" in str(app.screen.query_one("#session-approval").render())
-        app.screen.query_one("#allow-session", Button).press()
-        await until(pilot, lambda: sessions.sessions[0].state == "done", timeout=20)
-        await until(pilot, lambda: "Done." in str(
-            app.screen.query_one("#session-lines").render()), timeout=10)
-        box = app.screen.query_one("#session-message", Input)
-        box.focus()
-        box.value = "Thanks"
+        await until(pilot, lambda: app.conversation is not None, timeout=10)
+        await type_text(pilot, "/sessions")
         await pilot.press("enter")
-        await until(pilot, lambda: "Thanks" in str(
-            app.screen.query_one("#session-lines").render()), timeout=10)
-        app.screen.dismiss(None)
+        await until(pilot, lambda: isinstance(app.screen, SessionsScreen))
         await pilot.pause()
+        assert "Needs your approval" in str(app.screen.query_one("#sessions").get_option_at_index(0).prompt)
+        app.screen.query_one("#open-session", Button).press()
+        await until(pilot, lambda: app.viewing is not None and app.query(PermissionPrompt),
+                    timeout=10)
+        assert "Sub-session: Look it up" in str(app.query_one("#status").render())
+        await type_text(pilot, "/allow")
+        await pilot.press("enter")
+        await until(pilot, lambda: sessions.sessions[0].state == "done", timeout=20)
+        await type_text(pilot, "Thanks")
+        await pilot.press("enter")
+        await until(pilot, lambda: any("Noted." in str(m.blocks) for m in sessions.sessions[0]
+                                       .messages), timeout=20)
+        await type_text(pilot, "/back")
+        await pilot.press("enter")
+        await until(pilot, lambda: app.viewing is None and app.runtime is h.runtime)
+        assert app.conversation.id == h.conversation.id
     await sessions.aclose()

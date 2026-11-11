@@ -73,6 +73,13 @@ context, working in the same folder with the same tools and settings. It runs in
 background while the conversation goes on, and its report comes back as the result of that
 step. Several can run at once.
 
+- **You decide on the agent's own ideas.** When you asked for the work, the sub-session
+  starts at once. When it is the agent's idea, it waits in the sidebar as a proposal until
+  you start or dismiss it.
+- **The agent hears back.** When a sub-session stops working (it is done, asks something,
+  or answered you) and the agent was not already waiting for it, the agent gets a short
+  notice in its conversation, which wakes it.
+
 - **Each has its own spending limit,** which the agent sets when it starts one (a dollar
   unless it says otherwise). It is not counted in your own limit.
 - **It asks you for approvals.** A step that needs your OK waits for you, as in your own
@@ -82,9 +89,11 @@ step. Several can run at once.
   the sidebar. Click one to open it in place of the conversation: its messages and steps,
   its approvals, Stop, and a message box that talks to it. Click the conversation to go
   back; the sub-session keeps working. In the terminal app, `/sessions` does the same.
-- **It is kept.** Quitting Kayden stops sub-sessions that are working, but they stay listed.
-  Opening one that is not running starts it again on its own conversation. Their work is in
-  `sessions/` in the data folder.
+- **It is kept.** Quitting Kayden stops sub-sessions that are working, but they stay listed,
+  and **Resume** lets one carry on with its task. Kayden never resumes one by itself after a
+  restart, so a crash cannot quietly repeat an action. Opening one that is not running
+  starts it again on its own conversation. Their work is in `sessions/` in the data folder.
+- **Right-click one** to open, resume, stop, rename, archive or delete it.
 
 ## Memory
 

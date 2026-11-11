@@ -28,6 +28,7 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
+    Checkbox,
     Collapsible,
     Footer,
     Input,
@@ -133,7 +134,7 @@ from kayden.frontends.common import (
     restart_notice,
 )
 from kayden.frontends.remote import RemoteRuntime
-from kayden.frontends.sessions import SubSession, SubSessions, message_lines, working_text
+from kayden.frontends.sessions import SubSession, SubSessions, working_text
 
 STATE_LABELS = {
     AgentState.NOT_STARTED: "Not started",
@@ -168,7 +169,7 @@ DECISION_ALIASES = {
 HELP = (
     "Commands: /stop (Esc), /activate (Ctrl+R), /model [id] (Ctrl+O), /settings (F2), "
     "/conversations (F3), /memory (F4), /mcp (tool servers), /folder [path], "
-    "/duty [instruction|off] (F5), /goal [instruction], /sessions, "
+    "/duty [instruction|off] (F5), /goal [instruction], /sessions, /back, "
     "/cancel [call id] (Ctrl+K), /allow [once|conversation], /deny, /quit (Ctrl+Q). "
     "Messages can be sent while the agent runs; they are queued."
 )
@@ -1170,31 +1171,31 @@ class DutyScreen(ModalScreen[DutyChoice | None]):
         self.dismiss(None)
 
 
-class SessionsScreen(ModalScreen[None]):
-    """The open conversation's sub-sessions. The highlighted one is open: its
-    conversation as it happens, a message box that talks to it, its approvals and Stop."""
+class SessionsScreen(ModalScreen[str | None]):
+    """The open conversation's sub-sessions. Returns the one to open in place."""
 
     BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", "Close")]
 
     def __init__(self, sessions: SubSessions, conversation_id: ConversationId | None) -> None:
         super().__init__()
         self.sessions, self.conversation_id = sessions, conversation_id
-        self.opened: tuple[SubSession, RemoteRuntime] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Sub-sessions", classes="title")
             yield OptionList(id="sessions")
             yield Static("", id="session-empty", classes="hint")
-            with VerticalScroll(id="session-work"):
-                yield Static("", id="session-lines", markup=False)
-            yield Static("", id="session-approval", markup=False)
-            with Horizontal(classes="buttons", id="session-approve"):
-                yield Button("Allow once", id="allow-session", variant="primary")
-                yield Button("Deny", id="deny-session")
-            yield Input(placeholder="Message this sub-session", id="session-message")
+            yield Checkbox("Show archived", id="show-archived")
             with Horizontal(classes="buttons"):
+                yield Button("Open", id="open-session", variant="primary")
+                yield Button("Start", id="start-session", variant="primary")
+                yield Button("Dismiss", id="dismiss-session")
+                yield Button("Resume", id="resume-session")
                 yield Button("Stop", id="stop-session", variant="error")
+            with Horizontal(classes="buttons"):
+                yield Button("Rename", id="rename-session")
+                yield Button("Archive", id="archive-session")
+                yield Button("Delete", id="delete-session", variant="error")
                 yield Button("Close", id="close")
 
     def on_mount(self) -> None:
@@ -1204,91 +1205,105 @@ class SessionsScreen(ModalScreen[None]):
     def on_unmount(self) -> None:
         with contextlib.suppress(ValueError):
             self.sessions.listeners.remove(self.refresh_view)
-        self._release()
 
     def _selected(self) -> SubSession | None:
         option = self.query_one(OptionList).highlighted_option
         return next((s for s in self.sessions.sessions if option and s.id == option.id), None)
 
     def refresh_view(self) -> None:
-        listed = self.sessions.of(self.conversation_id)
+        archived = self.query_one("#show-archived", Checkbox).value
+        listed = self.sessions.of(self.conversation_id, include_archived=archived)
         option_list = self.query_one(OptionList)
         current = option_list.highlighted
         option_list.clear_options()
-        option_list.add_options([Option(f"{s.task[:70]}\n  {s.summary}", id=s.id)
-                                 for s in listed])
+        option_list.add_options([
+            Option(f"{s.name[:70]}{'  (archived)' if s.archived else ''}\n  {s.summary}",
+                   id=s.id) for s in listed])
         if listed:
             option_list.highlighted = min(current or 0, len(listed) - 1)
         self.query_one("#session-empty", Static).update(
             "" if listed else "No sub-sessions in this conversation. The agent starts one "
             "when it hands off a task.")
-        self.run_worker(self._show, group="session", exclusive=True)
+        self._buttons()
+
+    @on(Checkbox.Changed, "#show-archived")
+    def _archived_toggled(self) -> None:
+        self.refresh_view()
 
     @on(OptionList.OptionHighlighted)
-    def _highlighted(self) -> None:
-        self.run_worker(self._show, group="session", exclusive=True)
-
-    async def _show(self) -> None:
+    def _buttons(self) -> None:
         session = self._selected()
-        if session is None:
-            self._release()
-        elif self.opened is None or self.opened[0] is not session:
-            self._release()
+        proposed = session is not None and session.state == "proposed"
+        shown = {
+            "#open-session": session is not None and not proposed,
+            "#start-session": proposed, "#dismiss-session": proposed,
+            "#resume-session": session is not None and session.resumable,
+            "#stop-session": session is not None and session.running,
+            "#rename-session": session is not None and not proposed,
+            "#archive-session": session is not None and not proposed,
+            "#delete-session": session is not None and not proposed}
+        for selector, visible in shown.items():
+            self.query_one(selector, Button).display = visible
+        if session is not None:
+            self.query_one("#archive-session", Button).label = (
+                "Unarchive" if session.archived else "Archive")
+
+    def _run(self, awaitable: Awaitable[Any]) -> None:
+        async def run() -> None:
             try:
-                self.opened = (session, await self.sessions.open(session))
+                await awaitable
             except Exception as e:  # noqa: BLE001 - shown, never fatal
-                self.notify(f"The sub-session could not be opened: {e}", severity="error")
-        lines: list[tuple[str, str]] = []
-        pending = None
-        if self.opened is not None:
-            remote = self.opened[1]
-            conversation = remote.snapshot().conversation
-            if conversation is not None:
-                with contextlib.suppress(Exception):
-                    lines = message_lines(await remote.history(conversation.id))
-            pending = next(iter(remote.snapshot().pending_permissions), None)
-        self.query_one("#session-lines", Static).update(
-            "\n\n".join(f"{who}: {text}" for who, text in lines))
-        self.query_one("#session-approval", Static).update(
-            f"It asks to run {pending.call.name}: {call_parts(pending.call.arguments)[1]}"
-            if pending is not None else "")
-        self.query_one("#session-approve").display = pending is not None
-        self.query_one("#stop-session", Button).disabled = session is None or not session.running
+                self.notify(str(e) or type(e).__name__, severity="error", markup=False)
 
-    def _release(self) -> None:
-        if self.opened is not None:
-            child, remote = self.opened
-            self.opened = None
-            self.sessions.release(child, remote)
+        self.run_worker(run())
 
-    async def _command(self, awaitable: Awaitable[Any]) -> None:
-        try:
-            await awaitable
-        except Exception as e:  # noqa: BLE001 - shown, never fatal
-            self.notify(str(e) or type(e).__name__, severity="error", markup=False)
+    @on(OptionList.OptionSelected)
+    @on(Button.Pressed, "#open-session")
+    def _open(self) -> None:
+        if (session := self._selected()) is not None and session.state != "proposed":
+            self.dismiss(session.id)
 
-    @on(Input.Submitted, "#session-message")
-    def _message(self, event: Input.Submitted) -> None:
-        event.stop()
-        text = event.value.strip()
-        event.input.clear()
-        if text and self.opened is not None:
-            self.run_worker(self._command(self.opened[1].send(text)))
+    @on(Button.Pressed, "#start-session")
+    def _start(self) -> None:
+        if (session := self._selected()) is not None:
+            self._run(self.sessions.start(session))
 
-    @on(Button.Pressed, "#allow-session, #deny-session")
-    def _approve(self, event: Button.Pressed) -> None:
-        if self.opened is None:
-            return
-        remote = self.opened[1]
-        pending = next(iter(remote.snapshot().pending_permissions), None)
-        if pending is not None:
-            decision = Decision.ALLOW_ONCE if event.button.id == "allow-session" else Decision.DENY
-            self.run_worker(self._command(remote.resolve_permission(pending.id, decision)))
+    @on(Button.Pressed, "#dismiss-session")
+    def _dismiss_proposal(self) -> None:
+        if (session := self._selected()) is not None:
+            self.sessions.dismiss(session)
+
+    @on(Button.Pressed, "#resume-session")
+    def _resume(self) -> None:
+        if (session := self._selected()) is not None:
+            self._run(self.sessions.resume(session))
 
     @on(Button.Pressed, "#stop-session")
     def _stop(self) -> None:
         if (session := self._selected()) is not None:
             self.sessions.stop(session)
+
+    @on(Button.Pressed, "#rename-session")
+    def _rename(self) -> None:
+        if (session := self._selected()) is not None:
+            self.app.push_screen(
+                TextPromptScreen("Rename sub-session", session.title or "",
+                                 hint="Leave it empty to show its task."),
+                lambda title: title is not None and self.sessions.rename(session, title))
+
+    @on(Button.Pressed, "#archive-session")
+    def _archive(self) -> None:
+        if (session := self._selected()) is not None:
+            self.sessions.archive(session, not session.archived)
+
+    @on(Button.Pressed, "#delete-session")
+    def _delete(self) -> None:
+        if (session := self._selected()) is not None:
+            self.app.push_screen(
+                ConfirmScreen(f"Delete the sub-session “{session.name[:60]}”? It stops, and its "
+                              "conversation is erased. This cannot be undone.", yes="Delete",
+                              danger=True),
+                lambda yes: yes and self._run(self.sessions.delete(session)))
 
     @on(Button.Pressed, "#close")
     def _close(self) -> None:
@@ -1457,6 +1472,9 @@ class KaydenApp(App[None]):
         self.runtime = runtime
         self.start_options = start_options
         self.sessions = sessions
+        self.home = runtime  # this app's own runtime; `runtime` is the one shown
+        self.viewing: tuple[SubSession, RemoteRuntime] | None = None
+        self._generation = 0  # which pump feeds the inbox
         if sessions is not None:
             sessions.listeners.append(self._sessions_changed)
         self.last_seq = -1
@@ -1488,7 +1506,7 @@ class KaydenApp(App[None]):
     def on_mount(self) -> None:
         self._inbox.put_nowait(RESYNC)
         self.run_worker(self._consume(), name="consume", exit_on_error=True)
-        self.run_worker(self._pump(), name="pump", exit_on_error=False)
+        self.run_worker(self._pump(self._generation), group="pump", exit_on_error=False)
         self.query_one("#prompt", Input).focus()
         if self.runtime.snapshot().conversation is None:
             self._call(self._begin())
@@ -1512,12 +1530,46 @@ class KaydenApp(App[None]):
 
     # ── event plumbing ───────────────────────────────────────────────────
 
-    async def _pump(self) -> None:
+    async def _pump(self, generation: int) -> None:
+        runtime = self.runtime
         try:
-            async for envelope in self.runtime.events():
+            async for envelope in runtime.events():
                 await self._inbox.put(envelope)
         finally:
-            await self._inbox.put(None)
+            if generation == self._generation:  # not when another runtime is shown
+                await self._inbox.put(None)
+
+    def _show(self, runtime: RuntimeAPI) -> None:
+        """Show another runtime: this app's own or a sub-session's."""
+        self._generation += 1
+        self.workers.cancel_group(self, "pump")
+        self.runtime = runtime
+        self.last_seq = -1
+        self._inbox.put_nowait(RESYNC)
+        self.run_worker(self._pump(self._generation), group="pump", exit_on_error=False)
+
+    async def view_session(self, session: SubSession) -> None:
+        """Show a sub-session in place of this conversation; /back returns."""
+        assert self.sessions is not None
+        remote = await self.sessions.open(session)
+        self._leave_session()
+        self.viewing = (session, remote)
+        self._show(remote)
+
+    def _leave_session(self) -> None:
+        if self.viewing is not None:
+            session, remote = self.viewing
+            self.viewing = None
+            assert self.sessions is not None
+            self.sessions.release(session, remote)
+            self._show(self.home)
+
+    def _deliver_notes(self) -> None:
+        """Tell this app's conversation what its sub-sessions did while nobody waited."""
+        snapshot = self.home.snapshot()
+        if self.sessions is not None and snapshot.conversation is not None:
+            for note in self.sessions.take_notes(snapshot.conversation.id):
+                self._call(self.home.send(note))
 
     async def _consume(self) -> None:
         while (item := await self._inbox.get()) is not None:
@@ -1844,10 +1896,13 @@ class KaydenApp(App[None]):
     def _sessions_changed(self) -> None:
         with contextlib.suppress(NoMatches):  # before the status line is mounted
             self._render_status()
+        self._deliver_notes()
 
     def _render_status(self) -> None:
         state = STATE_LABELS[self.state]
         parts = [state + (f" · {self.pending_ops} running" if self.pending_ops else "")]
+        if self.viewing is not None:
+            parts.insert(0, f"Sub-session: {self.viewing[0].name[:40]} (/back returns)")
         if self.model:
             parts.append(self.model)
         if self.conversation is not None and self.conversation.folder is not None:
@@ -1906,6 +1961,7 @@ class KaydenApp(App[None]):
     async def start_conversation(self, options: StartOptions) -> None:
         self.conversation = await self.runtime.start(options)
         await self._inbox.put(RESYNC)
+        self._deliver_notes()
 
     @on(Input.Submitted, "#prompt")
     def _submitted(self, event: Input.Submitted) -> None:
@@ -1936,7 +1992,10 @@ class KaydenApp(App[None]):
                 self.action_conversations()
             case "memory":
                 self.action_memory()
+            case "back":
+                self._leave_session()
             case "mcp":
+                self._leave_session()
                 self.push_screen(McpScreen(self.runtime))
             case "duty" | "goal" if arg == "off":
                 self._call(self.runtime.set_duty(None))
@@ -1951,9 +2010,12 @@ class KaydenApp(App[None]):
                 if self.sessions is None:
                     self.notify("Sub-sessions are not available here.", severity="warning")
                 else:
-                    open_id = self.conversation.id if self.conversation is not None else None
-                    self.push_screen(SessionsScreen(self.sessions, open_id))
+                    self._leave_session()
+                    own = self.home.snapshot().conversation
+                    self.push_screen(SessionsScreen(self.sessions, own.id if own else None),
+                                     self._on_session_chosen)
             case "folder" if arg:
+                self._leave_session()
                 self.new_in_folder(str(Path(arg).expanduser()))
             case "folder":
                 folder = self.conversation.folder if self.conversation is not None else None
@@ -2007,7 +2069,15 @@ class KaydenApp(App[None]):
             return self.config is not None and self.conversation is not None
         return True
 
+    def _on_session_chosen(self, session_id: str | None) -> None:
+        if self.sessions is None or session_id is None:
+            return
+        session = next((s for s in self.sessions.sessions if s.id == session_id), None)
+        if session is not None:
+            self._call(self.view_session(session))
+
     def action_conversations(self) -> None:
+        self._leave_session()
         open_id = None if self.conversation is None else self.conversation.id
         self.push_screen(ConversationsScreen(self.runtime, open_id),
                          self._on_conversation_chosen)
@@ -2024,6 +2094,7 @@ class KaydenApp(App[None]):
             self._call(self.start_conversation(StartOptions(conversation_id=choice)))
 
     def action_memory(self) -> None:
+        self._leave_session()
         async def open_screen() -> None:
             try:
                 await self.runtime.notes()
@@ -2068,6 +2139,7 @@ class KaydenApp(App[None]):
         self._call(pick())
 
     def action_settings(self) -> None:
+        self._leave_session()
         async def open_screen() -> None:
             settings = await self.runtime.settings()
             try:

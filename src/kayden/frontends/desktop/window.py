@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QCloseEvent,
     QColor,
     QContextMenuEvent,
+    QCursor,
     QDesktopServices,
     QFont,
     QFontMetrics,
@@ -882,9 +883,7 @@ class MainWindow(QMainWindow):
                                           "to rename, archive or delete it.")
         self.conversation_list.itemActivated.connect(self._conversation_chosen)
         self.conversation_list.itemClicked.connect(self._conversation_chosen)
-        self.conversation_list.menu_requested.connect(
-            lambda entry, at: (info := self._info_of(entry)) is not None
-            and self.conversation_menu(info).popup(at))
+        self.conversation_list.menu_requested.connect(self._row_menu)
         for keys, command in ((QKeySequence("F2"), self.rename_conversation),
                               (QKeySequence.StandardKey.Delete, self.delete_conversation)):
             shortcut = QShortcut(keys, self.conversation_list,
@@ -1140,7 +1139,8 @@ class MainWindow(QMainWindow):
             _spawn(self.fill_sidebar())  # select the open conversation again
             return
         task = self.controller.open_conversation(conversation_id, seed_from=seed_from)
-        task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar())))
+        task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar()),
+                                          self._deliver_notes()))
 
     # ── view model changes ────────────────────────────────────────────────
 
@@ -1305,6 +1305,7 @@ class MainWindow(QMainWindow):
         sub-sessions under it. A folded group shows only its heading."""
         own = self.home.model.conversation
         viewing = self._viewing[0].id if self._viewing is not None else None
+        archived = self.show_archived.isChecked()
         groups: dict[str | None, list[ConversationInfo]] = {}
         for info in self._conversations.values():
             groups.setdefault(info.folder, []).append(info)
@@ -1334,13 +1335,16 @@ class MainWindow(QMainWindow):
                 self.conversation_list.addItem(entry)
                 if viewing is None and own is not None and info.id == own.id:
                     self.conversation_list.setCurrentItem(entry)
-                for session in (self.sessions.of(info.id) if self.sessions else ()):
-                    row = QListWidgetItem(session.task)
+                children = (self.sessions.of(info.id, include_archived=archived)
+                            if self.sessions else ())
+                for session in children:
+                    row = QListWidgetItem(session.name)
                     row.setData(KIND_ROLE, "session")
                     row.setData(Qt.ItemDataRole.UserRole, session.id)
-                    row.setData(TITLE_ROLE, session.task)
+                    row.setData(TITLE_ROLE, session.name)
                     row.setData(PREVIEW_ROLE, session.summary)
-                    row.setData(FLAGS_ROLE, {"working"} if session.running else set())
+                    row.setData(FLAGS_ROLE, {"working"} if session.running else
+                                {"archived"} if session.archived else set())
                     row.setToolTip(session.task)
                     self.conversation_list.addItem(row)
                     if session.id == viewing:
@@ -1438,14 +1442,76 @@ class MainWindow(QMainWindow):
     def _sessions_changed(self) -> None:
         self._refresh_status()
         self._render_sidebar()
+        self._deliver_notes()
+
+    def _deliver_notes(self) -> None:
+        """Tell this window's conversation what its sub-sessions did while nobody waited:
+        a notice as a message, which wakes the agent (queued while it works)."""
+        own = self.home.model.conversation
+        if self.sessions is not None and own is not None:
+            for note in self.sessions.take_notes(own.id):
+                self.home.send(note)
+
+    def _session_of(self, session_id: str) -> SubSession | None:
+        return next((s for s in (self.sessions.sessions if self.sessions else ())
+                     if s.id == session_id), None)
 
     def _session_chosen(self, session_id: str) -> None:
-        if self.sessions is None:
-            return
-        session = next((s for s in self.sessions.sessions if s.id == session_id), None)
+        session = self._session_of(session_id)
         if session is None or (self._viewing is not None and self._viewing[0] is session):
             return
+        if session.state == "proposed":  # nothing to open yet: start or dismiss it
+            self.session_menu(session).popup(QCursor.pos())
+            return
         _spawn(self.open_session(session))
+
+    def _row_menu(self, entry: QListWidgetItem, at: QPoint) -> None:
+        if entry.data(KIND_ROLE) == "session":
+            if (session := self._session_of(entry.data(Qt.ItemDataRole.UserRole))) is not None:
+                self.session_menu(session).popup(at)
+        elif (info := self._info_of(entry)) is not None:
+            self.conversation_menu(info).popup(at)
+
+    def session_menu(self, session: SubSession) -> QMenu:
+        assert self.sessions is not None
+        sessions = self.sessions
+        menu = QMenu(self)
+        if session.state == "proposed":
+            menu.addAction("Start", lambda: self.home.command(sessions.start(session)))
+            menu.addAction("Dismiss", lambda: sessions.dismiss(session))
+            return menu
+        menu.addAction("Open", lambda: _spawn(self.open_session(session)))
+        if session.resumable:
+            menu.addAction("Resume", lambda: self.home.command(sessions.resume(session)))
+        if session.running:
+            menu.addAction("Stop", lambda: sessions.stop(session))
+        menu.addAction("Rename…", lambda: self.rename_session(session))
+        menu.addAction("Unarchive" if session.archived else "Archive",
+                       lambda: sessions.archive(session, not session.archived))
+        menu.addAction("Delete…", lambda: self.delete_session(session))
+        return menu
+
+    def rename_session(self, session: SubSession) -> None:
+        assert self.sessions is not None
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Rename sub-session")
+        dialog.setLabelText("New name (leave it empty to show its task):")
+        dialog.setTextValue(session.title or "")
+        dialog.textValueSelected.connect(lambda title: self.sessions.rename(session, title))
+        dialog.open()
+
+    def delete_session(self, session: SubSession) -> None:
+        assert self.sessions is not None
+        sessions = self.sessions
+
+        def delete() -> None:
+            if self._viewing is not None and self._viewing[0] is session:
+                self._leave_session()
+            self.home.command(sessions.delete(session))
+
+        confirm(self, f"Delete the sub-session “{clip(session.name, 80)}”?", delete,
+                yes="Delete", danger=True,
+                details="It stops, and its conversation is erased. This cannot be undone.")
 
     async def open_session(self, session: SubSession) -> None:
         """Show a sub-session in the conversation area, as its own conversation: its

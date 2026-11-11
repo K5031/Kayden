@@ -29,10 +29,12 @@ listing and peeking are trivial. In Kayden the user-facing host is the frontend.
 `kayden.frontends.sessions.SubSessions`, a Tools module with no UI code, which the
 desktop app and the TUI create and offer. It offers:
 
-- `start_session(task, budget_usd)`: starts a child, a separate Kayden agent with its own
-  context, in the conversation's work folder, on the task as a goal. The call runs in the
-  background and returns the child's report when the goal is reached, or its question when
-  it asks for help.
+- `start_session(task, initiation, budget_usd)`: starts a child, a separate Kayden agent
+  with its own context, in the conversation's work folder, on the task as a goal. With
+  `user_asked` it starts at once; with `own_initiative` it is a proposal the user starts or
+  dismisses, as the Claude app asks before a session the agent proposes. The call runs in
+  the background and returns the child's report when the goal is reached, or its question
+  when it asks for help.
 - `message_session(session, text)`: answers a question or adds an instruction, then waits
   the same way.
 - `stop_session(session)`: stops a child.
@@ -52,7 +54,11 @@ How a child runs:
   parent stops every child that is working. A child that is done or stopped is closed
   once no view has it open.
 - Each child's record (`session.json` in its folder) keeps it listed after a restart.
-  Opening one that is not running starts it again on its own conversation.
+  Opening one that is not running starts it again on its own conversation; **Resume** also
+  lets it carry on with its goal. Nothing resumes by itself after a restart (SPEC 11).
+- When a child stops working and no call of the parent's waits for it (the user talked to
+  it), the parent gets a notice in its conversation, as the Claude app sends a note when a
+  session ends a turn.
 - While it runs the call's progress line is the child's current step, so the step card in
   the parent conversation shows it live.
 
@@ -72,9 +78,10 @@ therefore shows a child with the same code as its own conversation.
   Clicking a child shows it in the conversation area: its messages and steps, its
   permission cards, Stop, and a message box that talks to it. Clicking a conversation goes
   back; the child keeps working. Memory, tool servers and settings stay the window's own.
-- **TUI:** a terminal app shows one screen, so `/sessions` lists the children with the
-  highlighted one's conversation, its open prompt with Allow once and Deny, a message box
-  and Stop.
+- **Row actions:** open, resume, stop, rename, archive and delete; a proposal is started or
+  dismissed.
+- **TUI:** `/sessions` lists the children with the same actions; opening one shows it in
+  place of the conversation, the app's runtime swapped for the child's, until `/back`.
 - Both status lines count the children working; the parent conversation shows each child
   as a step, with its report as the result.
 
@@ -98,6 +105,11 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
 - **A window per child,** or a plain text view of its work. Less code than switching the
   conversation area, but not what the Claude app does, and the plain view could not show
   steps, prompts or a message box.
+- **Resuming children by themselves after a restart,** as long-running app sessions do.
+  Convenient, but SPEC 11 keeps a crash from quietly repeating an action; one click is the
+  price.
+- **A notice for every turn,** including a goal's check-ins. Closest to the Claude app's
+  notes, but a child between check-ins would wake its parent every few minutes for nothing.
 - **A real tree widget** for the sidebar. Native folding, but the rows' drawing, menus and
   shortcuts are built on a list; headings and indented rows in the same list keep them.
 
@@ -110,8 +122,9 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
 - **Children wait for approvals.** A child whose step needs the user's OK waits until the
   user opens it; the sidebar says so. Routing prompts to a supervisor agent is the KFM's
   escalation, not built.
-- **Stopped on quit.** Working children stop with the window; they stay listed and start
-  again when opened, but do not resume their goal by themselves.
+- **Stopped on quit.** Working children stop with the window; they stay listed, and a click
+  on Resume, not Kayden itself, lets them carry on.
+- **Notices wake the parent.** Each notice is a request the parent pays for.
 - **The channel protocol carries all of RuntimeAPI,** so it is a larger contract: a
   renamed API type or field breaks reopening a child run by an older Kayden.
 - **Bundles.** A child is started as `python -m kayden` with the parent's interpreter; a
