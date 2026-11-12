@@ -315,3 +315,40 @@ async def test_the_voice_button_starts_a_spoken_conversation(
     window.close()
     assert not voice.on
     task.cancel()
+
+
+def test_a_microphone_that_reports_no_error_is_open(qapp, monkeypatch):
+    """Qt reports NoError in an enum that is not equal to QAudio's of the same name."""
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtMultimedia import QtAudio
+
+    from kayden.frontends.desktop.voice import audio
+
+    class Device:
+        def isNull(self) -> bool:
+            return False
+
+        def isFormatSupported(self, _format: object) -> bool:
+            return True
+
+    class Source:
+        def __init__(self, *_args: object) -> None:
+            self.buffer = QBuffer()
+            self.buffer.open(QIODevice.OpenModeFlag.ReadWrite)
+
+        def start(self) -> QBuffer:
+            return self.buffer
+
+        def error(self) -> object:
+            return QtAudio.Error.NoError
+
+        def stop(self) -> None: ...
+
+        def deleteLater(self) -> None: ...
+
+    monkeypatch.setattr(audio.QMediaDevices, "defaultAudioInput", staticmethod(Device))
+    monkeypatch.setattr(audio, "QAudioSource", Source)
+    heard: list[np.ndarray] = []
+    microphone = audio.Microphone(heard.append)
+    microphone.start()  # does not raise NoMicrophone
+    microphone.stop()

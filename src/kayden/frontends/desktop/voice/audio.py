@@ -12,6 +12,8 @@ from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource,
 
 from kayden.frontends.desktop.voice.engine import RATE
 
+# Qt's audio enums are compared by name: PySide6 has them twice (QAudio and QtAudio), and
+# a value of one never equals the other's, so a device's NoError would look like an error.
 _DTYPES = {QAudioFormat.SampleFormat.Int16: (np.int16, 32768.0),
            QAudioFormat.SampleFormat.Int32: (np.int32, 2147483648.0),
            QAudioFormat.SampleFormat.Float: (np.float32, 1.0),
@@ -61,7 +63,7 @@ class Microphone(QObject):
             raise NoMicrophone("The microphone's sound format is not supported.")
         self._source = QAudioSource(device, self._format, self)
         self._io = self._source.start()
-        if self._io is None or self._source.error() != QAudio.Error.NoError:
+        if self._io is None or self._source.error().name != "NoError":
             self.stop()
             raise NoMicrophone("The microphone could not be opened.")
         self._io.readyRead.connect(self._read)
@@ -104,9 +106,9 @@ class Speaker(QObject):
         sink = self._sink = QAudioSink(QMediaDevices.defaultAudioOutput(), sound, self)
         done = self._done = asyncio.get_running_loop().create_future()
 
-        def changed(state: QAudio.State) -> None:
+        def changed(state: QAudio.State) -> None:  # the annotation lets Qt pass the state
             # Idle: all of it was played. Stopped: stop(), or the device failed.
-            if state in (QAudio.State.IdleState, QAudio.State.StoppedState) and not done.done():
+            if state.name in ("IdleState", "StoppedState") and not done.done():
                 done.set_result(None)
 
         sink.stateChanged.connect(changed)
