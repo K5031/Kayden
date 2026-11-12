@@ -16,6 +16,7 @@ import shutil
 import tempfile
 from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from PySide6.QtCore import (
     QMimeData,
     QObject,
     QPoint,
+    QRect,
     QRectF,
     QSize,
     Qt,
@@ -58,6 +60,7 @@ from PySide6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextFormat,
+    QTextFrame,
     QTextFrameFormat,
 )
 from PySide6.QtWidgets import (
@@ -188,6 +191,8 @@ LINE_HEIGHT_PERCENT = 118  # reply text, of the font's line spacing (itself ~1.3
 CODE_SCALE = 0.88  # inline code, of the text size: monospace looks larger at the same size
 PARAGRAPH_SPACING = 10  # px below a reply paragraph
 CODE_PADDING = 10  # px around the lines of a code block, inside its box
+CODE_HEADER = 22  # px above them, for the block's language and its copy button
+CODE_RADIUS = 8  # px, the corners of the box
 TURN_GAP = 18  # px more below your message, before Kayden's reply, than between its steps
 LIST_ITEM_SPACING = 4  # px below a list item
 ZOOM_SAVE_DELAY_S = 0.4
@@ -546,17 +551,21 @@ class MarkdownView(QTextBrowser):
         self.document().setDocumentMargin(0)
         self.document().setIndentWidth(20)
         self.document().documentLayout().documentSizeChanged.connect(self._fit)
+        self._boxes: list[tuple[QTextFrame, str]] = []  # each code block and its language
+        self.code_buttons: list[QToolButton] = []  # one per code block; spares are hidden
 
     def setMarkdown(self, markdown: str) -> None:
         """Markdown with room to breathe: taller lines, space between paragraphs and list
         items, more above headings; inline code a little smaller, on a soft background; a
-        code block in one box, its lines together and wrapped when long."""
+        code block in one round box under its language and a copy button, its lines
+        together and wrapped when long."""
+        self._boxes = []
         super().setMarkdown(markdown)
         code = QTextCharFormat()
         code.setFontPointSize(self.font().pointSizeF() * CODE_SCALE)
         inline = QTextCharFormat(code)
         inline.setBackground(QColor(theme.current().select))
-        boxes: list[list[int]] = []  # each code block: where it starts and ends
+        boxes: list[list[Any]] = []  # each code block: its start, end and language
         previous_fenced = False
         block = self.document().begin()
         while block.isValid():
@@ -580,7 +589,8 @@ class MarkdownView(QTextBrowser):
                 if previous_fenced:
                     boxes[-1][1] = end
                 else:
-                    boxes.append([block.position(), end])
+                    boxes.append([block.position(), end, fmt.stringProperty(
+                        QTextFormat.Property.BlockCodeLanguage)])
                 fmt.setNonBreakableLines(False)
                 fmt.setTopMargin(0)
                 fmt.setBottomMargin(0)
@@ -600,26 +610,87 @@ class MarkdownView(QTextBrowser):
                 fmt.setTopMargin(HEADING_SPACING)
             QTextCursor(block).setBlockFormat(fmt)
             block = block.next()
-        box = QTextFrameFormat()
-        box.setBackground(QColor(theme.current().select))
+        box = QTextFrameFormat()  # its background is painted here, for the round corners
         box.setPadding(CODE_PADDING)
-        box.setBottomMargin(PARAGRAPH_SPACING)
-        for start, end in reversed(boxes):  # from the end: a frame moves what follows it
+        box.setTopMargin(CODE_HEADER)  # inside the painted box: the frame's whole rectangle
+        for start, end, language in reversed(boxes):  # from the end: a frame moves the rest
             cursor = QTextCursor(self.document())
             cursor.setPosition(start)
             cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
             frame = cursor.insertFrame(box)
-            # Qt puts an empty line before and after a frame: keep them from showing.
-            for position in (frame.firstPosition() - 1, frame.lastPosition() + 1):
+            self._boxes.insert(0, (frame, language))
+            # Qt puts an empty line before and after a frame: the one before is kept from
+            # showing, the one after is the space below the box.
+            for position, height in ((frame.firstPosition() - 1, 1),
+                                     (frame.lastPosition() + 1, PARAGRAPH_SPACING)):
                 edge = self.document().findBlock(position)
                 if edge.isValid() and not edge.text():
                     flat = QTextBlockFormat()
-                    flat.setLineHeight(1, QTextBlockFormat.LineHeightTypes.FixedHeight.value)
+                    flat.setLineHeight(height,
+                                       QTextBlockFormat.LineHeightTypes.FixedHeight.value)
                     QTextCursor(edge).setBlockFormat(flat)
+        while len(self.code_buttons) < len(self._boxes):
+            button = QToolButton(self.viewport(), objectName="codeCopy")
+            button.setAccessibleName("Copy code")
+            button.setIconSize(QSize(14, 14))
+            button.setCursor(Qt.CursorShape.ArrowCursor)
+            button.clicked.connect(partial(self._copy_code, len(self.code_buttons)))
+            self.code_buttons.append(button)
+        for index, button in enumerate(self.code_buttons):
+            self._paint_copy(button)
+            button.setVisible(index < len(self._boxes))
+        self._place_buttons()
+
+    def code_boxes(self) -> list[QRect]:
+        """Where each code block's box is, in the view."""
+        layout = self.document().documentLayout()
+        return [layout.frameBoundingRect(frame).toAlignedRect() for frame, _ in self._boxes]
+
+    def code_languages(self) -> list[str]:
+        return [language for _, language in self._boxes]
+
+    def _place_buttons(self) -> None:
+        for box, button in zip(self.code_boxes(), self.code_buttons, strict=False):
+            size = button.sizeHint()
+            button.setGeometry(box.right() - size.width() - 5, box.top() + 4,
+                               size.width(), size.height())
+
+    def _copy_code(self, index: int) -> None:
+        frame, _ = self._boxes[index]
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(frame.firstPosition())
+        cursor.setPosition(frame.lastPosition(), QTextCursor.MoveMode.KeepAnchor)
+        QApplication.clipboard().setText(cursor.selectedText().replace("\u2029", "\n"))
+        button = self.code_buttons[index]
+        self._paint_copy(button, copied=True)
+        QTimer.singleShot(COPIED_MS, button, partial(self._paint_copy, button))
+
+    def _paint_copy(self, button: QToolButton, copied: bool = False) -> None:
+        button.setIcon(theme.icon("check" if copied else "copy", theme.current().muted, 14))
+        button.setToolTip("Copied" if copied else "Copy")
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """The boxes of the code blocks and their languages, under the text."""
+        colors = theme.current()
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        small = QFont(self.font())
+        small.setPointSizeF(self.font().pointSizeF() * CODE_SCALE)
+        painter.setFont(small)
+        for box, language in zip(self.code_boxes(), self.code_languages(), strict=True):
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors.select))
+            painter.drawRoundedRect(box, CODE_RADIUS, CODE_RADIUS)
+            painter.setPen(QColor(colors.muted))
+            painter.drawText(box.adjusted(CODE_PADDING + 1, 4, 0, 0).topLeft()
+                             + QPoint(0, painter.fontMetrics().ascent() + 2), language)
+        painter.end()
+        super().paintEvent(event)
 
     def _fit(self, *_: object) -> None:
         self.document().setTextWidth(self.viewport().width())
         self.setFixedHeight(int(self.document().size().height()) + 4)
+        self._place_buttons()
 
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)

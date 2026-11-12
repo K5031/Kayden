@@ -254,6 +254,8 @@ QToolButton#menu {{ padding: 6px; border-radius: 8px; }}
 QToolButton#menu:hover {{ background: {c.select}; }}
 QToolButton#replyAction {{ padding: 3px; border-radius: 6px; }}
 QToolButton#replyAction:hover {{ background: {c.select}; }}
+QToolButton#codeCopy {{ padding: 3px; border-radius: 6px; background: transparent; }}
+QToolButton#codeCopy:hover {{ background: {c.bubble}; }}
 QToolButton#profile {{ color: {c.text}; padding: 6px 8px; }}
 QToolButton#windowControl {{ padding: 6px; border-radius: 6px; }}
 QDialog#settings {{ border: 1px solid {c.line}; }}

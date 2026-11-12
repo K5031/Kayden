@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QContextMenuEvent, QTextCursor
+from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
 
@@ -578,9 +578,33 @@ def test_a_code_block_is_one_box_with_its_lines_together(qapp):
     assert not first.blockFormat().nonBreakableLines()  # a long line wraps, not cut off
     frame = QTextCursor(first).currentFrame()
     assert frame is not document.rootFrame() and frame is QTextCursor(last).currentFrame()
-    assert frame.frameFormat().background().style() != Qt.BrushStyle.NoBrush
     assert frame.frameFormat().padding() > 0
     assert QTextCursor(lines["After."]).currentFrame() is document.rootFrame()
+
+
+def test_a_code_block_has_round_corners_its_language_and_a_copy_button(qapp):
+    bubble = AssistantBubble(AssistantItem(
+        text="Before.\n\n```python\none = 1\ntwo = 2\n```\n\nThen:\n\n```\nls\n```", final=True))
+    bubble.resize(500, 300)
+    bubble.show()
+    qapp.processEvents()
+    body = bubble.body
+    [box, _] = body.code_boxes()
+    picture = body.grab().toImage()
+    inside = picture.pixelColor(box.center())
+    assert inside == QColor(theme.current().select)
+    assert picture.pixelColor(box.left(), box.top()) != inside  # the corner is cut round
+    assert body.code_languages() == ["python", ""]
+    first, second = body.code_buttons
+    assert first.isVisible() and box.contains(first.geometry()) and first.toolTip() == "Copy"
+    first.click()
+    assert QApplication.clipboard().text() == "one = 1\ntwo = 2"
+    assert first.toolTip() == "Copied"
+    second.click()
+    assert QApplication.clipboard().text() == "ls"
+    bubble.item.text = "No code now."
+    bubble.refresh()
+    assert not body.code_boxes() and not any(b.isVisible() for b in body.code_buttons)
 
 
 @pytest.fixture
