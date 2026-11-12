@@ -174,6 +174,9 @@ QPushButton[danger="true"] {{ background: {c.error}; color: {c.bg}; border-color
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px;
     color: {c.muted}; }}
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
+QFrame#attachment {{ background: {c.bg}; border: 1px solid {c.line}; border-radius: 8px; }}
+QToolButton#removeAttachment {{ background: transparent; border-radius: 9px; padding: 0; }}
+QToolButton#removeAttachment:hover {{ background: {c.select}; }}
 QToolButton#send {{ background: transparent; border-radius: 8px; padding: 0; }}
 QToolButton#send:hover {{ background: {c.select}; }}
 QToolButton#modelPicker {{ color: {c.muted}; padding: 2px 6px; font-size: {small}; }}

@@ -172,6 +172,38 @@ class ServerToolUse:
 
 
 @dataclass(frozen=True, slots=True)
+class Image:
+    """A picture the user attached to their message (RuntimeAPI.send). Cores send it as the
+    provider's image content; one whose provider or model cannot see images sends
+    attachment_text in its place."""
+
+    media_type: str  # image/png, image/jpeg, image/gif or image/webp
+    data: str  # the file's bytes, base64
+    name: str = ""  # its file name
+
+
+@dataclass(frozen=True, slots=True)
+class File:
+    """A file the user attached to their message. `text` is its content when it reads as
+    text and is small enough to include; None when it is binary or too large, so the agent
+    only learns where it is. Cores send attachment_text."""
+
+    path: str  # absolute
+    text: str | None = None
+
+
+def attachment_text(block: Image | File) -> str:
+    """An attachment as text: a file for the model, either for a summary or a search hit,
+    an image for a model that cannot see it."""
+    if isinstance(block, Image):
+        return f"[Image attached: {block.name or block.media_type}]"
+    if block.text is None:
+        return (f"[File attached: {block.path}. Its content is not included (it is binary "
+                "or too large); open it with your tools if you need it.]")
+    return f"[File attached: {block.path}]\n{block.text}"
+
+
+@dataclass(frozen=True, slots=True)
 class OpaqueBlock:
     """A persisted block whose type this version doesn't know (for example a removed
     plugin's). Memory returns it for unresolvable tags and re-encodes it unchanged;
@@ -182,7 +214,7 @@ class OpaqueBlock:
 
 
 type Block = (Text | Reasoning | ToolCall | ToolResult | OperationResult | ServerToolUse
-              | OpaqueBlock)
+              | Image | File | OpaqueBlock)
 
 # Stable on-disk tags. Memory persists blocks as {"type": tag, "data": {...}} with these
 # tags, never Python import paths, so renaming a class doesn't break an archive.
@@ -193,6 +225,8 @@ BLOCK_TYPES: Mapping[str, type] = {
     "tool_result": ToolResult,
     "operation_result": OperationResult,
     "server_tool_use": ServerToolUse,
+    "image": Image,
+    "file": File,
 }
 
 
@@ -1246,6 +1280,7 @@ class MessageQueued:
 
     message_id: str
     text: str
+    attachments: Sequence[Image | File] = ()  # what the user attached to it
 
 
 @dataclass(frozen=True, slots=True)
@@ -1610,10 +1645,16 @@ class RuntimeAPI(Protocol):
         Settings.restart_frontend names, reopening the open conversation unless the Memory
         module changes. The event stream ends, so the frontend's run() returns."""
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, files: Sequence[str] = ()) -> None:
         """Submit a user message and authorize a cycle. While a cycle runs or the agent
         is stopping, the message is queued (MessageQueued) and delivered at the next
-        turn boundary; a turn that ended without tool calls starts the next cycle."""
+        turn boundary; a turn that ended without tool calls starts the next cycle.
+
+        `files` are paths of files the user attached. The runtime reads them: an image
+        (PNG, JPEG, GIF, WebP, up to 5 MB) becomes an Image block of the message, a file
+        that reads as text (up to 200 kB) a File with its content, any other a File
+        without. ValueError for one that cannot be read; nothing is sent then. `text` may
+        be empty when there are files."""
 
     async def activate(self) -> None:
         """User-initiated cycle with no new message. If the transcript is empty or its

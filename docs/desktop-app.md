@@ -65,6 +65,7 @@ another reason, the Settings window opens with the message.
 | Move, resize or maximize the window | Drag the conversation's title bar or the top of the sidebar; double-click it to maximize. Drag any edge to resize. Minimize, maximize and close are at the top right. |
 | Find the menus | **☰** at the top of the sidebar: new chat, duty, stop, view (zoom, archived conversations) and model. Your name at the bottom left: settings, memory, tool servers, help and quit; the gear next to it opens Settings. Shortcuts work without opening a menu. |
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
+| Attach a file | Drop it anywhere on the window, or paste it (a copied picture or screenshot works too). It waits above the message box, a picture with a small preview, until you send; ✕ takes it off. See [Attaching files](using-kayden.md#attaching-files). |
 | Run a skill | Send its name as a message: `/consolidate-memory`. See [Skills](concepts.md#skills). |
 | Stop Kayden | Press the round button in the message box (it shows a square while Kayden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |

@@ -21,6 +21,8 @@ from kayden.api import (
     Core,
     CoreError,
     CoreEvent,
+    File,
+    Image,
     InferenceRequest,
     InstancePaths,
     Message,
@@ -40,6 +42,7 @@ from kayden.api import (
     TransientCoreError,
     Usage,
     UsageReport,
+    attachment_text,
 )
 from kayden.core._common import (
     ModelConfig,
@@ -80,6 +83,7 @@ class Profile:
     models: Mapping[str, ModelConfig] = field(default_factory=dict)  # defaults under `models`
     transient_finish_reasons: frozenset[str] = frozenset()  # interrupted, worth retrying
     reasoning_input_field: str | None = None  # assistant field that replays reasoning
+    images: bool = True  # its models take images; False: an attached one goes as a line
     maintenance_options: Mapping[str, Any] = field(default_factory=dict)  # under `options`
 
 
@@ -100,6 +104,7 @@ _PROFILES = {
         },
         transient_finish_reasons=frozenset({"insufficient_system_resource", "aborted"}),
         reasoning_input_field="reasoning_content",
+        images=False,
         maintenance_options={"thinking": {"type": "disabled"}},
     ),
 }
@@ -176,7 +181,7 @@ class OpenAICompatCore(Core):
             "model": request.model,
             "messages": to_messages(request.system, request.messages,
                                     reasoning_field=self._profile.reasoning_input_field,
-                                    model=request.model),
+                                    model=request.model, images=self._profile.images),
             "extra_body": request_options(options, self._models.get(request.model)),
         }
         if request.tools:
@@ -322,9 +327,11 @@ def to_tool(spec: ToolSpec) -> JSON:
 
 
 def to_messages(system: str, messages: Sequence[Message], *,
-                reasoning_field: str | None = None, model: str | None = None) -> list[JSON]:
+                reasoning_field: str | None = None, model: str | None = None,
+                images: bool = True) -> list[JSON]:
     """With `reasoning_field`, every assistant entry carries it: the text of `model`'s own
-    Reasoning blocks, or "" for turns without any (cut short, shrunk, another model's)."""
+    Reasoning blocks, or "" for turns without any (cut short, shrunk, another model's).
+    A user's images go as image parts, or with `images` off as a line of text each."""
     out: list[JSON] = [{"role": "system", "content": system}] if system else []
     for message in messages:
         texts = [text for b in message.blocks if (text := _text(b))]
@@ -347,8 +354,16 @@ def to_messages(system: str, messages: Sequence[Message], *,
                     for c in calls
                 ]
             out.append(entry)
-        elif texts:
-            out.append({"role": "user", "content": "\n\n".join(texts)})
+        elif texts or any(isinstance(b, Image) for b in message.blocks):
+            shown = [b for b in message.blocks if isinstance(b, Image)] if images else []
+            texts += [attachment_text(b) for b in message.blocks
+                      if isinstance(b, Image) and not images]
+            text = "\n\n".join(texts)
+            out.append({"role": "user", "content": text if not shown else [
+                *([{"type": "text", "text": text}] if text else []),
+                *({"type": "image_url",
+                   "image_url": {"url": f"data:{b.media_type};base64,{b.data}"}}
+                  for b in shown)]})
     return out
 
 
@@ -360,6 +375,8 @@ def _text(block: Block) -> str | None:
             return operation_text(block)
         case ServerToolUse():
             return server_tool_text(block)
+        case File():
+            return attachment_text(block)
     return None
 
 

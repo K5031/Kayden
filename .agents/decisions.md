@@ -885,3 +885,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 |---|---|
 | Offered | AI provider and Tools (`common.MODULE_LABELS`). The interface is not a setting for now (the owner, 2026-11-12): `kayden` starts the terminal app, `kayden-desktop` (entry point of `kayden.window:main`) and the app menu the desktop app |
 | Still honoured | A frontend saved under `[modules]` in settings.toml or named in config.toml: the launchers and `restart()` work as before, so `kayden` opens the desktop app where one was chosen earlier |
+
+## Attachments
+
+| Choice | Decision |
+|---|---|
+| Limits | Image: `.png .jpg .jpeg .gif .webp` by suffix, up to 5 MB; text: UTF-8 without NUL bytes, up to 200 kB; anything else by path (`runtime/attachments.py`) |
+| Message | `Text(text)` first, also when empty, then the attachments in the order given |
+| As text | `[Image attached: name]`; `[File attached: path]` and the content; or that the content is not included (`api.attachment_text`) |
+| Desktop | Dropped files and pasted file lists are attached, not typed in as paths (`MessageBox.insertFromMimeData`); a pasted picture is saved as `pasted-N.png` in a temporary folder removed when the window closes; the same path is not attached twice |

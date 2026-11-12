@@ -16,6 +16,8 @@ from datetime import UTC, datetime
 from kayden.api import (
     PROFILE,
     ArchiveHit,
+    File,
+    Image,
     Memory,
     MemoryNote,
     Message,
@@ -27,6 +29,7 @@ from kayden.api import (
     ToolOutput,
     ToolResult,
     ToolSpec,
+    attachment_text,
 )
 
 HIT_PREVIEW_CHARS = 1000
@@ -194,4 +197,6 @@ def _render(message: Message) -> str:
                 parts.append(f"[{s}] {c}")
             case ServerToolUse(summary=summary, content=c):
                 parts.append(f"[{summary}] {c}")
+            case Image() | File():
+                parts.append(attachment_text(b))
     return " ".join(parts)

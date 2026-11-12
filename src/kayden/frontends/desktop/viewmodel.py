@@ -32,7 +32,9 @@ from kayden.api import (
     EventEnvelope,
     Failure,
     FailureKind,
+    File,
     HelpNeeded,
+    Image,
     InstanceLockedError,
     MaintenanceFinished,
     MaintenanceStarted,
@@ -143,6 +145,7 @@ class UserItem:
     text: str
     message_id: str | None = None
     queued: bool = False
+    attachments: tuple[Image | File, ...] = ()  # what the user attached to it
 
 
 @dataclass(eq=False)
@@ -685,7 +688,8 @@ class ConversationModel:
         self._set_card(None)
         if event.message_id not in self._queued and event.message_id not in self._seen:
             self._queued[event.message_id] = self._add(
-                UserItem(event.text, event.message_id, queued=True))
+                UserItem(event.text, event.message_id, queued=True,
+                         attachments=tuple(event.attachments)))
 
     def _stream_text(self, text: str, *, reasoning: bool) -> None:
         tail = self._stream[-1] if self._stream else None
@@ -764,14 +768,16 @@ class ConversationModel:
         self._seen.add(message.id)
         if message.role is Role.USER:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
-            if text and notice_of(text) is None and self._insert_at is None:
+            attached = tuple(b for b in message.blocks if isinstance(b, (Image, File)))
+            said = bool(text or attached)
+            if said and notice_of(text) is None and self._insert_at is None:
                 self._set_card(None)  # answered: results and notices leave it up
-            if text:
+            if said:
                 self._end_turn_plan()
             if (notice := notice_of(text)) is not None:
                 self._add(NoticeItem(notice, "info"))
-            elif text:
-                self._add(UserItem(text, message.id))
+            elif said:
+                self._add(UserItem(text, message.id, attachments=attached))
             for block in message.blocks:
                 if isinstance(block, OperationResult):
                     self._finish(block, None)
@@ -1085,9 +1091,11 @@ class Controller:
 
     # ── commands ──────────────────────────────────────────────────────────
 
-    def send(self, text: str) -> None:
-        if text.strip():
-            self.command(self.runtime.send(text.strip()))
+    def send(self, text: str, files: Sequence[str] = ()) -> None:
+        """The user's message with the files they attached to it."""
+        if text.strip() or files:
+            self.command(self.runtime.send(text.strip(), files=list(files)) if files
+                         else self.runtime.send(text.strip()))
 
     def stop(self) -> None:
         self.model.notice = "Stop requested"

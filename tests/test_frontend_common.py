@@ -187,6 +187,16 @@ def test_plan_text_round_trips_and_reports_bad_lines():
         parse_plan_text("ok\n[todo] x | due tomorrow")
 
 
+def test_a_text_only_frontend_names_what_was_attached():
+    from kayden.api import File, Image
+    from kayden.frontends.common import with_attachments
+
+    attached = [Image("image/png", "AAAA", "shot.png"), File("/w/notes.txt", "Buy oat milk.")]
+    assert with_attachments("look", attached) == "look\n[image: shot.png]\n[file: notes.txt]"
+    assert with_attachments("", [Image("image/png", "AAAA")]) == "[image]"
+    assert with_attachments("plain", []) == "plain"
+
+
 def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
     import time
 

@@ -100,8 +100,8 @@ async def test_a_conversation_is_driven_over_the_channel(make, clients):
     conversation = started["result"]
     assert conversation["type"] == "ConversationInfo" and conversation["duty"] is None
     assert (await client.request("send", text="hi"))["result"] is None
-    await eventually(lambda: any(e["state"] == "idle" for e in client.events("StateChanged"))
-                     and client.events("MessageCommitted")[-1:])
+    await eventually(lambda: len(client.events("MessageCommitted")) == 2
+                     and client.events("StateChanged")[-1]["state"] == "idle")
     [_, answer] = client.events("MessageCommitted")
     assert answer["message"]["blocks"] == [{"type": "Text", "text": "Hello from a unit"}]
     seqs = [m["params"]["seq"] for m in client.messages if m.get("method") == "event"]

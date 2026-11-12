@@ -1470,6 +1470,52 @@ async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     assert kinds[-3:] == ["ChecklistItem", "UserItem", "AssistantItem"]  # it is history now
 
 
+async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(
+        make, qapp, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl
+    from PySide6.QtGui import QColor, QImage
+
+    from kayden.api import File, Image
+    from kayden.frontends.desktop.viewmodel import UserItem
+
+    picture = tmp_path / "shot.png"
+    image = QImage(40, 30, QImage.Format.Format_RGB32)
+    image.fill(QColor("teal"))
+    image.save(str(picture))
+    note = tmp_path / "notes.txt"
+    note.write_text("Buy oat milk.")
+    h: Harness = await make()
+    h.core.add(Step(text="A teal picture and a shopping note."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dropped = QMimeData()
+    dropped.setUrls([QUrl.fromLocalFile(str(picture)), QUrl.fromLocalFile(str(note))])
+    assert window.input.canInsertFromMimeData(dropped)
+    window.input.insertFromMimeData(dropped)  # a drop on the box, or a paste of files
+    assert window.input.toPlainText() == ""  # attached, not typed in as paths
+    assert window.attachments.paths() == [str(picture), str(note)]
+    shot, text = window.attachments.chips
+    assert shot.preview is not None and not shot.preview.pixmap().isNull()  # a small preview
+    assert shot.preview.pixmap().width() <= 56 and text.preview is None
+    text.remove.click()  # one can be taken off again
+    assert window.attachments.paths() == [str(picture)]
+    window.attachments.add([str(note)])
+    window._paste_image(image)  # a picture copied from elsewhere
+    assert len(window.attachments.paths()) == 3
+    window.input.setPlainText("what are these?")
+    QTest.keyClick(window.input, Qt.Key.Key_Return)
+    assert window.attachments.paths() == [] and window.attachments.isHidden()
+    await eventually(lambda: not controller.model.busy and h.core.requests)
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    sent = h.core.requests[0].messages[0]
+    assert [type(b).__name__ for b in sent.blocks] == ["Text", "Image", "File", "Image"]
+    [mine] = [i for i in controller.model.items if isinstance(i, UserItem)]
+    assert [type(a) for a in mine.attachments] == [Image, File, Image]
+    bubble = window._widgets[id(mine)]
+    assert len(bubble.images) == 2 and [f.text() for f in bubble.files] == ["notes.txt"]
+    assert not bubble.images[0].pixmap().isNull()
+
+
 def test_a_reply_shows_copy_and_its_age_on_hover(qapp):
     import time
 

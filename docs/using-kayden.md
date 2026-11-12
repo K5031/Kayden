@@ -30,6 +30,23 @@ agent's thinking between them, fold into one line that shows the step under way,
 many there were and any that failed ("4 steps · 1 failed"); open it to see them all. In the
 terminal app, select the line and press Enter.
 
+### Attaching files
+
+In the desktop app, drop files on the window or paste them, then send. A message can be
+attachments only.
+
+- **A picture** (PNG, JPEG, GIF or WebP, up to 5 MB) is shown to the model, so you can ask
+  about a screenshot or a photo. With a model that cannot see pictures (DeepSeek), the
+  agent is only told that one was attached.
+- **A text file** (up to 200 kB) goes with its content and its path, so the agent can read
+  it at once and knows where it is, also when it is outside the work folder.
+- **Any other file** (binary, or larger) goes by its path only; the agent opens it with
+  its tools if it needs to.
+
+Attachments are kept with the conversation and shown again when you reopen it. A picture
+adds to what every later message of that conversation costs. The terminal app shows what
+was attached but cannot attach.
+
 ## Approving actions
 
 When the agent wants to use a tool that the permission level does not allow on its own,

@@ -8,15 +8,29 @@ the qasync loop that also runs the runtime.
 from __future__ import annotations
 
 import asyncio
+import base64
 import getpass
 import html
 import json
+import shutil
+import tempfile
 from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QMimeData,
+    QObject,
+    QPoint,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -24,9 +38,12 @@ from PySide6.QtGui import (
     QContextMenuEvent,
     QCursor,
     QDesktopServices,
+    QDragEnterEvent,
+    QDropEvent,
     QEnterEvent,
     QFont,
     QFontMetrics,
+    QImage,
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
@@ -78,6 +95,7 @@ from kayden.api import (
     ConversationInfo,
     Decision,
     Duty,
+    Image,
     McpServer,
     MemoryNote,
     ModelInfo,
@@ -176,6 +194,8 @@ KEY_PAGES = {
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
 EMPTY_TITLE = "Start a conversation"
 EMPTY_HINT = "Ask a question or describe a task."
+THUMBNAIL = 56  # px: a picture waiting above the message box
+SHOWN_IMAGE = 260  # px: a picture in a message you sent, at most
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
 COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
 RECENT_FOLDERS = 6  # a new chat's folder menu: its own and recent ones
@@ -562,6 +582,24 @@ class UserBubble(QWidget):
         self.bubble = QFrame(objectName="user")
         layout = QVBoxLayout(self.bubble)
         layout.setContentsMargins(12, 8, 12, 8)
+        self.images: list[QLabel] = []
+        self.files: list[QLabel] = []
+        for attached in item.attachments:
+            if isinstance(attached, Image):
+                picture = QPixmap()
+                picture.loadFromData(base64.b64decode(attached.data))
+                if not picture.isNull():
+                    shown = QLabel()
+                    shown.setPixmap(_fitted(picture, SHOWN_IMAGE))
+                    shown.setAccessibleName(f"Image {attached.name}".strip())
+                    self.images.append(shown)
+                    layout.addWidget(shown)
+                    continue
+            name = attached.name if isinstance(attached, Image) else Path(attached.path).name
+            chip = _label(name, role="small", selectable=False)
+            chip.setToolTip("" if isinstance(attached, Image) else attached.path)
+            self.files.append(chip)
+            layout.addWidget(chip)
         self.text = _label()
         layout.addWidget(self.text)
         row.addWidget(self.bubble)
@@ -569,6 +607,7 @@ class UserBubble(QWidget):
 
     def refresh(self) -> None:
         self.text.setText(self.item.text + ("\n(queued)" if self.item.queued else ""))
+        self.text.setVisible(bool(self.text.text()))
         self.setEnabled(not self.item.queued)
         self.setAccessibleName("You" + (", queued" if self.item.queued else ""))
         self._fit()
@@ -1254,6 +1293,8 @@ class MessageBox(QPlainTextEdit):
 
     submitted = Signal()
     focus_changed = Signal(bool)
+    attached = Signal(list)  # paths of files dropped or pasted into it
+    pasted = Signal(QImage)  # an image pasted from the clipboard
     MIN_LINES = 1  # one slim row until there is more to show
     MAX_LINES = 8
 
@@ -1277,6 +1318,19 @@ class MessageBox(QPlainTextEdit):
             return
         super().keyPressEvent(event)
 
+    def canInsertFromMimeData(self, source: QMimeData) -> bool:
+        return bool(_local_files(source)) or source.hasImage() or \
+            super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        """Files and pictures are attached, not typed in as their paths."""
+        if files := _local_files(source):
+            self.attached.emit(files)
+        elif source.hasImage() and isinstance(image := source.imageData(), QImage):
+            self.pasted.emit(image)
+        else:
+            super().insertFromMimeData(source)
+
     def focusInEvent(self, event: Any) -> None:
         super().focusInEvent(event)
         self.focus_changed.emit(True)
@@ -1284,6 +1338,91 @@ class MessageBox(QPlainTextEdit):
     def focusOutEvent(self, event: Any) -> None:
         super().focusOutEvent(event)
         self.focus_changed.emit(False)
+
+
+def _local_files(source: QMimeData) -> list[str]:
+    """The files among what was dropped or pasted."""
+    return [url.toLocalFile() for url in source.urls()
+            if url.isLocalFile() and Path(url.toLocalFile()).is_file()] \
+        if source.hasUrls() else []
+
+
+def _fitted(picture: QPixmap, size: int) -> QPixmap:
+    """The picture no wider or taller than `size`, never enlarged."""
+    if picture.width() <= size and picture.height() <= size:
+        return picture
+    return picture.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+
+
+class AttachmentChip(QFrame):
+    """One file waiting to be sent: a small preview of a picture, else its name; ✕ takes
+    it off."""
+
+    removed = Signal()
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self.path = path
+        self.setObjectName("attachment")
+        self.setToolTip(path)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(4)
+        picture = QPixmap(path)
+        self.preview: QLabel | None = None
+        if not picture.isNull():
+            self.preview = QLabel()
+            self.preview.setPixmap(_fitted(picture, THUMBNAIL))
+            self.preview.setAccessibleName(f"Preview of {Path(path).name}")
+            row.addWidget(self.preview)
+        else:
+            row.addWidget(_label(clip(Path(path).name, 40), wrap=False, selectable=False))
+        self.remove = QToolButton(objectName="removeAttachment")
+        self.remove.setIcon(theme.icon("close", theme.current().muted, 12))
+        self.remove.setIconSize(QSize(12, 12))
+        self.remove.setFixedSize(18, 18)
+        self.remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove.setToolTip("Remove")
+        self.remove.setAccessibleName(f"Remove {Path(path).name}")
+        self.remove.clicked.connect(self.removed)
+        row.addWidget(self.remove, 0, Qt.AlignmentFlag.AlignTop)
+
+
+class AttachmentStrip(QWidget):
+    """The files attached to the message being written, above the text."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(0, 0, 0, 2)
+        self._row.setSpacing(6)
+        self._row.addStretch(1)
+        self.chips: list[AttachmentChip] = []
+        self.hide()
+
+    def paths(self) -> list[str]:
+        return [chip.path for chip in self.chips]
+
+    def add(self, paths: Sequence[str]) -> None:
+        for path in paths:
+            if path in self.paths():
+                continue
+            chip = AttachmentChip(path)
+            chip.removed.connect(lambda chip=chip: self._remove(chip))
+            self.chips.append(chip)
+            self._row.insertWidget(self._row.count() - 1, chip)
+        self.setVisible(bool(self.chips))
+
+    def clear(self) -> None:
+        for chip in list(self.chips):
+            self._remove(chip)
+
+    def _remove(self, chip: AttachmentChip) -> None:
+        self.chips.remove(chip)
+        _detach(chip)
+        _discard(chip)
+        self.setVisible(bool(self.chips))
 
 
 # ── main window ───────────────────────────────────────────────────────────
@@ -1491,14 +1630,23 @@ class MainWindow(QMainWindow):
         self.prompts = QVBoxLayout()
         self.prompts.setContentsMargins(0, 0, 0, 8)
         self.composer = QFrame(objectName="composer")
-        composer = QHBoxLayout(self.composer)  # one row: the text, then Send at its foot
-        composer.setContentsMargins(16, 6, 6, 6)
+        box = QVBoxLayout(self.composer)  # what is attached, then the row to write in
+        box.setContentsMargins(16, 6, 6, 6)
+        box.setSpacing(4)
+        self.attachments = AttachmentStrip()
+        box.addWidget(self.attachments)
+        composer = QHBoxLayout()  # one row: the text, then Send at its foot
         composer.setSpacing(8)
+        box.addLayout(composer)
+        self._pasted: Path | None = None  # the folder pasted pictures are saved in
+        self.setAcceptDrops(True)  # files can be dropped anywhere on the window
         self.input = MessageBox()
         self.input.setPlaceholderText("Message Kayden")
         self.input.setToolTip("Enter sends. Shift+Enter starts a new line.")
         self.input.setAccessibleName("Message")
         self.input.submitted.connect(self._send)
+        self.input.attached.connect(self.attachments.add)
+        self.input.pasted.connect(self._paste_image)
         self.input.focus_changed.connect(lambda on: theme.mark(self.composer, "focused", on))
         self.send_button = QToolButton(objectName="send", text="Send")
         self.send_button.setFixedSize(32, 32)
@@ -2273,10 +2421,29 @@ class MainWindow(QMainWindow):
     # ── commands ──────────────────────────────────────────────────────────
 
     def _send(self) -> None:
-        text = self.input.toPlainText().strip()
-        if text:
+        text, files = self.input.toPlainText().strip(), self.attachments.paths()
+        if text or files:
             self.input.clear()
-            self.controller.send(text)
+            self.attachments.clear()
+            self.controller.send(text, files)
+
+    def _paste_image(self, image: QImage) -> None:
+        """A picture pasted from the clipboard: saved as a file, then attached like one."""
+        if self._pasted is None:
+            self._pasted = Path(tempfile.mkdtemp(prefix="kayden-pasted-"))
+        path = self._pasted / f"pasted-{len(list(self._pasted.iterdir())) + 1}.png"
+        if image.save(str(path), "PNG"):
+            self.attachments.add([str(path)])
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if _local_files(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        if files := _local_files(event.mimeData()):
+            self.attachments.add(files)
+            self.input.setFocus()
+            event.acceptProposedAction()
 
     def _send_or_stop(self) -> None:
         if self.model.busy:
@@ -2332,6 +2499,8 @@ class MainWindow(QMainWindow):
         self.controller.command(load())
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._pasted is not None:
+            shutil.rmtree(self._pasted, ignore_errors=True)
         self.closed.emit()
         super().closeEvent(event)
 

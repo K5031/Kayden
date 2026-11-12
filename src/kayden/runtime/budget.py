@@ -14,6 +14,8 @@ from typing import Any
 
 from kayden.api import (
     Budget,
+    File,
+    Image,
     Message,
     ModelInfo,
     OpaqueBlock,
@@ -26,6 +28,7 @@ from kayden.api import (
     ToolResult,
     Usage,
     UsageSnapshot,
+    attachment_text,
 )
 
 USAGE_SCHEMA_VERSION = 1
@@ -35,6 +38,9 @@ _MESSAGE_OVERHEAD = 4
 
 def _text_tokens(text: str) -> int:
     return -(-len(text) // _CHARS_PER_TOKEN)
+
+
+_IMAGE_TOKENS = 1500  # about what providers charge for a screenshot-sized image
 
 
 def _block_text(block: object) -> str:
@@ -49,6 +55,10 @@ def _block_text(block: object) -> str:
             return s + c + json.dumps(state)  # the provider's results are read as input
         case OpaqueBlock(data=d):
             return json.dumps(d, default=str)
+        case Image():
+            return " " * (4 * _IMAGE_TOKENS)
+        case File():
+            return attachment_text(block)
     return ""
 
 

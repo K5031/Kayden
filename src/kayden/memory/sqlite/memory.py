@@ -43,6 +43,8 @@ from kayden.api import (
     CoreError,
     Duty,
     DutyKind,
+    File,
+    Image,
     InstancePaths,
     Memory,
     MemoryNote,
@@ -61,6 +63,7 @@ from kayden.api import (
     ToolOutput,
     ToolResult,
     ToolSpec,
+    attachment_text,
 )
 from kayden.memory.tools import memory_tools, run_memory_tool
 
@@ -1174,6 +1177,9 @@ def _render_transcript(messages: Sequence[Message]) -> str:
                                  f"{_shortened(content)}")
                 case ServerToolUse(summary=summary, content=content):
                     lines.append(f"[{stamp} {message.role}] {summary}: {_shortened(content)}")
+                case Image() | File():
+                    lines.append(f"[{stamp} {message.role}] "
+                                 f"{_shortened(attachment_text(block))}")
                 case _:
                     lines.append(f"[{stamp} {message.role}] {block}")
     return "\n".join(lines)

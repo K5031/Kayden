@@ -22,6 +22,8 @@ from kayden.api import (
     Core,
     CoreError,
     CoreEvent,
+    File,
+    Image,
     InferenceRequest,
     InstancePaths,
     Message,
@@ -41,6 +43,7 @@ from kayden.api import (
     TransientCoreError,
     Usage,
     UsageReport,
+    attachment_text,
 )
 from kayden.core._common import (
     ERROR_STATUSES,
@@ -568,6 +571,11 @@ def _to_content(block: Block, model: str, bound: str | None, search: bool) -> li
                      "content": result_text(block), "is_error": status in ERROR_STATUSES}]
         case OperationResult():
             return [{"type": "text", "text": operation_text(block)}]
+        case Image(media_type=media_type, data=data):
+            return [{"type": "image",
+                     "source": {"type": "base64", "media_type": media_type, "data": data}}]
+        case File():
+            return [{"type": "text", "text": attachment_text(block)}]
     return []  # OpaqueBlock
 
 

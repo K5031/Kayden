@@ -21,6 +21,8 @@ from kayden.api import (
     AgentState,
     Duty,
     DutyKind,
+    File,
+    Image,
     McpServer,
     ModelInfo,
     ModuleChoice,
@@ -431,6 +433,18 @@ def checklist(plan: Sequence[PlanItem], working: bool) -> tuple[PlanItem, ...]:
     the checklist follows the work, it does not stay behind as a to-do list."""
     open_ = any(i.status in (PlanStatus.TODO, PlanStatus.DOING) for i in plan)
     return tuple(plan) if working and open_ else ()
+
+
+def with_attachments(text: str, blocks: Iterable[object]) -> str:
+    """A user's message for a frontend that shows text only: what they wrote, then a line
+    for each thing they attached."""
+    lines = [text] if text else []
+    for block in blocks:
+        if isinstance(block, Image):
+            lines.append(f"[image: {block.name}]" if block.name else "[image]")
+        elif isinstance(block, File):
+            lines.append(f"[file: {Path(block.path).name}]")
+    return "\n".join(lines)
 
 
 def plan_steps(arguments: Any) -> tuple[PlanItem, ...]:

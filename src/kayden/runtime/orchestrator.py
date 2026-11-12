@@ -107,6 +107,7 @@ from kayden.api import (
     UsageReport,
     UsageUpdated,
 )
+from kayden.runtime import attachments
 from kayden.runtime import duty as duties
 from kayden.runtime import skills as skill_files
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
@@ -512,13 +513,15 @@ class Runtime:
                            conversation=self.restart_request.conversation_id)
         await self.aclose()
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, files: Sequence[str] = ()) -> None:
         state = self._state()
         if state == AgentState.NOT_STARTED:
             raise RuntimeStateError("not started")
         if state == AgentState.FAILED and (reason := self._budget.exhausted()):
             raise RuntimeStateError(f"budget exhausted: {reason}")
-        queued = MessageQueued(_new_id(), text)
+        attached = await asyncio.to_thread(attachments.read, files) if files else ()
+        state = self._state()  # the files were read meanwhile
+        queued = MessageQueued(_new_id(), text, attached)
         self._inbox.append(queued)
         self._answered()
         if state in _RUNNING or state == AgentState.STOPPING:
@@ -1126,7 +1129,8 @@ class Runtime:
                 await self._flush_results()
         while self._inbox:
             q = self._inbox.pop(0)
-            await self._append(Message(q.message_id, Role.USER, (Text(q.text),), time.time()))
+            await self._append(Message(q.message_id, Role.USER,
+                                       (Text(q.text), *q.attachments), time.time()))
         return True
 
     async def _ensure_user_last(self) -> None:
