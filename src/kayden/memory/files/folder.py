@@ -11,6 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 MEMORY_INDEX = "MEMORY.md"
+# What of MEMORY_INDEX is loaded into a conversation, as in Claude Code: its first lines
+# or bytes, whichever ends first.
+INDEX_MAX_LINES = 200
+INDEX_MAX_BYTES = 25 * 1024
 
 DEFAULT_PROJECT = "default"  # the folder of conversations without a work folder
 
@@ -55,11 +59,24 @@ After writing a file, add a one-line pointer to {MEMORY_INDEX}: `- [Title](file.
 
 Before saving, check for a file that already covers it and update that one rather than
 writing a duplicate; delete memories that turn out wrong. View a memory before you change
-it, and change it with a small edit rather than by writing it again. Keep each memory to
-one fact and the index short: when either grows long, condense it. Don't save what the project's
+it, and change it with a small edit rather than by writing it again. Only the first
+{INDEX_MAX_LINES} lines of {MEMORY_INDEX} are loaded: keep one line per memory, move detail
+into the memory files, and merge or drop stale entries. Don't save what the project's
 files, code or history already record, or what only matters to this conversation.
 Memories reflect what was true when they were written: check a file, name or setting a
 memory mentions before relying on it."""
+
+
+def loaded_index(text: str) -> list[str]:
+    """The index's lines as a conversation gets them: non-empty, within both limits."""
+    lines, size = [], 0
+    for line in text.splitlines()[:INDEX_MAX_LINES]:
+        size += len(line.encode()) + 1
+        if size > INDEX_MAX_BYTES:
+            break
+        if line.strip():
+            lines.append(line)
+    return lines
 
 
 def project_key(folder: str | None) -> str:

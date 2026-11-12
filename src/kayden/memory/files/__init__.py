@@ -26,6 +26,7 @@ from kayden.memory.files.folder import (
     MemoryFile,
     MemoryFolder,
     join_frontmatter,
+    loaded_index,
     project_key,
     split_frontmatter,
 )
@@ -77,7 +78,7 @@ class FilesMemory(SqliteArchive):
         loaded = self._loaded.get(info.id)
         if loaded is None or loaded[0] != summary:
             index = await asyncio.to_thread(self._folder(info.folder).index)
-            loaded = (summary, [line for line in index.splitlines() if line.strip()])
+            loaded = (summary, loaded_index(index))
             self._loaded[info.id] = loaded
         return LongTerm(RULES, loaded[1], _render)
 
@@ -103,7 +104,7 @@ class FilesMemory(SqliteArchive):
             shown = self._loaded.get(info.id)
             if MEMORY_INDEX not in seen and shown is not None:
                 index = folder.index()
-                if index and [line for line in index.splitlines() if line.strip()] == shown[1]:
+                if index and loaded_index(index) == shown[1]:
                     seen[MEMORY_INDEX] = index
             return run_command(folder, dict(call.arguments), seen)
 

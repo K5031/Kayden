@@ -64,8 +64,9 @@ set with `[memory]` in [config.toml](#configtoml). Kayden comes with two:
   Markdown file per fact. The agent writes them itself while it works, and every
   conversation in that folder sees the index as it was when the conversation started: a
   memory saved or edited meanwhile shows up in the next conversation. The agent reads a
-  memory before it changes it, edits it in place, and keeps each to one short fact and the
-  index to 200 lines. Choose it with:
+  memory before it changes it and edits it in place. A conversation gets the first 200
+  lines of the index, so the agent is told to condense it when it grows past that. Choose
+  it with:
 
   ```toml
   [memory]

@@ -92,9 +92,13 @@ a file that was not read:
   conversation's prompt shows.
 - **Small edits.** `create` writes only a new file; an existing one is changed with
   `str_replace` or `insert`.
-- **Sizes that force condensing.** A memory holds at most 4000 characters and `MEMORY.md`
-  at most 200 lines; a write that would exceed either is refused with what to do (cut,
-  split, merge, delete). The user's own edits are not limited.
+- **An index that has to stay short.** As in Claude Code, a conversation is given the
+  first 200 lines or 25 kB of `MEMORY.md`, whichever ends first (`folder.loaded_index`).
+  A write that takes the index past that stands, but the tool answers with an error
+  telling the agent to rewrite it, since what lies beyond is not seen again; from 80 %
+  of either limit a write comes with a reminder to keep one line per memory, move detail
+  into the memory files and merge or drop stale entries. A memory file has no limit of
+  its own.
 - **Everything is visible.** The Memory window shows every file, and they are plain files.
 
 ### The contract
@@ -105,12 +109,25 @@ take `folder`, the conversation's work folder, which the runtime passes and a mo
 one memory for all conversations ignores. `MemoryNote.fixed` marks a note that can only be
 emptied (the built-in profile), so frontends no longer know the profile's title.
 
+### Where it differs from Claude Code
+
+Claude Code names the project folder after the git repository, so worktrees share one
+memory; here it is the conversation's work folder. Claude Code stamps a `modified` time
+into a memory file's frontmatter when it is written; here the file is as the agent wrote
+it. (Claude Code's documentation, read 2026-11-12.)
+
 ## Alternatives considered
 
 - **Replace the built-in Memory.** Built first: the store went to schema 9 without notes,
   and the contract got memory-file methods instead of notes. It works, but leaves no
   choice, needs the owner's store converted by hand, and does not show that a Memory can
   be swapped.
+- **Refuse a write that takes the index past its limit, and cap each memory file.** Built
+  first (200 lines, 4000 characters). Stricter than Claude Code, which lets the write
+  stand and reports it, and has no limit per file; the owner wants it the same.
+- **Topic files that group related memories.** One file per memory is what Claude Code
+  does ("one topic file per memory", one index line each): a single fact can be corrected
+  or deleted without touching others, and files do not grow into pages.
 - **A Memory written from scratch, without the shared archive.** The purest test, but it
   would copy the archive, search and erasure, which have nothing to do with how long-term
   memory is kept.
@@ -133,7 +150,7 @@ emptied (the built-in profile), so frontends no longer know the profile's title.
 - The guards cost a tool call: to change a memory the agent first views it. Checked with
   Opus 5.5: asked to update a memory another conversation wrote, it viewed the file, then
   replaced one sentence.
-- A full index stops new memories until the agent condenses it; an agent that does not
-  will fail to save.
+- An index left over its limit keeps its tail on disk but out of every conversation, until
+  the agent rewrites it.
 - Memory is per project: what Kayden learns in one project is not seen in another.
 - The files can be read and edited outside Kayden. Their edits keep no revisions.

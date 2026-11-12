@@ -207,22 +207,40 @@ async def test_the_index_in_the_prompt_counts_as_read_while_it_is_current(tmp_pa
     await memory.aclose()
 
 
-async def test_the_index_and_each_memory_have_a_size_the_agent_must_keep_to(tmp_path: Path):
-    """A full index is condensed before more goes in, and a memory stays one fact."""
-    from kayden.memory.files.tool import INDEX_MAX_LINES, MEMORY_MAX_CHARS
+async def test_an_index_past_what_is_loaded_is_saved_and_reported(tmp_path: Path):
+    """As in Claude Code: a conversation gets the first 200 lines or 25 kB of the index.
+    A write past that stands, as an error telling the agent to rewrite it; near it, the
+    write comes with a reminder."""
+    from kayden.memory.files.folder import INDEX_MAX_BYTES, INDEX_MAX_LINES
 
     memory, project, _conv, run = await _tool(tmp_path)
-    full = "".join(f"- [M{i}](m{i}.md) — fact {i}\n" for i in range(INDEX_MAX_LINES))
-    assert not (await run(command="create", path="MEMORY.md", file_text=full)).is_error
-    more = await run(command="insert", path="MEMORY.md", insert_line=0,
-                     insert_text="- [One more](more.md) — fact")
-    assert more.is_error and str(INDEX_MAX_LINES) in more.content
-    assert "merge" in more.content.lower()
-    assert len((await memory.notes(folder=project))[0].text.splitlines()) == INDEX_MAX_LINES
-    long = await run(command="create", path="essay.md", file_text="x" * (MEMORY_MAX_CHARS + 1))
-    assert long.is_error and "one fact" in long.content
-    # The user is not held to them: it is their memory.
-    await memory.save_note("essay.md", "An essay", "x" * (MEMORY_MAX_CHARS + 1), folder=project)
+
+    def index(count: int) -> str:
+        return "".join(f"- [M{i}](m{i}.md) — fact {i}\n" for i in range(count))
+
+    fine = await run(command="create", path="MEMORY.md", file_text=index(100))
+    assert fine.content == "Saved MEMORY.md."
+    await run(command="delete", path="MEMORY.md")
+    near = await run(command="create", path="MEMORY.md", file_text=index(INDEX_MAX_LINES - 10))
+    assert not near.is_error and "near its limit" in near.content and "merge" in near.content
+    over = await run(command="insert", path="MEMORY.md", insert_line=0,
+                     insert_text=index(20).rstrip())
+    assert over.is_error and over.content.startswith("Saved, but")
+    assert "Rewrite it now" in over.content
+    saved = (await memory.notes(folder=project))[0].text.splitlines()
+    assert len(saved) == INDEX_MAX_LINES + 10  # the write stands
+    other = await memory.create_conversation(folder=project)
+    await memory.append(other.id, [text_message("tok0002")])
+    shown = (await memory.assemble(context(other.id, 500_000))).system_addendum
+    assert len([line for line in shown.splitlines() if line.startswith("- [M")]) \
+        == INDEX_MAX_LINES  # what is past the limit is not loaded
+    await run(command="view", path="MEMORY.md")
+    await run(command="delete", path="MEMORY.md")
+    wide = await run(command="create", path="MEMORY.md",
+                     file_text=f"- [Wide](w.md) — {'x' * INDEX_MAX_BYTES}\n")
+    assert wide.is_error and "kB" in wide.content  # few lines, but too many bytes
+    # A memory file has no limit of its own.
+    assert not (await run(command="create", path="essay.md", file_text="x" * 50_000)).is_error
     await memory.aclose()
 
 

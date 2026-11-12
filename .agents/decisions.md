@@ -857,7 +857,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Folder | The runtime passes the open conversation's work folder to `notes`, `save_note`, `delete_note`; `SqliteMemory` ignores it |
 | Fixed | `MemoryNote.fixed` (the built-in profile) replaces the frontends' title check |
 | Tool | `memory`, Anthropic's memory tool commands, run in a thread; read-only `recall` and `read_around` come from the archive |
-| Its guards | What a conversation has read is kept per conversation, path to text, in the process (`FilesMemory._seen`): a restart means reading again. `create` refuses an existing file; `str_replace`, `insert`, `delete` and `rename` need the file read and unchanged. Limits: 4000 characters a memory, 200 lines for `MEMORY.md`, on the agent's writes only |
+| Its guards | What a conversation has read is kept per conversation, path to text, in the process (`FilesMemory._seen`): a restart means reading again. `create` refuses an existing file; `str_replace`, `insert`, `delete` and `rename` need the file read and unchanged. `MEMORY.md`: 200 lines or 25 kB loaded; a write past that is saved and answered as an error, one past 80 % with a reminder; no limit per memory file |
 
 ## Skills
 

@@ -6,10 +6,14 @@ from __future__ import annotations
 from typing import Any
 
 from kayden.api import ToolSpec
-from kayden.memory.files.folder import MEMORY_INDEX, MemoryFolder
+from kayden.memory.files.folder import (
+    INDEX_MAX_BYTES,
+    INDEX_MAX_LINES,
+    MEMORY_INDEX,
+    MemoryFolder,
+)
 
-INDEX_MAX_LINES = 200  # of MEMORY.md: a longer index is condensed before more goes in
-MEMORY_MAX_CHARS = 4000  # of one memory file: a memory is one fact
+INDEX_NEAR = 0.8  # of either limit: from here a write of the index comes with a reminder
 
 MEMORY = ToolSpec(
     "memory",
@@ -19,9 +23,9 @@ MEMORY = ToolSpec(
     "create (a new file with file_text), str_replace (old_str, which must occur once, with "
     "new_str), insert (insert_text after line insert_line; 0 is the top), delete, rename "
     "(old_path to new_path). View a file before you change it: a file you have not read "
-    "in this conversation, or that changed since, is not edited, deleted or renamed. A "
-    f"memory holds at most {MEMORY_MAX_CHARS} characters and {MEMORY_INDEX} at most "
-    f"{INDEX_MAX_LINES} lines.",
+    "in this conversation, or that changed since, is not edited, deleted or renamed. Only "
+    f"the first {INDEX_MAX_LINES} lines or {INDEX_MAX_BYTES // 1024} kB of {MEMORY_INDEX} "
+    "are loaded into a conversation.",
     {
         "type": "object",
         "properties": {
@@ -68,17 +72,25 @@ def run_command(folder: MemoryFolder, args: dict[str, Any], seen: dict[str, str]
             raise ValueError(f"View {name} first: it changed since you read it.")
         return text
 
-    def write(name: str, text: str) -> None:
-        if name == MEMORY_INDEX and len(text.splitlines()) > INDEX_MAX_LINES:
-            raise ValueError(
-                f"{MEMORY_INDEX} would have {len(text.splitlines())} lines; it holds at most "
-                f"{INDEX_MAX_LINES}. Condense it first: merge memories that belong together, "
-                "delete those that are stale, and remove their lines.")
-        if name != MEMORY_INDEX and len(text) > MEMORY_MAX_CHARS:
-            raise ValueError(
-                f"{name} would have {len(text)} characters; a memory holds one fact, in at "
-                f"most {MEMORY_MAX_CHARS}. Cut it down, or split it into several memories.")
+    def write(name: str, text: str) -> str:
+        """Write the file; a note for the result when it is the index and long. Past its
+        limit the write stands, as an error that says to rewrite it: what lies beyond is
+        not loaded into the next conversation."""
         seen[name] = folder.write(name, text).text
+        if name != MEMORY_INDEX:
+            return ""
+        lines, size = len(text.splitlines()), len(text.encode())
+        how = ("keep one line per memory, move detail into the memory files, and merge or "
+               "drop stale entries")
+        if lines > INDEX_MAX_LINES or size > INDEX_MAX_BYTES:
+            raise ValueError(
+                f"Saved, but {MEMORY_INDEX} is now {lines} lines and {size // 1024} kB: only "
+                f"its first {INDEX_MAX_LINES} lines or {INDEX_MAX_BYTES // 1024} kB are loaded "
+                f"into a conversation, so the rest will not be seen. Rewrite it now: {how}.")
+        if lines > INDEX_NEAR * INDEX_MAX_LINES or size > INDEX_NEAR * INDEX_MAX_BYTES:
+            return (f" It is near its limit ({lines} of {INDEX_MAX_LINES} lines, "
+                    f"{size // 1024} of {INDEX_MAX_BYTES // 1024} kB): {how}.")
+        return ""
 
     def absent(name: str) -> None:
         try:
@@ -100,16 +112,15 @@ def run_command(folder: MemoryFolder, args: dict[str, Any], seen: dict[str, str]
         case "create":
             needs("path", "file_text")
             absent(path)
-            write(path, args["file_text"])
-            return f"Saved {path}."
+            return f"Saved {path}." + write(path, args["file_text"])
         case "str_replace":
             needs("path", "old_str", "new_str")
             text = known(path)
             count = text.count(args["old_str"])
             if count != 1:
                 raise ValueError(f"old_str occurs {count} times in {path}; it must occur once.")
-            write(path, text.replace(args["old_str"], args["new_str"]))
-            return f"Edited {path}."
+            return f"Edited {path}." + write(path, text.replace(args["old_str"],
+                                                                 args["new_str"]))
         case "insert":
             needs("path", "insert_line", "insert_text")
             lines = known(path).splitlines(keepends=True)
@@ -120,8 +131,8 @@ def run_command(folder: MemoryFolder, args: dict[str, Any], seen: dict[str, str]
                 args["insert_text"] + "\n")
             if at and not lines[at - 1].endswith("\n"):
                 lines[at - 1] += "\n"
-            write(path, "".join([*lines[:at], added, *lines[at:]]))
-            return f"Inserted into {path}."
+            return f"Inserted into {path}." + write(
+                path, "".join([*lines[:at], added, *lines[at:]]))
         case "delete":
             needs("path")
             known(path)
