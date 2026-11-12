@@ -55,6 +55,7 @@ desktop = [
     "pyside6-essentials>=6.12.0",
     "qasync>=0.28.0",
     "sherpa-onnx>=1.13,<2",
+    "sherpa-onnx-core>=1.13,<2",  # the libraries; uv does not see sherpa-onnx requires it
 ]
 
 [dependency-groups]
