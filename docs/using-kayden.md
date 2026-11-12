@@ -57,7 +57,7 @@ agent or switch conversations are withdrawn.
 ### The plan
 
 For a task with several steps, the agent writes a plan first and ticks the steps off as it
-works. You see it as a checklist above the message box: ✓ done, ◐ under way, ○ still to
+works. You see it as a checklist under the conversation: ✓ done, ◐ under way, ○ still to
 do, and struck through for steps it dropped. It goes away once every step is done. A quick
 question gets no plan.
 

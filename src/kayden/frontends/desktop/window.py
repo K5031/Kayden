@@ -1116,7 +1116,7 @@ class PlanCard(QFrame):
         self.setObjectName("plan")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(10)
+        layout.setSpacing(6)
         colors = theme.current()
         self._rows: list[tuple[str, str]] = []
         for item in plan:
@@ -1130,6 +1130,7 @@ class PlanCard(QFrame):
                 icon = QLabel()
                 icon.setPixmap(theme.icon(mark, colors.muted, 16).pixmap(16, 16))
             text = _label(item.text, tone=None if mark in ("doing", "todo") else "muted")
+            text.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             if mark == "dropped":
                 font = text.font()
                 font.setStrikeOut(True)
@@ -1459,6 +1460,8 @@ class MainWindow(QMainWindow):
         empty.addStretch(3)
         outer.addWidget(self.load_earlier, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addLayout(self.items_layout)
+        self.plan_slot = QVBoxLayout()  # the checklist, under the newest message
+        outer.addLayout(self.plan_slot)
         self.waiting_line = _label("Thinking…", selectable=False, tone="muted")
         self.waiting_line.hide()
         outer.addWidget(self.waiting_line)
@@ -1871,11 +1874,12 @@ class MainWindow(QMainWindow):
         return body.parentWidget() if body is not None else None
 
     def _rebuild_prompts(self) -> None:
-        while (child := self.prompts.takeAt(0)) is not None:
-            if child.widget() is not None:
-                _discard(child.widget())
-        if steps := self.model.checklist:
-            self.prompts.addWidget(PlanCard(steps))
+        for layout in (self.prompts, self.plan_slot):
+            while (child := layout.takeAt(0)) is not None:
+                if child.widget() is not None:
+                    _discard(child.widget())
+        if steps := self.model.checklist:  # in the conversation, so it scrolls with it
+            self.plan_slot.addWidget(PlanCard(steps))
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
         for proposal in self.model.proposals.values():

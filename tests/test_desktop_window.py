@@ -1456,6 +1456,7 @@ async def test_the_plan_shows_as_a_checklist_while_steps_are_open(make, qapp):
     controller.send("fix the bug")
     await eventually(lambda: controller.model.checklist and not controller.model.busy)
     card = window.findChildren(PlanCard)[-1]
+    assert window.scroll.isAncestorOf(card)  # part of the conversation: it scrolls with it
     assert card.rows() == [("done", "Read the code"), ("doing", "Fix the bug"),
                            ("todo", "Run the tests")]
     controller.send("carry on")
