@@ -76,6 +76,7 @@ from kayden.api import (
     Proposal,
     ProposalMade,
     ProposalResolved,
+    Reasoning,
     ReasoningDelta,
     Role,
     RuntimeEvent,
@@ -208,6 +209,26 @@ class _Stream:
     output_estimate: int = 0
     report: Usage | None = None
     completed: Completed | None = None
+    thought_s: float = 0.0  # reasoning streamed for this long
+    thinking_since: float | None = None
+
+    def thought(self, thinking: bool) -> None:
+        """An event arrived: reasoning, or something that ends a stretch of it."""
+        now = time.monotonic()
+        if thinking and self.thinking_since is None:
+            self.thinking_since = now
+        elif not thinking and self.thinking_since is not None:
+            self.thought_s += now - self.thinking_since
+            self.thinking_since = None
+
+    def timed(self, event: Completed) -> Completed:
+        """`event` with the time thought on its message's first Reasoning block."""
+        blocks = list(event.message.blocks)
+        first = next((i for i, b in enumerate(blocks) if isinstance(b, Reasoning)), None)
+        if first is None or not self.thought_s:
+            return event
+        blocks[first] = replace(blocks[first], seconds=round(self.thought_s, 3))
+        return replace(event, message=replace(event.message, blocks=tuple(blocks)))
 
     def estimate(self) -> Usage:
         """Per dimension, the larger of the last report and the runtime's own estimate."""
@@ -1583,9 +1604,11 @@ class Runtime:
         async with contextlib.aclosing(self._core.stream(request)) as events:
             async for event in events:
                 st.started = True
+                if not isinstance(event, UsageReport):
+                    st.thought(isinstance(event, ReasoningDelta))
                 match event:
                     case Completed():
-                        st.completed = event
+                        st.completed = st.timed(event)
                         return
                     case UsageReport(usage=usage):
                         st.report = usage

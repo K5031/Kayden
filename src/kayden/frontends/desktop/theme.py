@@ -174,8 +174,6 @@ QPushButton[danger="true"] {{ background: {c.error}; color: {c.bg}; border-color
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px;
     color: {c.muted}; }}
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
-QToolButton#thinking {{ padding: 2px 0; }}
-QToolButton#thinking:hover {{ background: transparent; }}
 QLabel#reasoning {{ border: none; border-left: 2px solid {c.track}; padding: 2px 0 2px 12px; }}
 QFrame#attachment {{ background: {c.bg}; border: 1px solid {c.line}; border-radius: 8px; }}
 QToolButton#removeAttachment {{ background: transparent; border-radius: 9px; padding: 0; }}

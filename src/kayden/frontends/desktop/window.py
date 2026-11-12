@@ -49,6 +49,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPainterPath,
+    QPaintEvent,
     QPen,
     QPixmap,
     QShortcut,
@@ -249,6 +250,14 @@ def _label(text: str = "", *, wrap: bool = True, selectable: bool = True,
     label.setProperty("tone", tone)
     label.setProperty("role", role)
     return label
+
+
+def _thought(seconds: float | None) -> str:
+    """The thinking line once the thinking is over: "Thought for 4s"."""
+    if seconds is None:
+        return "Thought"
+    minutes, rest = divmod(max(1, round(seconds)), 60)
+    return f"Thought for {minutes}m {rest}s" if minutes else f"Thought for {rest}s"
 
 
 def _mascot(width: int) -> QLabel:
@@ -626,6 +635,41 @@ class UserBubble(QWidget):
         self._fit()
 
 
+class ThinkingLine(QToolButton):
+    """The line above a reply that unfolds the model's thinking: its words, flush with the
+    reply's text, then a chevron close behind them."""
+
+    ICON, GAP = 12, 4
+
+    def __init__(self) -> None:
+        super().__init__(checkable=True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)  # repainted when the pointer comes
+
+    def sizeHint(self) -> QSize:
+        metrics = self.fontMetrics()
+        return QSize(metrics.horizontalAdvance(self.text()) + self.GAP + self.ICON,
+                     metrics.height() + 4)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.updateGeometry()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        colors = theme.current()
+        color = colors.text if self.underMouse() else colors.muted
+        painter = QPainter(self)
+        painter.setPen(QColor(color))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         self.text())
+        chevron = theme.icon("unfolded" if self.isChecked() else "folded", color, self.ICON)
+        left = self.fontMetrics().horizontalAdvance(self.text()) + self.GAP
+        chevron.paint(painter, left, (self.height() - self.ICON) // 2 + 1, self.ICON, self.ICON)
+
+
 class AssistantBubble(QWidget):
     """Kayden's reply: an avatar, then the text with no bubble, easy to read when long."""
 
@@ -638,17 +682,11 @@ class AssistantBubble(QWidget):
         layout = QVBoxLayout()
         layout.setSpacing(4)
         row.addLayout(layout, 1)
-        # Flush with the reply's text: the words first, then a chevron that unfolds them.
-        self.thinking = QToolButton(objectName="thinking", checkable=True)
-        self.thinking.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.thinking.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.thinking.setIconSize(QSize(12, 12))
-        self.thinking.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.thinking = ThinkingLine()
         self.thinking.toggled.connect(self._toggle_thinking)
         self.reasoning = _label(tone="muted")
         self.reasoning.setObjectName("reasoning")
         self.reasoning.hide()
-        self._toggle_thinking(False)
         self.body = MarkdownView()
         self.body.setAccessibleName("Kayden")
         self.marker = _label(selectable=False, tone="muted")
@@ -673,8 +711,7 @@ class AssistantBubble(QWidget):
         self._copied = QTimer(self, singleShot=True, interval=COPIED_MS)
         self._copied.timeout.connect(self._paint_copy)
         self._paint_copy()
-        layout.addWidget(self.thinking, 0,
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute)
+        layout.addWidget(self.thinking, 0, Qt.AlignmentFlag.AlignLeft)
         for widget in (self.reasoning, self.body, self.marker, self.footer):
             layout.addWidget(widget)
         self._timer = QTimer(self, singleShot=True, interval=RENDER_INTERVAL_MS)
@@ -710,14 +747,13 @@ class AssistantBubble(QWidget):
         self.copy.setToolTip("Copied" if copied else "Copy")
 
     def _toggle_thinking(self, shown: bool) -> None:
-        self.thinking.setIcon(theme.icon("unfolded" if shown else "folded",
-                                         theme.current().muted, 12))
         self.reasoning.setVisible(shown)
 
     def _render(self) -> None:
         item = self.item
         self.thinking.setVisible(bool(item.reasoning))
-        self.thinking.setText("Thinking…" if not item.final and not item.text else "Thought")
+        self.thinking.setText("Thinking…" if not item.final and not item.text
+                              else _thought(item.thought_s))
         self.reasoning.setText(item.reasoning)
         self.body.setVisible(bool(item.text))
         self.body.setMarkdown(item.text)

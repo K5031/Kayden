@@ -155,6 +155,7 @@ class UserItem:
 class AssistantItem:
     text: str = ""
     reasoning: str = ""
+    thought_s: float | None = None  # how long the model thought, once committed
     final: bool = False  # committed; False while streaming
     created_at: float | None = None  # when its message was committed
     interrupted: bool = False  # the cycle ended before it was committed
@@ -783,9 +784,11 @@ class ConversationModel:
                     current.created_at = message.created_at  # the reply's, when joined
                     last = current
                     self.on_change(Updated(current))
-                case Reasoning(text=text):
+                case Reasoning(text=text, seconds=seconds):
                     current = current or self._add(
                         AssistantItem(final=True, created_at=message.created_at))
+                    if seconds:
+                        current.thought_s = (current.thought_s or 0.0) + seconds
                     if joined and text:
                         current.reasoning += "\n\n"
                         joined = False

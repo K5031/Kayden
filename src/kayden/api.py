@@ -130,6 +130,9 @@ class Reasoning:
     # Producing model; Cores drop state from other models. None (blocks persisted before
     # this field) counts as another model, so such reasoning is never replayed.
     model: str | None = None
+    # How long the model thought in this message, measured by the runtime on its first
+    # Reasoning block; a Core leaves it None.
+    seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

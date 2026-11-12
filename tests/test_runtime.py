@@ -362,6 +362,21 @@ async def test_model_without_context_window_is_refused(make: Any) -> None:
         await h.start(model="mystery")
 
 
+async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) -> None:
+    from kayden.api import Reasoning
+
+    core = ScriptedCore([Step(reasoning="hmm", text="ok", delay=0.05), Step(text="plain")])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.turn("go")
+    thought, said = (await h.transcript())[-1].blocks
+    assert isinstance(thought, Reasoning) and thought.text == "hmm"
+    assert thought.seconds is not None and 0.03 <= thought.seconds < 1  # until the text came
+    assert said == Text("ok")
+    await h.turn("again")
+    assert (await h.transcript())[-1].blocks == (Text("plain"),)
+
+
 # ── Stop ──
 
 
