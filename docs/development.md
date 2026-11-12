@@ -58,8 +58,9 @@ src/kayden/memory/                    Memories; tools.py is the recall and note 
   sqlite/                             notes in SQLite (the default); SqliteArchive, the archive both build on
   files/                              Claude Code-style memory folders per project
 src/kayden/tools/                     Tools
-  shell_files/                        shell commands, files, web search and fetch; reads attached files
-                                      (attachments.py, office.py)
+  shell_files/                        shell commands, files, web search and fetch (web.py), a look at
+                                      the screen (screen.py); reads attached files (attachments.py,
+                                      office.py)
   mcp/                                tools of MCP servers
 src/kayden/frontends/                 Frontends; common.py is what every frontend shows the same way,
                                       headless.py, remote.py and wire.py the headless channel,

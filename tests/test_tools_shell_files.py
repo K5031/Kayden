@@ -311,6 +311,7 @@ async def test_a_work_folder_that_holds_the_home_folder_confines_nothing(tmp_pat
 
 async def test_read_only_flags(tools):
     flags = {spec.name: spec.read_only for spec in await tools.list_tools()}
+    flags.pop("screenshot", None)  # offered where Spectacle is installed (test_tools_screen)
     assert flags == {
         "shell": False,
         "read_file": True,

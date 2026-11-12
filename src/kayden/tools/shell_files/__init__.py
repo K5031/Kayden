@@ -1,4 +1,5 @@
-"""The built-in Tools module: shell commands, file operations and the web (POSIX only).
+"""The built-in Tools module: shell commands, file operations, the web and a look at the
+screen (POSIX only).
 
 Relative paths resolve against the workspace root, which is also the shell's working
 directory. Commands inherit the process environment (PERMISSION_CEILING_ENV included);
@@ -48,7 +49,7 @@ from kayden.api import (
     Tools,
     ToolSpec,
 )
-from kayden.tools.shell_files import attachments, office, web
+from kayden.tools.shell_files import attachments, office, screen, web
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
@@ -250,12 +251,14 @@ class ShellFilesTools(Tools):
         shell_timeout: float | None = None,
         shell_stall_timeout: float | None = SHELL_STALL_TIMEOUT,
         web_tools: web.Web | None = None,
+        screen_tools: screen.Screen | None = None,
     ) -> None:
         self._default = Path(root).expanduser().resolve()
         self._bwrap = _bwrap(self._default, Path.home().resolve())
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
+        self._screen = screen_tools or screen.Screen.found()
         self._confined_calls: set[str] = set()  # file calls `confined` allowed, by call id
         self._set_root(self._default)
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
@@ -266,6 +269,7 @@ class ShellFilesTools(Tools):
             "list_files": self._list_files,
             "search_files": self._search_files,
             **{name: self._web_call(name) for name in web.NAMES},
+            screen.NAME: self._screenshot,
         }
 
     def _set_root(self, root: Path) -> None:
@@ -278,7 +282,7 @@ class ShellFilesTools(Tools):
         shell = self._shell_spec
         if self._sandbox is not None:
             shell = replace(shell, description=shell.description + SANDBOX_NOTE)
-        self._spec_list = (shell, *FILE_SPECS, *web.SPECS)
+        self._spec_list = (shell, *FILE_SPECS, *web.SPECS, *self._screen.specs)
         self._specs = {spec.name: spec for spec in self._spec_list}
 
     async def list_tools(self) -> Sequence[ToolSpec]:
@@ -293,7 +297,7 @@ class ShellFilesTools(Tools):
     async def confined(self, call: ToolCall) -> bool:
         if call.name in web.NAMES:
             return True
-        if not self._bounded or call.name not in self._handlers:
+        if not self._bounded or call.name not in self._handlers or call.name == screen.NAME:
             return False
         if call.name == "shell":
             return self._sandbox is not None and call.arguments.get("unsandboxed") is not True
@@ -325,7 +329,7 @@ class ShellFilesTools(Tools):
         try:
             result = await self._handlers[call.name](call.arguments, ctx)
             return result if isinstance(result, ToolOutput) else ToolOutput(result)
-        except (ToolError, web.WebError) as e:
+        except (ToolError, web.WebError, screen.ScreenError) as e:
             return ToolOutput(str(e), is_error=True)
         except httpx2.HTTPError as e:
             return ToolOutput(f"The page could not be read: {type(e).__name__}: {e}",
@@ -334,6 +338,9 @@ class ShellFilesTools(Tools):
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
         finally:
             _must_stay_inside.reset(token)
+
+    async def _screenshot(self, args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        return await self._screen.run()
 
     def _web_call(self, name: str) -> Callable[[dict[str, Any], ToolContext], Awaitable[str]]:
         async def call(args: dict[str, Any], ctx: ToolContext) -> str:

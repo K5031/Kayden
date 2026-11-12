@@ -217,6 +217,22 @@ It reads public pages only, not pages on your computer or your local network. So
 refuse programs that read them (Kayden says so and looks elsewhere), and search engines
 sometimes turn searches away for a while; Kayden tries a search again before it gives up.
 
+## Looking at your screen
+
+Ask the agent to look at your screen ("what does this error on my screen mean?") and it
+takes a screenshot of your whole desktop and sees it, in the terminal app, the desktop
+app and when you talk to it.
+
+- **It asks first**, like any action outside the work folder. At the permission level
+  Auto it looks without asking when your message asks for it.
+- **Everything on screen is sent to the model**: close what you do not want it to see.
+- **It only looks.** It cannot click or type on your desktop.
+- **KDE Plasma only** for now: it uses Spectacle, KDE's screenshot program. On other
+  desktops the agent does not have this tool.
+
+A screenshot costs about as much as a page of text each time, and stays in the
+conversation like an attached picture.
+
 ## More tools (MCP)
 
 Tool servers give Kayden more tools: GitHub, a database, your calendar, and many more.

@@ -916,6 +916,17 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 | Offered | AI provider and Tools (`common.MODULE_LABELS`). The interface is not a setting for now (the owner, 2026-11-12): `kayden` starts the terminal app, `kayden-desktop` (entry point of `kayden.window:main`) and the app menu the desktop app |
 | Still honoured | A frontend saved under `[modules]` in settings.toml or named in config.toml: the launchers and `restart()` work as before, so `kayden` opens the desktop app where one was chosen earlier |
 
+## Seeing the screen
+
+Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md).
+
+| Choice | Decision |
+|---|---|
+| Program | `spectacle`, looked up on `PATH` when the module is made; without it the tool is not listed |
+| Capture | `-b -n -f -o <folder>/screenshot.png` in a `kayden-screen-` temporary folder, removed after the read; 20 s (`screen.CAPTURE_TIMEOUT`), then the program is killed, as on Stop |
+| Result | `[Screenshot of the user's desktop, W x H pixels]` (the size from the PNG header) with the picture as `Image("image/png", …, "screenshot.png")`; over 5 MB is an error |
+| Tool | No arguments, not read-only, never confined, timeout 60 s |
+
 ## Attachments
 
 | Choice | Decision |
