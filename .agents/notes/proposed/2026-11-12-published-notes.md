@@ -68,8 +68,7 @@ Notes flow one way: an agent publishes, others read.
 - The reading instance cannot create, change, rename or delete a published note, and its
   own notes are not visible to the publisher.
 - An instance without the two options behaves as `kayden.memory.files` does.
-- A fleet's job costs less with published notes than without, measured
-  ([Repeatable real-model tasks](2026-11-12-repeatable-real-model-tasks.md)).
+- A fleet's job costs less with published notes than without, measured.
 
 ## Risks
 
