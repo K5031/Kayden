@@ -680,7 +680,7 @@ class AssistantBubble(QWidget):
         self.marker.setText(marker)
         self.marker.setVisible(bool(marker))
         # A turn can carry thinking with no readable text and only call tools.
-        self.setVisible(bool(item.text or item.reasoning or marker))
+        self.setVisible(bool(item.text or item.reasoning or marker) and not item.hidden)
 
 
 class ToolCard(QFrame):

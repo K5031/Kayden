@@ -153,6 +153,9 @@ class AssistantItem:
     created_at: float | None = None  # when its message was committed
     interrupted: bool = False  # the cycle ended before it was committed
     refused: bool = False
+    # Thinking only, while what follows it streams: the stream's line stands in for it, and
+    # the committed message is joined to it (ConversationModel._thinking).
+    hidden: bool = False
 
 
 @dataclass(eq=False)
@@ -687,6 +690,9 @@ class ConversationModel:
     def _stream_text(self, text: str, *, reasoning: bool) -> None:
         tail = self._stream[-1] if self._stream else None
         if not isinstance(tail, AssistantItem):
+            if not self._stream and (before := self._thinking()) is not None:
+                before.hidden = True
+                self.on_change(Updated(before))
             tail = self._add(AssistantItem())
             self._stream.append(tail)
         if reasoning:
@@ -695,15 +701,39 @@ class ConversationModel:
             tail.text += text
         self.on_change(Updated(tail))
 
+    def _thinking(self) -> AssistantItem | None:
+        """The committed thinking, without a reply, that the conversation ends on (a
+        checklist aside): what the agent says next belongs with it. Only something not
+        shown as a step (a plan update) can lie between the two, so on screen they would
+        be two Thinking lines one under the other."""
+        if self._insert_at is not None:
+            return None
+        for item in reversed(self.items):
+            if isinstance(item, ChecklistItem) or item in self._stream:
+                continue
+            if (isinstance(item, AssistantItem) and item.final and item.reasoning
+                    and not item.text and not item.refused and not item.interrupted):
+                return item
+            return None
+        return None
+
+    def _show_thinking(self) -> None:
+        for item in self.items:
+            if isinstance(item, AssistantItem) and item.hidden:
+                item.hidden = False
+                self.on_change(Updated(item))
+
     def _discard_stream(self) -> None:
         for item in self._stream:
             if isinstance(item, ToolItem):
                 self._tools.pop(item.call_id, None)
             self._remove(item)
         self._stream.clear()
+        self._show_thinking()
 
     def _end_stream(self) -> None:
         """The cycle ended without committing what streamed (Stop or a failure)."""
+        self._show_thinking()
         for item in self._stream:
             if isinstance(item, AssistantItem):
                 item.interrupted = True
@@ -746,18 +776,24 @@ class ConversationModel:
                 if isinstance(block, OperationResult):
                     self._finish(block, None)
             return None
-        last = current = None
+        last = None
+        current = self._thinking()
+        joined = current is not None
         for block in message.blocks:
             match block:
                 case TextBlock(text=text):
                     current = current or self._add(
                         AssistantItem(final=True, created_at=message.created_at))
                     current.text += text
+                    current.created_at = message.created_at  # the reply's, when joined
                     last = current
                     self.on_change(Updated(current))
                 case Reasoning(text=text):
                     current = current or self._add(
                         AssistantItem(final=True, created_at=message.created_at))
+                    if joined and text:
+                        current.reasoning += "\n\n"
+                        joined = False
                     current.reasoning += text
                     self.on_change(Updated(current))
                 case ToolCall() as call:

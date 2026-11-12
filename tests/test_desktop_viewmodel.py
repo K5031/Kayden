@@ -454,6 +454,40 @@ def test_a_reopened_conversation_shows_each_turns_checklist_where_it_ended():
     assert len(of(model, ChecklistItem)) == 2
 
 
+def test_thinking_before_and_after_a_plan_update_is_one_line():
+    """A plan update is not shown as a step, so the thinking on both sides of it would be
+    two Thinking lines one under the other."""
+    from kayden.api import Reasoning
+
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    model.apply(StateChanged(AgentState.THINKING))
+    model.apply(MessageCommitted(Message("u", Role.USER, (Text("try again"),), 0.0)))
+    model.apply(MessageCommitted(Message("a1", Role.ASSISTANT, (
+        Reasoning("First I plan."), _plan("p", ("Try", "doing"))), 0.0), StopReason.TOOL_USE))
+    model.apply(MessageCommitted(Message(
+        "t", Role.TOOL, (ToolResult("p", ToolStatus.OK, "Plan saved."),), 0.0)))
+    [first] = of(model, AssistantItem)
+    model.apply(ReasoningDelta("Now I try."))  # streaming: still one line on screen
+    shown = [i for i in of(model, AssistantItem) if not i.hidden]
+    assert len(shown) == 1 and shown[0].reasoning == "Now I try."
+    model.apply(MessageCommitted(Message("a2", Role.ASSISTANT, (
+        Reasoning("Now I try."), Text("Done.")), 0.0), StopReason.END_TURN))
+    [only] = of(model, AssistantItem)
+    assert only is first and not only.hidden
+    assert only.reasoning == "First I plan.\n\nNow I try." and only.text == "Done."
+    # Across a step that is shown, thinking stays where it was said.
+    model.apply(MessageCommitted(Message("u2", Role.USER, (Text("again"),), 0.0)))
+    model.apply(MessageCommitted(Message("a3", Role.ASSISTANT, (
+        Reasoning("Look first."), ToolCall("c", "look", {})), 0.0), StopReason.TOOL_USE))
+    model.apply(MessageCommitted(Message(
+        "t2", Role.TOOL, (ToolResult("c", ToolStatus.OK, "found"),), 0.0)))
+    model.apply(MessageCommitted(Message("a4", Role.ASSISTANT, (
+        Reasoning("Then answer."), Text("Found it.")), 0.0), StopReason.END_TURN))
+    assert [i.reasoning for i in of(model, AssistantItem)][-2:] == ["Look first.",
+                                                                  "Then answer."]
+
+
 def test_waiting_until_something_of_the_next_step_shows():
     """The model can think for a long time before its first token arrives."""
     model = ConversationModel()
