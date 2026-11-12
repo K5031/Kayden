@@ -5,6 +5,14 @@ files and searches the web, decides on its own only what is safe and asks you ab
 rest, and stops at hard spending limits. Works with Anthropic, DeepSeek and
 OpenAI-compatible models.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-dark.png">
+  <img src="docs/images/main-light.png" alt="The Kayden desktop app, working through a checklist while it fixes a bug">
+</picture>
+
+The [desktop app](docs/desktop-app.md): Kayden plans the task as a checklist, works through
+it step by step and reports what it found.
+
 A runtime drives four swappable modules (Core, Memory, Tools, Frontend); see
 `src/kayden/api.py` and `SPEC.md`.
 
