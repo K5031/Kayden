@@ -10,6 +10,7 @@ from pathlib import Path
 import pypdf
 import pypdf.errors
 
+from kayden import office
 from kayden.api import Attachment, Document, File, Image
 
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -19,6 +20,7 @@ MAX_TEXT_BYTES = 200_000  # of a file whose content goes into the message
 # A PDF goes to the provider whole, base64, in a request of at most 32 MB and 600 pages.
 MAX_PDF_BYTES = 20 * 1024 * 1024
 MAX_PDF_PAGES = 600
+MAX_OFFICE_BYTES = 20 * 1024 * 1024  # of a Word, Excel or PowerPoint file read as text
 
 
 def read(paths: Sequence[str]) -> tuple[Attachment, ...]:
@@ -38,6 +40,8 @@ def _read(path: Path) -> Attachment:
             return Image(media_type, base64.b64encode(path.read_bytes()).decode(), path.name)
         if path.suffix.lower() == ".pdf" and size <= MAX_PDF_BYTES:
             return _pdf(path)
+        if path.suffix.lower() in office.KINDS and size <= MAX_OFFICE_BYTES:
+            return _office(path)
         if size > MAX_TEXT_BYTES:
             return File(str(path))
         raw = path.read_bytes()
@@ -62,3 +66,13 @@ def _pdf(path: Path) -> Document | File:
     except (pypdf.errors.PyPdfError, ValueError, KeyError, OSError):
         return File(str(path))
     return Document(str(path), base64.b64encode(raw).decode(), text, len(reader.pages))
+
+
+def _office(path: Path) -> File:
+    """A Word, Excel or PowerPoint file with its text; by its path alone when it cannot be
+    read or its text is too long to include."""
+    try:
+        text = office.to_text(path)
+    except ValueError:
+        return File(str(path))
+    return File(str(path), text if len(text.encode()) <= MAX_TEXT_BYTES else None)

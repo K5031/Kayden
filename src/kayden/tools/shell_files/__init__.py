@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import io
 import os
 import re
 import shutil
@@ -28,13 +29,14 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import httpx2
 import jsonschema
 import pypdf
 import pypdf.errors
 
+from kayden import office
 from kayden.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
 from kayden.tools.shell_files import web
 
@@ -98,7 +100,9 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         description=(
             "Read a UTF-8 text file. Optional 1-based start line `offset` and line `limit` "
             f"(default {MAX_READ_LINES}). A PDF is read as the text of its pages: all of "
-            "them, or those `pages` names, such as \"3\" or \"2-5\"."
+            "them, or those `pages` names, such as \"3\" or \"2-5\". A Word, Excel or "
+            "PowerPoint file (.docx, .xlsx, .pptx) is read as its text, by lines like any "
+            "text file."
         ),
         parameters=_object(
             {
@@ -393,11 +397,21 @@ class ShellFilesTools(Tools):
         if path.suffix.lower() == ".pdf":
             return await asyncio.to_thread(self._read_pdf, path, args.get("pages"))
 
+        def source() -> IO[str]:
+            """The file as text; a Word, Excel or PowerPoint file converted first."""
+            if path.suffix.lower() not in office.KINDS:
+                return open(self._open(path, os.O_RDONLY), encoding="utf-8", errors="replace")
+            with open(self._open(path, os.O_RDONLY), "rb") as raw:
+                try:
+                    return io.StringIO(office.to_text(raw, path.suffix) + "\n")
+                except ValueError as e:
+                    raise ToolError(f"{self._display(path)}: {e}") from e
+
         def read() -> str:
             """Reads only up to what it returns: the file may be huge or endless."""
             selected: list[str] = []
             size, notes = 0, []
-            with open(self._open(path, os.O_RDONLY), encoding="utf-8", errors="replace") as f:
+            with source() as f:
                 lines = iter(lambda: f.readline(MAX_READ_CHARS + 1), "")
                 for number, line in enumerate(lines, 1):
                     if number < offset:

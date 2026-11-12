@@ -40,6 +40,9 @@ attachments only.
   agent is only told that one was attached.
 - **A PDF** (up to 20 MB and 600 pages) goes to Claude whole: it reads the text and sees
   every page, so tables, charts and scans work. Other providers get the text of its pages.
+- **A Word, Excel or PowerPoint file** (.docx, .xlsx, .pptx) goes as its text: a
+  document's headings, paragraphs and tables, a workbook's sheets row by row, a deck's
+  slides with their notes. Formatting, pictures and charts in them are not included.
 - **A text file** (up to 200 kB) goes with its content and its path, so the agent can read
   it at once and knows where it is, also when it is outside the work folder.
 - **Any other file** (binary, or larger) goes by its path only; the agent opens it with
@@ -49,8 +52,9 @@ Attachments are kept with the conversation and shown again when you reopen it. A
 or a PDF adds to what every later message of that conversation costs; a PDF is charged
 by the page.
 
-The agent can also read a PDF it comes across by itself: its file tool returns the text
-of the pages, all of them or a range, with any provider. The terminal app shows what
+The agent can also read these by itself when it comes across them: its file tool returns
+the text of a PDF's pages, all of them or a range, and of a Word, Excel or PowerPoint
+file, with any provider. The terminal app shows what
 was attached but cannot attach.
 
 ## Approving actions

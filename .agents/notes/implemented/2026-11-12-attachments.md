@@ -17,8 +17,9 @@ apps (2026-11-12), with a small preview above the message box for images.
   it is binary or too large to include. `api.attachment_text` is how each reads as text.
 - **`RuntimeAPI.send(text, files=())`** takes the paths of the files the user attached.
   The runtime reads them in a thread (`runtime/attachments.py`): an image (PNG, JPEG, GIF,
-  WebP, up to 5 MB) becomes an `Image`; a PDF (up to 20 MB and 600 pages, read with pypdf) a `Document`; a file that
-  decodes as UTF-8 (up to 200 kB) a
+  WebP, up to 5 MB) becomes an `Image`; a PDF (up to 20 MB and 600 pages, read with pypdf) a `Document`; a Word, Excel
+  or PowerPoint file (.docx, .xlsx, .pptx, up to 20 MB) a `File` whose text is the
+  document converted (`kayden.office`); a file that decodes as UTF-8 (up to 200 kB) a
   `File` with its content; anything else a `File` without. A path that cannot be read
   raises ValueError and nothing is sent. The text may be empty. `MessageQueued` carries
   the attachments of a message sent while the agent works.
@@ -34,7 +35,11 @@ apps (2026-11-12), with a small preview above the message box for images.
   and a PDF as its text plus that much per page.
 - **The file tool** reads a PDF too (`read_file` on a `.pdf`, with an optional `pages`
   range): the text of its pages, as a tool result, with any provider. This is how the
-  agent reads a PDF it finds by itself.
+  agent reads a PDF it finds by itself. It reads Word, Excel and PowerPoint files the same
+  way, converted to text and then by lines like any text file.
+- **`kayden.office`** converts those three with python-docx, openpyxl and python-pptx. It
+  sits beside `api.py`, outside any module, because the runtime (attachments) and a Tools
+  module (the file tool) both need it and neither may call the other.
 - **The desktop app** takes files dropped anywhere on the window or pasted into the
   message box, and a picture pasted from the clipboard, which it saves to a temporary
   folder first. They wait in a strip above the text (`AttachmentStrip`): a 56 px preview
@@ -60,6 +65,12 @@ apps (2026-11-12), with a small preview above the message box for images.
 - **A file tool that returns the PDF's pages to the model as a document.** What Claude
   Code's own Read does, and it lets the agent choose pages; but a tool result here is
   text, so it would change the Tools contract. The tool returns text for now.
+- **Office files through a skill**, the agent running a converter in its shell. No code
+  and no dependencies, but it needs the converter installed and the sandbox to see the
+  file, and a dropped file would still arrive as a bare path. The owner asked for them to
+  work like the rest.
+- **markitdown**, one library for many formats. It brings pandas for spreadsheets; the
+  three libraries used are what it wraps, without that.
 - **One `Attachment` block for both.** Cores and frontends would switch on the media type
   everywhere; two blocks say what each is.
 
@@ -76,6 +87,9 @@ apps (2026-11-12), with a small preview above the message box for images.
 - A file that is attached by path only is read by the agent's tools under the usual
   permissions, so one outside the work folder still asks.
 - A PDF is stored twice over in the archive: its bytes and its text.
-- pypdf is a dependency.
-- Not built: Office documents, resizing a picture that is too large, attaching from the
+- pypdf, python-docx, openpyxl and python-pptx are dependencies.
+- An Office file reaches the model as text only: its formatting, pictures and charts do
+  not, and a formula comes as its last saved value.
+- Not built: the old binary formats (.doc, .xls, .ppt), resizing a picture that is too
+  large, attaching from the
   terminal app, and a file picker button.
