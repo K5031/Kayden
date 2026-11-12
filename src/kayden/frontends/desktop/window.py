@@ -1255,8 +1255,8 @@ class MessageBox(QPlainTextEdit):
 
     submitted = Signal()
     focus_changed = Signal(bool)
-    MIN_LINES = 2  # room to write, as other chat apps leave
-    MAX_LINES = 6
+    MIN_LINES = 1  # one slim row until there is more to show
+    MAX_LINES = 8
 
     def __init__(self) -> None:
         super().__init__()
@@ -1492,9 +1492,9 @@ class MainWindow(QMainWindow):
         self.prompts = QVBoxLayout()
         self.prompts.setContentsMargins(0, 0, 0, 8)
         self.composer = QFrame(objectName="composer")
-        composer = QVBoxLayout(self.composer)
-        composer.setContentsMargins(16, 12, 10, 8)
-        composer.setSpacing(4)
+        composer = QHBoxLayout(self.composer)  # one row: the text, then Send at its foot
+        composer.setContentsMargins(16, 6, 6, 6)
+        composer.setSpacing(8)
         self.input = MessageBox()
         self.input.setPlaceholderText("Message Kayden")
         self.input.setToolTip("Enter sends. Shift+Enter starts a new line.")
@@ -1506,11 +1506,8 @@ class MainWindow(QMainWindow):
         self.send_button.setIconSize(QSize(16, 16))
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_button.clicked.connect(self._send_or_stop)
-        composer.addWidget(self.input)
-        actions = QHBoxLayout()
-        actions.addStretch()
-        actions.addWidget(self.send_button)
-        composer.addLayout(actions)
+        composer.addWidget(self.input, 1, Qt.AlignmentFlag.AlignVCenter)
+        composer.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
         self.model_button = QToolButton(objectName="modelPicker")
         self.model_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.model_button.setToolTip("Change the model")

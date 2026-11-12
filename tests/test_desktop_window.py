@@ -1095,7 +1095,10 @@ async def test_the_model_picker_under_the_message_box_shows_the_models_name(make
     await window.refresh_models()
     assert window.model_button.text() == "Fake One"  # its name, not its id
     assert window.model_button.menu() is window.model_menu
-    assert window.input.height() >= 2 * window.input.fontMetrics().lineSpacing()
+    line = window.input.fontMetrics().lineSpacing()
+    assert line <= window.input.height() < 2 * line  # one slim row while empty
+    window.input.setPlainText("one\ntwo\nthree")
+    assert window.input.height() >= 3 * line  # and it grows with the text
 
 
 async def test_the_permission_picker_tightens_at_once_and_asks_before_loosening(make, qapp):
