@@ -602,7 +602,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offere
 | Mechanism | The app font and every style-sheet font size scale by the zoom (`theme.set_zoom`), live; pixel sizes (padding, icons, radii) stay |
 | Levels | 67, 80, 90, 100, 110, 125, 150, 175, 200 %, as in browsers |
 | Keys | Zoom In: the platform's Zoom In (Ctrl++) and Ctrl+=; Zoom Out: Ctrl+−; Actual Size: Ctrl+0; all in a View menu |
-| Stored | `<data dir>/desktop.json` (`{"zoom": 1.25}`), written 0.4 s after the last change; missing or unreadable means 100 % |
+| Stored | `<data dir>/desktop.json` (`{"zoom": 1.25, "theme": "light"}`), written 0.4 s after the last change; missing or unreadable means 100 % |
+| Theme | View → Theme: System (follows the desktop's color scheme, the default), Light or Dark (`theme.set_theme`), stored beside the zoom. It is a view preference of this app, like the zoom, so it is in the View menu and `desktop.json`, not in the runtime's settings |
 | Not a setting | A desktop-only view preference, so it stays out of `settings.toml` and the runtime |
 
 ## Step groups

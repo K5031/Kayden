@@ -70,6 +70,8 @@ DARK = Palette(
 ICONS = Path(__file__).parent / "icons"
 
 _current = LIGHT
+THEMES = ("system", "light", "dark")  # "system" follows the desktop's color scheme
+_choice = "system"
 ZOOM_LEVELS = (0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0)
 _zoom = 1.0
 _base_pt: float | None = None  # the app font's size before any zoom
@@ -77,6 +79,17 @@ _base_pt: float | None = None  # the app font's size before any zoom
 
 def current() -> Palette:
     return _current
+
+
+def choice() -> str:
+    """The theme the user chose (THEMES)."""
+    return _choice
+
+
+def set_theme(app: QApplication, name: str) -> None:
+    global _choice
+    _choice = name if name in THEMES else "system"
+    apply(app)
 
 
 def system_is_dark() -> bool:
@@ -101,9 +114,11 @@ def set_zoom(app: QApplication, level: float) -> None:
 
 
 def apply(app: QApplication, dark: bool | None = None) -> None:
-    """Style the app for `dark`, or for the system's color scheme when None, at the zoom."""
+    """Style the app for `dark`, or for the chosen theme when None, at the zoom."""
     global _current, _base_pt
-    _current = DARK if (system_is_dark() if dark is None else dark) else LIGHT
+    if dark is None:
+        dark = system_is_dark() if _choice == "system" else _choice == "dark"
+    _current = DARK if dark else LIGHT
     if _base_pt is None:
         _base_pt = app.font().pointSizeF()
     font = QFont(app.font())
@@ -115,7 +130,8 @@ def apply(app: QApplication, dark: bool | None = None) -> None:
 
 
 def follow_system(app: QApplication) -> None:
-    """Restyle whenever the system switches between light and dark."""
+    """Restyle whenever the system switches between light and dark; a chosen light or
+    dark theme stays."""
     app.styleHints().colorSchemeChanged.connect(lambda _: apply(app))
 
 

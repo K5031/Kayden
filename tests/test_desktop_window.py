@@ -613,13 +613,38 @@ async def test_ctrl_plus_minus_and_zero_zoom_and_are_remembered(make, qapp, unzo
     await eventually(lambda: '"zoom": 1.0' in saved.read_text())
 
 
-async def test_a_saved_zoom_is_read_back(tmp_path):
+async def test_a_saved_zoom_and_theme_are_read_back(tmp_path):
     saved = tmp_path / "desktop.json"
-    assert await window_module.load_zoom(saved) == 1.0
-    saved.write_text('{"zoom": 1.25}')
-    assert await window_module.load_zoom(saved) == 1.25
+    assert await window_module.load_look(saved) == (1.0, "system")
+    saved.write_text('{"zoom": 1.25, "theme": "light"}')
+    assert await window_module.load_look(saved) == (1.25, "light")
+    saved.write_text('{"theme": "pink"}')
+    assert await window_module.load_look(saved) == (1.0, "system")
     saved.write_text("not json")
-    assert await window_module.load_zoom(saved) == 1.0
+    assert await window_module.load_look(saved) == (1.0, "system")
+
+
+@pytest.fixture
+def system_theme(qapp):
+    yield
+    theme.set_theme(qapp, "system")
+
+
+async def test_the_theme_is_chosen_in_the_view_menu_and_remembered(
+        make, qapp, system_theme, tmp_path):
+    h: Harness = await make()
+    await h.start()
+    saved = tmp_path / "desktop.json"
+    window = MainWindow(h.runtime, Controller(h.runtime, ConversationModel()), zoom_file=saved)
+    assert window.theme_actions["system"].isChecked()
+    window.theme_actions["light"].trigger()
+    assert theme.choice() == "light" and not theme.current().dark
+    await eventually(lambda: saved.exists() and '"theme": "light"' in saved.read_text())
+    window.theme_actions["dark"].trigger()
+    assert theme.current().dark and window.theme_actions["dark"].isChecked()
+    theme.apply(qapp)  # as when the desktop switches: the choice stays
+    assert theme.current().dark
+    await eventually(lambda: '"theme": "dark"' in saved.read_text())
 
 
 def groups(window: MainWindow) -> list[StepGroup]:

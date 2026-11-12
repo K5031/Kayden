@@ -33,6 +33,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QCloseEvent,
     QColor,
     QContextMenuEvent,
@@ -219,18 +220,23 @@ def _spawn(coro: Any) -> asyncio.Task[Any]:
     return asyncio.ensure_future(coro)
 
 
-async def load_zoom(path: Path) -> float:
-    """The zoom saved in `path`; 1.0 when there is none or it is unreadable."""
-    def read() -> float:
+async def load_look(path: Path) -> tuple[float, str]:
+    """The zoom and the theme saved in `path`; 1.0 and "system" where there is none or it
+    is unreadable."""
+    def read() -> tuple[float, str]:
         try:
-            return float(json.loads(path.read_text(encoding="utf-8"))["zoom"])
-        except (OSError, ValueError, TypeError, KeyError):
-            return 1.0
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            name = saved.get("theme")
+            return float(saved.get("zoom", 1.0)), name if name in theme.THEMES else "system"
+        except (OSError, ValueError, TypeError, AttributeError):
+            return 1.0, "system"
     return await asyncio.to_thread(read)
 
 
-async def save_zoom(path: Path, level: float) -> None:
-    await asyncio.to_thread(path.write_text, json.dumps({"zoom": level}), encoding="utf-8")
+async def save_look(path: Path) -> None:
+    """Remember the zoom and the theme in use."""
+    look = json.dumps({"zoom": theme.zoom(), "theme": theme.choice()})
+    await asyncio.to_thread(path.write_text, look, encoding="utf-8")
 
 
 def _right(*widgets: QWidget) -> QHBoxLayout:
@@ -1895,6 +1901,16 @@ class MainWindow(QMainWindow):
             action.setShortcuts(keys)
             action.triggered.connect(lambda _=False, s=steps: self.zoom(s))
             view_menu.addAction(action)
+        theme_menu = view_menu.addMenu("&Theme")
+        themes = QActionGroup(self)
+        self.theme_actions: dict[str, QAction] = {}
+        for name, text in (("system", "&System"), ("light", "&Light"), ("dark", "&Dark")):
+            action = QAction(text, self, checkable=True)
+            action.setChecked(name == theme.choice())
+            action.triggered.connect(lambda _=False, n=name: self.set_theme(n))
+            themes.addAction(action)
+            theme_menu.addAction(action)
+            self.theme_actions[name] = action
         view_menu.addSeparator()
         view_menu.addAction(self.show_archived)
         self.model_menu = main_menu.addMenu("&Model")
@@ -1926,22 +1942,33 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         assert isinstance(app, QApplication)
         theme.set_zoom(app, theme.zoom_step(theme.zoom(), steps) if steps else 1.0)
+        self._remember_look()
+
+    def _remember_look(self) -> None:
         if self.zoom_file is None:
             return
         if self._zoom_saver is not None:  # once the keys stop: one write, never a stale one
             self._zoom_saver.cancel()
         self._zoom_saver = _spawn(self._save_zoom(self.zoom_file))
 
+    def set_theme(self, name: str) -> None:
+        """Light, dark, or whatever the desktop is set to; remembered like the zoom."""
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        theme.set_theme(app, name)
+        self._remember_look()
+
     async def _save_zoom(self, path: Path) -> None:
         await asyncio.sleep(ZOOM_SAVE_DELAY_S)
-        await save_zoom(path, theme.zoom())
+        await save_look(path)
 
     async def save_pending_zoom(self) -> None:
-        """Write a zoom change still waiting for its delay, before the window goes."""
+        """Write a zoom or theme change still waiting for its delay, before the window
+        goes."""
         if self._zoom_saver is not None and not self._zoom_saver.done():
             self._zoom_saver.cancel()
             assert self.zoom_file is not None
-            await save_zoom(self.zoom_file, theme.zoom())
+            await save_look(self.zoom_file)
 
     # ── startup ───────────────────────────────────────────────────────────
 

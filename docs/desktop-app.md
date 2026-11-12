@@ -6,7 +6,9 @@ a terminal.
 
 ![The desktop app, light](images/main-light.png)
 
-It follows your computer's light or dark setting, and switches when you change it.
+It follows your computer's light or dark setting, and switches when you change it. To
+keep it light or dark whatever the computer is set to, choose **☰ → View → Theme**; the
+choice is remembered.
 
 ![The desktop app, dark](images/main-dark.png)
 
@@ -63,7 +65,7 @@ another reason, the Settings window opens with the message.
 | To | Do this |
 |---|---|
 | Move, resize or maximize the window | Drag the conversation's title bar or the top of the sidebar; double-click it to maximize. Drag any edge to resize. Minimize, maximize and close are at the top right. |
-| Find the menus | **☰** at the top of the sidebar: new chat, duty, stop, view (zoom, archived conversations) and model. Your name at the bottom left: settings, memory, tool servers, help and quit; the gear next to it opens Settings. Shortcuts work without opening a menu. |
+| Find the menus | **☰** at the top of the sidebar: new chat, duty, stop, view (zoom, theme, archived conversations) and model. Your name at the bottom left: settings, memory, tool servers, help and quit; the gear next to it opens Settings. Shortcuts work without opening a menu. |
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
 | Attach a file | Click **+** in the message box, drop it anywhere on the window, or paste it (a copied picture or screenshot works too). It waits above the message box, a picture with a small preview, until you send; ✕ takes it off. See [Attaching files](using-kayden.md#attaching-files). |
 | Run a skill | Send its name as a message: `/consolidate-memory`. See [Skills](concepts.md#skills). |

@@ -45,7 +45,7 @@ class DesktopFrontend(Frontend):
     def __init__(self, conversation_id: str | None = None,
                  data_dir: Path | None = None) -> None:
         self.conversation_id = conversation_id
-        self.data_dir = data_dir  # None: no zoom remembered, no single window
+        self.data_dir = data_dir  # None: no zoom or theme remembered, no single window
         self.zoom_file = data_dir / ZOOM_FILE if data_dir is not None else None
         self.sessions = SubSessions(data_dir) if data_dir is not None else None
 
@@ -62,7 +62,7 @@ class DesktopFrontend(Frontend):
 
         from kayden.frontends.desktop import theme
         from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
-        from kayden.frontends.desktop.window import MainWindow, load_zoom
+        from kayden.frontends.desktop.window import MainWindow, load_look
 
         app = QApplication.instance()
         if app is None:
@@ -71,7 +71,9 @@ class DesktopFrontend(Frontend):
             await self._hand_over(self.data_dir)
             return
         if self.zoom_file is not None:
-            theme.set_zoom(app, await load_zoom(self.zoom_file))
+            zoom, look = await load_look(self.zoom_file)
+            theme.set_theme(app, look)
+            theme.set_zoom(app, zoom)
         controller = Controller(runtime, ConversationModel())
         window = MainWindow(runtime, controller, self.zoom_file, self.sessions)
         server = (await single.listen(self.data_dir, window.bring_forward)
