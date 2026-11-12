@@ -8,9 +8,11 @@ Message conventions:
 - ASSISTANT messages hold Text, Reasoning, ToolCall and ServerToolUse blocks.
 - TOOL messages hold only ToolResult blocks. The runtime appends exactly one per turn,
   directly after the assistant message, with one result per call (placeholders and
-  refusals included).
+  refusals included). A ToolResult may carry the pictures and PDFs its tool returned
+  (attachments: Image and Document).
 - USER messages hold Text and OperationResult blocks (OperationResult carries the
-  late outcome of a backgrounded call; Cores render it as text for providers).
+  late outcome of a backgrounded call; Cores render it as text for providers), and what
+  the user attached: Image, Document and File blocks, after the Text.
 - Message ids are unique within a conversation. Core assigns the id of the assistant
   message it returns in Completed; the runtime assigns all others.
 
