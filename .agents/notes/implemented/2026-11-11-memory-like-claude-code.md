@@ -34,8 +34,11 @@ deleting a conversation also erases (`_erase`).
 
 - One memory folder per project, outside the project:
   `<data dir>/projects/<key>/memory/` (option `projects`), where `<key>` is the
-  conversation's folder as an absolute path with `/` turned into `-`
-  (`-home-k5031-Projects-Kayden`), as Claude Code names its project folders. A
+  project's absolute path with `/` turned into `-` (`-home-k5031-Projects-Kayden`), as
+  Claude Code names its project folders. The project is the git repository the
+  conversation's work folder is in, the main one when that is a worktree, so every folder
+  and worktree of a repository shares one memory; outside a repository it is the work
+  folder itself (`folder.project_root`, which reads `.git` and asks no git command). A
   conversation without a folder uses the key `default`.
 - In it, `MEMORY.md`, the index, and one `.md` file per memory, in Claude Code's format:
 
@@ -45,11 +48,15 @@ deleting a conversation also erases (`_erase`).
   description: <one-line summary, used to decide relevance>
   metadata:
     type: user | feedback | project | reference
+    modified: 2026-11-12T10:20:30.123Z
   ---
 
   <the fact; for feedback and project, then **Why:** and **How to apply:** lines.
   Related memories linked as [[their-name]].>
   ```
+
+  `modified` is the time the file was written, set on every write by the agent or the
+  user (`folder.stamped`), as Claude Code records it.
 
   `MEMORY.md` holds one line per memory: `- [Title](file.md) — hook`.
 
@@ -109,13 +116,6 @@ take `folder`, the conversation's work folder, which the runtime passes and a mo
 one memory for all conversations ignores. `MemoryNote.fixed` marks a note that can only be
 emptied (the built-in profile), so frontends no longer know the profile's title.
 
-### Where it differs from Claude Code
-
-Claude Code names the project folder after the git repository, so worktrees share one
-memory; here it is the conversation's work folder. Claude Code stamps a `modified` time
-into a memory file's frontmatter when it is written; here the file is as the agent wrote
-it. (Claude Code's documentation, read 2026-11-12.)
-
 ## Alternatives considered
 
 - **Replace the built-in Memory.** Built first: the store went to schema 9 without notes,
@@ -147,10 +147,14 @@ it. (Claude Code's documentation, read 2026-11-12.)
   file and come back when switched back.
 - Memory is written by the model doing the work, one fact per file; when it forgets to
   save, nothing catches it, as in Claude Code.
+- Checked with Opus 5.5 in a git repository: a memory saved from a chat in a subfolder
+  landed in the repository's memory folder with its `modified` time, and a chat at the
+  repository's root answered from it.
 - The guards cost a tool call: to change a memory the agent first views it. Checked with
   Opus 5.5: asked to update a memory another conversation wrote, it viewed the file, then
   replaced one sentence.
 - An index left over its limit keeps its tail on disk but out of every conversation, until
   the agent rewrites it.
-- Memory is per project: what Kayden learns in one project is not seen in another.
+- Memory is per project: what Kayden learns in one project is not seen in another. A
+  project is a whole repository, so a chat in a subfolder or a worktree shares its memory.
 - The files can be read and edited outside Kayden. Their edits keep no revisions.

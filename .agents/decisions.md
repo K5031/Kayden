@@ -855,6 +855,8 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Budget | The head (rules or profile) whenever it fits the room, then lines from the top within the long-term fraction |
 | Files as notes | Id and title = path, description = frontmatter `description`, text = body. Saving writes Claude Code frontmatter (not for `MEMORY.md`); a new title renames the file. No revisions |
 | Folder | The runtime passes the open conversation's work folder to `notes`, `save_note`, `delete_note`; `SqliteMemory` ignores it |
+| Project | `FilesMemory` names the memory folder after `folder.project_root`: the nearest folder with a `.git` directory, or for a `.git` file (a worktree) the repository its `commondir` points to; a submodule is its own project. Found once per work folder and process (`FilesMemory._keys`) |
+| `modified` | UTC, ISO 8601 with milliseconds and `Z`, under `metadata`; replaced on each write, added with a `metadata` block when the frontmatter has none; a file without frontmatter and `MEMORY.md` are not stamped |
 | Fixed | `MemoryNote.fixed` (the built-in profile) replaces the frontends' title check |
 | Tool | `memory`, Anthropic's memory tool commands, run in a thread; read-only `recall` and `read_around` come from the archive |
 | Its guards | What a conversation has read is kept per conversation, path to text, in the process (`FilesMemory._seen`): a restart means reading again. `create` refuses an existing file; `str_replace`, `insert`, `delete` and `rename` need the file read and unchanged. `MEMORY.md`: 200 lines or 25 kB loaded; a write past that is saved and answered as an error, one past 80 % with a reminder; no limit per memory file |

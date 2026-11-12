@@ -59,9 +59,10 @@ set with `[memory]` in [config.toml](#configtoml). Kayden comes with two:
 
 - **Notes** (the default): About you and one note per topic, shared by all your
   conversations and saved after each answer. See [Memory](concepts.md#memory).
-- **Files per project**, as in Claude Code: each project folder gets its own memory
+- **Files per project**, as in Claude Code: each project gets its own memory
   folder, `~/.kayden/projects/<project>/memory/`, with a `MEMORY.md` index and one
-  Markdown file per fact. The agent writes them itself while it works, and every
+  Markdown file per fact. A project is a git repository, so chats in its subfolders and
+  worktrees share one memory; a folder outside any repository is its own project. The agent writes them itself while it works, and every
   conversation in that folder sees the index as it was when the conversation started: a
   memory saved or edited meanwhile shows up in the next conversation. The agent reads a
   memory before it changes it and edits it in place. A conversation gets the first 200
