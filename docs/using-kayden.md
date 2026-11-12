@@ -59,9 +59,22 @@ agent or switch conversations are withdrawn.
 For a task with several steps, the agent writes a plan first and ticks the steps off as it
 works. You see it as a checklist under the conversation: ✓ done, ◐ under way, ○ still to
 do, and struck through for steps it dropped. It shows while the agent is working and goes
-away when it stops or every step is done. A quick question gets no plan. A step can have a
-due time, but the agent is only woken for it in a conversation with a
-[duty](concepts.md#duties).
+away when it stops or every step is done. A quick question gets no plan.
+
+### Reminders
+
+Ask Kayden to remind you of something, or to do something later ("remind me at 9 to call
+Sam", "check the build again in ten minutes"). It gives a step of its plan a due time, and
+is woken when the time comes, without a message from you. The status line shows
+**Reminder at 09:00** while one is waiting.
+
+- **The conversation has to be open in Kayden** at that time. A reminder that came due
+  while it was closed, or while Kayden was not running, is not sent late by itself: the
+  agent sees it with your next message.
+- **It needs a spending limit** (Settings), since the agent then works while you are away.
+- **Stop** puts reminders off until your next message.
+- For work that keeps going on its own, give the conversation a
+  [duty](concepts.md#duties) instead.
 
 ### The wrap-up card
 

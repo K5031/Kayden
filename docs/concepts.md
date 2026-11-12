@@ -45,8 +45,9 @@ or turn it off; the conversation keeps everything said so far.
   agent says the goal is reached, with a short report.
 - **The plan** is a list of steps, each to do, doing, done or dropped, with an optional
   due time and note. The agent always has it in view, and you can edit it. Any
-  conversation can have one (see [The plan](using-kayden.md#the-plan)); with a duty, a
-  step that falls due also wakes the agent.
+  conversation can have one (see [The plan](using-kayden.md#the-plan)), and a step that
+  falls due wakes the agent, with or without a duty (see
+  [Reminders](using-kayden.md#reminders)).
 - **When it wakes:** when a background task finishes (the first one, not all of them),
   when a step falls due, when you write, and otherwise at least every so often (an hour
   unless you change it). It never checks in more often than the minimum you set (a

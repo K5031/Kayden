@@ -195,6 +195,8 @@ def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
 
     duty = Duty("x")
     assert duty_status(None, None, AgentState.IDLE) is None
+    assert duty_status(None, 4102480800.0, AgentState.IDLE) == "Reminder at 2100-01-01 03:00" \
+        or duty_status(None, 4102480800.0, AgentState.IDLE).startswith("Reminder at 2")
     assert duty_status(duty, None, AgentState.STOPPED) == "Duty paused: activate to resume"
     assert duty_status(duty, None, AgentState.THINKING) == "Duty: working"
     assert duty_status(duty, time.time() + 60, AgentState.IDLE).startswith(

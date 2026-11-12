@@ -342,6 +342,9 @@ class Runtime:
         self._duty_timer: asyncio.Task[None] | None = None
         self._duty_wake_at: float | None = None
         self._duty_cause: str | None = None  # why the next cycle was requested for a duty
+        # Without a duty: steps due up to this time have reminded, or fell due while the
+        # conversation was closed and wait for the user.
+        self._reminded = 0.0
         self._help: str | None = None  # the agent's open question (ask_for_help)
         # Proposals waiting for the user, by the propose call's id (also their operation's).
         self._proposals: dict[CallId, tuple[Proposal, asyncio.Future[bool]]] = {}
@@ -473,6 +476,9 @@ class Runtime:
         self._log.decision("start", conversation=conversation.id, resumed=resumed,
                            seed_from=conversation.seed_from, model=model)
         self._set_base(AgentState.IDLE)
+        self._reminded = time.time()
+        if conversation.duty is None:  # a duty waits for the user after it was closed
+            self._schedule_duty()
         return conversation
 
     async def select_model(self, model_id: str) -> None:
@@ -692,7 +698,7 @@ class Runtime:
         await self._save_duty(self._conversation.duty, plan)
         self._plan_call = None
         self._log.decision("plan", items=len(plan), by="user")
-        if self._duty_timer is not None:
+        if self._duty_timer is not None or self._conversation.duty is None:
             self._schedule_duty()
 
     async def _save_duty(self, duty: Duty | None, plan: Sequence[PlanItem]) -> None:
@@ -1172,8 +1178,11 @@ class Runtime:
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
             duty = self._conversation.duty if self._conversation is not None else None
-            await self._append(Message(_new_id(), Role.USER,
-                                       (Text(duties.notice(cause, duty)),), time.time()))
+            notice = duties.notice(cause, duty)
+            if duty is None and cause == duties.DUE and self._conversation is not None:
+                self._reminded = time.time()
+                notice = duties.reminder(self._conversation.plan, self._reminded)
+            await self._append(Message(_new_id(), Role.USER, (Text(notice),), time.time()))
         else:
             await self._ensure_user_last()
         while True:
@@ -1258,10 +1267,16 @@ class Runtime:
                 and self._config.budget.max_cost_usd is not None)
 
     def _schedule_duty(self) -> None:
-        """While idle, wake the duty at its next time (duties.next_wake)."""
+        """While idle, wake the duty at its next time (duties.next_wake); without a duty,
+        when the next step falls due (duties.next_reminder)."""
         self._cancel_duty()
-        duty = self._conversation.duty if self._conversation is not None else None
-        if duty is None or not self._waiting():
+        if self._conversation is None or not self._waiting():
+            return
+        duty = self._conversation.duty
+        if duty is None:
+            due = duties.next_reminder(self._conversation.plan, self._reminded)
+            if due is not None and self._reminders():
+                self._wake_in(max(self._config.reminder_min_s, due - time.time()), duties.DUE)
             return
         if self._help is not None:
             self._log.decision("duty_paused", reason="waiting for help")
@@ -1272,7 +1287,14 @@ class Runtime:
                           "The duty is paused: it needs a spending limit. Set one in the "
                           "settings, then activate the conversation.")
             return
-        delay, cause = duties.next_wake(duty, self._conversation.plan)
+        self._wake_in(*duties.next_wake(duty, self._conversation.plan))
+
+    def _reminders(self) -> bool:
+        """Whether a due step wakes the agent without a duty: with a spending limit, as a
+        duty needs one."""
+        return self._config.budget.max_cost_usd is not None
+
+    def _wake_in(self, delay: float, cause: str) -> None:
         self._duty_timer = asyncio.create_task(self._duty_due(delay, cause))
         self._duty_wake_at = time.time() + delay
         self._log.decision("duty_scheduled", in_s=round(delay, 3), cause=cause)
@@ -1972,7 +1994,8 @@ class Runtime:
                 await self._save_duty(self._conversation.duty, plan)
                 self._plan_call = call.id
                 self._log.decision("plan", items=len(plan), by="model")
-                return ToolStatus.OK, duties.saved(plan, self._conversation.duty, now)
+                return ToolStatus.OK, duties.saved(plan, self._conversation.duty, now,
+                                                   reminders=self._reminders())
             case "ask_for_help":
                 if self._conversation.duty is None:
                     return ToolStatus.ERROR, "There is no duty to pause."

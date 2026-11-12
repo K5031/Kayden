@@ -40,20 +40,24 @@ STILL_OPEN = ("Steps are still open: update the plan again before you end your t
               "unless they wait for the user or for background work.")
 
 
-NO_WAKE = ("This conversation has no duty, so nothing wakes you when a step falls due: do "
-           "not end your turn to wait for it. If the user wants to be reminded or have "
-           "work done later, say that it needs a duty, which only they can turn on.")
+WAKES = ("You will be woken when a step falls due, as long as this conversation stays open "
+         "in Kayden: you can end your turn meanwhile.")
+NO_WAKE = ("Nothing wakes you when a step falls due, because no spending limit is set: do "
+           "not end your turn to wait for it. If the user wants a reminder or work done "
+           "later, tell them it needs a spending limit, which they set in the settings.")
 
 
-def saved(plan: Sequence[PlanItem], duty: Duty | None, now: float) -> str:
+def saved(plan: Sequence[PlanItem], duty: Duty | None, now: float, *,
+          reminders: bool) -> str:
     """What update_plan answers. The call and this answer are how the plan stays in view,
-    so it says what the call's arguments do not: the time, and when each step is due."""
+    so it says what the call's arguments do not: the time, when each step is due, and
+    whether a due step wakes the agent (`reminders`; a duty always does)."""
     lines = [f"Plan saved. It is now {local(now)}."]
     due = [f"- {i.text}: due {local(i.due)}" for i in plan if i.due and i.status in OPEN]
     lines += due
     if due and duty is None:
-        lines.append(NO_WAKE)
-    if duty is None and any(i.status in OPEN for i in plan):
+        lines.append(WAKES if reminders else NO_WAKE)
+    if duty is None and any(i.status in OPEN and not i.due for i in plan):
         lines.append(STILL_OPEN)
     return "\n".join(lines)
 
@@ -104,6 +108,21 @@ def notice(cause: str, duty: Duty | None) -> str:
     says = _SAYS.get(cause, "{cause}").format(kind=kind, cause=cause)
     return (f"{NOTICE_PREFIX}{says} Carry on with your {kind}, or end your turn if there is "
             "nothing to do now.")
+
+
+def next_reminder(plan: Sequence[PlanItem], after: float) -> float | None:
+    """Without a duty: when the next open step falls due, counting only those due later
+    than `after` (the last reminder), so a step left open reminds once."""
+    due = [i.due for i in plan if i.due is not None and i.status in OPEN and i.due > after]
+    return min(due) if due else None
+
+
+def reminder(plan: Sequence[PlanItem], now: float) -> str:
+    """The message that starts a cycle for a due step in a conversation without a duty."""
+    due = "; ".join(i.text for i in plan
+                    if i.due is not None and i.status in OPEN and i.due <= now)
+    return (f"{NOTICE_PREFIX}Due now in your plan: {due}. This is the time you set: do what "
+            "the step says (for a reminder, tell the user), then update the plan.")
 
 
 def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:

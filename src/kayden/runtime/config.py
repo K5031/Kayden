@@ -71,6 +71,7 @@ class RuntimeConfig:
     initial_wait_s: float = 10.0
     default_tool_timeout_s: float = 3600.0
     cancel_grace_s: float = 5.0
+    reminder_min_s: float = 60.0  # the soonest a due step wakes the agent without a duty
     subscriber_queue_size: int = 1000
     modules: ModuleState = field(default_factory=ModuleState)
 

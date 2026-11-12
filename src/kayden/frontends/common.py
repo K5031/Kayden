@@ -386,9 +386,10 @@ _PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")
 
 def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
                 help_needed: str | None = None) -> str | None:
-    """The duty's state for a status line, None without a duty."""
+    """The duty's state for a status line; without a duty, when the agent is next woken
+    for a due step, else None."""
     if duty is None:
-        return None
+        return f"Reminder at {_when(wake_at)}" if wake_at is not None else None
     if help_needed is not None and state in (AgentState.IDLE, AgentState.STOPPED):
         return "Duty waiting for your answer"
     if wake_at is not None:

@@ -416,7 +416,7 @@ class PlanItem:
 
     text: str
     status: PlanStatus = PlanStatus.TODO
-    due: float | None = None  # Unix time; an open item due wakes a duty
+    due: float | None = None  # Unix time; an open item due wakes the agent
     note: str = ""
 
 
@@ -808,7 +808,7 @@ _PLAN_ITEM = {
         "status": {"type": "string", "enum": [s.value for s in PlanStatus], "default": "todo"},
         "due": {"type": "string", "description":
                 "When it falls due, ISO 8601 (e.g. 2026-11-12T09:00), local time unless an "
-                "offset is given. Only a duty wakes you at that time."},
+                "offset is given. You are woken at that time."},
         "due_in_minutes": {"type": "number", "minimum": 0,
                            "description": "Instead of due: minutes from now."},
         "note": {"type": "string"},
@@ -826,8 +826,9 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         "done as you go, in the same call as other work where you can. Skip it for a quick "
         "answer or a single step. When a new task starts, replace the old plan. Never end "
         "your turn with the plan out of date: when the work is finished, every step is "
-        "done or dropped. Your last update stays in view; with a "
-        "duty, an open item that falls due wakes you.",
+        "done or dropped. Your last update stays in view. An open step "
+        "that falls due wakes you: give a step a due time to do it, or to remind the "
+        "user, later.",
         {"type": "object",
          "properties": {"items": {"type": "array", "items": _PLAN_ITEM}},
          "required": ["items"]},
@@ -1347,9 +1348,10 @@ class MemoriesChanged:
 
 @dataclass(frozen=True, slots=True)
 class DutyScheduled:
-    """When the open conversation's duty wakes next by itself (Unix time). None: it does
-    not, because the agent is working, has no duty, or the duty is paused (Stop, a failure,
-    a restart, no spending limit) until a person sends a message or activates it."""
+    """When the open conversation's agent is next woken by itself (Unix time): by its duty,
+    or without one for a step of its plan that falls due. None: it is not, because the
+    agent is working, nothing is due, or the duty is paused (Stop, a failure, a restart,
+    no spending limit) until a person sends a message or activates it."""
 
     wake_at: float | None
 

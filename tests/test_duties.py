@@ -176,12 +176,76 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
 # ── The plan ──
 
 
-def test_a_due_step_without_a_duty_is_said_not_to_wake_the_agent():
-    """Only a duty wakes the agent; without one it would wait for a reminder forever."""
+# ── Reminders: a due step without a duty ──
+
+
+def soon(text: str = "Stand up") -> Step:
+    return Step(calls=[call("update_plan", {"items": [
+        {"text": text, "due_in_minutes": 0.002}]}, id="p")])  # about a tenth of a second
+
+
+async def test_a_due_step_wakes_the_agent_without_a_duty(make):
+    h = await duty_harness(make, [soon(), Step(text="I will remind you."),
+                                  Step(text="Time to stand up!")], reminder_min_s=0.05)
+    await h.turn("remind me to stand up in a moment")
+    assert "woken" in (await h.results())["p"].content
+    assert h.runtime.snapshot().duty_wake_at is not None  # frontends show when
+    await idle(h, 3)
+    assert wakes(h)[-1] == "duty: a plan item is due"
+    assert "[Runtime notice] Due now in your plan: Stand up." in notices(
+        h.core.requests[2])[-1]
+    # The step is still open and overdue: it reminded once, not again and again.
+    await asyncio.sleep(0.3)
+    assert len(h.core.requests) == 3 and h.runtime.snapshot().duty_wake_at is None
+
+
+async def test_a_reminder_needs_a_spending_limit(make):
+    """As a duty does: nothing makes the agent act while the user is away without one."""
+    h = await duty_harness(make, [soon(), Step(text="Noted.")], budget=Budget(),
+                           reminder_min_s=0.05)
+    await h.turn("remind me to stand up in a moment")
+    assert duties.NO_WAKE in (await h.results())["p"].content
+    await asyncio.sleep(0.3)
+    assert len(h.core.requests) == 2 and h.runtime.snapshot().duty_wake_at is None
+
+
+async def test_a_reopened_conversation_reminds_of_what_is_still_to_come_only(make):
+    """A step that fell due while the conversation was closed waits for the user, as a
+    duty does after a restart; one that is still ahead wakes the agent."""
+    h = await duty_harness(make, [Step(text="Second one!")], reminder_min_s=0.05)
+    now = time.time()
+    await h.runtime.set_plan([PlanItem("First", due=now - 60),
+                              PlanItem("Second", due=now + 1.0)])
+    first = h.conversation.id
+    await h.chat("Other")
+    await h.start(conversation_id=first)
+    await idle(h, 1)
+    assert "[Runtime notice] Due now in your plan: First; Second." in notices(
+        h.core.requests[0])[-1]
+
+
+async def test_stop_puts_reminders_off_until_the_next_message(make):
+    h = await duty_harness(make, [soon(), Step(text="ok", hang=True), Step(text="Back."),
+                                  Step(text="Stand up!")], reminder_min_s=0.05)
+    await h.runtime.send("remind me")
+    await eventually(lambda: len(h.core.requests) == 2)
+    await h.runtime.stop()
+    await eventually(lambda: h.runtime.snapshot().state == AgentState.STOPPED)
+    await asyncio.sleep(0.3)
+    assert len(h.core.requests) == 2  # stopped: nothing wakes it
+    await h.turn("carry on")
+    await idle(h, 4)
+    assert wakes(h)[-1] == "duty: a plan item is due"
+
+
+def test_what_update_plan_says_about_due_steps():
     later = PlanItem("Check the build", PlanStatus.TODO, due=time.time() + 600)
-    assert duties.NO_WAKE in duties.saved([later], None, time.time())
-    assert duties.NO_WAKE not in duties.saved([later], Duty("Watch the build"), time.time())
-    assert duties.NO_WAKE not in duties.saved([PlanItem("Fix it")], None, time.time())
+    now = time.time()
+    assert duties.WAKES in duties.saved([later], None, now, reminders=True)
+    assert duties.NO_WAKE in duties.saved([later], None, now, reminders=False)
+    with_duty = duties.saved([later], Duty("Watch the build"), now, reminders=True)
+    assert duties.WAKES not in with_duty and duties.NO_WAKE not in with_duty
+    assert duties.WAKES not in duties.saved([PlanItem("Fix it")], None, now, reminders=True)
 
 
 def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
