@@ -12,6 +12,7 @@ import base64
 import getpass
 import html
 import json
+import re
 import shutil
 import tempfile
 from collections.abc import Callable, Container, Sequence
@@ -148,7 +149,7 @@ from kayden.frontends.common import (
     request_note,
     restart_notice,
 )
-from kayden.frontends.desktop import app_menu, theme
+from kayden.frontends.desktop import app_menu, syntax, theme
 from kayden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     AssistantItem,
@@ -536,6 +537,31 @@ class RowDelegate(QStyledItemDelegate):
 # ── transcript widgets ────────────────────────────────────────────────────
 
 
+_FENCE = re.compile(r"^( *)(`{3,}|~{3,})(.*)$")
+
+
+def _code_blocks_apart(markdown: str) -> str:
+    """The Markdown with a comment between code blocks that follow each other: Qt makes
+    one run of lines of them, with nothing to tell where one ends."""
+    lines: list[str] = []
+    fence = ""  # the fence of the code block these lines are in
+    closed = False  # a code block ended and nothing but blank lines came since
+    for line in markdown.split("\n"):
+        found = _FENCE.match(line)
+        if fence:
+            if (found and found[2][0] == fence[0] and len(found[2]) >= len(fence)
+                    and not found[3].strip()):
+                fence, closed = "", True
+        elif found:
+            if closed:
+                lines += [f"{found[1]}<!-- -->", ""]
+            fence, closed = found[2], False
+        elif line.strip():
+            closed = False
+        lines.append(line)
+    return "\n".join(lines)
+
+
 class MarkdownView(QTextBrowser):
     """Read-only Markdown that grows to fit its text instead of scrolling."""
 
@@ -560,7 +586,7 @@ class MarkdownView(QTextBrowser):
         code block in one round box under its language and a copy button, its lines
         together and wrapped when long."""
         self._boxes = []
-        super().setMarkdown(markdown)
+        super().setMarkdown(_code_blocks_apart(markdown))
         code = QTextCharFormat()
         code.setFontPointSize(self.font().pointSizeF() * CODE_SCALE)
         inline = QTextCharFormat(code)
@@ -586,16 +612,24 @@ class MarkdownView(QTextBrowser):
             fenced = fmt.hasProperty(QTextFormat.Property.BlockCodeFence)
             if fenced:  # Qt makes a block of every line
                 end = block.position() + block.length() - 1
-                if previous_fenced:
+                language = fmt.stringProperty(QTextFormat.Property.BlockCodeLanguage)
+                if previous_fenced and boxes[-1][2] == language:
                     boxes[-1][1] = end
                 else:
-                    boxes.append([block.position(), end, fmt.stringProperty(
-                        QTextFormat.Property.BlockCodeLanguage)])
+                    boxes.append([block.position(), end, language])
                 fmt.setNonBreakableLines(False)
                 fmt.setTopMargin(0)
                 fmt.setBottomMargin(0)
                 QTextCursor(block).setBlockFormat(fmt)
                 previous_fenced = True
+                block = block.next()
+                continue
+            if previous_fenced and not block.text():  # the comment between two code blocks
+                fmt.setLineHeight(1, QTextBlockFormat.LineHeightTypes.FixedHeight.value)
+                fmt.setTopMargin(0)
+                fmt.setBottomMargin(0)
+                QTextCursor(block).setBlockFormat(fmt)
+                previous_fenced = False
                 block = block.next()
                 continue
             previous_fenced = False
@@ -619,6 +653,7 @@ class MarkdownView(QTextBrowser):
             cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
             frame = cursor.insertFrame(box)
             self._boxes.insert(0, (frame, language))
+            self._colour(frame, language)
             # Qt puts an empty line before and after a frame: the one before is kept from
             # showing, the one after is the space below the box.
             for position, height in ((frame.firstPosition() - 1, 1),
@@ -641,6 +676,24 @@ class MarkdownView(QTextBrowser):
             button.setVisible(index < len(self._boxes))
         self._place_buttons()
 
+    def _code(self, frame: QTextFrame) -> str:
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(frame.firstPosition())
+        cursor.setPosition(frame.lastPosition(), QTextCursor.MoveMode.KeepAnchor)
+        return cursor.selectedText().replace("\u2029", "\n")  # Qt's paragraph separator
+
+    def _colour(self, frame: QTextFrame, language: str) -> None:
+        """Syntax colours for a code block whose language is named and known."""
+        colors = syntax.colors(theme.current().dark)
+        for start, length, kind in syntax.spans(self._code(frame), language):
+            cursor = QTextCursor(self.document())
+            cursor.setPosition(frame.firstPosition() + start)
+            cursor.setPosition(frame.firstPosition() + start + length,
+                               QTextCursor.MoveMode.KeepAnchor)
+            colored = QTextCharFormat()
+            colored.setForeground(QColor(colors[kind]))
+            cursor.mergeCharFormat(colored)
+
     def code_boxes(self) -> list[QRect]:
         """Where each code block's box is, in the view."""
         layout = self.document().documentLayout()
@@ -656,11 +709,7 @@ class MarkdownView(QTextBrowser):
                                size.width(), size.height())
 
     def _copy_code(self, index: int) -> None:
-        frame, _ = self._boxes[index]
-        cursor = QTextCursor(self.document())
-        cursor.setPosition(frame.firstPosition())
-        cursor.setPosition(frame.lastPosition(), QTextCursor.MoveMode.KeepAnchor)
-        QApplication.clipboard().setText(cursor.selectedText().replace("\u2029", "\n"))
+        QApplication.clipboard().setText(self._code(self._boxes[index][0]))
         button = self.code_buttons[index]
         self._paint_copy(button, copied=True)
         QTimer.singleShot(COPIED_MS, button, partial(self._paint_copy, button))

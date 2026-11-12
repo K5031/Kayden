@@ -607,6 +607,58 @@ def test_a_code_block_has_round_corners_its_language_and_a_copy_button(qapp):
     assert not body.code_boxes() and not any(b.isVisible() for b in body.code_buttons)
 
 
+def test_code_blocks_that_follow_each_other_are_separate_boxes(qapp):
+    bubble = AssistantBubble(AssistantItem(
+        text="Run:\n\n```sh\nls\n```\n\n```sh\npwd\n```\n\n```json\n{}\n```\n\n"
+             "- item\n\n  ```\n  a\n  ```\n\n  ```\n  b\n  ```", final=True))
+    bubble.resize(500, 400)
+    bubble.show()
+    qapp.processEvents()
+    body = bubble.body
+    assert body.code_languages() == ["sh", "sh", "json", "", ""]
+    boxes = body.code_boxes()
+    assert all(above.bottom() < below.top() for above, below in itertools.pairwise(boxes))
+    for button, code in zip(body.code_buttons, ["ls", "pwd", "{}", "a", "b"], strict=True):
+        button.click()
+        assert QApplication.clipboard().text() == code
+
+
+def colours_of(bubble: AssistantBubble) -> dict[str, str]:
+    """The colour of each piece of text in a reply, by its text."""
+    found = {}
+    block = bubble.body.document().begin()
+    while block.isValid():
+        fragments = block.begin()
+        while not fragments.atEnd():
+            fragment = fragments.fragment()
+            found[fragment.text().strip()] = fragment.charFormat().foreground().color().name()
+            fragments += 1
+        block = block.next()
+    return found
+
+
+def test_code_in_a_named_language_is_coloured(qapp):
+    from kayden.frontends.desktop import syntax
+
+    code = 'def area(r):\n    return 3.14 * r  # a circle\n\nname = "disc"'
+    bubble = AssistantBubble(AssistantItem(text=f"```python\n{code}\n```", final=True))
+    palette = {kind: color.lower() for kind, color in syntax.colors(dark=False).items()}
+    found = colours_of(bubble)
+    assert found["def"] == palette["keyword"] and found["return"] == palette["keyword"]
+    assert found["area"] == palette["name"]
+    assert found["3.14"] == palette["number"]
+    assert found["# a circle"] == palette["comment"]
+    assert found['"disc"'] == palette["string"]
+    assert len(set(palette.values())) == len(palette)
+    assert syntax.spans("ls  # all", "sh")[-1] == (4, 5, "comment")  # on a last line too
+
+
+@pytest.mark.parametrize("fence", ["", "nonsense"])
+def test_code_in_no_known_language_stays_plain(qapp, fence):
+    bubble = AssistantBubble(AssistantItem(text=f"```{fence}\ndef area(r):\n```", final=True))
+    assert len(set(colours_of(bubble).values())) == 1
+
+
 @pytest.fixture
 def unzoomed(qapp):
     yield

@@ -51,6 +51,7 @@ desktop = "kayden.frontends.desktop:factory"
 [project.optional-dependencies]
 desktop = [
     "numpy>=2.5.4",
+    "pygments>=2.21",
     "pyside6-addons>=6.12.0",
     "pyside6-essentials>=6.12.0",
     "qasync>=0.28.0",
