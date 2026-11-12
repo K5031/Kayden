@@ -1516,6 +1516,16 @@ async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(
     assert not bubble.images[0].pixmap().isNull()
 
 
+def test_a_sent_pdf_shows_by_its_name(qapp):
+    from kayden.api import Document
+    from kayden.frontends.desktop.viewmodel import UserItem
+
+    bubble = UserBubble(UserItem("summarize", "m1", attachments=(
+        Document("/home/me/report.pdf", "JVBERi0=", "Sales rose", 2),)))
+    assert [f.text() for f in bubble.files] == ["report.pdf"] and not bubble.images
+    assert bubble.files[0].toolTip() == "/home/me/report.pdf"
+
+
 def test_a_reply_shows_copy_and_its_age_on_hover(qapp):
     import time
 

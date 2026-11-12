@@ -22,6 +22,7 @@ from kayden.api import (
     Core,
     CoreError,
     CoreEvent,
+    Document,
     File,
     Image,
     InferenceRequest,
@@ -538,9 +539,12 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
             out[-1]["content"].extend(content)
         else:
             out.append({"role": role, "content": content})
-        if role == "user":
-            out[-1]["content"].sort(key=lambda c: c["type"] != "tool_result")
+        if role == "user":  # tool results first, then documents, before the text about them
+            out[-1]["content"].sort(key=lambda c: _USER_ORDER.get(c["type"], 2))
     return out, prefix.of(out)
+
+
+_USER_ORDER = {"tool_result": 0, "document": 1}
 
 
 def _to_content(block: Block, model: str, bound: str | None, search: bool) -> list[JSON]:
@@ -576,6 +580,9 @@ def _to_content(block: Block, model: str, bound: str | None, search: bool) -> li
                      "source": {"type": "base64", "media_type": media_type, "data": data}}]
         case File():
             return [{"type": "text", "text": attachment_text(block)}]
+        case Document(data=data):
+            return [{"type": "document", "source": {
+                "type": "base64", "media_type": "application/pdf", "data": data}}]
     return []  # OpaqueBlock
 
 

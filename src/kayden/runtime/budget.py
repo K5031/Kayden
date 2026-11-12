@@ -14,6 +14,7 @@ from typing import Any
 
 from kayden.api import (
     Budget,
+    Document,
     File,
     Image,
     Message,
@@ -59,6 +60,8 @@ def _block_text(block: object) -> str:
             return " " * (4 * _IMAGE_TOKENS)
         case File():
             return attachment_text(block)
+        case Document(pages=pages):  # its text and every page as an image
+            return attachment_text(block) + " " * (4 * _IMAGE_TOKENS * pages)
     return ""
 
 

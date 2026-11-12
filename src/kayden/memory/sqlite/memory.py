@@ -41,6 +41,7 @@ from kayden.api import (
     ConversationId,
     ConversationInfo,
     CoreError,
+    Document,
     Duty,
     DutyKind,
     File,
@@ -1177,7 +1178,7 @@ def _render_transcript(messages: Sequence[Message]) -> str:
                                  f"{_shortened(content)}")
                 case ServerToolUse(summary=summary, content=content):
                     lines.append(f"[{stamp} {message.role}] {summary}: {_shortened(content)}")
-                case Image() | File():
+                case Image() | File() | Document():
                     lines.append(f"[{stamp} {message.role}] "
                                  f"{_shortened(attachment_text(block))}")
                 case _:

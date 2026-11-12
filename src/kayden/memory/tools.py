@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from kayden.api import (
     PROFILE,
     ArchiveHit,
+    Document,
     File,
     Image,
     Memory,
@@ -197,6 +198,6 @@ def _render(message: Message) -> str:
                 parts.append(f"[{s}] {c}")
             case ServerToolUse(summary=summary, content=c):
                 parts.append(f"[{summary}] {c}")
-            case Image() | File():
+            case Image() | File() | Document():
                 parts.append(attachment_text(b))
     return " ".join(parts)

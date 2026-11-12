@@ -3,24 +3,31 @@
 from __future__ import annotations
 
 import base64
+import io
 from collections.abc import Sequence
 from pathlib import Path
 
-from kayden.api import File, Image
+import pypdf
+import pypdf.errors
+
+from kayden.api import Attachment, Document, File, Image
 
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".gif": "image/gif", ".webp": "image/webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # what model providers accept for one image
 MAX_TEXT_BYTES = 200_000  # of a file whose content goes into the message
+# A PDF goes to the provider whole, base64, in a request of at most 32 MB and 600 pages.
+MAX_PDF_BYTES = 20 * 1024 * 1024
+MAX_PDF_PAGES = 600
 
 
-def read(paths: Sequence[str]) -> tuple[Image | File, ...]:
-    """Each file as a block: an image the model can see, a text file with its content, or
-    any other by its path alone. ValueError for one that cannot be read. Blocking."""
+def read(paths: Sequence[str]) -> tuple[Attachment, ...]:
+    """Each file as a block: an image the model can see, a PDF with its pages and text, a
+    text file with its content, or any other by its path alone. ValueError for one that cannot be read. Blocking."""
     return tuple(_read(Path(path).expanduser()) for path in paths)
 
 
-def _read(path: Path) -> Image | File:
+def _read(path: Path) -> Attachment:
     try:
         path = path.resolve(strict=True)
         if not path.is_file():
@@ -29,6 +36,8 @@ def _read(path: Path) -> Image | File:
         media_type = IMAGE_TYPES.get(path.suffix.lower())
         if media_type is not None and size <= MAX_IMAGE_BYTES:
             return Image(media_type, base64.b64encode(path.read_bytes()).decode(), path.name)
+        if path.suffix.lower() == ".pdf" and size <= MAX_PDF_BYTES:
+            return _pdf(path)
         if size > MAX_TEXT_BYTES:
             return File(str(path))
         raw = path.read_bytes()
@@ -39,3 +48,17 @@ def _read(path: Path) -> Image | File:
     except UnicodeDecodeError:
         return File(str(path))
     return File(str(path), None if "\x00" in text else text)
+
+
+def _pdf(path: Path) -> Document | File:
+    """The PDF with the text of its pages; by its path alone when it cannot be read as one
+    or has too many pages."""
+    raw = path.read_bytes()
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(raw))
+        if len(reader.pages) > MAX_PDF_PAGES:
+            return File(str(path))
+        text = "\n\n".join(page.extract_text().strip() for page in reader.pages).strip()
+    except (pypdf.errors.PyPdfError, ValueError, KeyError, OSError):
+        return File(str(path))
+    return Document(str(path), base64.b64encode(raw).decode(), text, len(reader.pages))

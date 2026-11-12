@@ -32,6 +32,8 @@ from typing import Any
 
 import httpx2
 import jsonschema
+import pypdf
+import pypdf.errors
 
 from kayden.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
 from kayden.tools.shell_files import web
@@ -95,13 +97,15 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         name="read_file",
         description=(
             "Read a UTF-8 text file. Optional 1-based start line `offset` and line `limit` "
-            f"(default {MAX_READ_LINES})."
+            f"(default {MAX_READ_LINES}). A PDF is read as the text of its pages: all of "
+            "them, or those `pages` names, such as \"3\" or \"2-5\"."
         ),
         parameters=_object(
             {
                 "path": _STRING,
                 "offset": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1},
+                "pages": {"type": "string", "description": "For a PDF: a page or a range."},
             },
             ["path"],
         ),
@@ -152,6 +156,21 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         read_only=True,
     ),
 )
+
+
+def _page_range(pages: str | None, total: int) -> tuple[int, int]:
+    """The first and last page `pages` names ("3", "2-5"; None: all of them)."""
+    if pages is None:
+        return 1, total
+    first, _, last = pages.strip().partition("-")
+    try:
+        start, end = int(first), int(last or first)
+    except ValueError:
+        raise ToolError(f'pages is a page or a range, such as "3" or "2-5", not {pages!r}') \
+            from None
+    if not 1 <= start <= end <= total:
+        raise ToolError(f"pages {pages} is not within the PDF's {total} pages")
+    return start, end
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
@@ -371,6 +390,8 @@ class ShellFilesTools(Tools):
         limit = args.get("limit", MAX_READ_LINES)
         if path.is_dir():
             raise ToolError(f"{self._display(path)} is a directory")
+        if path.suffix.lower() == ".pdf":
+            return await asyncio.to_thread(self._read_pdf, path, args.get("pages"))
 
         def read() -> str:
             """Reads only up to what it returns: the file may be huge or endless."""
@@ -394,6 +415,28 @@ class ShellFilesTools(Tools):
             return "\n".join([text, *notes]) if notes else text
 
         return await asyncio.to_thread(read)
+
+    def _read_pdf(self, path: Path, pages: str | None) -> str:
+        """The text of a PDF's pages, each under its number, up to MAX_READ_CHARS."""
+        with open(self._open(path, os.O_RDONLY), "rb") as f:
+            try:
+                reader = pypdf.PdfReader(f)
+                total = len(reader.pages)
+                first, last = _page_range(pages, total)
+                parts, size = [f"[PDF, {total} page{'s' if total != 1 else ''}]"], 0
+                for number in range(first, last + 1):
+                    text = reader.pages[number - 1].extract_text().strip()
+                    if size and size + len(text) > MAX_READ_CHARS:
+                        parts.append(f'[more pages follow; use pages "{number}-{last}" to '
+                                     "read on]")
+                        break
+                    parts.append(f"[Page {number}]\n{text[:MAX_READ_CHARS]}".rstrip())
+                    size += len(text)
+            except (pypdf.errors.PyPdfError, KeyError) as e:
+                raise ToolError(f"{self._display(path)} cannot be read as a PDF: {e}") from e
+        if not size:
+            parts.append("[No text could be read from these pages: they may be scans.]")
+        return "\n".join(parts)
 
     async def _write_file(self, args: dict[str, Any], ctx: ToolContext) -> str:
         path = self._path(args["path"])

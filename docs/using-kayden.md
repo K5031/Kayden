@@ -38,13 +38,19 @@ attachments only.
 - **A picture** (PNG, JPEG, GIF or WebP, up to 5 MB) is shown to the model, so you can ask
   about a screenshot or a photo. With a model that cannot see pictures (DeepSeek), the
   agent is only told that one was attached.
+- **A PDF** (up to 20 MB and 600 pages) goes to Claude whole: it reads the text and sees
+  every page, so tables, charts and scans work. Other providers get the text of its pages.
 - **A text file** (up to 200 kB) goes with its content and its path, so the agent can read
   it at once and knows where it is, also when it is outside the work folder.
 - **Any other file** (binary, or larger) goes by its path only; the agent opens it with
   its tools if it needs to.
 
 Attachments are kept with the conversation and shown again when you reopen it. A picture
-adds to what every later message of that conversation costs. The terminal app shows what
+or a PDF adds to what every later message of that conversation costs; a PDF is charged
+by the page.
+
+The agent can also read a PDF it comes across by itself: its file tool returns the text
+of the pages, all of them or a range, with any provider. The terminal app shows what
 was attached but cannot attach.
 
 ## Approving actions

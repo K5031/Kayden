@@ -890,7 +890,8 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 
 | Choice | Decision |
 |---|---|
-| Limits | Image: `.png .jpg .jpeg .gif .webp` by suffix, up to 5 MB; text: UTF-8 without NUL bytes, up to 200 kB; anything else by path (`runtime/attachments.py`) |
+| Limits | Image: `.png .jpg .jpeg .gif .webp` by suffix, up to 5 MB; PDF: `.pdf` by suffix, up to 20 MB (the provider takes 32 MB per request, and base64 adds a third) and 600 pages, else by path; one pypdf cannot open goes by path; text: UTF-8 without NUL bytes, up to 200 kB; anything else by path (`runtime/attachments.py`) |
 | Message | `Text(text)` first, also when empty, then the attachments in the order given |
-| As text | `[Image attached: name]`; `[File attached: path]` and the content; or that the content is not included (`api.attachment_text`) |
+| `read_file` on a PDF | `[PDF, N pages]`, then `[Page n]` and its text for every page or the `pages` range ("3", "2-5"), up to 100 000 characters, with a note to read on; a note when no text could be read |
+| As text | `[File attached: path (PDF, N pages)]` and its text, or that none could be read; `[Image attached: name]`; `[File attached: path]` and the content; or that the content is not included (`api.attachment_text`) |
 | Desktop | Dropped files and pasted file lists are attached, not typed in as paths (`MessageBox.insertFromMimeData`); a pasted picture is saved as `pasted-N.png` in a temporary folder removed when the window closes; the same path is not attached twice |

@@ -21,6 +21,7 @@ from kayden.api import (
     Core,
     CoreError,
     CoreEvent,
+    Document,
     File,
     Image,
     InferenceRequest,
@@ -375,7 +376,7 @@ def _text(block: Block) -> str | None:
             return operation_text(block)
         case ServerToolUse():
             return server_tool_text(block)
-        case File():
+        case File() | Document():
             return attachment_text(block)
     return None
 

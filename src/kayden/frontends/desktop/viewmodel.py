@@ -20,6 +20,7 @@ from typing import Any
 
 from kayden.api import (
     AgentState,
+    Attachment,
     Budget,
     CompactionFinished,
     CompactionStarted,
@@ -27,6 +28,7 @@ from kayden.api import (
     ConversationInfo,
     ConversationUpdated,
     Decision,
+    Document,
     Duty,
     DutyScheduled,
     EventEnvelope,
@@ -145,7 +147,7 @@ class UserItem:
     text: str
     message_id: str | None = None
     queued: bool = False
-    attachments: tuple[Image | File, ...] = ()  # what the user attached to it
+    attachments: tuple[Attachment, ...] = ()  # what the user attached to it
 
 
 @dataclass(eq=False)
@@ -768,7 +770,8 @@ class ConversationModel:
         self._seen.add(message.id)
         if message.role is Role.USER:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
-            attached = tuple(b for b in message.blocks if isinstance(b, (Image, File)))
+            attached = tuple(b for b in message.blocks
+                             if isinstance(b, (Image, File, Document)))
             said = bool(text or attached)
             if said and notice_of(text) is None and self._insert_at is None:
                 self._set_card(None)  # answered: results and notices leave it up

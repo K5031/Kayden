@@ -19,6 +19,7 @@ from kayden.api import (
     NOTICE_PREFIX,
     SUGGESTION_TOOLS,
     AgentState,
+    Document,
     Duty,
     DutyKind,
     File,
@@ -442,7 +443,7 @@ def with_attachments(text: str, blocks: Iterable[object]) -> str:
     for block in blocks:
         if isinstance(block, Image):
             lines.append(f"[image: {block.name}]" if block.name else "[image]")
-        elif isinstance(block, File):
+        elif isinstance(block, (File, Document)):
             lines.append(f"[file: {Path(block.path).name}]")
     return "\n".join(lines)
 

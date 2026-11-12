@@ -95,6 +95,25 @@ async def test_shell_does_not_hang_on_background_child(tools, tmp_path):
     await run(tools, tmp_path, "shell", command="pkill -f 'sleep 5' || true")
 
 
+async def test_read_file_reads_a_pdf_by_its_pages(tools, workspace, tmp_path):
+    from tests.pdf import make_pdf
+
+    (workspace / "report.pdf").write_bytes(make_pdf(
+        ["Sales rose in March", "Costs fell in April", "Outlook for May"]))
+    whole = await run(tools, tmp_path, "read_file", path="report.pdf")
+    assert whole.content.startswith("[PDF, 3 pages]\n[Page 1]\nSales rose in March")
+    assert "[Page 3]\nOutlook for May" in whole.content
+    some = await run(tools, tmp_path, "read_file", path="report.pdf", pages="2-3")
+    assert "[Page 1]" not in some.content and "[Page 2]\nCosts fell in April" in some.content
+    one = await run(tools, tmp_path, "read_file", path="report.pdf", pages="3")
+    assert one.content == "[PDF, 3 pages]\n[Page 3]\nOutlook for May"
+    for wrong in ("0", "4", "3-2", "two"):
+        out = await run(tools, tmp_path, "read_file", path="report.pdf", pages=wrong)
+        assert out.is_error and "pages" in out.content
+    (workspace / "broken.pdf").write_bytes(b"%PDF-1.4 not really")
+    assert (await run(tools, tmp_path, "read_file", path="broken.pdf")).is_error
+
+
 async def test_read_file_offset_and_limit(tools, workspace, tmp_path):
     (workspace / "lines.txt").write_text("".join(f"{i}\n" for i in range(1, 11)))
     out = await run(tools, tmp_path, "read_file", path="lines.txt", offset=3, limit=2)

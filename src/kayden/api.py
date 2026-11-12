@@ -192,11 +192,31 @@ class File:
     text: str | None = None
 
 
-def attachment_text(block: Image | File) -> str:
+@dataclass(frozen=True, slots=True)
+class Document:
+    """A PDF the user attached to their message. A Core whose provider reads PDFs sends the
+    file itself, so the model sees every page as it looks; any other sends
+    attachment_text, its extracted text."""
+
+    path: str  # absolute
+    data: str  # the file's bytes, base64
+    text: str  # the text of its pages; empty for a scan
+    pages: int
+
+
+type Attachment = Image | File | Document
+
+
+def attachment_text(block: Attachment) -> str:
     """An attachment as text: a file for the model, either for a summary or a search hit,
-    an image for a model that cannot see it."""
+    an image or a PDF for a model that cannot take it."""
     if isinstance(block, Image):
         return f"[Image attached: {block.name or block.media_type}]"
+    if isinstance(block, Document):
+        head = (f"[File attached: {block.path} (PDF, {block.pages} "
+                f"page{'s' if block.pages != 1 else ''})]")
+        return f"{head}\n{block.text}" if block.text else (
+            f"{head}\n[No text could be read from it: it may be a scan.]")
     if block.text is None:
         return (f"[File attached: {block.path}. Its content is not included (it is binary "
                 "or too large); open it with your tools if you need it.]")
@@ -214,7 +234,7 @@ class OpaqueBlock:
 
 
 type Block = (Text | Reasoning | ToolCall | ToolResult | OperationResult | ServerToolUse
-              | Image | File | OpaqueBlock)
+              | Image | File | Document | OpaqueBlock)
 
 # Stable on-disk tags. Memory persists blocks as {"type": tag, "data": {...}} with these
 # tags, never Python import paths, so renaming a class doesn't break an archive.
@@ -227,6 +247,7 @@ BLOCK_TYPES: Mapping[str, type] = {
     "server_tool_use": ServerToolUse,
     "image": Image,
     "file": File,
+    "document": Document,
 }
 
 
@@ -1280,7 +1301,7 @@ class MessageQueued:
 
     message_id: str
     text: str
-    attachments: Sequence[Image | File] = ()  # what the user attached to it
+    attachments: Sequence[Attachment] = ()  # what the user attached to it
 
 
 @dataclass(frozen=True, slots=True)
@@ -1651,9 +1672,9 @@ class RuntimeAPI(Protocol):
         turn boundary; a turn that ended without tool calls starts the next cycle.
 
         `files` are paths of files the user attached. The runtime reads them: an image
-        (PNG, JPEG, GIF, WebP, up to 5 MB) becomes an Image block of the message, a file
-        that reads as text (up to 200 kB) a File with its content, any other a File
-        without. ValueError for one that cannot be read; nothing is sent then. `text` may
+        (PNG, JPEG, GIF, WebP, up to 5 MB) becomes an Image block of the message, a PDF
+        (up to 20 MB and 600 pages) a Document, a file that reads as text (up to 200 kB)
+        a File with its content, any other a File without. ValueError for one that cannot be read; nothing is sent then. `text` may
         be empty when there are files."""
 
     async def activate(self) -> None:
