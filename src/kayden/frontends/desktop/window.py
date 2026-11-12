@@ -1683,11 +1683,11 @@ class MainWindow(QMainWindow):
         self.prompts.setContentsMargins(0, 0, 0, 8)
         self.composer = QFrame(objectName="composer")
         box = QVBoxLayout(self.composer)  # what is attached, then the row to write in
-        box.setContentsMargins(16, 6, 6, 6)
+        box.setContentsMargins(6, 6, 6, 6)
         box.setSpacing(4)
         self.attachments = AttachmentStrip()
         box.addWidget(self.attachments)
-        composer = QHBoxLayout()  # one row: the text, then Send at its foot
+        composer = QHBoxLayout()  # one row: Add files, the text, then Send at its foot
         composer.setSpacing(8)
         box.addLayout(composer)
         self._pasted: Path | None = None  # the folder pasted pictures are saved in
@@ -1705,6 +1705,15 @@ class MainWindow(QMainWindow):
         self.send_button.setIconSize(QSize(16, 16))
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_button.clicked.connect(self._send_or_stop)
+        self.attach_button = QToolButton(objectName="send")
+        self.attach_button.setFixedSize(32, 32)
+        self.attach_button.setIconSize(QSize(16, 16))
+        self.attach_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.attach_button.setToolTip("Add files")
+        self.attach_button.setAccessibleName("Add files")
+        self.attach_button.clicked.connect(self._choose_files)
+        self.file_dialog: QFileDialog | None = None
+        composer.addWidget(self.attach_button, 0, Qt.AlignmentFlag.AlignBottom)
         composer.addWidget(self.input, 1, Qt.AlignmentFlag.AlignVCenter)
         composer.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
         self.model_button = QToolButton(objectName="modelPicker")
@@ -1764,6 +1773,7 @@ class MainWindow(QMainWindow):
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
         self.menu_button.setIcon(theme.icon("menu", colors.muted, 18))
         self.new_button.setIcon(theme.icon("plus", colors.text, 16))
+        self.attach_button.setIcon(theme.icon("plus", colors.muted, 16))
         self.folder_button.setIcon(theme.icon("folder", colors.text, 18))
         maximized = self.isMaximized()
         for name, button in self.window_buttons.items():
@@ -1771,6 +1781,14 @@ class MainWindow(QMainWindow):
             button.setIcon(theme.icon(kind, colors.muted))
         self.window_buttons["maximize"].setToolTip("Restore" if maximized else "Maximize")
         self.profile_button.setIcon(theme.avatar(self.user_name))
+
+    def _choose_files(self) -> None:
+        """Add files picks files to go with the message, as dropping them does."""
+        folder = self.model.conversation.folder if self.model.conversation else None
+        self.file_dialog = QFileDialog(self, "Add files", folder or str(Path.home()))
+        self.file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        self.file_dialog.filesSelected.connect(self.attachments.add)
+        self.file_dialog.open()
 
     def _choose_folder(self) -> None:
         if reason := self.controller.can_switch():

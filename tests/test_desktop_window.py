@@ -1648,3 +1648,20 @@ def test_a_scroll_bar_takes_clicks_across_its_whole_width(qapp):
         QTest.mouseClick(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
                          QPoint(x, bar.height() - 20))
         assert bar.value() > 0  # it paged down
+
+
+async def test_add_files_picks_files_to_go_with_the_message(make, qapp, tmp_path):
+    from PySide6.QtWidgets import QFileDialog
+
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    note = tmp_path / "note.txt"
+    note.write_text("hello")
+    assert window.attach_button.toolTip() == "Add files"
+    window.attach_button.click()
+    dialog = window.file_dialog
+    assert dialog is not None and dialog.fileMode() is QFileDialog.FileMode.ExistingFiles
+    dialog.filesSelected.emit([str(note)])
+    dialog.close()
+    assert window.attachments.paths() == [str(note)]

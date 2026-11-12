@@ -32,7 +32,8 @@ terminal app, select the line and press Enter.
 
 ### Attaching files
 
-In the desktop app, drop files on the window or paste them, then send. A message can be
+In the desktop app, click **+** in the message box, drop files on the window or paste
+them, then send. A message can be
 attachments only.
 
 - **A picture** (PNG, JPEG, GIF or WebP, up to 5 MB) is shown to the model, so you can ask
