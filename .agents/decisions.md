@@ -890,7 +890,8 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 
 | Choice | Decision |
 |---|---|
-| Limits | Image: `.png .jpg .jpeg .gif .webp` by suffix, up to 5 MB; PDF: `.pdf` by suffix, up to 20 MB (the provider takes 32 MB per request, and base64 adds a third) and 600 pages, else by path; one pypdf cannot open goes by path; text: UTF-8 without NUL bytes, up to 200 kB; anything else by path (`runtime/attachments.py`) |
+| Limits | Image: `.png .jpg .jpeg .gif .webp` by suffix, up to 5 MB; PDF: `.pdf` by suffix, up to 20 MB (the provider takes 32 MB per request, and base64 adds a third) and 600 pages, else by path; one pypdf cannot open goes by path; text: UTF-8 without NUL bytes, up to 200 kB; anything else by path (`tools/shell_files/attachments.py`) |
+| Who reads | The first Tools module, in the order they are offered, whose `attach` does not raise NotImplementedError; any other error it raises refuses the message as a ValueError; with none, `File(path)` |
 | Message | `Text(text)` first, also when empty, then the attachments in the order given |
 | Office files as text | Word: paragraphs in order, `#` per heading level, `- ` and `1. ` for list styles, a table as `\| a \| b \|` rows. Excel: `## Sheet: name`, then a row per non-empty row, values as last saved, trailing empty cells dropped. PowerPoint: `## Slide n`, the text of its shapes and tables, `[Notes] …`. A file whose text is over 200 kB is attached by path; `read_file` pages through it by lines |
 | `read_file` on a PDF | `[PDF, N pages]`, then `[Page n]` and its text for every page or the `pages` range ("3", "2-5"), up to 100 000 characters, with a note to read on; a note when no text could be read |

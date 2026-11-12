@@ -1001,6 +1001,15 @@ class Tools(abc.ABC):
         be used. NotImplementedError (the default): the module has one fixed folder."""
         raise NotImplementedError
 
+    async def attach(self, path: Path) -> Attachment:
+        """Optional. Read a file the user attached to their message (RuntimeAPI.send) into
+        the block the message carries: an Image, a Document, or a File with its content or,
+        when it cannot be included, without. It is the user's own act, so no permission is
+        asked and the file may lie outside the work folder. ValueError when it cannot be
+        read. NotImplementedError (the default): the runtime asks the next Tools module,
+        and with none attaches the file by its path alone."""
+        raise NotImplementedError
+
     async def confined(self, call: ToolCall) -> bool:
         """True when this call can read and change nothing on this computer outside the
         module's work folder (a web request reads nothing on it). Optional: False (the
@@ -1671,10 +1680,12 @@ class RuntimeAPI(Protocol):
         is stopping, the message is queued (MessageQueued) and delivered at the next
         turn boundary; a turn that ended without tool calls starts the next cycle.
 
-        `files` are paths of files the user attached. The runtime reads them: an image
-        (PNG, JPEG, GIF, WebP, up to 5 MB) becomes an Image block of the message, a PDF
-        (up to 20 MB and 600 pages) a Document, a file that reads as text (up to 200 kB)
-        a File with its content, any other a File without. ValueError for one that cannot be read; nothing is sent then. `text` may
+        `files` are paths of files the user attached. A Tools module reads each into a
+        block of the message (Tools.attach): with the built-in one, an image (PNG, JPEG,
+        GIF, WebP, up to 5 MB) becomes an Image, a PDF (up to 20 MB and 600 pages) a
+        Document, a file that reads as text (up to 200 kB) or a Word, Excel or PowerPoint
+        file a File with its content, any other a File without. ValueError for one that
+        cannot be read; nothing is sent then. `text` may
         be empty when there are files."""
 
     async def activate(self) -> None:

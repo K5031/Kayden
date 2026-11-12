@@ -1,17 +1,17 @@
-"""The files a user attaches to a message (RuntimeAPI.send), read into its blocks."""
+"""A file the user attached to a message, read into the block the message carries
+(Tools.attach)."""
 
 from __future__ import annotations
 
 import base64
 import io
-from collections.abc import Sequence
 from pathlib import Path
 
 import pypdf
 import pypdf.errors
 
-from kayden import office
 from kayden.api import Attachment, Document, File, Image
+from kayden.tools.shell_files import office
 
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".gif": "image/gif", ".webp": "image/webp"}
@@ -23,13 +23,10 @@ MAX_PDF_PAGES = 600
 MAX_OFFICE_BYTES = 20 * 1024 * 1024  # of a Word, Excel or PowerPoint file read as text
 
 
-def read(paths: Sequence[str]) -> tuple[Attachment, ...]:
-    """Each file as a block: an image the model can see, a PDF with its pages and text, a
-    text file with its content, or any other by its path alone. ValueError for one that cannot be read. Blocking."""
-    return tuple(_read(Path(path).expanduser()) for path in paths)
-
-
-def _read(path: Path) -> Attachment:
+def read(path: Path) -> Attachment:
+    """The file as a block: an image the model can see, a PDF with its pages and text, a
+    Word, Excel or PowerPoint file or a text file with its content, or any other by its
+    path alone. ValueError when it cannot be read. Blocking."""
     try:
         path = path.resolve(strict=True)
         if not path.is_file():

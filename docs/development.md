@@ -63,7 +63,8 @@ src/kayden/memory/                    Memories; tools.py is the recall and note 
   sqlite/                             notes in SQLite (the default); SqliteArchive, the archive both build on
   files/                              Claude Code-style memory folders per project
 src/kayden/tools/                     Tools
-  shell_files/                        shell commands, files, web search and fetch
+  shell_files/                        shell commands, files, web search and fetch; reads attached files
+                                      (attachments.py, office.py)
   mcp/                                tools of MCP servers
 src/kayden/frontends/                 Frontends; common.py is what every frontend shows the same way,
                                       headless.py, remote.py and wire.py the headless channel,
@@ -71,7 +72,6 @@ src/kayden/frontends/                 Frontends; common.py is what every fronten
   tui/                                terminal app (Textual)
   desktop/                            desktop app: viewmodel.py (no Qt), window.py, assets
 src/kayden/skills/                    the skills Kayden comes with (runtime/skills.py loads them)
-src/kayden/office.py                  Word, Excel and PowerPoint files as text, for the runtime and Tools
 src/kayden/window.py                  the window launcher
 src/kayden_desktop/                   the module a Briefcase bundle runs
 src/kayden/__main__.py                the `kayden` command: config, saved settings, restarts

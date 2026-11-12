@@ -1,5 +1,5 @@
-"""Word, Excel and PowerPoint files as text (kayden.office): attached to a message, and
-read by the file tool."""
+"""Word, Excel and PowerPoint files as text (shell_files.office): attached to a message,
+and read by the file tool."""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from kayden import office
 from kayden.api import File
-from kayden.runtime import attachments
+from kayden.tools.shell_files import attachments, office
 from tests.test_tools_shell_files import run, tools, workspace  # noqa: F401
 
 
@@ -83,7 +82,7 @@ def test_an_attached_office_file_goes_with_its_text(tmp_path: Path):
     plan, broken = tmp_path / "plan.docx", tmp_path / "broken.xlsx"
     make_docx(plan)
     broken.write_bytes(b"nope")
-    read, unread = attachments.read([str(plan), str(broken)])
+    read, unread = attachments.read(plan), attachments.read(broken)
     assert read == File(str(plan), office.to_text(plan))
     assert unread == File(str(broken))  # by its path alone
 

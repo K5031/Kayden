@@ -9,7 +9,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from kayden.api import ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kayden.api import Attachment, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kayden.tools.shell_files import attachments
 
 type ToolFn = Callable[[ToolCall, ToolContext], Awaitable[ToolOutput]]
 
@@ -34,6 +35,7 @@ class FakeTools(Tools):
         self.closed = False
         self.confined_names: set[str] = set()  # tools whose calls stay in the work folder
         self.folders: list[Path | None] | None = None  # use_folder calls; None = fixed folder
+        self.attaches = True  # reads attached files (Tools.attach)
         self.folder_error: OSError | None = None
         self.received: list[ToolCall] = []  # calls as execute and confined got them
 
@@ -138,6 +140,12 @@ class FakeTools(Tools):
     async def confined(self, call: ToolCall) -> bool:
         self.received.append(call)
         return call.name in self.confined_names
+
+    async def attach(self, path: Path) -> Attachment:
+        """As the built-in Tools read an attached file; `attaches` False: not at all."""
+        if not self.attaches:
+            raise NotImplementedError
+        return await asyncio.to_thread(attachments.read, path.expanduser())
 
     async def use_folder(self, folder: Path | None) -> None:
         if self.folders is None:

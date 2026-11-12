@@ -23,8 +23,8 @@ from kayden.api import (
 )
 from kayden.core.openai_compat import to_messages as openai_messages
 from kayden.memory.sqlite import SqliteMemory
-from kayden.runtime import attachments
 from kayden.runtime.budget import estimate_tokens
+from kayden.tools.shell_files import ShellFilesTools, attachments
 from tests.conformance.core_suite import collect
 from tests.conftest import eventually
 from tests.core.test_anthropic import MODEL, AnthropicDriver
@@ -53,8 +53,8 @@ def files(tmp_path: Path) -> dict[str, str]:
 
 
 def test_an_image_is_read_whole_and_a_text_file_with_its_content(files):
-    image, note, binary, big = attachments.read(
-        [files["png"], files["txt"], files["bin"], files["big"]])
+    image, note, binary, big = (attachments.read(Path(files[name]))
+                                for name in ("png", "txt", "bin", "big"))
     assert image == Image("image/png", base64.b64encode(PNG).decode(), "shot.png")
     assert note == File(files["txt"], "Buy oat milk.\n")
     assert binary == File(files["bin"]) and big == File(files["big"])  # named, not included
@@ -62,15 +62,15 @@ def test_an_image_is_read_whole_and_a_text_file_with_its_content(files):
 
 def test_a_file_that_is_not_there_is_refused(tmp_path: Path):
     with pytest.raises(ValueError, match="cannot attach"):
-        attachments.read([str(tmp_path / "gone.txt")])
+        attachments.read(tmp_path / "gone.txt")
     with pytest.raises(ValueError, match="not a file"):
-        attachments.read([str(tmp_path)])
+        attachments.read(tmp_path)
 
 
 def test_an_image_too_large_for_a_provider_goes_by_its_path(tmp_path: Path):
     path = tmp_path / "huge.png"
     path.write_bytes(b"\x89PNG" + b"\x00" * attachments.MAX_IMAGE_BYTES)
-    assert attachments.read([str(path)]) == (File(str(path)),)
+    assert attachments.read(path) == File(str(path))
 
 
 def test_how_an_attachment_reads_as_text():
@@ -84,14 +84,14 @@ def test_a_pdf_is_read_whole_with_its_text(tmp_path: Path):
     path = tmp_path / "report.pdf"
     raw = make_pdf(["Sales rose in March", "Costs fell in April"])
     path.write_bytes(raw)
-    [document] = attachments.read([str(path)])
+    document = attachments.read(path)
     assert document == Document(str(path), base64.b64encode(raw).decode(),
                                 "Sales rose in March\n\nCosts fell in April", 2)
     assert attachment_text(document) == (
         f"[File attached: {path} (PDF, 2 pages)]\nSales rose in March\n\nCosts fell in April")
     broken = tmp_path / "broken.pdf"
     broken.write_bytes(b"%PDF-1.4 not really")
-    assert attachments.read([str(broken)]) == (File(str(broken)),)  # by its path alone
+    assert attachments.read(broken) == File(str(broken))  # by its path alone
 
 
 def test_a_pdf_counts_its_pages_toward_the_context():
@@ -101,7 +101,35 @@ def test_a_pdf_counts_its_pages_toward_the_context():
         >= estimate_tokens([plain]) + 3 * 1000
 
 
+async def test_the_file_tools_read_what_is_attached_also_outside_the_work_folder(
+        files, tmp_path: Path):
+    """Attaching is the user's act: no permission, and not bound to the work folder."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    (workspace / "inside.txt").write_text("in here")
+    tools = ShellFilesTools(workspace)
+    assert await tools.attach(Path(files["txt"])) == File(files["txt"], "Buy oat milk.\n")
+    assert await tools.attach(Path("inside.txt")) == File(  # relative: from the work folder
+        str(workspace / "inside.txt"), "in here")
+    with pytest.raises(ValueError, match="cannot attach"):
+        await tools.attach(tmp_path / "gone.txt")
+
+
 # ── In the runtime ───────────────────────────────────────────────────────
+
+
+async def test_without_tools_that_read_attachments_a_file_goes_by_its_path(make, files):
+    from tests.fakes.tools import FakeTools
+
+    tools = FakeTools()
+    tools.attaches = False
+    h = await make(tools=tools, core=ScriptedCore([Step(text="I see a path.")]))
+    await h.start()
+    await h.turn("look")
+    await h.runtime.send("and this", files=[files["png"]])
+    await eventually(lambda: len(h.core.requests) == 2
+                     and h.runtime.snapshot().state == AgentState.IDLE)
+    assert (await h.transcript())[-2].blocks[1] == File(files["png"])
 
 
 async def test_a_message_carries_what_was_attached(make, files):
@@ -144,7 +172,7 @@ async def test_a_message_queued_while_the_agent_works_keeps_its_attachments(make
 
 
 def test_an_image_counts_toward_the_context(files):
-    [image] = attachments.read([files["png"]])
+    image = attachments.read(Path(files["png"]))
     plain = Message("m", Role.USER, (Text("hi"),), 0.0)
     assert estimate_tokens([Message("m", Role.USER, (Text("hi"), image), 0.0)]) \
         >= estimate_tokens([plain]) + 1000

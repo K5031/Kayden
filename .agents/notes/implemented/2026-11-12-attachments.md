@@ -16,13 +16,19 @@ apps (2026-11-12), with a small preview above the message box for images.
   pages; and `File(path, text)`, a text file with its content, or with `text` None when
   it is binary or too large to include. `api.attachment_text` is how each reads as text.
 - **`RuntimeAPI.send(text, files=())`** takes the paths of the files the user attached.
-  The runtime reads them in a thread (`runtime/attachments.py`): an image (PNG, JPEG, GIF,
-  WebP, up to 5 MB) becomes an `Image`; a PDF (up to 20 MB and 600 pages, read with pypdf) a `Document`; a Word, Excel
-  or PowerPoint file (.docx, .xlsx, .pptx, up to 20 MB) a `File` whose text is the
-  document converted (`kayden.office`); a file that decodes as UTF-8 (up to 200 kB) a
-  `File` with its content; anything else a `File` without. A path that cannot be read
-  raises ValueError and nothing is sent. The text may be empty. `MessageQueued` carries
-  the attachments of a message sent while the agent works.
+  The runtime does not read them: it asks the Tools modules in order for each
+  (`Tools.attach(path)`, optional) and puts the first answer into the message. With no
+  module that implements it, a file goes as a `File` by its path alone. A path that
+  cannot be read raises ValueError and nothing is sent. The text may be empty.
+  `MessageQueued` carries the attachments of a message sent while the agent works.
+- **The built-in Tools read them** (`tools/shell_files/attachments.py`, in a thread): an
+  image (PNG, JPEG, GIF, WebP, up to 5 MB) becomes an `Image`; a PDF (up to 20 MB and 600
+  pages, read with pypdf) a `Document`; a Word, Excel or PowerPoint file (.docx, .xlsx,
+  .pptx, up to 20 MB) a `File` whose text is the document converted
+  (`shell_files/office.py`); a file that decodes as UTF-8 (up to 200 kB) a `File` with its
+  content; anything else a `File` without. Attaching is the user's own act, so no
+  permission is asked and the file may lie outside the work folder; a relative path is
+  taken from the work folder.
 - **Cores.** Anthropic sends an `Image` as a base64 image block, a `Document` as a
   base64 document block ahead of the message's text (the model reads its text and sees
   each page), and a `File` as text. Other providers get a `Document`'s extracted text. The
@@ -37,9 +43,8 @@ apps (2026-11-12), with a small preview above the message box for images.
   range): the text of its pages, as a tool result, with any provider. This is how the
   agent reads a PDF it finds by itself. It reads Word, Excel and PowerPoint files the same
   way, converted to text and then by lines like any text file.
-- **`kayden.office`** converts those three with python-docx, openpyxl and python-pptx. It
-  sits beside `api.py`, outside any module, because the runtime (attachments) and a Tools
-  module (the file tool) both need it and neither may call the other.
+- **`shell_files/office.py`** converts those three with python-docx, openpyxl and
+  python-pptx, for both the attachment and the file tool.
 - **The desktop app** takes files dropped anywhere on the window or pasted into the
   message box, and a picture pasted from the clipboard, which it saves to a temporary
   folder first. They wait in a strip above the text (`AttachmentStrip`): a 56 px preview
@@ -56,6 +61,11 @@ apps (2026-11-12), with a small preview above the message box for images.
 - **A `Tools.attach` grant** that makes reading a dropped file count as confined. Keeps
   the content out of the transcript, but ties the feature to one Tools module's file tool
   and still does not show images.
+- **The runtime reads the files itself.** Built first (`runtime/attachments.py`, with the
+  Office conversion in a module beside `api.py` so that the file tool could share it).
+  It works, but the runtime then knows file formats and size limits, which is not
+  orchestration, and a Tools module that works somewhere else (another machine, a
+  container) could not read attachments its own way.
 - **The frontend reads the files and sends their bytes.** The headless channel would
   carry megabytes of base64 per message, and every frontend would repeat the reading and
   the limits.
@@ -84,6 +94,8 @@ apps (2026-11-12), with a small preview above the message box for images.
   message.
 - **The archive grows** by every attached image, kept in full as the archive is.
 - **Models without vision** only learn that an image was attached.
+- What can be attached depends on the Tools module: one without `attach` leaves every
+  file a bare path.
 - A file that is attached by path only is read by the agent's tools under the usual
   permissions, so one outside the work folder still asks.
 - A PDF is stored twice over in the archive: its bytes and its text.

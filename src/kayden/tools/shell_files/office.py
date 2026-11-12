@@ -1,6 +1,5 @@
-"""Word, Excel and PowerPoint files as text a model can read. Used where a file's content
-goes to the model: a file the user attaches (the runtime) and one the agent reads (a
-Tools module); neither reaches into the other for it."""
+"""Word, Excel and PowerPoint files as text a model can read: for a file the user attaches
+(attachments.py) and one the agent reads (read_file)."""
 
 from __future__ import annotations
 

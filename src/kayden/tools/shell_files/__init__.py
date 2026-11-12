@@ -36,9 +36,16 @@ import jsonschema
 import pypdf
 import pypdf.errors
 
-from kayden import office
-from kayden.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
-from kayden.tools.shell_files import web
+from kayden.api import (
+    Attachment,
+    InstancePaths,
+    ToolCall,
+    ToolContext,
+    ToolOutput,
+    Tools,
+    ToolSpec,
+)
+from kayden.tools.shell_files import attachments, office, web
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
@@ -289,6 +296,11 @@ class ShellFilesTools(Tools):
     def _inside(self, raw: str) -> bool:
         """Whether the path, with symlinks followed, is in the workspace."""
         return self._path(raw).resolve().is_relative_to(self.root)
+
+    async def attach(self, path: Path) -> Attachment:
+        """A relative path is taken from the work folder. Reading is the user's act, so
+        the file may lie outside it."""
+        return await asyncio.to_thread(attachments.read, self._path(str(path)))
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         spec = self._specs.get(call.name)

@@ -28,6 +28,7 @@ from kayden.api import (
     AgentConfig,
     AgentState,
     ArchiveHit,
+    Attachment,
     Budget,
     BudgetExhausted,
     CallId,
@@ -49,6 +50,7 @@ from kayden.api import (
     EventEnvelope,
     Failure,
     FailureKind,
+    File,
     FrontendInfo,
     HelpNeeded,
     InferenceRequest,
@@ -107,7 +109,6 @@ from kayden.api import (
     UsageReport,
     UsageUpdated,
 )
-from kayden.runtime import attachments
 from kayden.runtime import duty as duties
 from kayden.runtime import skills as skill_files
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
@@ -519,7 +520,7 @@ class Runtime:
             raise RuntimeStateError("not started")
         if state == AgentState.FAILED and (reason := self._budget.exhausted()):
             raise RuntimeStateError(f"budget exhausted: {reason}")
-        attached = await asyncio.to_thread(attachments.read, files) if files else ()
+        attached = tuple([await self._attach(path) for path in files])
         state = self._state()  # the files were read meanwhile
         queued = MessageQueued(_new_id(), text, attached)
         self._inbox.append(queued)
@@ -528,6 +529,20 @@ class Runtime:
             self._emit(queued)
         else:
             self._request_cycle("user message")
+
+    async def _attach(self, path: str) -> Attachment:
+        """A file the user attached, as the first Tools module that reads attachments
+        makes of it (Tools.attach); with none, by its path alone."""
+        for module in self._tools:
+            try:
+                return await module.attach(Path(path))
+            except NotImplementedError:
+                continue
+            except ValueError:
+                raise
+            except Exception as e:
+                raise ValueError(f"cannot attach {path}: {e}") from e
+        return File(str(Path(path).expanduser().absolute()))
 
     async def activate(self) -> None:
         state = self._state()
