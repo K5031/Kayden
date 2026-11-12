@@ -224,11 +224,10 @@ class NoticeItem:
 
 @dataclass(eq=False)
 class ChecklistItem:
-    """The plan as the agent last wrote it during one turn (its update_plan calls), shown
-    where the agent first wrote it in that turn and left there when the turn ends."""
+    """The plan as the agent last wrote it (its update_plan calls), shown under the newest
+    message while the agent works and gone when it stops."""
 
     steps: tuple[PlanItem, ...]
-    live: bool = False  # the agent is working on it now
 
 
 type Item = UserItem | AssistantItem | ToolItem | NoticeItem | ChecklistItem
@@ -355,8 +354,7 @@ class ConversationModel:
         self._oldest_id: str | None = None
         self._insert_at: int | None = None  # set while prepending an earlier page
         # The checklist of the turn being shown, and of the turn being prepended.
-        self._turn_plan: ChecklistItem | None = None
-        self._page_plan: ChecklistItem | None = None
+        self._plan: ChecklistItem | None = None
         self._compaction: NoticeItem | None = None  # the line of a running compaction
         self._closed_card: str | None = None  # the card the user put away
 
@@ -415,7 +413,7 @@ class ConversationModel:
         """Rebuild from a snapshot and the newest history page (RuntimeSnapshot order: the
         caller subscribed first and drops envelopes at or below snapshot.seq)."""
         self.items.clear()
-        self._turn_plan = self._page_plan = None
+        self._plan = None
         self.prompts.clear()
         self.proposals.clear()
         self.card = None
@@ -438,6 +436,8 @@ class ConversationModel:
         self._oldest_id = history[0].id if history else None
         for message in history:
             self._render(message)
+        if not self.busy:
+            self._drop_plan()
         for op in snapshot.operations:
             item = self._tools.get(op.call.id) or self._add_tool(op.call)
             item.phase = Phase.BACKGROUND if op.backgrounded else Phase.RUNNING
@@ -457,7 +457,6 @@ class ConversationModel:
     def prepend(self, page: Sequence[Message], *, page_size: int = HISTORY_PAGE) -> None:
         """Add an earlier history page above what is shown."""
         self._insert_at = 0
-        self._page_plan = None
         try:
             for message in page:
                 self._render(message)
@@ -477,7 +476,8 @@ class ConversationModel:
                     self.failure = None
                     self._model_next = True
                 self.state, self.pending_ops = state, pending_ops
-                self._set_live(self._turn_plan, self.busy)
+                if not self.busy:
+                    self._drop_plan()
                 if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
                     self._end_stream()
                 if state is not AgentState.STOPPING:
@@ -617,41 +617,33 @@ class ConversationModel:
             index = len(self.items)
         self.items.insert(index, item)
         self.on_change(Inserted(index, item))
+        plan = self._plan
+        if (self._insert_at is None and plan is not None and item is not plan
+                and self.items[-1] is not plan):
+            # The checklist stays under the newest message.
+            self._remove(plan)
+            self.items.append(plan)
+            self.on_change(Inserted(len(self.items) - 1, plan))
         return item
 
     def _show_plan(self, steps: tuple[PlanItem, ...]) -> None:
-        """The turn's checklist: put where the agent first writes its plan, and changed
-        there by its later update_plan calls."""
-        prepending = self._insert_at is not None
-        plan = self._page_plan if prepending else self._turn_plan
-        if plan is not None and plan in self.items:
-            if steps:
-                plan.steps = steps
-                self.on_change(Updated(plan))
-                return
-            if prepending and self._insert_at is not None:
-                self._insert_at -= 1
-            self._remove(plan)
-        plan = None
-        if steps:
-            plan = self._add(ChecklistItem(steps, live=not prepending and self.busy))
-        if prepending:
-            self._page_plan = plan
-        else:
-            self._turn_plan = plan
-
-    def _end_turn_plan(self) -> None:
-        """A new turn begins: the checklist stays where it is, as history."""
+        """The checklist of the work under way, as the agent's newest update_plan call
+        leaves it. Earlier pages show none: their work is over."""
         if self._insert_at is not None:
-            self._page_plan = None
             return
-        self._set_live(self._turn_plan, False)
-        self._turn_plan = None
+        if self._plan is None or not steps:
+            self._drop_plan()
+            if steps:
+                self._plan = self._add(ChecklistItem(steps))
+            return
+        self._plan.steps = steps
+        self.on_change(Updated(self._plan))
 
-    def _set_live(self, plan: ChecklistItem | None, live: bool) -> None:
-        if plan is not None and plan.live != live:
-            plan.live = live
-            self.on_change(Updated(plan))
+    def _drop_plan(self) -> None:
+        """The agent stopped, or a new turn begins: the checklist leaves the conversation."""
+        if self._insert_at is None and self._plan is not None:
+            self._remove(self._plan)
+            self._plan = None
 
     def _remove(self, item: Item) -> None:
         self.items.remove(item)
@@ -702,14 +694,14 @@ class ConversationModel:
         self.on_change(Updated(tail))
 
     def _thinking(self) -> AssistantItem | None:
-        """The committed thinking, without a reply, that the conversation ends on: what the
-        agent says next belongs with it. Only something not shown (a plan update that
-        changes the checklist further up) can lie between the two, so on screen they would
+        """The committed thinking, without a reply, that the conversation ends on (the
+        checklist aside): what the agent says next belongs with it. Only something not
+        shown as a step (a plan update) can lie between the two, so on screen they would
         be two Thinking lines one under the other."""
         if self._insert_at is not None:
             return None
         for item in reversed(self.items):
-            if item in self._stream:
+            if isinstance(item, ChecklistItem) or item in self._stream:
                 continue
             if (isinstance(item, AssistantItem) and item.final and item.reasoning
                     and not item.text and not item.refused and not item.interrupted):
@@ -747,7 +739,7 @@ class ConversationModel:
             return
         if (queued := self._queued.pop(message.id, None)) is not None:
             self._seen.add(message.id)
-            self._end_turn_plan()
+            self._drop_plan()
             queued.queued = False
             self.on_change(Updated(queued))
             return
@@ -770,7 +762,7 @@ class ConversationModel:
             if said and notice_of(text) is None and self._insert_at is None:
                 self._set_card(None)  # answered: results and notices leave it up
             if said:
-                self._end_turn_plan()
+                self._drop_plan()
             if (notice := notice_of(text)) is not None:
                 self._add(NoticeItem(notice, "info"))
             elif said:

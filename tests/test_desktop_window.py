@@ -1436,42 +1436,32 @@ async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
 
 
 async def test_the_checklist_is_part_of_the_conversation(make, qapp):
-    """It stays where the agent first wrote its plan, is changed there by later updates,
-    and scrolls away as the conversation goes on."""
-    from kayden.frontends.desktop.viewmodel import ChecklistItem, ToolItem
+    """It sits under the newest message while the agent works and is gone when it stops."""
+    from kayden.frontends.desktop.viewmodel import ChecklistItem, Phase, ToolItem
     from kayden.frontends.desktop.window import PlanCard
 
     h: Harness = await make()
-    plan = [{"text": "Read the code", "status": "done"},
-            {"text": "Fix the bug", "status": "doing"}, {"text": "Run the tests"}]
-    done = [{**step, "status": "done"} for step in plan]
+    plan = [{"text": "Read the code", "status": "doing"}, {"text": "Fix the bug"}]
+    later = [{"text": "Read the code", "status": "done"},
+             {"text": "Fix the bug", "status": "doing"}]
     h.core.add(Step(calls=[call("update_plan", {"items": plan})]),
-               Step(calls=[call("look", {"q": 1}), call("update_plan", {"items": done})]),
-               Step(text="All fixed."), Step(text="You're welcome."))
-    h.tools.instant("look", "found")
+               Step(calls=[call("update_plan", {"items": later}), call("look", {"q": 1})]))
+    h.tools.hanging("look")
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("fix the bug")
-    await eventually(lambda: not controller.model.busy and len(h.core.requests) == 3)
-    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     items = controller.model.items
+    await eventually(lambda: any(isinstance(i, ToolItem) and i.phase is Phase.RUNNING
+                                 for i in items))
     lists = [i for i in items if isinstance(i, ChecklistItem)]
-    assert len(lists) == 1  # one per turn, where the plan was first written
-    assert [type(i).__name__ for i in items[-4:]] == [
-        "UserItem", "ChecklistItem", "ToolItem", "AssistantItem"]
-    assert isinstance(items[-2], ToolItem)
-    assert [str(s.status) for s in lists[0].steps] == ["done", "done", "done"]
-    assert not lists[0].live  # the turn is over: it stays, at rest
+    assert len(lists) == 1 and items[-1] is lists[0]  # under the step that came after it
     card = window._widgets[id(lists[0])]
     assert isinstance(card, PlanCard) and window.scroll.isAncestorOf(card)
-    assert card.rows() == [("done", "Read the code"), ("done", "Fix the bug"),
-                           ("done", "Run the tests")]
-    controller.send("thanks")
-    await eventually(lambda: not controller.model.busy and len(h.core.requests) == 4)
-    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
-    kinds = [type(i).__name__ for i in controller.model.items]
-    assert kinds[-5:] == ["ChecklistItem", "ToolItem", "AssistantItem", "UserItem",
-                          "AssistantItem"]  # it is history now
+    assert card.rows() == [("done", "Read the code"), ("doing", "Fix the bug")]
+    controller.stop()
+    await eventually(lambda: not controller.model.busy)
+    await eventually(lambda: not any(isinstance(i, ChecklistItem) for i in items))
+    assert id(lists[0]) not in window._widgets
 
 
 async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(

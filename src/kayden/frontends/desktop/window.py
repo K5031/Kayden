@@ -1126,20 +1126,13 @@ class Spinner(QWidget):
 
     SIZE, STEP_MS, STEP_DEGREES, ARC_DEGREES = 16, 60, 30, 100
 
-    def __init__(self, color: str, *, turning: bool = True) -> None:
+    def __init__(self, color: str) -> None:
         super().__init__()
         self._color, self._angle = QColor(color), 0
         self.setFixedSize(self.SIZE, self.SIZE)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._turn)
-        self.set_turning(turning)
-
-    def set_turning(self, turning: bool) -> None:
-        """Still when the work it marks has stopped."""
-        if turning and not self._timer.isActive():
-            self._timer.start(self.STEP_MS)
-        elif not turning:
-            self._timer.stop()
+        self._timer.start(self.STEP_MS)
 
     def _turn(self) -> None:
         self._angle = (self._angle + self.STEP_DEGREES) % 360
@@ -1181,7 +1174,6 @@ class PlanCard(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self._steps = item.steps
-        self._spinners: list[Spinner] = []
         colors = theme.current()
         self._rows: list[tuple[str, str]] = []
         for step in self._steps:
@@ -1190,8 +1182,7 @@ class PlanCard(QFrame):
             row.setSpacing(8)
             icon: QWidget
             if mark == "doing":
-                icon = Spinner(colors.muted, turning=item.live)
-                self._spinners.append(icon)
+                icon = Spinner(colors.muted)
             else:
                 icon = QLabel()
                 icon.setPixmap(theme.icon(mark, colors.muted, 16).pixmap(16, 16))
@@ -1216,8 +1207,6 @@ class PlanCard(QFrame):
     def refresh(self) -> None:
         if self.item.steps != self._steps:
             self._build()
-        for spinner in self._spinners:
-            spinner.set_turning(self.item.live)
 
     def rows(self) -> list[tuple[str, str]]:
         """(mark, text) per step, for tests and accessibility checks."""
