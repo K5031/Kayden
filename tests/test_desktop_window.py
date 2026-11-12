@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QContextMenuEvent
+from PySide6.QtGui import QAction, QContextMenuEvent, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
 
@@ -562,6 +562,25 @@ def test_inline_code_is_smaller_on_a_soft_background(qapp):
     [code] = [f for f in formats if f.fontFixedPitch()]
     assert code.fontPointSize() < bubble.body.font().pointSizeF()
     assert code.background().style() != Qt.BrushStyle.NoBrush
+
+
+def test_a_code_block_is_one_box_with_its_lines_together(qapp):
+    bubble = AssistantBubble(AssistantItem(
+        text="Before.\n\n```python\none = 1\ntwo = 2\n```\n\nAfter.", final=True))
+    document = bubble.body.document()
+    lines = {}
+    block = document.begin()
+    while block.isValid():
+        lines[block.text()] = block
+        block = block.next()
+    first, last = lines["one = 1"], lines["two = 2"]
+    assert first.blockFormat().bottomMargin() == 0  # no paragraph gap between its lines
+    assert not first.blockFormat().nonBreakableLines()  # a long line wraps, not cut off
+    frame = QTextCursor(first).currentFrame()
+    assert frame is not document.rootFrame() and frame is QTextCursor(last).currentFrame()
+    assert frame.frameFormat().background().style() != Qt.BrushStyle.NoBrush
+    assert frame.frameFormat().padding() > 0
+    assert QTextCursor(lines["After."]).currentFrame() is document.rootFrame()
 
 
 @pytest.fixture

@@ -57,6 +57,8 @@ from PySide6.QtGui import (
     QTextBlockFormat,
     QTextCharFormat,
     QTextCursor,
+    QTextFormat,
+    QTextFrameFormat,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -185,6 +187,7 @@ from kayden.frontends.sessions import SubSession, SubSessions
 LINE_HEIGHT_PERCENT = 118  # reply text, of the font's line spacing (itself ~1.35 em)
 CODE_SCALE = 0.88  # inline code, of the text size: monospace looks larger at the same size
 PARAGRAPH_SPACING = 10  # px below a reply paragraph
+CODE_PADDING = 10  # px around the lines of a code block, inside its box
 TURN_GAP = 18  # px more below your message, before Kayden's reply, than between its steps
 LIST_ITEM_SPACING = 4  # px below a list item
 ZOOM_SAVE_DELAY_S = 0.4
@@ -546,12 +549,15 @@ class MarkdownView(QTextBrowser):
 
     def setMarkdown(self, markdown: str) -> None:
         """Markdown with room to breathe: taller lines, space between paragraphs and list
-        items, more above headings; inline code a little smaller, on a soft background."""
+        items, more above headings; inline code a little smaller, on a soft background; a
+        code block in one box, its lines together and wrapped when long."""
         super().setMarkdown(markdown)
         code = QTextCharFormat()
         code.setFontPointSize(self.font().pointSizeF() * CODE_SCALE)
         inline = QTextCharFormat(code)
         inline.setBackground(QColor(theme.current().select))
+        boxes: list[list[int]] = []  # each code block: where it starts and ends
+        previous_fenced = False
         block = self.document().begin()
         while block.isValid():
             fragments = block.begin()
@@ -568,6 +574,21 @@ class MarkdownView(QTextBrowser):
                 cursor.mergeCharFormat(code if block.blockFormat().nonBreakableLines()
                                        else inline)
             fmt = block.blockFormat()
+            fenced = fmt.hasProperty(QTextFormat.Property.BlockCodeFence)
+            if fenced:  # Qt makes a block of every line
+                end = block.position() + block.length() - 1
+                if previous_fenced:
+                    boxes[-1][1] = end
+                else:
+                    boxes.append([block.position(), end])
+                fmt.setNonBreakableLines(False)
+                fmt.setTopMargin(0)
+                fmt.setBottomMargin(0)
+                QTextCursor(block).setBlockFormat(fmt)
+                previous_fenced = True
+                block = block.next()
+                continue
+            previous_fenced = False
             fmt.setLineHeight(LINE_HEIGHT_PERCENT,
                               QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
             if block.textList() is not None:
@@ -579,6 +600,22 @@ class MarkdownView(QTextBrowser):
                 fmt.setTopMargin(HEADING_SPACING)
             QTextCursor(block).setBlockFormat(fmt)
             block = block.next()
+        box = QTextFrameFormat()
+        box.setBackground(QColor(theme.current().select))
+        box.setPadding(CODE_PADDING)
+        box.setBottomMargin(PARAGRAPH_SPACING)
+        for start, end in reversed(boxes):  # from the end: a frame moves what follows it
+            cursor = QTextCursor(self.document())
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            frame = cursor.insertFrame(box)
+            # Qt puts an empty line before and after a frame: keep them from showing.
+            for position in (frame.firstPosition() - 1, frame.lastPosition() + 1):
+                edge = self.document().findBlock(position)
+                if edge.isValid() and not edge.text():
+                    flat = QTextBlockFormat()
+                    flat.setLineHeight(1, QTextBlockFormat.LineHeightTypes.FixedHeight.value)
+                    QTextCursor(edge).setBlockFormat(flat)
 
     def _fit(self, *_: object) -> None:
         self.document().setTextWidth(self.viewport().width())
