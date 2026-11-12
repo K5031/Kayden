@@ -6,12 +6,11 @@ rest, and stops at hard spending limits. Works with Anthropic, DeepSeek and
 OpenAI-compatible models.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-dark.png">
-  <img src="docs/images/main-light.png" alt="The Kayden desktop app, working through a checklist while it fixes a bug">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/empty-dark.png">
+  <img src="docs/images/empty-light.png" alt="The Kayden desktop app on a new chat, with its mascot peeking over the words Start a conversation">
 </picture>
 
-The [desktop app](docs/desktop-app.md): Kayden plans the task as a checklist, works through
-it step by step and reports what it found.
+The [desktop app](docs/desktop-app.md), ready for a new chat.
 
 A runtime drives four swappable modules (Core, Memory, Tools, Frontend); see
 `src/kayden/api.py` and `SPEC.md`.
