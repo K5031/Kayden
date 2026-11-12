@@ -12,4 +12,5 @@ Claude, DeepSeek or OpenAI models, using your own API key.
 | [Settings](settings.md) | Change the AI provider, model, spending limit, permissions or instructions |
 | [Driving Kayden from a program](headless.md) | Run Kayden without a screen and control it over stdin and stdout |
 | [Concepts](concepts.md) | Understand conversations, background tasks, duties, sub-sessions, memory, skills, deleting and budgets |
+| [Writing a module](writing-modules.md) | Add your own tools, model provider, interface or memory |
 | [Development](development.md) | Understand how Kayden is built, run the tests, contribute |

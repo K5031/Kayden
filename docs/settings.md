@@ -51,7 +51,7 @@ the first start looks like: enter your API key, then **Restart now**.
 The provider and Tools lists show every module installed with Kayden: its own,
 and those of any package you install that provides one. A module is a program that runs
 with your permissions, so install only ones you trust; see
-[Development](development.md#writing-a-module).
+[Writing a module](writing-modules.md).
 
 The memory module, where conversations and long-term memory are kept, is not in the
 settings screen: another one would be another archive, without your conversations. It is

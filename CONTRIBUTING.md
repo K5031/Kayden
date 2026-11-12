@@ -30,7 +30,8 @@ architecture and the tests.
 ## Good places to start
 
 Writing a module is the cleanest way in: a new Core (model provider), Tools or Frontend
-needs no change to the runtime. See [Writing a module](docs/development.md#writing-a-module).
+needs no change to the runtime. See [Writing a module](docs/writing-modules.md), which
+has a small working example of each kind.
 
 ## Using an AI agent
 

@@ -28,19 +28,14 @@ runtime (`runtime/setup.py`) that only shows and saves settings.
 
 ## Writing a module
 
-Declare the factory as an entry point in your package's `pyproject.toml`, in the group for
-its kind. The name is the module's id; once the package is installed in Kayden's
-environment, the module is listed in every frontend's settings:
-
-```toml
-[project.entry-points."kayden.frontends"]   # or kayden.cores, kayden.memories, kayden.tools
-my-ui = "my_package.ui:factory"
-```
+See [Writing a module](writing-modules.md): what each kind has to implement, a minimal
+working example of each in `examples/`, how to register one and how to check it against
+the conformance suites.
 
 Optional attributes on the factory: `display_name` (shown instead of the id), `key_name`
 for a Core (the environment variable and keychain entry of its API key, which the settings
 ask for), and for a frontend `kind`: `"terminal"` (started by `kayden`, the default) or
-`"window"` (run by the window launcher, `python -m kayden.window`), and `event_loop`: a
+`"window"` (run by the window launcher, `kayden-desktop`), and `event_loop`: a
 callable that runs a coroutine on the loop the frontend needs, like `asyncio.run` (the
 default). The desktop app names Qt's; a GTK or web frontend names its own. An entry point whose
 package does not import is not listed. Launchers may pass a frontend the options `start`,
@@ -75,6 +70,7 @@ src/kayden/skills/                    the skills Kayden comes with (runtime/skil
 src/kayden/window.py                  the window launcher
 src/kayden_desktop/                   the module a Briefcase bundle runs
 src/kayden/__main__.py                the `kayden` command: config, saved settings, restarts
+examples/                             a minimal module of each kind, to copy from
 tests/                                tests; fakes/ and conformance/ hold shared test modules
 SPEC.md                               product spec
 .agents/                              design records (see below)
