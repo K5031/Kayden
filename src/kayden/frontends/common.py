@@ -431,6 +431,21 @@ def checklist(plan: Sequence[PlanItem], working: bool) -> tuple[PlanItem, ...]:
     return tuple(plan) if working and open_ else ()
 
 
+def plan_steps(arguments: Any) -> tuple[PlanItem, ...]:
+    """The steps of an update_plan call, as a frontend shows them in the conversation;
+    what cannot be read is left out."""
+    steps = []
+    items = arguments.get("items") if isinstance(arguments, dict) else None
+    for item in items if isinstance(items, list) else ():
+        if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"]:
+            try:
+                status = PlanStatus(item.get("status", "todo"))
+            except ValueError:
+                continue
+            steps.append(PlanItem(item["text"], status))
+    return tuple(steps)
+
+
 def plan_text(plan: Sequence[PlanItem]) -> str:
     """The plan as editable lines (PLAN_HINT)."""
     lines = []

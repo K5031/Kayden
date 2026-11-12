@@ -89,13 +89,13 @@ from kayden.frontends.common import (
     Card,
     call_parts,
     card_of,
-    checklist,
     duty_status,
     group_title,
     help_text,
     money,
     notice_of,
     past_tense,
+    plan_steps,
     provider_step,
 )
 from kayden.frontends.sessions import SubSessions
@@ -213,7 +213,16 @@ class NoticeItem:
     link: str | None = None  # a link after the text: "memory" opens the Memory window
 
 
-type Item = UserItem | AssistantItem | ToolItem | NoticeItem
+@dataclass(eq=False)
+class ChecklistItem:
+    """The plan as the agent last wrote it during one turn (its update_plan calls), shown
+    under that turn's newest message and left there when the turn ends."""
+
+    steps: tuple[PlanItem, ...]
+    live: bool = False  # the agent is working on it now
+
+
+type Item = UserItem | AssistantItem | ToolItem | NoticeItem | ChecklistItem
 type Segment = Item | list[Item]
 
 
@@ -336,6 +345,9 @@ class ConversationModel:
         self._seen: set[str] = set()  # message ids rendered
         self._oldest_id: str | None = None
         self._insert_at: int | None = None  # set while prepending an earlier page
+        # The checklist of the turn being shown, and of the turn being prepended.
+        self._turn_plan: ChecklistItem | None = None
+        self._page_plan: ChecklistItem | None = None
         self._compaction: NoticeItem | None = None  # the line of a running compaction
         self._closed_card: str | None = None  # the card the user put away
 
@@ -394,6 +406,7 @@ class ConversationModel:
         """Rebuild from a snapshot and the newest history page (RuntimeSnapshot order: the
         caller subscribed first and drops envelopes at or below snapshot.seq)."""
         self.items.clear()
+        self._turn_plan = self._page_plan = None
         self.prompts.clear()
         self.proposals.clear()
         self.card = None
@@ -435,6 +448,7 @@ class ConversationModel:
     def prepend(self, page: Sequence[Message], *, page_size: int = HISTORY_PAGE) -> None:
         """Add an earlier history page above what is shown."""
         self._insert_at = 0
+        self._page_plan = None
         try:
             for message in page:
                 self._render(message)
@@ -453,10 +467,8 @@ class ConversationModel:
                 if state is AgentState.THINKING and self.state is not AgentState.THINKING:
                     self.failure = None
                     self._model_next = True
-                shown = self.checklist
                 self.state, self.pending_ops = state, pending_ops
-                if self.checklist != shown:
-                    self.on_change(PromptsChanged())
+                self._set_live(self._turn_plan, self.busy)
                 if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
                     self._end_stream()
                 if state is not AgentState.STOPPING:
@@ -552,11 +564,8 @@ class ConversationModel:
                                          "Settings.", "warning"))
             case ConversationUpdated(info=info):
                 if self.conversation is not None and info.id == self.conversation.id:
-                    before = self.checklist
                     self.conversation = info
                     self.on_change(StatusChanged())
-                    if self.checklist != before:
-                        self.on_change(PromptsChanged())
                 self.on_change(ConversationListChanged())
             case DutyScheduled(wake_at=wake_at):
                 self.duty_wake_at = wake_at
@@ -599,7 +608,48 @@ class ConversationModel:
             index = len(self.items)
         self.items.insert(index, item)
         self.on_change(Inserted(index, item))
+        plan = self._turn_plan if self._insert_at is None else self._page_plan
+        if plan is not None and item is not plan and plan in self.items:
+            # The checklist stays under its turn's newest message.
+            self._remove(plan)
+            last = len(self.items) if self._insert_at is None else self._insert_at - 1
+            self.items.insert(last, plan)
+            self.on_change(Inserted(last, plan))
         return item
+
+    def _show_plan(self, steps: tuple[PlanItem, ...]) -> None:
+        """The turn's checklist, replaced by the agent's newest update_plan call."""
+        prepending = self._insert_at is not None
+        old = self._page_plan if prepending else self._turn_plan
+        if old is not None and old in self.items:
+            if prepending and self._insert_at is not None:
+                self._insert_at -= 1
+            self._remove(old)
+        new = None
+        if steps:
+            new = ChecklistItem(steps, live=not prepending and self.busy)
+            if prepending:  # so that adding it does not move the one it replaces
+                self._page_plan = None
+            else:
+                self._turn_plan = None
+            self._add(new)
+        if prepending:
+            self._page_plan = new
+        else:
+            self._turn_plan = new
+
+    def _end_turn_plan(self) -> None:
+        """A new turn begins: the checklist stays where it is, as history."""
+        if self._insert_at is not None:
+            self._page_plan = None
+            return
+        self._set_live(self._turn_plan, False)
+        self._turn_plan = None
+
+    def _set_live(self, plan: ChecklistItem | None, live: bool) -> None:
+        if plan is not None and plan.live != live:
+            plan.live = live
+            self.on_change(Updated(plan))
 
     def _remove(self, item: Item) -> None:
         self.items.remove(item)
@@ -619,12 +669,6 @@ class ConversationModel:
         if card != self.card:
             self.card = card
             self.on_change(PromptsChanged())
-
-    @property
-    def checklist(self) -> tuple[PlanItem, ...]:
-        """The open conversation's plan while the agent works on it (common.checklist)."""
-        return (checklist(self.conversation.plan, self.busy)
-                if self.conversation is not None else ())
 
     def close_card(self) -> None:
         """The user put the card away; typing an answer still works."""
@@ -673,6 +717,7 @@ class ConversationModel:
             return
         if (queued := self._queued.pop(message.id, None)) is not None:
             self._seen.add(message.id)
+            self._end_turn_plan()
             queued.queued = False
             self.on_change(Updated(queued))
             return
@@ -691,6 +736,8 @@ class ConversationModel:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             if text and notice_of(text) is None and self._insert_at is None:
                 self._set_card(None)  # answered: results and notices leave it up
+            if text:
+                self._end_turn_plan()
             if (notice := notice_of(text)) is not None:
                 self._add(NoticeItem(notice, "info"))
             elif text:
@@ -718,6 +765,8 @@ class ConversationModel:
                         self._add_tool(call)
                     if (card := card_of(call)) and self._insert_at is None:
                         self._set_card(card)
+                    if call.name == "update_plan":
+                        self._show_plan(plan_steps(call.arguments))
                     current = None
                 case ToolResult() as result:
                     self._finish(result, None)

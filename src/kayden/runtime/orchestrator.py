@@ -345,6 +345,7 @@ class Runtime:
         # Without a duty: steps due up to this time have reminded, or fell due while the
         # conversation was closed and wait for the user.
         self._reminded = 0.0
+        self._sent_back = False  # this cycle: the agent was told to finish its plan
         self._help: str | None = None  # the agent's open question (ask_for_help)
         # Proposals waiting for the user, by the propose call's id (also their operation's).
         self._proposals: dict[CallId, tuple[Proposal, asyncio.Future[bool]]] = {}
@@ -938,6 +939,20 @@ class Runtime:
         budget = window - reserve - count(self._system()) - count(tool_json)
         return ContextRequest(self._conversation.id, max(0, int(budget * factor)), count), reserve
 
+    async def _send_back(self) -> bool:
+        """The agent ended its turn with steps of its plan open: send it back, once a
+        cycle, to do them or close them (duties.finish). Not with a duty, whose plan stays
+        open between check-ins, nor while background work may still finish them."""
+        conversation = self._conversation
+        if (self._sent_back or conversation is None or conversation.duty is not None
+                or self._ops or not duties.unfinished(conversation.plan)):
+            return False
+        self._sent_back = True
+        self._log.decision("sent_back", open=len(duties.unfinished(conversation.plan)))
+        await self._append(Message(_new_id(), Role.USER,
+                                   (Text(duties.finish(conversation.plan)),), time.time()))
+        return True
+
     # ── Tools offered to the model ───────────────────────────────────────
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
@@ -1170,6 +1185,7 @@ class Runtime:
 
     async def _cycle_body(self) -> None:
         self._set_phase(AgentState.THINKING)
+        self._sent_back = False
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
@@ -1220,6 +1236,8 @@ class Runtime:
             ended = (len(calls) == 1 and calls[0].name == "wrap_up"
                      and results[0].status in (ToolStatus.OK, ToolStatus.BACKGROUNDED))
             if (calls and not ended) or delivered:  # a queued message authorizes the next turn
+                continue
+            if not calls and await self._send_back():
                 continue
             # After the answer: Memory saves what the exchange taught it.
             before = await self._note_versions()

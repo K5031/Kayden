@@ -121,6 +121,19 @@ def reminder(plan: Sequence[PlanItem], now: float) -> str:
             "the step says (for a reminder, tell the user), then update the plan.")
 
 
+def unfinished(plan: Sequence[PlanItem]) -> list[PlanItem]:
+    """The steps a turn should not end on: open ones that do not wait for a due time."""
+    return [i for i in plan if i.status in OPEN and i.due is None]
+
+
+def finish(plan: Sequence[PlanItem]) -> str:
+    """The message that sends the agent back when it ends a turn with steps open."""
+    steps = "; ".join(i.text for i in unfinished(plan))
+    return (f"{NOTICE_PREFIX}Your plan still has open steps: {steps}. Do them now. If one is "
+            "finished or no longer needed, mark it done or dropped with update_plan. If one "
+            "waits for the user, say what you need from them and end your turn.")
+
+
 def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:
     """update_plan's items; ValueError for a due time that cannot be read."""
     plan = []

@@ -130,22 +130,24 @@ async def test_the_prompt_shows_a_plan_the_conversation_does_not(make):
     """A plan the user edited, or one whose update_plan call is no longer in view (a
     conversation opened again, older messages summarized), is in the prompt."""
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [{"text": "Fix the bug"}]}, id="p")]),
-        Step(text="On it."), Step(text="Sure."),
-        Step(calls=[call("update_plan", {"items": [{"text": "Ship it"}]}, id="q")]),
-        Step(text="Planned."), Step(text="Hello again.")])
+        Step(calls=[call("update_plan", {"items": [
+            {"text": "Fix the bug", "status": "done"}]}, id="p")]),
+        Step(text="Fixed."), Step(text="Sure."), Step(text="That one is yours to do."),
+        Step(calls=[call("update_plan", {"items": [
+            {"text": "Ship it", "status": "done"}]}, id="q")]),
+        Step(text="Shipped."), Step(text="Hello again.")])
     await h.turn("fix the bug")
     await h.runtime.set_plan([PlanItem("Write the docs first")])
     await h.turn("carry on")
     system = h.core.requests[2].system
     assert "## Plan\n- [todo] Write the docs first" in system and duties.CLOSE_PLAN in system
     await h.turn("plan again")  # the agent's own update is in the conversation again
-    assert "## Plan" not in h.core.requests[4].system
+    assert "## Plan" not in h.core.requests[5].system
     first = h.conversation.id
     await h.chat("Other")  # away and back: what the conversation shows is not known
     await h.start(conversation_id=first)
     await h.turn("hello again")
-    assert "- [todo] Ship it" in h.core.requests[5].system
+    assert "- [done] Ship it" in h.core.requests[6].system
 
 
 async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
@@ -229,6 +231,56 @@ async def test_stop_puts_reminders_off_until_the_next_message(make):
     await h.turn("carry on")
     await idle(h, 4)
     assert wakes(h)[-1] == "duty: a plan item is due"
+
+
+# ── Finishing the plan ──
+
+
+def plan_call(*items: tuple[str, str], id: str = "p") -> Step:
+    return Step(calls=[call("update_plan", {"items": [
+        {"text": text, "status": status} for text, status in items]}, id=id)])
+
+
+async def test_a_turn_does_not_end_with_steps_open(make):
+    """The agent is sent back once to finish or close its plan, as Claude works until its
+    checklist is done."""
+    h = await duty_harness(make, [
+        plan_call(("Read the code", "done"), ("Fix the bug", "doing")),
+        Step(text="I looked at it."),  # ends its turn with a step open
+        plan_call(("Read the code", "done"), ("Fix the bug", "done"), id="q"),
+        Step(text="Fixed.")])
+    await h.turn("fix the bug")
+    assert len(h.core.requests) == 4
+    sent_back = notices(h.core.requests[2])[-1]
+    assert "still has open steps: Fix the bug" in sent_back
+    assert [i.status for i in h.runtime.snapshot().conversation.plan] == [
+        PlanStatus.DONE, PlanStatus.DONE]
+
+
+async def test_it_is_sent_back_once_and_may_then_leave_steps_open(make):
+    """What waits for the user cannot be finished: the agent says so and the turn ends."""
+    h = await duty_harness(make, [
+        plan_call(("Ask which colour", "doing")), Step(text="Which colour?"),
+        Step(text="I need your answer on the colour first.")])
+    await h.turn("paint it")
+    assert len(h.core.requests) == 3
+    assert h.runtime.snapshot().state == AgentState.IDLE
+    assert h.runtime.snapshot().conversation.plan[0].status == PlanStatus.DOING
+
+
+async def test_steps_that_wait_are_not_sent_back_for(make):
+    """A step with a due time waits for it, and a duty keeps its plan between check-ins."""
+    h = await duty_harness(make, [
+        Step(calls=[call("update_plan", {"items": [
+            {"text": "Call back", "due": "2099-01-01T09:00"}]})]),
+        Step(text="I will.")])
+    await h.turn("remind me")
+    assert len(h.core.requests) == 2
+    duty = await duty_harness(make, [plan_call(("Read mail", "doing")), Step(text="On it.")])
+    await duty.runtime.set_duty(QUIET)
+    await idle(duty, 2)
+    await asyncio.sleep(0.2)
+    assert len(duty.core.requests) == 2
 
 
 def test_what_update_plan_says_about_due_steps():

@@ -83,7 +83,6 @@ from kayden.api import (
     ModelInfo,
     PermissionPolicy,
     PermissionRequest,
-    PlanItem,
     Proposal,
     RuntimeAPI,
     Settings,
@@ -127,6 +126,7 @@ from kayden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     AssistantItem,
     Change,
+    ChecklistItem,
     Closed,
     Controller,
     ConversationListChanged,
@@ -1088,13 +1088,20 @@ class Spinner(QWidget):
 
     SIZE, STEP_MS, STEP_DEGREES, ARC_DEGREES = 16, 60, 30, 100
 
-    def __init__(self, color: str) -> None:
+    def __init__(self, color: str, *, turning: bool = True) -> None:
         super().__init__()
         self._color, self._angle = QColor(color), 0
         self.setFixedSize(self.SIZE, self.SIZE)
-        timer = QTimer(self)
-        timer.timeout.connect(self._turn)
-        timer.start(self.STEP_MS)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._turn)
+        self.set_turning(turning)
+
+    def set_turning(self, turning: bool) -> None:
+        """Still when the work it marks has stopped."""
+        if turning and not self._timer.isActive():
+            self._timer.start(self.STEP_MS)
+        elif not turning:
+            self._timer.stop()
 
     def _turn(self) -> None:
         self._angle = (self._angle + self.STEP_DEGREES) % 360
@@ -1111,27 +1118,32 @@ class Spinner(QWidget):
 
 class PlanCard(QFrame):
     """The agent's plan as a checklist: done steps ticked and dimmed, the one under way with
-    a turning arc, the rest open; dropped ones struck through."""
+    an arc that turns while the agent works on it, the rest open; dropped ones struck
+    through."""
 
-    def __init__(self, plan: Sequence[PlanItem]) -> None:
+    def __init__(self, item: ChecklistItem) -> None:
         super().__init__()
+        self.item = item
+        plan = item.steps
+        self._spinners: list[Spinner] = []
         self.setObjectName("plan")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
         colors = theme.current()
         self._rows: list[tuple[str, str]] = []
-        for item in plan:
-            mark = str(item.status)  # done, doing, todo or dropped
+        for step in plan:
+            mark = str(step.status)  # done, doing, todo or dropped
             row = QHBoxLayout()
             row.setSpacing(8)
             icon: QWidget
             if mark == "doing":
-                icon = Spinner(colors.muted)
+                icon = Spinner(colors.muted, turning=item.live)
+                self._spinners.append(icon)
             else:
                 icon = QLabel()
                 icon.setPixmap(theme.icon(mark, colors.muted, 16).pixmap(16, 16))
-            text = _label(item.text, tone=None if mark in ("doing", "todo") else "muted")
+            text = _label(step.text, tone=None if mark in ("doing", "todo") else "muted")
             text.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             if mark == "dropped":
                 font = text.font()
@@ -1147,8 +1159,12 @@ class PlanCard(QFrame):
             row.addLayout(holder)
             row.addWidget(text, 1)
             layout.addLayout(row)
-            self._rows.append((mark, item.text))
+            self._rows.append((mark, step.text))
         self.setAccessibleName("Plan")
+
+    def refresh(self) -> None:
+        for spinner in self._spinners:
+            spinner.set_turning(self.item.live)
 
     def rows(self) -> list[tuple[str, str]]:
         """(mark, text) per step, for tests and accessibility checks."""
@@ -1462,8 +1478,6 @@ class MainWindow(QMainWindow):
         empty.addStretch(3)
         outer.addWidget(self.load_earlier, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addLayout(self.items_layout)
-        self.plan_slot = QVBoxLayout()  # the checklist, under the newest message
-        outer.addLayout(self.plan_slot)
         self.waiting_line = _label("Thinking…", selectable=False, tone="muted")
         self.waiting_line.hide()
         outer.addWidget(self.waiting_line)
@@ -1824,6 +1838,8 @@ class MainWindow(QMainWindow):
                 return AssistantBubble(item)
             case ToolItem():
                 return ToolCard(item, self.controller.cancel)
+            case ChecklistItem():
+                return PlanCard(item)
             case NoticeItem() if item.link is None and is_long(item.text):
                 return Detail(item.text, lines=1, chars=140)  # a new goal's brief
             case NoticeItem():
@@ -1876,12 +1892,9 @@ class MainWindow(QMainWindow):
         return body.parentWidget() if body is not None else None
 
     def _rebuild_prompts(self) -> None:
-        for layout in (self.prompts, self.plan_slot):
-            while (child := layout.takeAt(0)) is not None:
-                if child.widget() is not None:
-                    _discard(child.widget())
-        if steps := self.model.checklist:  # in the conversation, so it scrolls with it
-            self.plan_slot.addWidget(PlanCard(steps))
+        while (child := self.prompts.takeAt(0)) is not None:
+            if child.widget() is not None:
+                _discard(child.widget())
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
         for proposal in self.model.proposals.values():

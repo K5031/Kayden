@@ -1450,29 +1450,39 @@ async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
     assert not mascot.pixmap().isNull() and mascot.accessibleName() == "Kayden"
 
 
-async def test_the_plan_shows_as_a_checklist_while_the_agent_works(make, qapp):
+async def test_the_checklist_is_part_of_the_conversation(make, qapp):
+    """It sits under the turn's newest message while the agent works, stays there when the
+    turn ends, and scrolls away as the conversation goes on."""
+    from kayden.frontends.desktop.viewmodel import ChecklistItem
     from kayden.frontends.desktop.window import PlanCard
 
     h: Harness = await make()
-    h.core.add(Step(calls=[call("update_plan", {"items": [
-                   {"text": "Read the code", "status": "done"},
-                   {"text": "Fix the bug", "status": "doing"},
-                   {"text": "Run the tests"}]})]),
-               Step(text="Fixing it.", hang=True))
+    plan = [{"text": "Read the code", "status": "done"},
+            {"text": "Fix the bug", "status": "doing"}, {"text": "Run the tests"}]
+    done = [{**step, "status": "done"} for step in plan]
+    h.core.add(Step(calls=[call("update_plan", {"items": plan})]),
+               Step(calls=[call("look", {"q": 1}), call("update_plan", {"items": done})]),
+               Step(text="All fixed."), Step(text="You're welcome."))
+    h.tools.instant("look", "found")
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("fix the bug")
-    await eventually(lambda: controller.model.checklist and window.findChildren(PlanCard))
-    card = window.findChildren(PlanCard)[-1]
-    assert window.scroll.isAncestorOf(card)  # part of the conversation: it scrolls with it
-    assert card.rows() == [("done", "Read the code"), ("doing", "Fix the bug"),
-                           ("todo", "Run the tests")]
-    # The turn ends with a step open: the checklist goes with the work, it does not stay
-    # above the message box as a to-do list.
-    await h.runtime.stop()
-    await eventually(lambda: not controller.model.busy and controller.model.checklist == ())
-    await eventually(lambda: window.plan_slot.count() == 0)
-    assert [i.text for i in controller.model.conversation.plan][1] == "Fix the bug"  # kept
+    await eventually(lambda: not controller.model.busy and len(h.core.requests) == 3)
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    items = controller.model.items
+    lists = [i for i in items if isinstance(i, ChecklistItem)]
+    assert len(lists) == 1 and items[-1] is lists[0]  # one per turn, under its last message
+    assert [str(s.status) for s in lists[0].steps] == ["done", "done", "done"]
+    assert not lists[0].live  # the turn is over: it stays, at rest
+    card = window._widgets[id(lists[0])]
+    assert isinstance(card, PlanCard) and window.scroll.isAncestorOf(card)
+    assert card.rows() == [("done", "Read the code"), ("done", "Fix the bug"),
+                           ("done", "Run the tests")]
+    controller.send("thanks")
+    await eventually(lambda: not controller.model.busy and len(h.core.requests) == 4)
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    kinds = [type(i).__name__ for i in controller.model.items]
+    assert kinds[-3:] == ["ChecklistItem", "UserItem", "AssistantItem"]  # it is history now
 
 
 def test_a_reply_shows_copy_and_its_age_on_hover(qapp):

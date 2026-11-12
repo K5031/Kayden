@@ -415,6 +415,45 @@ def _snapshot(seq: int = 0) -> RuntimeSnapshot:
                            operations=(), pending_permissions=(), queued_messages=())
 
 
+def _plan(call_id: str, *steps: tuple[str, str]) -> ToolCall:
+    return ToolCall(call_id, "update_plan", {"items": [
+        {"text": text, "status": status} for text, status in steps]})
+
+
+def test_a_reopened_conversation_shows_each_turns_checklist_where_it_ended():
+    """The checklist is drawn from the agent's update_plan calls, so it is there again
+    after a restart: one per turn, with the turn's last state, under its last message."""
+    from kayden.frontends.desktop.viewmodel import ChecklistItem
+
+    def said(i: str, role: Role, *blocks: object) -> Message:
+        return Message(i, role, tuple(blocks), 0.0)
+
+    earlier = [said("u0", Role.USER, Text("tidy up")),
+               said("a0", Role.ASSISTANT, _plan("p0", ("Tidy", "done")), Text("Tidied."))]
+    history = [
+        said("u1", Role.USER, Text("fix the bug")),
+        said("a1", Role.ASSISTANT, _plan("p1", ("Read", "doing"), ("Fix", "todo"))),
+        said("t1", Role.TOOL, ToolResult("p1", ToolStatus.OK, "Plan saved.")),
+        said("a2", Role.ASSISTANT, _plan("p2", ("Read", "done"), ("Fix", "done")),
+             Text("Fixed.")),
+        said("t2", Role.TOOL, ToolResult("p2", ToolStatus.OK, "Plan saved.")),
+        said("u2", Role.USER, Text("thanks")),
+        said("a3", Role.ASSISTANT, Text("Any time."))]
+    model = ConversationModel()
+    model.load(_snapshot(), history)
+    kinds = [type(i).__name__ for i in model.items]
+    assert kinds == ["UserItem", "AssistantItem", "ChecklistItem", "UserItem",
+                     "AssistantItem"]
+    [shown] = of(model, ChecklistItem)
+    assert [(s.text, str(s.status)) for s in shown.steps] == [("Read", "done"),
+                                                              ("Fix", "done")]
+    assert not shown.live
+    model.prepend(earlier)  # an older page keeps its own
+    kinds = [type(i).__name__ for i in model.items]
+    assert kinds[:3] == ["UserItem", "AssistantItem", "ChecklistItem"]
+    assert len(of(model, ChecklistItem)) == 2
+
+
 def test_waiting_until_something_of_the_next_step_shows():
     """The model can think for a long time before its first token arrives."""
     model = ConversationModel()
