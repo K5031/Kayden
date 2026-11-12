@@ -56,8 +56,10 @@ The agent can also open these by itself when it comes across them, with its file
 
 - **A picture** is shown to the model, so it can look at a screenshot or a diagram in your
   project.
-- **A PDF** is shown as its pages, up to 20 at a time, with their text. Claude sees the
-  pages; other providers get the text.
+- **A PDF** is read as the text of its pages, all of them or a range. When the text is
+  not enough (a scan, a chart, a layout), the agent can ask to look at the pages
+  themselves, up to 20 at a time. That costs far more, and only Claude sees them; other
+  providers get the text again.
 - **A Word, Excel or PowerPoint file** is read as its text.
 
 In the list of steps, such a result names what it returned (`[image: chart.png]`). The terminal app shows what

@@ -111,8 +111,10 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         description=(
             "Read a UTF-8 text file. Optional 1-based start line `offset` and line `limit` "
             f"(default {MAX_READ_LINES}). A picture (PNG, JPEG, GIF, WebP) is shown to you. "
-            "A PDF is shown as its pages, with their text: all of them, or those `pages` "
-            f"names, such as \"3\" or \"2-5\", at most {PDF_PAGES_PER_READ} at a time. "
+            "A PDF is read as the text of its pages: all of them, or those `pages` names, "
+            "such as \"3\" or \"2-5\". Set `view` to look at the pages themselves, for a "
+            "scan, a chart or a layout the text does not carry: at most "
+            f"{PDF_PAGES_PER_READ} at a time, and each costs far more than its text. "
             "A Word, Excel or "
             "PowerPoint file (.docx, .xlsx, .pptx) is read as its text, by lines like any "
             "text file."
@@ -123,6 +125,8 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
                 "offset": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1},
                 "pages": {"type": "string", "description": "For a PDF: a page or a range."},
+                "view": {"type": "boolean",
+                         "description": "For a PDF: the pages as they look, not their text."},
             },
             ["path"],
         ),
@@ -416,7 +420,8 @@ class ShellFilesTools(Tools):
         if path.suffix.lower() in attachments.IMAGE_TYPES:
             return await asyncio.to_thread(self._read_image, path)
         if path.suffix.lower() == ".pdf":
-            return await asyncio.to_thread(self._read_pdf, path, args.get("pages"))
+            return await asyncio.to_thread(self._read_pdf, path, args.get("pages"),
+                                           args.get("view") is True)
 
         def source() -> IO[str]:
             """The file as text; a Word, Excel or PowerPoint file converted first."""
@@ -462,15 +467,18 @@ class ShellFilesTools(Tools):
                       base64.b64encode(raw).decode(), path.name)
         return ToolOutput(f"[Image {self._display(path)}]", attachments=(image,))
 
-    def _read_pdf(self, path: Path, pages: str | None) -> ToolOutput:
-        """A PDF's pages, all or those `pages` names and at most PDF_PAGES_PER_READ, as a
-        document of their own with their text: a model that reads PDFs sees the pages,
-        any other gets the text."""
+    def _read_pdf(self, path: Path, pages: str | None, view: bool) -> ToolOutput:
+        """A PDF's pages, all or those `pages` names: their text, each under its number, up
+        to MAX_READ_CHARS; with `view`, at most PDF_PAGES_PER_READ of the pages themselves
+        as a document of their own, which a model that reads PDFs sees as they look."""
         with open(self._open(path, os.O_RDONLY), "rb") as f:
             try:
                 reader = pypdf.PdfReader(f)
                 total = len(reader.pages)
                 first, last = _page_range(pages, total)
+                head = f"PDF, {total} page{'s' if total != 1 else ''}"
+                if not view:
+                    return ToolOutput(self._pdf_text(reader, first, last, head))
                 more = last - first + 1 > PDF_PAGES_PER_READ
                 last = min(last, first + PDF_PAGES_PER_READ - 1)
                 writer = pypdf.PdfWriter()
@@ -483,17 +491,31 @@ class ShellFilesTools(Tools):
                 writer.write(data)
             except (pypdf.errors.PyPdfError, KeyError) as e:
                 raise ToolError(f"{self._display(path)} cannot be read as a PDF: {e}") from e
-        head = f"PDF, {total} page{'s' if total != 1 else ''}"
         if (first, last) != (1, total):
             head += f"; pages {first}-{last} attached"
         if more:
             head += f'; use pages "{last + 1}-{min(total, last + PDF_PAGES_PER_READ)}" to read on'
-        text = "\n\n".join(texts)[:MAX_READ_CHARS]
-        if data.tell() > attachments.MAX_PDF_BYTES:  # too large to send: its text alone
-            return ToolOutput(f"[{head}; too large to show, so as text]\n{text}")
-        document = Document(str(path), base64.b64encode(data.getvalue()).decode(), text,
-                            last - first + 1)
+        if data.tell() > attachments.MAX_PDF_BYTES:
+            raise ToolError(f"These pages of {self._display(path)} are too large to look at; "
+                            "ask for fewer, or read their text.")
+        document = Document(str(path), base64.b64encode(data.getvalue()).decode(),
+                            "\n\n".join(texts)[:MAX_READ_CHARS], last - first + 1)
         return ToolOutput(f"[{head}]", attachments=(document,))
+
+    @staticmethod
+    def _pdf_text(reader: pypdf.PdfReader, first: int, last: int, head: str) -> str:
+        parts, size = [f"[{head}]"], 0
+        for number in range(first, last + 1):
+            text = reader.pages[number - 1].extract_text().strip()
+            if size and size + len(text) > MAX_READ_CHARS:
+                parts.append(f'[more pages follow; use pages "{number}-{last}" to read on]')
+                break
+            parts.append(f"[Page {number}]\n{text[:MAX_READ_CHARS]}".rstrip())
+            size += len(text)
+        if not size:
+            parts.append("[No text could be read from these pages: they may be scans. Read "
+                         "them with view true to look at them.]")
+        return "\n".join(parts)
 
     async def _write_file(self, args: dict[str, Any], ctx: ToolContext) -> str:
         path = self._path(args["path"])

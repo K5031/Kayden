@@ -95,24 +95,19 @@ async def test_shell_does_not_hang_on_background_child(tools, tmp_path):
     await run(tools, tmp_path, "shell", command="pkill -f 'sleep 5' || true")
 
 
-async def test_read_file_reads_a_pdf_by_its_pages(tools, workspace, tmp_path):
-    """The pages go with the result as a document of their own, with their text for a
-    model that does not read PDFs."""
+async def test_read_file_reads_a_pdf_as_the_text_of_its_pages(tools, workspace, tmp_path):
     from tests.pdf import make_pdf
 
     (workspace / "report.pdf").write_bytes(make_pdf(
         ["Sales rose in March", "Costs fell in April", "Outlook for May"]))
     whole = await run(tools, tmp_path, "read_file", path="report.pdf")
-    [document] = whole.attachments
-    assert whole.content == "[PDF, 3 pages]" and document.pages == 3
-    assert document.text.startswith("[Page 1]\nSales rose in March")
-    assert "[Page 3]\nOutlook for May" in document.text
+    assert whole.content.startswith("[PDF, 3 pages]\n[Page 1]\nSales rose in March")
+    assert "[Page 3]\nOutlook for May" in whole.content
+    assert not whole.attachments  # text is what it costs: the pages come only when asked for
     some = await run(tools, tmp_path, "read_file", path="report.pdf", pages="2-3")
-    assert "[Page 1]" not in some.attachments[0].text
-    assert "[Page 2]\nCosts fell in April" in some.attachments[0].text
+    assert "[Page 1]" not in some.content and "[Page 2]\nCosts fell in April" in some.content
     one = await run(tools, tmp_path, "read_file", path="report.pdf", pages="3")
-    assert one.content == "[PDF, 3 pages; pages 3-3 attached]"
-    assert one.attachments[0].text == "[Page 3]\nOutlook for May"
+    assert one.content == "[PDF, 3 pages]\n[Page 3]\nOutlook for May"
     for wrong in ("0", "4", "3-2", "two"):
         out = await run(tools, tmp_path, "read_file", path="report.pdf", pages=wrong)
         assert out.is_error and "pages" in out.content
@@ -120,15 +115,31 @@ async def test_read_file_reads_a_pdf_by_its_pages(tools, workspace, tmp_path):
     assert (await run(tools, tmp_path, "read_file", path="broken.pdf")).is_error
 
 
-async def test_read_file_reads_a_long_pdf_some_pages_at_a_time(tools, workspace, tmp_path):
+async def test_read_file_shows_a_pdfs_pages_when_asked_to(tools, workspace, tmp_path):
+    """For a scan, a chart or a layout: the pages themselves, a few at a time."""
     from tests.pdf import make_pdf
 
+    (workspace / "report.pdf").write_bytes(make_pdf(
+        ["Sales rose in March", "Costs fell in April", "Outlook for May"]))
+    part = await run(tools, tmp_path, "read_file", path="report.pdf", pages="2-3", view=True)
+    [document] = part.attachments
+    assert part.content == "[PDF, 3 pages; pages 2-3 attached]" and document.pages == 2
+    assert document.text == "[Page 2]\nCosts fell in April\n\n[Page 3]\nOutlook for May"
+    whole = await run(tools, tmp_path, "read_file", path="report.pdf", view=True)
+    assert whole.content == "[PDF, 3 pages]" and whole.attachments[0].pages == 3
+    assert whole.attachments[0].data != document.data  # only the pages asked for
     (workspace / "long.pdf").write_bytes(make_pdf([f"Page text {n}" for n in range(1, 46)]))
-    first = await run(tools, tmp_path, "read_file", path="long.pdf")
+    first = await run(tools, tmp_path, "read_file", path="long.pdf", view=True)
     assert first.attachments[0].pages == 20
     assert first.content == '[PDF, 45 pages; pages 1-20 attached; use pages "21-40" to read on]'
-    last = await run(tools, tmp_path, "read_file", path="long.pdf", pages="41-45")
-    assert last.content == "[PDF, 45 pages; pages 41-45 attached]"
+
+
+async def test_read_file_says_when_a_pdf_has_no_text_to_read(tools, workspace, tmp_path):
+    from tests.pdf import make_pdf
+
+    (workspace / "scan.pdf").write_bytes(make_pdf(["", ""]))
+    out = await run(tools, tmp_path, "read_file", path="scan.pdf")
+    assert "No text could be read" in out.content and "view" in out.content
 
 
 async def test_read_file_shows_a_picture(tools, workspace, tmp_path):

@@ -335,7 +335,8 @@ async def test_memory_keeps_a_tool_results_attachments_out_of_search(tmp_path):
     await memory.aclose()
 
 
-async def test_the_file_tool_shows_a_picture_and_a_pdfs_pages(files, tmp_path: Path):
+async def test_the_file_tool_shows_a_picture_and_on_request_a_pdfs_pages(
+        files, tmp_path: Path):
     from tests.pdf import make_pdf
 
     workspace = tmp_path / "work"
@@ -353,12 +354,9 @@ async def test_the_file_tool_shows_a_picture_and_a_pdfs_pages(files, tmp_path: P
     assert picture.attachments == (Image("image/png", base64.b64encode(PNG).decode(),
                                          "shot.png"),)
     assert "shot.png" in picture.content
-    whole = await read(path="report.pdf")
-    [document] = whole.attachments
-    assert document.pages == 3 and "Costs fell in April" in document.text
-    assert whole.content == "[PDF, 3 pages]"  # the pages themselves go with it
-    part = await read(path="report.pdf", pages="2-3")
+    text = await read(path="report.pdf")
+    assert not text.attachments and "[Page 2]\nCosts fell in April" in text.content
+    part = await read(path="report.pdf", pages="2-3", view=True)  # the pages, when asked for
     [some] = part.attachments
     assert some.pages == 2 and "Sales rose" not in some.text and "Outlook for May" in some.text
     assert part.content == "[PDF, 3 pages; pages 2-3 attached]"
-    assert some.data != document.data  # only those pages

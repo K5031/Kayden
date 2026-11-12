@@ -45,9 +45,9 @@ apps (2026-11-12), with a small preview above the message box for images.
   text there and a picture in a user message right after the tool results (or as a line
   of text for a profile without vision). A result that arrives late, from a backgrounded
   call, is a text block in a user message and only names them.
-- **The file tool** uses that (`read_file`): a picture is shown to the model; a PDF goes
-  as a document of the pages asked for, at most 20 per call, with their text under
-  `[Page n]` marks; Word, Excel and PowerPoint files are converted to text and read by
+- **The file tool** uses that (`read_file`): a picture is shown to the model; a PDF is
+  read as the text of its pages under `[Page n]` marks, and with `view` goes as a
+  document of the pages asked for, at most 20 per call, with that text; Word, Excel and PowerPoint files are converted to text and read by
   lines like any text file. This is how the agent looks at what it finds by itself, and
   it is an ordinary tool call, under the usual permissions.
 - **Two ways in, on purpose,** as in Claude's apps: what the user drops goes straight into
@@ -87,6 +87,8 @@ apps (2026-11-12), with a small preview above the message box for images.
   would cost a model step, a file outside the work folder would ask for permission
   (unless attached paths were pre-approved, which is special treatment again), and the
   model might not open it.
+- **`read_file` shows a PDF's pages by default,** as Claude Code's Read does. Built first;
+  but most PDFs read fine as text at a fraction of the cost, so the pages are on request.
 - **Tool results that stay text.** No contract change, but the agent could not look at a
   picture in a project or a scanned PDF it found.
 - **Office files through a skill**, the agent running a converter in its shell. No code
@@ -114,8 +116,8 @@ apps (2026-11-12), with a small preview above the message box for images.
   permissions, so one outside the work folder still asks.
 - Checked with Opus 5.5: asked to open a picture and a PDF with its file tool, it described
   the picture and quoted page 2 of the PDF, for about 8 cents.
-- A PDF read by the tool costs what its pages cost as images, not only its text; `pages`
-  and the 20-page limit are how the agent keeps that down.
+- A PDF read by the tool costs only its text unless the agent asks to view the pages,
+  which costs what they cost as images; a PDF without text says to view it.
 - A PDF is stored twice over in the archive: its bytes and its text.
 - pypdf, python-docx, openpyxl and python-pptx are dependencies.
 - An Office file reaches the model as text only: its formatting, pictures and charts do
