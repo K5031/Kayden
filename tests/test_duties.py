@@ -559,3 +559,13 @@ def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action
     told = DUTY_TOOLS["update_plan"].description
     assert "Every task that edits files, runs more than one command or has several steps" in told
     assert "with your very first tool call" in told
+
+
+def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
+    """Else it is sent back after the goal, for one more request, to tick the steps off."""
+    from kayden.api import DUTY_TOOLS
+
+    told = DUTY_TOOLS["finish_goal"].description
+    assert "update_plan" in told and "in the same message" in told
+    assert "done or dropped" in told
+    assert "A step for reporting or finishing is done by this call" in told
