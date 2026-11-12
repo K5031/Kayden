@@ -174,6 +174,9 @@ QPushButton[danger="true"] {{ background: {c.error}; color: {c.bg}; border-color
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px;
     color: {c.muted}; }}
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
+QToolButton#thinking {{ padding: 2px 0; }}
+QToolButton#thinking:hover {{ background: transparent; }}
+QLabel#reasoning {{ border: none; border-left: 2px solid {c.track}; padding: 2px 0 2px 12px; }}
 QFrame#attachment {{ background: {c.bg}; border: 1px solid {c.line}; border-radius: 8px; }}
 QToolButton#removeAttachment {{ background: transparent; border-radius: 9px; padding: 0; }}
 QToolButton#removeAttachment:hover {{ background: {c.select}; }}
@@ -281,7 +284,7 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
     """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", "menu" (three
-    lines), "plus", "copy", "check", a plan step's "done", "todo" or "dropped", or a
+    lines), "plus", "copy", "check", "folded" and "unfolded" (chevrons), a plan step's "done", "todo" or "dropped", or a
     window control:
     "minimize", "maximize", "restore", "close"."""
     scale = 2
@@ -359,6 +362,15 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
             path.lineTo(s * 0.18, s * 0.18)
             path.lineTo(s * 0.64, s * 0.18)
             path.lineTo(s * 0.64, s * 0.24)
+            painter.drawPath(path)
+        case "folded" | "unfolded":
+            if kind == "folded":  # points right
+                points = ((0.4, 0.26), (0.64, 0.5), (0.4, 0.74))
+            else:  # points down
+                points = ((0.26, 0.4), (0.5, 0.64), (0.74, 0.4))
+            path = QPainterPath(QPointF(s * points[0][0], s * points[0][1]))
+            for x, y in points[1:]:
+                path.lineTo(s * x, s * y)
             painter.drawPath(path)
         case "check":
             painter.setPen(QPen(QColor(color), size / 10, Qt.PenStyle.SolidLine,

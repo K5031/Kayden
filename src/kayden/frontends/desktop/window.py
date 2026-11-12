@@ -638,12 +638,17 @@ class AssistantBubble(QWidget):
         layout = QVBoxLayout()
         layout.setSpacing(4)
         row.addLayout(layout, 1)
-        self.thinking = QToolButton(text="Thinking", checkable=True)
-        self.thinking.setArrowType(Qt.ArrowType.RightArrow)
+        # Flush with the reply's text: the words first, then a chevron that unfolds them.
+        self.thinking = QToolButton(objectName="thinking", checkable=True)
         self.thinking.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.thinking.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.thinking.setIconSize(QSize(12, 12))
+        self.thinking.setCursor(Qt.CursorShape.PointingHandCursor)
         self.thinking.toggled.connect(self._toggle_thinking)
         self.reasoning = _label(tone="muted")
+        self.reasoning.setObjectName("reasoning")
         self.reasoning.hide()
+        self._toggle_thinking(False)
         self.body = MarkdownView()
         self.body.setAccessibleName("Kayden")
         self.marker = _label(selectable=False, tone="muted")
@@ -668,7 +673,8 @@ class AssistantBubble(QWidget):
         self._copied = QTimer(self, singleShot=True, interval=COPIED_MS)
         self._copied.timeout.connect(self._paint_copy)
         self._paint_copy()
-        layout.addWidget(self.thinking, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.thinking, 0,
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute)
         for widget in (self.reasoning, self.body, self.marker, self.footer):
             layout.addWidget(widget)
         self._timer = QTimer(self, singleShot=True, interval=RENDER_INTERVAL_MS)
@@ -704,13 +710,14 @@ class AssistantBubble(QWidget):
         self.copy.setToolTip("Copied" if copied else "Copy")
 
     def _toggle_thinking(self, shown: bool) -> None:
-        self.thinking.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
+        self.thinking.setIcon(theme.icon("unfolded" if shown else "folded",
+                                         theme.current().muted, 12))
         self.reasoning.setVisible(shown)
 
     def _render(self) -> None:
         item = self.item
         self.thinking.setVisible(bool(item.reasoning))
-        self.thinking.setText("Thinking…" if not item.final and not item.text else "Thinking")
+        self.thinking.setText("Thinking…" if not item.final and not item.text else "Thought")
         self.reasoning.setText(item.reasoning)
         self.body.setVisible(bool(item.text))
         self.body.setMarkdown(item.text)

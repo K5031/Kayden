@@ -73,7 +73,7 @@ another reason, the Settings window opens with the message.
 | Answer a proposal | When Kayden proposes something of its own, a card above the message box says what and why: **Approve** runs it, **Dismiss** declines. See [Proposals](using-kayden.md#proposals). |
 | Cancel one task | Press **Cancel** on its card. |
 | See what a tool did | Steps between two replies fold into one line: the step under way while Kayden works ("Search the web for flights to Oslo"), then how many steps there were and any that failed ("4 steps · 1 failed"). Click it to see each step and the thinking between them; point at a step to see the tool and its exact input, and press its arrow for the result. A step without a sentence shows the tool and its input. |
-| See the model's reasoning | **Thinking…** shows under the conversation as soon as Kayden starts on its next step. Once the reasoning arrives, open **Thinking** above the reply to read it. |
+| See the model's reasoning | **Thinking…** shows under the conversation as soon as Kayden starts on its next step. Once the reasoning arrives it shows above the reply as **Thinking…**, then **Thought** when it is over: click it to read it. |
 | Copy a reply | Point at it: a copy button and how long ago it came appear under it. |
 | Start over | **New chat** (**Ctrl+N**). Nothing is added to the list until you send your first message. |
 | Work in another folder | In a new chat, the folder button in the middle: pick a recent one or **Choose folder…**. Any time: **☰ → New chat in another folder…**. A new chat starts in it. See [Folders](using-kayden.md#folders). |

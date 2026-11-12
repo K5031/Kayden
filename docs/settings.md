@@ -189,7 +189,7 @@ from. A file that is not valid stops Kayden with a one-line message naming the m
 module that rejects its options opens the settings with the message instead.
 
 With Claude models that always think (Opus 5.x, Sonnet 5.x, Haiku 5.x), Kayden asks for a
-summary of the thinking to be streamed, so you see it under **Thinking** as it happens.
+summary of the thinking to be streamed, so you see it under **Thinking…** as it happens.
 To change that, set `thinking` in the Core's options for that model, for example
 `thinking = { type = "adaptive", display = "omitted" }`.
 

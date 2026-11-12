@@ -1608,4 +1608,15 @@ def test_thinking_says_so_while_it_streams(qapp):
     assert not bubble.thinking.isHidden() and bubble.thinking.text() == "Thinking…"
     item.text, item.final = "Done.", True
     bubble.refresh()
-    assert bubble.thinking.text() == "Thinking"
+    assert bubble.thinking.text() == "Thought"  # it is over
+
+
+def test_the_thinking_line_unfolds_what_was_thought(qapp):
+    bubble = AssistantBubble(AssistantItem("Done.", "Looking at the files", final=True))
+    assert bubble.reasoning.isHidden()
+    # The words first, flush with the reply, then the chevron.
+    assert bubble.thinking.layoutDirection() is Qt.LayoutDirection.RightToLeft
+    folded = bubble.thinking.icon().cacheKey()
+    bubble.thinking.click()
+    assert not bubble.reasoning.isHidden() and bubble.reasoning.text() == "Looking at the files"
+    assert bubble.thinking.icon().cacheKey() != folded  # it points down now
