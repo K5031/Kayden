@@ -54,7 +54,9 @@ or turn it off; the conversation keeps everything said so far.
   minute unless you change it); a finished task or your message wakes it at once.
   To react to the outside world, the agent starts a tool that waits for something, for
   example new mail through a tool server; when it finishes, the agent wakes.
-- **It needs a spending limit**, which caps what an agent working for days can cost.
+- **A spending limit is up to you.** A duty runs without one. Since it can work for days,
+  setting one in Settings caps what it can cost; your provider's own spend limit is the
+  other guard.
 - **It pauses** when you press Stop, when the limit is reached, after an error, and after
   Kayden restarts, so a crash never quietly repeats an action. Send a message or activate
   the conversation (Ctrl+R) to resume it.

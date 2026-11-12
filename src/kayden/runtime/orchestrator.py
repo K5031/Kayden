@@ -676,8 +676,6 @@ class Runtime:
             raise RuntimeStateError("no conversation is open")
         if duty is not None:
             duty = duties.check(duty)
-            if self._config.budget.max_cost_usd is None:
-                raise ValueError("a duty needs a spending limit: set one in the settings")
         turned_on = duty is not None and self._conversation.duty is None
         await self._save_duty(duty, self._conversation.plan)
         self._answered()
@@ -1263,8 +1261,7 @@ class Runtime:
     # ── Duties ───────────────────────────────────────────────────────────
 
     def _duty_running(self) -> bool:
-        return (self._conversation is not None and self._conversation.duty is not None
-                and self._config.budget.max_cost_usd is not None)
+        return self._conversation is not None and self._conversation.duty is not None
 
     def _schedule_duty(self) -> None:
         """While idle, wake the duty at its next time (duties.next_wake); without a duty,
@@ -1275,24 +1272,13 @@ class Runtime:
         duty = self._conversation.duty
         if duty is None:
             due = duties.next_reminder(self._conversation.plan, self._reminded)
-            if due is not None and self._reminders():
+            if due is not None:
                 self._wake_in(max(self._config.reminder_min_s, due - time.time()), duties.DUE)
             return
         if self._help is not None:
             self._log.decision("duty_paused", reason="waiting for help")
             return
-        if self._config.budget.max_cost_usd is None:
-            self._log.decision("duty_paused", reason="no spending limit")
-            self._failure(FailureKind.BUDGET,
-                          "The duty is paused: it needs a spending limit. Set one in the "
-                          "settings, then activate the conversation.")
-            return
         self._wake_in(*duties.next_wake(duty, self._conversation.plan))
-
-    def _reminders(self) -> bool:
-        """Whether a due step wakes the agent without a duty: with a spending limit, as a
-        duty needs one."""
-        return self._config.budget.max_cost_usd is not None
 
     def _wake_in(self, delay: float, cause: str) -> None:
         self._duty_timer = asyncio.create_task(self._duty_due(delay, cause))
@@ -1994,8 +1980,7 @@ class Runtime:
                 await self._save_duty(self._conversation.duty, plan)
                 self._plan_call = call.id
                 self._log.decision("plan", items=len(plan), by="model")
-                return ToolStatus.OK, duties.saved(plan, self._conversation.duty, now,
-                                                   reminders=self._reminders())
+                return ToolStatus.OK, duties.saved(plan, self._conversation.duty, now)
             case "ask_for_help":
                 if self._conversation.duty is None:
                     return ToolStatus.ERROR, "There is no duty to pause."

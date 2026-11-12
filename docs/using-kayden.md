@@ -71,7 +71,6 @@ is woken when the time comes, without a message from you. The status line shows
 - **The conversation has to be open in Kayden** at that time. A reminder that came due
   while it was closed, or while Kayden was not running, is not sent late by itself: the
   agent sees it with your next message.
-- **It needs a spending limit** (Settings), since the agent then works while you are away.
 - **Stop** puts reminders off until your next message.
 - For work that keeps going on its own, give the conversation a
   [duty](concepts.md#duties) instead.

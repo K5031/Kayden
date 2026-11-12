@@ -182,11 +182,11 @@ async def test_a_launch_duty_starts_a_new_conversation_on_it(make, clients):
 
 
 async def test_a_launch_duty_that_cannot_run_ends_the_unit(make, clients, capsys):
-    h: Harness = await make()  # no spending limit
-    client = clients(start=StartOptions(), duty="Run the socials", kind=DutyKind.DUTY)
+    h: Harness = await make()
+    client = clients(start=StartOptions(), duty="  ", kind=DutyKind.DUTY)  # says nothing
     task = await client.run(h.runtime)
     await asyncio.wait_for(task, 3)
-    assert "spending limit" in capsys.readouterr().err
+    assert "needs an instruction" in capsys.readouterr().err
 
 
 def test_factory_options():

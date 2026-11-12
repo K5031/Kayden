@@ -42,21 +42,17 @@ STILL_OPEN = ("Steps are still open: update the plan again before you end your t
 
 WAKES = ("You will be woken when a step falls due, as long as this conversation stays open "
          "in Kayden: you can end your turn meanwhile.")
-NO_WAKE = ("Nothing wakes you when a step falls due, because no spending limit is set: do "
-           "not end your turn to wait for it. If the user wants a reminder or work done "
-           "later, tell them it needs a spending limit, which they set in the settings.")
 
 
-def saved(plan: Sequence[PlanItem], duty: Duty | None, now: float, *,
-          reminders: bool) -> str:
+def saved(plan: Sequence[PlanItem], duty: Duty | None, now: float) -> str:
     """What update_plan answers. The call and this answer are how the plan stays in view,
     so it says what the call's arguments do not: the time, when each step is due, and
-    whether a due step wakes the agent (`reminders`; a duty always does)."""
+    that a due step wakes the agent."""
     lines = [f"Plan saved. It is now {local(now)}."]
     due = [f"- {i.text}: due {local(i.due)}" for i in plan if i.due and i.status in OPEN]
     lines += due
     if due and duty is None:
-        lines.append(WAKES if reminders else NO_WAKE)
+        lines.append(WAKES)
     if duty is None and any(i.status in OPEN and not i.due for i in plan):
         lines.append(STILL_OPEN)
     return "\n".join(lines)

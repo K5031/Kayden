@@ -377,8 +377,8 @@ DUTY_KIND_LABELS = {
     DutyKind.GOAL: "Until it is done",
 }
 DUTY_HINT = ("Kayden carries this on by itself: it keeps a plan, works on it, and checks in "
-             "again on its own. It needs a spending limit, and pauses when you press Stop, "
-             "when Kayden restarts, or when the limit is reached.")
+             "again on its own. It pauses when you press Stop, when Kayden restarts, or when "
+             "a spending limit you set is reached.")
 PLAN_HINT = ("One step per line: [todo], [doing], [done] or [dropped], the step, then "
              "optionally | due YYYY-MM-DD HH:MM and | a note.")
 _PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")

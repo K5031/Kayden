@@ -1350,8 +1350,8 @@ class MemoriesChanged:
 class DutyScheduled:
     """When the open conversation's agent is next woken by itself (Unix time): by its duty,
     or without one for a step of its plan that falls due. None: it is not, because the
-    agent is working, nothing is due, or the duty is paused (Stop, a failure, a restart,
-    no spending limit) until a person sends a message or activates it."""
+    agent is working, nothing is due, or the duty is paused (Stop, a failure, a restart)
+    until a person sends a message or activates it."""
 
     wake_at: float | None
 

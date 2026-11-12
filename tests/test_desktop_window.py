@@ -849,16 +849,21 @@ async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
 async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
     from kayden.frontends.desktop.window import DutyDialog
 
-    h: Harness = await make()  # no spending limit
+    h: Harness = await make()
     await h.start()
     window, _controller, _ = await open_window(h)
+
+    async def refuse(duty: object) -> None:
+        raise ValueError("this duty cannot run")
+
+    h.runtime.set_duty = refuse  # type: ignore[method-assign]
     window.show()
     window.open_duty()
     [dialog] = window.findChildren(DutyDialog)
     dialog.instruction.setPlainText("Watch")
     dialog.save_button.click()
     await eventually(lambda: dialog.error.isVisible())
-    assert "spending limit" in dialog.error.text()
+    assert "cannot run" in dialog.error.text()
     assert dialog.isVisible() and dialog.save_button.isEnabled()
 
 

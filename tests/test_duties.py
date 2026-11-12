@@ -20,7 +20,6 @@ from kayden.api import (
     DutyKind,
     DutyScheduled,
     Failure,
-    FailureKind,
     HelpNeeded,
     PlanItem,
     PlanStatus,
@@ -65,11 +64,14 @@ async def idle(h: Harness, requests: int) -> None:
 # ── Turning it on and off ──
 
 
-async def test_a_duty_needs_a_spending_limit(make):
-    h = await duty_harness(make, budget=Budget())
-    with pytest.raises(ValueError, match="spending limit"):
-        await h.runtime.set_duty(QUIET)
-    assert h.runtime.snapshot().conversation.duty is None
+async def test_a_duty_runs_without_a_spending_limit(make):
+    """A limit is the user's choice, as in Claude's apps: nothing requires one."""
+    h = await duty_harness(make, [Step(text="on it")], budget=Budget())
+    await h.runtime.set_duty(QUIET)
+    await idle(h, 1)
+    assert h.runtime.snapshot().conversation.duty is not None
+    assert h.runtime.snapshot().duty_wake_at is not None  # and it checks in again
+    assert not h.rec.of(Failure)
 
 
 @pytest.mark.parametrize("duty", [
@@ -186,7 +188,8 @@ def soon(text: str = "Stand up") -> Step:
 
 async def test_a_due_step_wakes_the_agent_without_a_duty(make):
     h = await duty_harness(make, [soon(), Step(text="I will remind you."),
-                                  Step(text="Time to stand up!")], reminder_min_s=0.05)
+                                  Step(text="Time to stand up!")], reminder_min_s=0.05,
+                           budget=Budget())  # no spending limit is needed
     await h.turn("remind me to stand up in a moment")
     assert "woken" in (await h.results())["p"].content
     assert h.runtime.snapshot().duty_wake_at is not None  # frontends show when
@@ -197,16 +200,6 @@ async def test_a_due_step_wakes_the_agent_without_a_duty(make):
     # The step is still open and overdue: it reminded once, not again and again.
     await asyncio.sleep(0.3)
     assert len(h.core.requests) == 3 and h.runtime.snapshot().duty_wake_at is None
-
-
-async def test_a_reminder_needs_a_spending_limit(make):
-    """As a duty does: nothing makes the agent act while the user is away without one."""
-    h = await duty_harness(make, [soon(), Step(text="Noted.")], budget=Budget(),
-                           reminder_min_s=0.05)
-    await h.turn("remind me to stand up in a moment")
-    assert duties.NO_WAKE in (await h.results())["p"].content
-    await asyncio.sleep(0.3)
-    assert len(h.core.requests) == 2 and h.runtime.snapshot().duty_wake_at is None
 
 
 async def test_a_reopened_conversation_reminds_of_what_is_still_to_come_only(make):
@@ -241,11 +234,9 @@ async def test_stop_puts_reminders_off_until_the_next_message(make):
 def test_what_update_plan_says_about_due_steps():
     later = PlanItem("Check the build", PlanStatus.TODO, due=time.time() + 600)
     now = time.time()
-    assert duties.WAKES in duties.saved([later], None, now, reminders=True)
-    assert duties.NO_WAKE in duties.saved([later], None, now, reminders=False)
-    with_duty = duties.saved([later], Duty("Watch the build"), now, reminders=True)
-    assert duties.WAKES not in with_duty and duties.NO_WAKE not in with_duty
-    assert duties.WAKES not in duties.saved([PlanItem("Fix it")], None, now, reminders=True)
+    assert duties.WAKES in duties.saved([later], None, now)
+    assert duties.WAKES not in duties.saved([later], Duty("Watch the build"), now)
+    assert duties.WAKES not in duties.saved([PlanItem("Fix it")], None, now)
 
 
 def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
@@ -398,20 +389,6 @@ async def test_an_exhausted_budget_pauses_it(make):
     await eventually(lambda: h.runtime.snapshot().state == AgentState.FAILED)
     await asyncio.sleep(0.3)
     assert len(h.core.requests) == 1 and h.runtime.snapshot().duty_wake_at is None
-
-
-async def test_without_a_spending_limit_it_pauses_and_says_so(make):
-    h = await duty_harness(make, [Step(text="on it")])
-    await h.runtime.set_duty(QUIET)
-    await idle(h, 1)
-    conversation = h.conversation.id
-    await h.close()
-    again: Harness = await make(core=ScriptedCore([Step(text="back")]), store=h.store)
-    await again.start(conversation)  # the limit is gone in this instance
-    await again.runtime.activate()
-    await eventually(lambda: any(f.kind == FailureKind.BUDGET and "spending limit" in f.message
-                                 for f in again.rec.of(Failure)))
-    assert len(again.core.requests) == 1 and again.runtime.snapshot().duty_wake_at is None
 
 
 # ── Goals ──

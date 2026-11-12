@@ -56,7 +56,7 @@ process and knows nothing of ranks, teams or other units (SPEC 10.2).
   is a `send`.
 - **Launch options:** `--duty "…"` and `--goal "…"` start a new conversation with that
   duty, which counts as the person's action that starts a duty; a duty that cannot start
-  (no spending limit) is reported on stderr and the unit quits. Budget, permissions and
+  (no instruction) is reported on stderr and the unit quits. Budget, permissions and
   model come from the unit's `config.toml`, which the spawner writes into the unit's data
   folder, so they persist with the usage they limit.
 - **Quitting:** stdin closing answers what was already asked, then shuts the instance

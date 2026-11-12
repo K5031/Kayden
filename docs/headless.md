@@ -16,7 +16,7 @@ kayden --headless --data-dir ~/units/writer --goal "Draft the launch post"
 | `--data-dir`, `--conversation`, `--model`, `--permissions` | As usual |
 
 Give each unit its own data folder. Its `config.toml` sets the model, permissions and
-spending limit (a duty needs one); see [config.toml](settings.md#configtoml).
+spending limit, if it should have one; see [config.toml](settings.md#configtoml).
 
 ## The channel
 
@@ -50,7 +50,7 @@ and the terminal app drive their sub-sessions this way:
 | `inspect_memory` | `conversation_id` |
 | `save_note`, `delete_note` | `title`, `description`, `text`, optional `note_id`; or `note_id` |
 
-A refusal (asking before `start`, a duty without a spending limit, an unknown
+A refusal (asking before `start`, a duty without an instruction, an unknown
 conversation) is error `-32000` with the runtime's message and `data.type`, such as
 `RuntimeStateError`. Missing parameters are `-32602`, unknown methods `-32601`.
 
