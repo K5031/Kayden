@@ -191,6 +191,8 @@ QToolButton {{ background: transparent; border: none; border-radius: 6px; paddin
     color: {c.muted}; }}
 QToolButton:hover {{ background: {c.card}; color: {c.text}; }}
 QLabel#reasoning {{ border: none; border-left: 2px solid {c.track}; padding: 2px 0 2px 12px; }}
+QProgressBar {{ background: {c.line}; border: none; border-radius: 3px; }}
+QProgressBar::chunk {{ background: {c.accent}; border-radius: 3px; }}
 QFrame#attachment {{ background: {c.bg}; border: 1px solid {c.line}; border-radius: 8px; }}
 QToolButton#removeAttachment {{ background: transparent; border-radius: 9px; padding: 0; }}
 QToolButton#removeAttachment:hover {{ background: {c.select}; }}

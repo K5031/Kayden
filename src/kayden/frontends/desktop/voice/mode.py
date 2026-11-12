@@ -55,6 +55,7 @@ class VoiceMode(QObject):
         self._models, self._transport = models, transport
         self.on = False
         self.status = ""
+        self.progress: float | None = None  # of the model download, while it runs
         self._engine: Engine | None = None
         self._voice: Voice | None = None
         self._microphone: object | None = None
@@ -77,7 +78,7 @@ class VoiceMode(QObject):
         if self._microphone is not None:
             self._microphone.stop()  # type: ignore[attr-defined]
         self._voice = self._microphone = self._starting = None
-        self.on = False
+        self.on, self.progress = False, None
         self._say("")
 
     def interrupt(self) -> bool:
@@ -124,10 +125,16 @@ class VoiceMode(QObject):
                 "computer: what you say is not sent to a speech service."):
             return False
         assert self.folder is not None
-        await download.fetch(
-            self.folder, needed,
-            lambda done: self._say(f"Downloading speech models… {round(done * 100)}%"),
-            transport=self._transport)
+
+        def progress(done: float) -> None:
+            self.progress = done
+            self._say(f"Downloading speech models: {round(done * size)} of {size} MB")
+
+        progress(0.0)
+        try:
+            await download.fetch(self.folder, needed, progress, transport=self._transport)
+        finally:
+            self.progress = None
         return True
 
     def _said(self, text: str) -> None:

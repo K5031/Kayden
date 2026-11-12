@@ -79,6 +79,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QScrollBar,
@@ -1701,6 +1702,20 @@ class MainWindow(QMainWindow):
         box.setSpacing(4)
         self.attachments = AttachmentStrip()
         box.addWidget(self.attachments)
+        # The speech models' download, while it runs: how far it is, in words and a bar.
+        self.voice_progress = QWidget()
+        downloading = QVBoxLayout(self.voice_progress)
+        downloading.setContentsMargins(10, 6, 10, 2)
+        downloading.setSpacing(6)
+        self.voice_progress_label = _label(selectable=False, role="small")
+        self.voice_progress_bar = QProgressBar()
+        self.voice_progress_bar.setRange(0, 1000)
+        self.voice_progress_bar.setTextVisible(False)
+        self.voice_progress_bar.setFixedHeight(6)
+        downloading.addWidget(self.voice_progress_label)
+        downloading.addWidget(self.voice_progress_bar)
+        self.voice_progress.hide()
+        box.addWidget(self.voice_progress)
         composer = QHBoxLayout()  # one row: Add files, the text, then Send at its foot
         composer.setSpacing(8)
         box.addLayout(composer)
@@ -2570,7 +2585,14 @@ class MainWindow(QMainWindow):
         theme.mark(self.voice_button, "active", on)
         self.voice_button.setToolTip("End the voice conversation" if on
                                      else "Talk with Kayden")
-        self.input.setPlaceholderText(self.voice.status or "Message Kayden")
+        fetching = self.voice.progress is not None
+        self.voice_progress.setVisible(fetching)
+        if fetching:
+            self.voice_progress_label.setText(f"{self.voice.status}. Click the voice button "
+                                              "to cancel.")
+            self.voice_progress_bar.setValue(round((self.voice.progress or 0.0) * 1000))
+        self.input.setPlaceholderText(
+            "Message Kayden" if fetching or not self.voice.status else self.voice.status)
         self._paint_icons()
 
     def _ask(self, text: str, details: str) -> asyncio.Future[bool]:

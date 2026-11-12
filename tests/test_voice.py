@@ -229,7 +229,8 @@ class FakeMicrophone:
         self.open = False
 
 
-async def test_the_voice_button_starts_a_spoken_conversation(make, qapp, tmp_path):
+async def test_the_voice_button_starts_a_spoken_conversation(
+        make, qapp, tmp_path, monkeypatch):
     """The first use asks, downloads the models and listens; what is said is sent, the
     reply is read aloud, and the agent is told it is being talked to."""
     import httpx2
@@ -256,7 +257,19 @@ async def test_the_voice_button_starts_a_spoken_conversation(make, qapp, tmp_pat
         microphones.append(FakeMicrophone(heard))
         return microphones[-1]
 
-    served = httpx2.MockTransport(lambda request: httpx2.Response(200, content=b"vad"))
+    release = asyncio.Event()  # holds the download partway
+    monkeypatch.setattr("kayden.frontends.desktop.voice.download.CHUNK", 1)
+
+    async def body():
+        yield b"va"
+        await release.wait()
+        yield b"d"
+
+    class Slow(httpx2.AsyncBaseTransport):  # MockTransport would read the body at once
+        async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, content=body())
+
+    served = Slow()
     folder = tmp_path / "voice"
     voice = VoiceMode(controller, folder, ask, engine=lambda _folder: engine,
                       microphone=microphone, speaker=lambda: speaker, transport=served,
@@ -270,8 +283,15 @@ async def test_the_voice_button_starts_a_spoken_conversation(make, qapp, tmp_pat
     await eventually(lambda: asked and not voice.on)  # declined: off, nothing fetched
     assert "0 MB" in asked[0] and not folder.exists() and not microphones
 
+    assert window.voice_progress.isHidden()
     window.voice_button.click()
+    await eventually(lambda: voice.progress is not None and voice.progress > 0.5)
+    assert not window.voice_progress.isHidden()  # a bar and how far it is, while it runs
+    assert window.voice_progress_bar.value() == 667
+    assert window.voice_progress_label.text().startswith("Downloading speech models: ")
+    release.set()
     await eventually(lambda: voice.spoken)
+    assert window.voice_progress.isHidden()
     assert (folder / "vad.onnx").read_bytes() == b"vad"
     assert window.input.placeholderText() == "Listening…"
     assert window.voice_button.property("active") is True
