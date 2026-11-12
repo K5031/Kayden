@@ -1090,7 +1090,8 @@ async def test_delete_is_disabled_when_memory_cannot_delete():
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
         app.screen.query_one("#confirm-yes", Button).press()
         await until(pilot, lambda: screen.query_one("#delete", Button).disabled)
-        assert any("cannot delete" in n.message for n in app._notifications)
+        await until(pilot, lambda: any("cannot delete" in n.message
+                                       for n in app._notifications))
 
 
 # ── long-term memory ─────────────────────────────────────────────────────
