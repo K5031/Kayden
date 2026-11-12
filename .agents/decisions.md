@@ -878,3 +878,10 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Configured | A `cache_control` in the Core's or the model's options is sent as it is (`ttl = "1h"`) |
 | Cost | Written tokens count as input at the input price; the premium (25 %, or 100 % for an hour's cache) is added as `Usage.extra_cost_usd`, from the model's input price |
 | Limit | The duty and Memory's addendum are in the system prompt, which comes before the messages: when one changes, the next request writes the conversation again instead of reading it. The plan is kept out of it while the conversation shows it, and the files Memory keeps each conversation's index as it started (measured: after a memory write, the next request read its whole prompt from the cache). What remains: a new rolling summary, and the built-in notes Memory, whose index changes with every save |
+
+## No interface choice in the settings screens
+
+| Choice | Decision |
+|---|---|
+| Offered | AI provider and Tools (`common.MODULE_LABELS`). The interface is not a setting for now (the owner, 2026-11-12): `kayden` starts the terminal app, `kayden-desktop` (entry point of `kayden.window:main`) and the app menu the desktop app |
+| Still honoured | A frontend saved under `[modules]` in settings.toml or named in config.toml: the launchers and `restart()` work as before, so `kayden` opens the desktop app where one was chosen earlier |

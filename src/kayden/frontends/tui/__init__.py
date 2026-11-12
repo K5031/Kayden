@@ -637,9 +637,8 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
             yield TextArea(s.system_prompt, id="instructions")
             yield Label("Folder for new chats")
             yield Input(s.work_folder or "", disabled=s.work_folder is None, id="work-folder")
-            for kind in ("tools", "frontend"):
-                yield Label(MODULE_LABELS[kind])
-                yield self._module_select(kind)
+            yield Label(MODULE_LABELS["tools"])
+            yield self._module_select("tools")
             yield Label(AT_RESTART, classes="hint")
             yield Label(restart_notice(s) or "", id="restart-notice", classes="hint")
             with Horizontal(classes="buttons"):
@@ -666,10 +665,6 @@ class SettingsScreen(ModalScreen[tuple[SettingsUpdate, bool] | None]):
         for selector in ("#model", "#maintenance-model"):
             self.query_one(selector, Select).disabled = switching or not self.models
         self.query_one("#model-note").display = switching
-
-    @on(Select.Changed, "#module-frontend")
-    def _frontend_changed(self, event: Select.Changed) -> None:
-        self.query_one("#restart").display = True
 
     @on(Button.Pressed, "#cancel")
     def _cancel(self) -> None:

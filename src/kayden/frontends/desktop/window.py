@@ -840,8 +840,7 @@ def is_long(text: str) -> bool:
     return "\n" in text or len(text) > 160
 
 
-MODULE_HINTS = {"tools": "What Kayden can do on this computer.",
-                "frontend": "How Kayden looks: this window or the terminal."}
+MODULE_HINTS = {"tools": "What Kayden can do on this computer."}
 
 
 def _setting(title: str, description: str, control: QWidget | QHBoxLayout, *,
@@ -2748,8 +2747,6 @@ class SettingsDialog(QDialog):
         self.modules = {kind: self._module_box(kind) for kind in MODULE_LABELS
                         if kind in settings.modules}
         self.modules["core"].currentIndexChanged.connect(self._core_changed)
-        self.modules["frontend"].currentIndexChanged.connect(
-            lambda: self.restart_button.setVisible(True))
         self.api_key = QLineEdit(echoMode=QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText("Leave empty to keep the current key")
         self.model = QComboBox()
@@ -2820,8 +2817,7 @@ class SettingsDialog(QDialog):
                 _setting("Model for memory upkeep", "Summarizes and saves memory; a cheaper "
                          "one is fine.", self.light),
                 self.model_note,
-                *(_setting(MODULE_LABELS[kind], MODULE_HINTS[kind], self.modules[kind])
-                  for kind in ("tools", "frontend")),
+                _setting(MODULE_LABELS["tools"], MODULE_HINTS["tools"], self.modules["tools"]),
                 _label(AT_RESTART, selectable=False, role="small")),
             "Spending": _page(
                 "Spending", _setting("Spending limit (US$)", f"Kayden stops when it reaches it. "

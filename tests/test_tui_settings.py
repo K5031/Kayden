@@ -49,7 +49,7 @@ async def test_settings_screen_shows_the_current_settings():
         await open_settings(pilot, app, stub, how="command")
         assert field(app, "#module-core", Select).value == "claude"
         assert not app.screen.query("#module-memory")  # configured in config.toml only
-        assert field(app, "#module-frontend", Select).value == "tui"
+        assert not app.screen.query("#module-frontend")  # each launcher starts its own
         assert field(app, "#api-key", Input).password
         assert field(app, "#api-key", Input).value == ""
         assert field(app, "#model", Select).value == "m1"
@@ -111,39 +111,19 @@ async def test_switching_provider_leaves_the_model_to_it():
         assert updates(stub) == [SettingsUpdate(modules={"core": "local"})]
 
 
-async def test_choosing_the_desktop_app_and_restarting_now():
-    """The owner's switch: settings, the desktop app as interface, Restart now."""
-    stub = StubRuntime()
-    app = make(stub)
-    async with app.run_test(size=(100, 40)) as pilot:
-        await open_settings(pilot, app, stub)
-        field(app, "#module-frontend", Select).value = "desktop"
-        await pilot.pause()
-        restart = app.screen.query_one("#restart", Button)
-        assert restart.display
-        stub.current_settings = fake_settings(
-            modules=chosen(stub.current_settings, "frontend", "desktop"),
-            restart_needed=True, restart_frontend="desktop")
-        restart.press()
-        await until(pilot, lambda: ("restart",) in stub.calls)
-        assert updates(stub) == [SettingsUpdate(modules={"frontend": "desktop"})]
-        await until(pilot, lambda: not app.is_running)
-
-
 async def test_saving_a_module_change_offers_restart_now():
     stub = StubRuntime()
     app = make(stub)
     async with app.run_test(size=(100, 40)) as pilot:
         await open_settings(pilot, app, stub)
-        field(app, "#module-frontend", Select).value = "desktop"
+        field(app, "#module-core", Select).value = "local"
         stub.current_settings = fake_settings(
-            modules=chosen(stub.current_settings, "frontend", "desktop"),
+            modules=chosen(stub.current_settings, "core", "local"),
             restart_needed=True, restart_frontend="tui")
         await save(pilot, app)
         await until(pilot, lambda: isinstance(app.screen, RestartScreen))
         message = str(app.screen.query_one("#restart-message").render())
-        assert "Desktop app will be used the next time you start Kayden on a computer with a display" \
-            in message
+        assert "Your changes take effect after a restart." in message
         app.screen.query_one("#restart-later", Button).press()
         await until(pilot, lambda: not isinstance(app.screen, RestartScreen))
         assert ("restart",) not in stub.calls
@@ -154,10 +134,10 @@ async def test_saving_without_a_memory_choice_keeps_the_memory():
     app = make(stub)
     async with app.run_test(size=(100, 40)) as pilot:
         await open_settings(pilot, app, stub)
-        field(app, "#module-frontend", Select).value = "desktop"
+        field(app, "#module-core", Select).value = "local"
         await save(pilot, app)
         await until(pilot, lambda: updates(stub))
-        assert updates(stub) == [SettingsUpdate(modules={"frontend": "desktop"})]
+        assert updates(stub) == [SettingsUpdate(modules={"core": "local"})]
 
 
 async def test_a_startup_error_opens_the_settings():

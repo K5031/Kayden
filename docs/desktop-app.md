@@ -20,13 +20,18 @@ published yet. Until then, install Kayden with its `desktop` extra from a checko
 uv tool install --python 3.13 --editable "Kayden[desktop]"
 ```
 
-Then run `kayden` and choose the desktop app as the interface in Settings. From then on,
-`kayden` opens the desktop app, and you can switch back to the terminal app in its
-Settings. To run it without installing, use this in place of `kayden`:
+Then start it:
+
+```bash
+kayden-desktop
+```
+
+`kayden` still starts the terminal app; both show the same conversations. To run the
+desktop app without installing:
 
 ```bash
 cd Kayden
-uv run --python 3.13 --extra desktop kayden
+uv run --python 3.13 --extra desktop kayden-desktop
 ```
 
 On Linux, choose your name at the bottom left → **Add to App Menu** once the app is open. Kayden then appears in
@@ -34,7 +39,7 @@ your app menu with its own icon and starts without a terminal. The menu item is 
 while the app menu has no entry for this install.
 
 The app is tested on Python 3.13. The Qt libraries it uses are not fully compatible with
-Python 3.15 yet. Without the `desktop` extra, the desktop app is not offered in Settings.
+Python 3.15 yet. Without the `desktop` extra, `kayden-desktop` cannot start.
 
 ## First start
 
@@ -114,10 +119,8 @@ in the Settings window does that. **Folder for new chats** applies to the next n
 
 ## Switching to the terminal app
 
-Choose **Terminal (TUI)** as the interface in Settings and save. The app cannot open a
-terminal itself: the terminal app is used the next time you run `kayden` in a terminal.
-From the terminal app, choosing the desktop app and **Restart now** opens this app in the
-same conversation.
+Run `kayden` in a terminal. It opens the same conversations with the same settings; close
+this app first, since one Kayden uses a data folder at a time.
 
 ## Good to know
 

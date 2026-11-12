@@ -17,14 +17,13 @@ changed is saved.
 | Instructions | The system prompt: who the agent is and how it should behave. | At the next step |
 | Folder for new chats | The folder a new conversation works in. Each conversation keeps its own; see [Folders](using-kayden.md#folders). | At the next new chat |
 | Tools | What the agent can do on your computer. | At restart |
-| Interface | The terminal app or the [desktop app](desktop-app.md). | At restart |
 
 Raising or removing the spending limit, or letting the agent do more, asks you to confirm
 first.
 
 ## Changes that apply at restart
 
-The AI provider, its key, Tools, Interface and tool servers (MCP) are saved at once but
+The AI provider, its key, Tools and tool servers (MCP) are saved at once but
 used from the next start of Kayden; until then you keep working as before. The settings
 screen says so and offers **Restart now**: Kayden stops what it is doing, as when you quit,
 and starts again with the new settings in the same conversation.
@@ -32,22 +31,9 @@ and starts again with the new settings in the same conversation.
 After a provider change, the new provider starts with its first model; choose another one
 after the restart.
 
-**Switching between the terminal and the desktop app.** Choose the interface, then
-**Restart now**:
-
-- From the terminal app, choosing the desktop app closes the terminal app and opens the
-  desktop app in the same conversation. Without a screen to show it on (an SSH session, for
-  example), the terminal app says the desktop app will be used the next time you start
-  Kayden on a computer with a display.
-- The desktop app cannot open a terminal. Choosing the terminal app there means it is used
-  the next time you run `kayden` in a terminal; **Restart now** restarts the desktop app for
-  any other change.
-
-With the desktop app chosen, running `kayden` opens the desktop app instead of the terminal
-app, and says so. It opens the terminal app, saying why, only when there is no screen to
-show a window on or the desktop app is not installed. The desktop app, started from the app
-menu, always opens a window, even with the terminal app chosen. Both need to be installed;
-see [Desktop app](desktop-app.md#install).
+**The terminal app or the desktop app** is not a setting: `kayden` starts the terminal
+app, and `kayden-desktop` or Kayden in your app menu starts the
+[desktop app](desktop-app.md). Both show the same conversations and use the same settings.
 
 **A different Memory is a different archive.** Your conversations and long-term memory stay
 where they are, but are not shown while another Memory is used; they come back when you
@@ -62,7 +48,7 @@ the first start looks like: enter your API key, then **Restart now**.
 
 ## Installed modules
 
-The provider, Tools and Interface lists show every module installed with Kayden: its own,
+The provider and Tools lists show every module installed with Kayden: its own,
 and those of any package you install that provides one. A module is a program that runs
 with your permissions, so install only ones you trust; see
 [Development](development.md#writing-a-module).

@@ -25,7 +25,6 @@ from kayden.api import (
     PermissionPolicy,
     Role,
     SettingsUpdate,
-    ShuttingDown,
 )
 from kayden.frontends.desktop import app_menu, theme
 from kayden.frontends.desktop import window as window_module
@@ -230,31 +229,14 @@ async def test_a_startup_error_opens_the_settings(installed, qapp, tmp_path, mon
     assert dialog.restart_button.isVisibleTo(dialog)
 
 
-async def test_settings_offer_no_memory_choice(make, installed, qapp):
+async def test_settings_offer_no_memory_or_interface_choice(make, installed, qapp):
     h = await setup(make)
     await h.start()
     window, controller, _ = await open_window(h)
     dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
-    assert set(dialog.modules) == {"core", "tools", "frontend"}
-    assert "memory" not in dialog.form().modules
-
-
-async def test_choosing_the_tui_says_when_it_is_used(make, installed, qapp):
-    h = await setup(make)
-    await h.start()
-    window, controller, _ = await open_window(h)
-    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
-    dialog.open()
-    frontend = dialog.modules["frontend"]
-    frontend.setCurrentIndex(frontend.findData("tui"))
-    dialog._save()
-    box = await eventually(lambda: next((b for b in window.findChildren(QMessageBox)
-                                         if b.isVisible()), None))
-    assert box.informativeText().startswith("Terminal (TUI) will be used the next time you run "
-                                            "kayden in a terminal.")
-    next(b for b in box.buttons() if b.text() == "Restart now").click()  # restarts the desktop app itself
-    await h.rec.wait_for(lambda r: r.of(ShuttingDown))
-    assert h.runtime.restart_request.frontend == "scripted-window"
+    assert set(dialog.modules) == {"core", "tools"}
+    # Memory is set in config.toml; the interface is each launcher's own.
+    assert not {"memory", "frontend"} & set(dialog.form().modules)
 
 
 async def test_kayden_can_be_added_to_the_app_menu(make, qapp, tmp_path, monkeypatch):

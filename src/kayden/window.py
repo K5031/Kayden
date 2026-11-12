@@ -28,7 +28,7 @@ DEFAULT_WORK_FOLDER = Path("~/Kayden")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="python -m kayden.window", description=__doc__)
+    parser = argparse.ArgumentParser(prog="kayden-desktop", description=__doc__)
     parser.add_argument("--data-dir", type=Path,
                         default=Path(os.environ.get("KAYDEN_DATA_DIR", DEFAULT_DATA_DIR)),
                         help="instance data directory (default: $KAYDEN_DATA_DIR or ~/.kayden)")
