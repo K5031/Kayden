@@ -549,3 +549,13 @@ async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
             "✓ Read the code", "◐ Fix the bug", "○ Run the tests"]
         await h.runtime.stop()  # no longer working: it goes, though a step is open
         await until(pilot, lambda: not app.query(PlanPanel), timeout=10)
+
+
+def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action():
+    """The rule is in the tool's description, which reaches the model whatever system
+    prompt the user has written."""
+    from kayden.api import DUTY_TOOLS
+
+    told = DUTY_TOOLS["update_plan"].description
+    assert "Every task that edits files, runs more than one command or has several steps" in told
+    assert "with your very first tool call" in told

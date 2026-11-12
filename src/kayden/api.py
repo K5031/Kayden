@@ -881,10 +881,12 @@ _PLAN_ITEM = {
 DUTY_TOOLS: Mapping[str, ToolSpec] = {
     "update_plan": ToolSpec(
         "update_plan",
-        "Replace your plan with this whole list; the user sees it as a checklist. For a task "
-        "with several steps, write the plan before you start, then mark each step doing and "
-        "done as you go, in the same call as other work where you can. Skip it for a quick "
-        "answer or a single step. When a new task starts, replace the old plan. Never end "
+        "Replace your plan with this whole list; the user sees it as a checklist. Every task "
+        "that edits files, runs more than one command or has several steps gets a plan: "
+        "write it with your very first tool call, alongside that call, before any other "
+        "work, then mark each step doing and done as you go, in the same call as other "
+        "work. Only a plain answer or a single action needs none. When a new task starts, "
+        "replace the old plan. Never end "
         "your turn with the plan out of date: when the work is finished, every step is "
         "done or dropped. Your last update stays in view. An open step "
         "that falls due wakes you: give a step a due time to do it, or to remind the "
