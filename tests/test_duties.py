@@ -145,6 +145,19 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
 # ── The plan ──
 
 
+def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
+    """An agent tends to stop ticking steps off once the work is done."""
+    from kayden.api import PlanItem, PlanStatus
+    from kayden.runtime import duty as duties
+
+    done = PlanItem("Read the code", PlanStatus.DONE)
+    doing = PlanItem("Fix the bug", PlanStatus.DOING)
+    assert duties.CLOSE_PLAN in duties.prompt(None, [done, doing])
+    assert duties.CLOSE_PLAN not in duties.prompt(None, [done])  # nothing open
+    # A duty's plan stays open between check-ins: its steps fall due later.
+    assert duties.CLOSE_PLAN not in duties.prompt(Duty("Watch the inbox"), [done, doing])
+
+
 async def test_update_plan_saves_the_plan_and_every_request_shows_it(make):
     h = await duty_harness(make, [
         Step(calls=[call("update_plan", {"items": [

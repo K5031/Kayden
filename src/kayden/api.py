@@ -823,8 +823,9 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         "Replace your plan with this whole list; the user sees it as a checklist. For a task "
         "with several steps, write the plan before you start, then mark each step doing and "
         "done as you go, in the same call as other work where you can. Skip it for a quick "
-        "answer or a single step. When a new task starts, replace the old plan; when the "
-        "task ends, every step is done or dropped. Every request shows the plan; with a "
+        "answer or a single step. When a new task starts, replace the old plan. Never end "
+        "your turn with the plan out of date: when the work is finished, every step is "
+        "done or dropped. Every request shows the plan; with a "
         "duty, an open item that falls due wakes you.",
         {"type": "object",
          "properties": {"items": {"type": "array", "items": _PLAN_ITEM}},

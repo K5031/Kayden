@@ -15,6 +15,11 @@ DUE = "a plan item is due"
 CHECK_IN = "scheduled check-in"
 FINISHED = "background work finished"
 OPEN = (PlanStatus.TODO, PlanStatus.DOING)
+CLOSE_PLAN = (
+    "Steps are still open. Before you end your turn, bring the plan up to date with "
+    "update_plan: mark what you finished done and what you gave up dropped, and finish "
+    "what you can. Leave a step open only when it waits for the user or for background "
+    "work.")
 
 
 def local(t: float) -> str:
@@ -51,7 +56,10 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
     if plan:
         lines = [f"- [{i.status}] {i.text}" + (f" (due {local(i.due)})" if i.due else "")
                  + (f" — {i.note}" if i.note else "") for i in plan]
-        parts.append("## Plan\n" + "\n".join(lines))
+        section = "## Plan\n" + "\n".join(lines)
+        if duty is None and any(i.status in OPEN for i in plan):
+            section += f"\n\n{CLOSE_PLAN}"
+        parts.append(section)
     elif duty is not None:
         parts.append("## Plan\n(empty: write one with update_plan)")
     return "\n\n".join(parts)

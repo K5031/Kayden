@@ -824,6 +824,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Shown | While a step is todo or doing (`common.checklist`): desktop `PlanCard` in the conversation under the newest message, scrolling with it, a rounded card as in Claude's app: a filled tick for done (dimmed), a turning arc for the step under way (`Spinner`), a dashed circle for the rest, dropped steps struck through; terminal `PlanPanel` at the top of the prompts. Gone once every step is done or dropped |
 | Steps | `update_plan` and `wrap_up` calls are not shown as steps (`common.CARD_TOOLS`): the checklist and the card show them |
 | Caching | The plan is in the system prompt, as with duties and the Memory summary, so a plan change starts a new prompt prefix |
+| Closing it | While a conversation without a duty has open steps, the plan section ends with `duty.CLOSE_PLAN`: bring the plan up to date before ending the turn, leaving a step open only when it waits for the user or background work. A duty's plan stays open between check-ins, so it gets no such line |
 
 ## Streaming thinking (Anthropic)
 
