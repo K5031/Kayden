@@ -1171,8 +1171,9 @@ def _render_transcript(messages: Sequence[Message]) -> str:
                 case ToolCall(_, name, arguments, raw):
                     shown = _shortened(raw or str(arguments))
                     lines.append(f"[{stamp} {message.role} calls {name}] {shown}")
-                case ToolResult(_, status, content):
-                    lines.append(f"[{stamp} tool result, {status}] {_shortened(content)}")
+                case ToolResult(_, status, content, attached):
+                    shown = "\n".join([content, *map(attachment_text, attached)])
+                    lines.append(f"[{stamp} tool result, {status}] {_shortened(shown)}")
                 case OperationResult(call_id, status, content):
                     lines.append(f"[{stamp} background operation {call_id}, {status}] "
                                  f"{_shortened(content)}")

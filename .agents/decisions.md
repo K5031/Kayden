@@ -894,6 +894,9 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Who reads | The first Tools module, in the order they are offered, whose `attach` does not raise NotImplementedError; any other error it raises refuses the message as a ValueError; with none, `File(path)` |
 | Message | `Text(text)` first, also when empty, then the attachments in the order given |
 | Office files as text | Word: paragraphs in order, `#` per heading level, `- ` and `1. ` for list styles, a table as `\| a \| b \|` rows. Excel: `## Sheet: name`, then a row per non-empty row, values as last saved, trailing empty cells dropped. PowerPoint: `## Slide n`, the text of its shapes and tables, `[Notes] …`. A file whose text is over 200 kB is attached by path; `read_file` pages through it by lines |
-| `read_file` on a PDF | `[PDF, N pages]`, then `[Page n]` and its text for every page or the `pages` range ("3", "2-5"), up to 100 000 characters, with a note to read on; a note when no text could be read |
+| `read_file` on a PDF | Content `[PDF, N pages]`, with `; pages a-b attached` for a part and `; use pages "c-d" to read on` when more than 20 were asked for; the pages as a `Document` built with pypdf (a PDF of just those pages), its text each page under `[Page n]`, up to 100 000 characters. Over 20 MB: the text in the content, no document |
+| `read_file` on a picture | Content `[Image path]` and the `Image`; over 5 MB an error |
+| Stored | A `ToolResult`'s attachments are encoded as blocks inside it (`codec._encode_value`); search leaves their data out as for top-level blocks |
+| Shown | Both apps add `[image: name]` / `[file: name]` lines to a step's result (`common.result_text`) |
 | As text | `[File attached: path (PDF, N pages)]` and its text, or that none could be read; `[Image attached: name]`; `[File attached: path]` and the content; or that the content is not included (`api.attachment_text`) |
 | Desktop | Dropped files and pasted file lists are attached, not typed in as paths (`MessageBox.insertFromMimeData`); a pasted picture is saved as `pasted-N.png` in a temporary folder removed when the window closes; the same path is not attached twice |

@@ -101,6 +101,7 @@ from kayden.frontends.common import (
     past_tense,
     plan_steps,
     provider_step,
+    result_text,
 )
 from kayden.frontends.sessions import SubSessions
 
@@ -834,7 +835,7 @@ class ConversationModel:
         else:
             item.phase = Phase.DONE
             item.status = result.status
-            item.content = result.content
+            item.content = result_text(result)
             item.duration_s = duration if duration is not None else item.duration_s
         if item in self._stream:
             self._stream.remove(item)

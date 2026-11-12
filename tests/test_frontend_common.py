@@ -197,6 +197,16 @@ def test_a_text_only_frontend_names_what_was_attached():
     assert with_attachments("plain", []) == "plain"
 
 
+def test_a_tool_result_names_what_it_returned_to_look_at():
+    from kayden.api import Document, Image, ToolResult, ToolStatus
+    from kayden.frontends.common import result_text
+
+    result = ToolResult("c", ToolStatus.OK, "[PDF, 3 pages]", (
+        Document("/w/report.pdf", "JV", "Sales", 3), Image("image/png", "AAAA", "chart.png")))
+    assert result_text(result) == "[PDF, 3 pages]\n[file: report.pdf]\n[image: chart.png]"
+    assert result_text(ToolResult("c", ToolStatus.OK, "done")) == "done"
+
+
 def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
     import time
 

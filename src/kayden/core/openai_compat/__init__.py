@@ -337,9 +337,22 @@ def to_messages(system: str, messages: Sequence[Message], *,
     for message in messages:
         texts = [text for b in message.blocks if (text := _text(b))]
         calls = [b for b in message.blocks if isinstance(b, ToolCall)]
+        returned: list[Image] = []  # pictures of tool results: a tool message is text only
         for result in (b for b in message.blocks if isinstance(b, ToolResult)):
+            parts = [result_text(result, mark_errors=True)]
+            for attached in result.attachments:
+                if isinstance(attached, Image) and images:
+                    returned.append(attached)
+                else:
+                    parts.append(attachment_text(attached))
             out.append({"role": "tool", "tool_call_id": result.call_id,
-                        "content": result_text(result, mark_errors=True)})
+                        "content": "\n\n".join(parts)})
+        if returned:
+            out.append({"role": "user", "content": [
+                {"type": "text", "text": "[What the tool returned with its result]"},
+                *({"type": "image_url",
+                   "image_url": {"url": f"data:{b.media_type};base64,{b.data}"}}
+                  for b in returned)]})
         if message.role is Role.ASSISTANT:
             if not texts and not calls:
                 continue

@@ -147,7 +147,7 @@ class Operation:
         if not isinstance(output, ToolOutput):
             return ToolResult(cid, ToolStatus.ERROR, f"Tool returned {type(output).__name__}")
         return ToolResult(cid, ToolStatus.ERROR if output.is_error else ToolStatus.OK,
-                          output.content)
+                          output.content, tuple(output.attachments))
 
     def _late_completion(self, task: asyncio.Task[ToolOutput]) -> None:
         self._on_late(self, self._outcome(task, None))

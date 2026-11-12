@@ -19,6 +19,11 @@ from kayden.api import (
     MessageQueued,
     Role,
     Text,
+    ToolCall,
+    ToolOutput,
+    ToolResult,
+    ToolSpec,
+    ToolStatus,
     attachment_text,
 )
 from kayden.core.openai_compat import to_messages as openai_messages
@@ -26,9 +31,10 @@ from kayden.memory.sqlite import SqliteMemory
 from kayden.runtime.budget import estimate_tokens
 from kayden.tools.shell_files import ShellFilesTools, attachments
 from tests.conformance.core_suite import collect
+from tests.conformance.tools_suite import RecordingContext
 from tests.conftest import eventually
 from tests.core.test_anthropic import MODEL, AnthropicDriver
-from tests.fakes.core import ScriptedCore, Step
+from tests.fakes.core import ScriptedCore, Step, call
 from tests.pdf import make_pdf
 
 # A 1x1 transparent PNG.
@@ -255,3 +261,104 @@ async def test_memory_keeps_attachments_and_searches_a_files_text_not_image_data
     assert await memory.search("March", conversation_ids=[conversation.id])
     assert not await memory.search("SlZCRVJpMA", conversation_ids=[conversation.id])
     await memory.aclose()
+
+
+# ── From a tool ──────────────────────────────────────────────────────────
+
+
+def _exchange(*attached: object) -> list[Message]:
+    call = ToolCall("c1", "read_file", {"path": "shot.png"})
+    return [_message(Text("look at it")),
+            Message("a", Role.ASSISTANT, (call,), time.time()),
+            Message("t", Role.TOOL, (ToolResult("c1", ToolStatus.OK, "Read shot.png.",
+                                                tuple(attached)),), time.time())]
+
+
+async def test_a_tools_result_carries_what_it_attached(make, files):
+    """A tool returns a picture or a PDF with its text, and the model gets it."""
+    image = attachments.read(Path(files["png"]))
+    h = await make(core=ScriptedCore([
+        Step(calls=[call("look", {"q": 1}, id="c1")]), Step(text="A dot.")]))
+    async def look(_call: ToolCall, _ctx: object) -> ToolOutput:
+        return ToolOutput("Here it is.", attachments=(image,))
+
+    h.tools.add(ToolSpec("look", "look tool", {"type": "object"}, read_only=True), look)
+    await h.start()
+    await h.turn("look at it")
+    result = (await h.results())["c1"]
+    assert result.content == "Here it is." and result.attachments == (image,)
+    sent = h.core.requests[1].messages[-1].blocks[0]
+    assert sent.attachments == (image,)
+
+
+async def test_claude_gets_a_tool_results_picture_and_pdf_inside_the_result():
+    anthropic = AnthropicDriver()
+    anthropic.queue_text()
+    await collect(anthropic.core, InferenceRequest(MODEL, "", _exchange(
+        Image("image/png", "AAAA", "shot.png"),
+        Document("/w/report.pdf", "JVBERi0=", "Sales rose", 1)), [], max_output_tokens=256))
+    await anthropic.core.aclose()
+    result = anthropic.stub.bodies[-1]["messages"][-1]["content"][0]
+    assert result["type"] == "tool_result" and result["content"] == [
+        {"type": "text", "text": "Read shot.png."},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                     "data": "AAAA"}},
+        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                        "data": "JVBERi0="}}]
+
+
+def test_openai_style_providers_get_a_tool_results_picture_after_it_and_a_pdfs_text_in_it():
+    image, pdf = Image("image/png", "AAAA", "shot.png"), Document("/w/r.pdf", "JV", "Sales", 1)
+    seen = openai_messages("", _exchange(image, pdf))
+    assert seen[-2] == {"role": "tool", "tool_call_id": "c1",
+                        "content": "Read shot.png.\n\n[File attached: /w/r.pdf (PDF, 1 page)]"
+                                   "\nSales"}
+    assert seen[-1] == {"role": "user", "content": [
+        {"type": "text", "text": "[What the tool returned with its result]"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]}
+    blind = openai_messages("", _exchange(image), images=False)
+    assert blind[-1] == {"role": "tool", "tool_call_id": "c1",
+                         "content": "Read shot.png.\n\n[Image attached: shot.png]"}
+
+
+async def test_memory_keeps_a_tool_results_attachments_out_of_search(tmp_path):
+    memory = SqliteMemory(tmp_path / "m.db")
+    conversation = await memory.create_conversation()
+    exchange = _exchange(Image("image/png", "QUJDREVGR0g", "shot.png"),
+                         Document("/w/report.pdf", "SlZCRVJpMA", "Sales rose in March", 1))
+    await memory.append(conversation.id, exchange)
+    stored = (await memory.history(conversation.id))[-1].blocks[0]
+    assert stored == exchange[-1].blocks[0] and isinstance(stored.attachments, tuple)
+    assert await memory.search("March", conversation_ids=[conversation.id])
+    for data in ("QUJDREVGR0g", "SlZCRVJpMA"):
+        assert not await memory.search(data, conversation_ids=[conversation.id])
+    await memory.aclose()
+
+
+async def test_the_file_tool_shows_a_picture_and_a_pdfs_pages(files, tmp_path: Path):
+    from tests.pdf import make_pdf
+
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    (workspace / "shot.png").write_bytes(PNG)
+    raw = make_pdf(["Sales rose in March", "Costs fell in April", "Outlook for May"])
+    (workspace / "report.pdf").write_bytes(raw)
+    tools = ShellFilesTools(workspace)
+
+    async def read(**arguments: object) -> ToolOutput:
+        return await tools.execute(ToolCall("c", "read_file", arguments),
+                                   RecordingContext("c"))
+
+    picture = await read(path="shot.png")
+    assert picture.attachments == (Image("image/png", base64.b64encode(PNG).decode(),
+                                         "shot.png"),)
+    assert "shot.png" in picture.content
+    whole = await read(path="report.pdf")
+    [document] = whole.attachments
+    assert document.pages == 3 and "Costs fell in April" in document.text
+    assert whole.content == "[PDF, 3 pages]"  # the pages themselves go with it
+    part = await read(path="report.pdf", pages="2-3")
+    [some] = part.attachments
+    assert some.pages == 2 and "Sales rose" not in some.text and "Outlook for May" in some.text
+    assert part.content == "[PDF, 3 pages; pages 2-3 attached]"
+    assert some.data != document.data  # only those pages

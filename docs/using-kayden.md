@@ -52,9 +52,15 @@ Attachments are kept with the conversation and shown again when you reopen it. A
 or a PDF adds to what every later message of that conversation costs; a PDF is charged
 by the page.
 
-The agent can also read these by itself when it comes across them: its file tool returns
-the text of a PDF's pages, all of them or a range, and of a Word, Excel or PowerPoint
-file, with any provider. The terminal app shows what
+The agent can also open these by itself when it comes across them, with its file tool:
+
+- **A picture** is shown to the model, so it can look at a screenshot or a diagram in your
+  project.
+- **A PDF** is shown as its pages, up to 20 at a time, with their text. Claude sees the
+  pages; other providers get the text.
+- **A Word, Excel or PowerPoint file** is read as its text.
+
+In the list of steps, such a result names what it returned (`[image: chart.png]`). The terminal app shows what
 was attached but cannot attach.
 
 ## Approving actions

@@ -569,10 +569,14 @@ def _to_content(block: Block, model: str, bound: str | None, search: bool) -> li
         case ToolCall(id=id, name=name, arguments=arguments):
             return [{"type": "tool_use", "id": _INVALID_ID_CHARS.sub("_", id), "name": name,
                      "input": arguments}]
-        case ToolResult(call_id=call_id, status=status):
+        case ToolResult(call_id=call_id, status=status, attachments=attached):
+            content: str | list[JSON] = result_text(block)
+            if attached:  # what the tool returned to look at, inside its result
+                content = [{"type": "text", "text": content},
+                           *(c for a in attached for c in _to_content(a, model, bound, search))]
             return [{"type": "tool_result",
                      "tool_use_id": _INVALID_ID_CHARS.sub("_", call_id),
-                     "content": result_text(block), "is_error": status in ERROR_STATUSES}]
+                     "content": content, "is_error": status in ERROR_STATUSES}]
         case OperationResult():
             return [{"type": "text", "text": operation_text(block)}]
         case Image(media_type=media_type, data=data):

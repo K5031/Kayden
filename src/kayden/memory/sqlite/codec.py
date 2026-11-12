@@ -1,7 +1,8 @@
 """Type-tagged JSON encoding of message blocks.
 
 A block is stored as {"type": tag, "data": {field: value}} with the stable tags of
-`api.BLOCK_TYPES`. A tag this version does not know (or data its class cannot take)
+`api.BLOCK_TYPES`. A field that holds blocks itself (a tool result's attachments) stores
+each the same way. A tag this version does not know (or data its class cannot take)
 decodes to an `OpaqueBlock`, which re-encodes to exactly what was stored.
 """
 
@@ -40,8 +41,23 @@ def encode_block(block: Block) -> dict[str, Any]:
     tag = _TAGS.get(type(block))
     if tag is None:
         raise TypeError(f"{type(block).__name__} has no tag in BLOCK_TYPES")
-    return {"type": tag, "data": {f.name: getattr(block, f.name)
+    return {"type": tag, "data": {f.name: _encode_value(getattr(block, f.name))
                                   for f in dataclasses.fields(block)}}
+
+
+def _encode_value(value: Any) -> Any:
+    if isinstance(value, (list, tuple)) and value and all(type(v) in _TAGS for v in value):
+        return [encode_block(v) for v in value]
+    return list(value) if isinstance(value, tuple) else value
+
+
+def _holds_blocks(hint: Any) -> bool:
+    """Whether a field's type is a sequence of blocks."""
+    origin, args = typing.get_origin(hint), typing.get_args(hint)
+    if not (isinstance(origin, type) and issubclass(origin, Sequence) and len(args) == 1):
+        return False
+    members = typing.get_args(args[0]) or (args[0],)
+    return all(m in _TAGS for m in members)
 
 
 def decode_block(item: dict[str, Any]) -> Block:
@@ -54,8 +70,11 @@ def decode_block(item: dict[str, Any]) -> Block:
         kwargs = {}
         for name, value in data.items():
             hint = hints[name]
-            kwargs[name] = hint(value) if isinstance(hint, type) and issubclass(hint, Enum) \
-                else value
+            if isinstance(hint, type) and issubclass(hint, Enum):
+                value = hint(value)
+            elif _holds_blocks(hint):
+                value = tuple(decode_block(v) for v in value)
+            kwargs[name] = value
         return cls(**kwargs)
     except (KeyError, TypeError, ValueError):
         return OpaqueBlock(tag, data)  # e.g. a field added by a later version
@@ -63,14 +82,7 @@ def decode_block(item: dict[str, Any]) -> Block:
 
 def searchable_text(raw: str) -> str:
     """The string values of the encoded blocks, minus ids and opaque provider state."""
-    parts: list[str] = []
-    for item in json.loads(raw):
-        skip = _SKIP_IN_SEARCH.get(item["type"], ())
-        data = item["data"]
-        if isinstance(data, dict):
-            data = {k: v for k, v in data.items() if k not in skip}
-        parts.extend(_strings(data))
-    return "\n".join(parts)
+    return "\n".join(part for item in json.loads(raw) for part in _strings(item))
 
 
 def _strings(value: Any) -> Iterator[str]:
@@ -80,5 +92,11 @@ def _strings(value: Any) -> Iterator[str]:
         for v in value:
             yield from _strings(v)
     elif isinstance(value, dict):
-        for v in value.values():
+        if value.keys() == {"type", "data"} and isinstance(value["data"], dict) \
+                and value["type"] in _SKIP_IN_SEARCH:  # a block: without what it skips
+            skip = _SKIP_IN_SEARCH[value["type"]]
+            value = {k: v for k, v in value["data"].items() if k not in skip}
+        elif value.keys() == {"type", "data"} and value["type"] in BLOCK_TYPES:
+            value = value["data"]
+        for v in value.values() if isinstance(value, dict) else ():
             yield from _strings(v)

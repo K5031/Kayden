@@ -147,6 +147,7 @@ from kayden.frontends.common import (
     raises_limit,
     request_note,
     restart_notice,
+    result_text,
     with_attachments,
 )
 from kayden.frontends.remote import RemoteRuntime
@@ -371,7 +372,7 @@ class ToolEntry(Static):
             if self.duration is not None:
                 head += f" ({self.duration:.1f}s)"
             out.append(head, style=style)
-            lines = self.result.content.splitlines()
+            lines = result_text(self.result).splitlines()
             body = "\n".join(lines[:MAX_RESULT_LINES])
             if len(lines) > MAX_RESULT_LINES:
                 body += f"\n… {len(lines) - MAX_RESULT_LINES} more lines"

@@ -27,6 +27,7 @@ from kayden.api import (
     McpServer,
     ModelInfo,
     ModuleChoice,
+    OperationResult,
     PermissionPolicy,
     PermissionRequest,
     PlanItem,
@@ -446,6 +447,12 @@ def with_attachments(text: str, blocks: Iterable[object]) -> str:
         elif isinstance(block, (File, Document)):
             lines.append(f"[file: {Path(block.path).name}]")
     return "\n".join(lines)
+
+
+def result_text(result: ToolResult | OperationResult) -> str:
+    """A tool's result as text: what it said, then a line for each picture or PDF it
+    returned with it."""
+    return with_attachments(result.content, getattr(result, "attachments", ()))
 
 
 def plan_steps(arguments: Any) -> tuple[PlanItem, ...]:

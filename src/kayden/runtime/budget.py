@@ -50,7 +50,9 @@ def _block_text(block: object) -> str:
             return t
         case ToolCall(name=n, arguments=a, raw_arguments=raw):
             return n + (raw if raw is not None else json.dumps(a))
-        case ToolResult(content=c) | OperationResult(content=c):
+        case ToolResult(content=c, attachments=attached):
+            return c + "".join(_block_text(a) for a in attached)
+        case OperationResult(content=c):
             return c
         case ServerToolUse(summary=s, content=c, state=state):
             return s + c + json.dumps(state)  # the provider's results are read as input

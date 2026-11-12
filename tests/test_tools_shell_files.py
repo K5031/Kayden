@@ -96,22 +96,50 @@ async def test_shell_does_not_hang_on_background_child(tools, tmp_path):
 
 
 async def test_read_file_reads_a_pdf_by_its_pages(tools, workspace, tmp_path):
+    """The pages go with the result as a document of their own, with their text for a
+    model that does not read PDFs."""
     from tests.pdf import make_pdf
 
     (workspace / "report.pdf").write_bytes(make_pdf(
         ["Sales rose in March", "Costs fell in April", "Outlook for May"]))
     whole = await run(tools, tmp_path, "read_file", path="report.pdf")
-    assert whole.content.startswith("[PDF, 3 pages]\n[Page 1]\nSales rose in March")
-    assert "[Page 3]\nOutlook for May" in whole.content
+    [document] = whole.attachments
+    assert whole.content == "[PDF, 3 pages]" and document.pages == 3
+    assert document.text.startswith("[Page 1]\nSales rose in March")
+    assert "[Page 3]\nOutlook for May" in document.text
     some = await run(tools, tmp_path, "read_file", path="report.pdf", pages="2-3")
-    assert "[Page 1]" not in some.content and "[Page 2]\nCosts fell in April" in some.content
+    assert "[Page 1]" not in some.attachments[0].text
+    assert "[Page 2]\nCosts fell in April" in some.attachments[0].text
     one = await run(tools, tmp_path, "read_file", path="report.pdf", pages="3")
-    assert one.content == "[PDF, 3 pages]\n[Page 3]\nOutlook for May"
+    assert one.content == "[PDF, 3 pages; pages 3-3 attached]"
+    assert one.attachments[0].text == "[Page 3]\nOutlook for May"
     for wrong in ("0", "4", "3-2", "two"):
         out = await run(tools, tmp_path, "read_file", path="report.pdf", pages=wrong)
         assert out.is_error and "pages" in out.content
     (workspace / "broken.pdf").write_bytes(b"%PDF-1.4 not really")
     assert (await run(tools, tmp_path, "read_file", path="broken.pdf")).is_error
+
+
+async def test_read_file_reads_a_long_pdf_some_pages_at_a_time(tools, workspace, tmp_path):
+    from tests.pdf import make_pdf
+
+    (workspace / "long.pdf").write_bytes(make_pdf([f"Page text {n}" for n in range(1, 46)]))
+    first = await run(tools, tmp_path, "read_file", path="long.pdf")
+    assert first.attachments[0].pages == 20
+    assert first.content == '[PDF, 45 pages; pages 1-20 attached; use pages "21-40" to read on]'
+    last = await run(tools, tmp_path, "read_file", path="long.pdf", pages="41-45")
+    assert last.content == "[PDF, 45 pages; pages 41-45 attached]"
+
+
+async def test_read_file_shows_a_picture(tools, workspace, tmp_path):
+    from tests.test_attachments import PNG
+
+    (workspace / "shot.png").write_bytes(PNG)
+    out = await run(tools, tmp_path, "read_file", path="shot.png")
+    assert out.content == "[Image shot.png]" and out.attachments[0].media_type == "image/png"
+    (workspace / "huge.png").write_bytes(b"\x89PNG" + b"\x00" * 5 * 1024 * 1024)
+    huge = await run(tools, tmp_path, "read_file", path="huge.png")
+    assert huge.is_error and "too large" in huge.content
 
 
 async def test_read_file_offset_and_limit(tools, workspace, tmp_path):

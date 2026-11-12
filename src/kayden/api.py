@@ -143,6 +143,9 @@ class ToolResult:
     call_id: CallId
     status: ToolStatus
     content: str
+    # Pictures and PDFs the tool returned with it (ToolOutput.attachments). A Core sends
+    # them inside the result where the provider takes that, else after it or as text.
+    attachments: Sequence[Image | Document] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -959,6 +962,8 @@ class ToolContext(Protocol):
 class ToolOutput:
     content: str
     is_error: bool = False
+    # Pictures and PDFs for the model to look at, with the text: what a file tool read.
+    attachments: Sequence[Image | Document] = ()
 
 
 class Tools(abc.ABC):

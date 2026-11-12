@@ -108,6 +108,7 @@ from kayden.api import (
     Usage,
     UsageReport,
     UsageUpdated,
+    attachment_text,
 )
 from kayden.runtime import duty as duties
 from kayden.runtime import skills as skill_files
@@ -1944,7 +1945,9 @@ class Runtime:
                 self._stop_abandoned.append(op.call.id)
         if op.backgrounded:
             self._pending_results.append((
-                OperationResult(result.call_id, result.status, result.content),
+                # Arrives in a user message, as text: what it attached is named there.
+                OperationResult(result.call_id, result.status, "\n\n".join(
+                    [result.content, *map(attachment_text, result.attachments)])),
                 ToolFinished(result, op.duration),
             ))
             if not self._cycle_active and not self._stopping:

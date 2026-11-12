@@ -39,10 +39,20 @@ apps (2026-11-12), with a small preview above the message box for images.
   `attachment_text`, shortened like tool output.
 - **The context budget** counts an image as about 1500 tokens (`budget._IMAGE_TOKENS`),
   and a PDF as its text plus that much per page.
-- **The file tool** reads a PDF too (`read_file` on a `.pdf`, with an optional `pages`
-  range): the text of its pages, as a tool result, with any provider. This is how the
-  agent reads a PDF it finds by itself. It reads Word, Excel and PowerPoint files the same
-  way, converted to text and then by lines like any text file.
+- **A tool can return pictures and PDFs** with its text: `ToolOutput.attachments`, kept on
+  the `ToolResult` block (`Image` and `Document`). Anthropic takes them inside the tool
+  result. For the OpenAI-compatible Core a tool message is text, so a PDF goes as its
+  text there and a picture in a user message right after the tool results (or as a line
+  of text for a profile without vision). A result that arrives late, from a backgrounded
+  call, is a text block in a user message and only names them.
+- **The file tool** uses that (`read_file`): a picture is shown to the model; a PDF goes
+  as a document of the pages asked for, at most 20 per call, with their text under
+  `[Page n]` marks; Word, Excel and PowerPoint files are converted to text and read by
+  lines like any text file. This is how the agent looks at what it finds by itself, and
+  it is an ordinary tool call, under the usual permissions.
+- **Two ways in, on purpose,** as in Claude's apps: what the user drops goes straight into
+  their message (`Tools.attach`: no model step, no permission prompt), and what the agent
+  opens comes back as a tool result.
 - **`shell_files/office.py`** converts those three with python-docx, openpyxl and
   python-pptx, for both the attachment and the file tool.
 - **The desktop app** takes files dropped anywhere on the window or pasted into the
@@ -72,9 +82,13 @@ apps (2026-11-12), with a small preview above the message box for images.
 - **A PDF as its extracted text only.** Works with every provider and needs no block of
   its own, but loses what Claude reads from the pages themselves: tables, charts, scans.
   The text is kept in the block as the fallback.
-- **A file tool that returns the PDF's pages to the model as a document.** What Claude
-  Code's own Read does, and it lets the agent choose pages; but a tool result here is
-  text, so it would change the Tools contract. The tool returns text for now.
+- **One way in: a dropped file as a path the model opens with `read_file`.** The runtime
+  would treat attachments like any tool call, with no `Tools.attach`. But every attachment
+  would cost a model step, a file outside the work folder would ask for permission
+  (unless attached paths were pre-approved, which is special treatment again), and the
+  model might not open it.
+- **Tool results that stay text.** No contract change, but the agent could not look at a
+  picture in a project or a scanned PDF it found.
 - **Office files through a skill**, the agent running a converter in its shell. No code
   and no dependencies, but it needs the converter installed and the sandbox to see the
   file, and a dropped file would still arrive as a bare path. The owner asked for them to
@@ -98,6 +112,10 @@ apps (2026-11-12), with a small preview above the message box for images.
   file a bare path.
 - A file that is attached by path only is read by the agent's tools under the usual
   permissions, so one outside the work folder still asks.
+- Checked with Opus 5.5: asked to open a picture and a PDF with its file tool, it described
+  the picture and quoted page 2 of the PDF, for about 8 cents.
+- A PDF read by the tool costs what its pages cost as images, not only its text; `pages`
+  and the 20-page limit are how the agent keeps that down.
 - A PDF is stored twice over in the archive: its bytes and its text.
 - pypdf, python-docx, openpyxl and python-pptx are dependencies.
 - An Office file reaches the model as text only: its formatting, pictures and charts do
