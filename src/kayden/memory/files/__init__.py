@@ -65,9 +65,15 @@ class FilesMemory(SqliteArchive):
         self._loaded: dict[ConversationId, tuple[str, list[str]]] = {}
         # What each conversation has read of its folder: path -> text (tool.run_command).
         self._seen: dict[ConversationId, dict[str, str]] = {}
+        self._keys: dict[str | None, str] = {}  # work folder -> its project's folder name
 
-    def _folder(self, folder: str | None) -> MemoryFolder:
-        return MemoryFolder(self._projects / project_key(folder) / "memory")
+    async def _folder(self, folder: str | None) -> MemoryFolder:
+        """The memory folder of a work folder's project (folder.project_key), found once:
+        finding the repository it belongs to reads the disk."""
+        key = self._keys.get(folder)
+        if key is None:
+            key = self._keys[folder] = await asyncio.to_thread(project_key, folder)
+        return MemoryFolder(self._projects / key / "memory")
 
     async def _long_term(self, info: ConversationInfo, summary: str) -> LongTerm:
         """The index as it was when the conversation started here, as Claude Code loads
@@ -77,7 +83,7 @@ class FilesMemory(SqliteArchive):
         the request's start changes then anyway."""
         loaded = self._loaded.get(info.id)
         if loaded is None or loaded[0] != summary:
-            index = await asyncio.to_thread(self._folder(info.folder).index)
+            index = await asyncio.to_thread((await self._folder(info.folder)).index)
             loaded = (summary, loaded_index(index))
             self._loaded[info.id] = loaded
         return LongTerm(RULES, loaded[1], _render)
@@ -96,7 +102,7 @@ class FilesMemory(SqliteArchive):
         if call.name != MEMORY.name:
             return await super().execute(call, ctx)
         info = await self._conversation(ctx.conversation_id)
-        folder = self._folder(info.folder)
+        folder = await self._folder(info.folder)
         seen = self._seen.setdefault(info.id, {})
 
         def run() -> str:
@@ -116,7 +122,7 @@ class FilesMemory(SqliteArchive):
     # ── The user's side: each file a note ─────────────────────────────────
 
     async def notes(self, *, folder: str | None = None) -> Sequence[MemoryNote]:
-        files = await asyncio.to_thread(self._folder(folder).files)
+        files = await asyncio.to_thread((await self._folder(folder)).files)
         return [_note(f) for f in files]
 
     async def save_note(self, title: str, description: str, text: str, *,
@@ -129,7 +135,7 @@ class FilesMemory(SqliteArchive):
         path = title.strip()
         if path and not PurePosixPath(path).suffix:
             path += ".md"
-        files = self._folder(folder)
+        files = await self._folder(folder)
 
         def write() -> MemoryFile:
             if note_id is not None:
@@ -155,7 +161,7 @@ class FilesMemory(SqliteArchive):
         return _note(await asyncio.to_thread(write))
 
     async def delete_note(self, note_id: str, *, folder: str | None = None) -> None:
-        await asyncio.to_thread(self._folder(folder).delete, note_id)
+        await asyncio.to_thread((await self._folder(folder)).delete, note_id)
 
 
 def _render(rules: str, index: Sequence[str]) -> str:

@@ -104,8 +104,11 @@ async def test_a_note_is_a_file_with_claude_codes_frontmatter(tmp_path: Path):
     note = await memory.save_note("user-tea", "Drinks tea", "Only green tea.")
     assert note.id == note.title == "user-tea.md"
     file = tmp_path / "p" / "default" / "memory" / "user-tea.md"
-    assert file.read_text() == ("---\nname: user-tea\ndescription: Drinks tea\nmetadata:\n"
-                                "  type: user\n---\n\nOnly green tea.\n")
+    written = file.read_text().splitlines()
+    assert written[:5] == ["---", "name: user-tea", "description: Drinks tea", "metadata:",
+                           "  type: user"]
+    assert written[5].startswith("  modified: 20") and written[6:] == ["---", "",
+                                                                      "Only green tea."]
     edited = await memory.save_note("user-tea.md", "", "Matcha too.", note_id=note.id)
     assert edited.description == "Drinks tea" and edited.text == "Matcha too.\n"
     await memory.aclose()
@@ -241,6 +244,72 @@ async def test_an_index_past_what_is_loaded_is_saved_and_reported(tmp_path: Path
     assert wide.is_error and "kB" in wide.content  # few lines, but too many bytes
     # A memory file has no limit of its own.
     assert not (await run(command="create", path="essay.md", file_text="x" * 50_000)).is_error
+    await memory.aclose()
+
+
+def test_a_git_repository_has_one_memory_for_all_its_folders_and_worktrees(tmp_path: Path):
+    """As in Claude Code: the project is the repository, the main one for a worktree; a
+    folder outside any repository is its own project."""
+    import subprocess
+
+    from kayden.memory.files.folder import project_key
+
+    def git(*args: str, cwd: Path) -> None:
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd,
+                       check=True, capture_output=True)
+
+    repo = tmp_path / "repo"
+    (repo / "src" / "deep").mkdir(parents=True)
+    git("init", "-q", cwd=repo)
+    (repo / "a.txt").write_text("a")
+    git("add", ".", cwd=repo)
+    git("commit", "-qm", "first", cwd=repo)
+    tree = tmp_path / "tree"
+    git("worktree", "add", "-q", str(tree), "-b", "side", cwd=repo)
+    key = str(repo.resolve()).replace("/", "-")
+    assert project_key(str(repo)) == key
+    assert project_key(str(repo / "src" / "deep")) == key  # a folder inside it
+    assert project_key(str(tree)) == key  # a worktree of it
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert project_key(str(plain)) == str(plain.resolve()).replace("/", "-")
+    assert project_key(None) == "default"
+
+
+def test_a_memory_file_records_when_it_was_written():
+    from datetime import UTC, datetime
+
+    from kayden.memory.files.folder import stamped
+
+    now = datetime(2026, 11, 12, 10, 20, 30, 123000, tzinfo=UTC)
+    typed = "---\nname: tea\ndescription: Tea\nmetadata:\n  type: user\n---\n\nGreen tea.\n"
+    once = stamped(typed, now)
+    assert once == ("---\nname: tea\ndescription: Tea\nmetadata:\n  type: user\n"
+                    "  modified: 2026-11-12T10:20:30.123Z\n---\n\nGreen tea.\n")
+    later = stamped(once, datetime(2026, 11, 13, tzinfo=UTC))  # replaced, not added again
+    assert later.count("modified:") == 1 and "2026-11-13T00:00:00.000Z" in later
+    bare = stamped("---\nname: tea\n---\nGreen tea.\n", now)
+    assert bare == ("---\nname: tea\nmetadata:\n  modified: 2026-11-12T10:20:30.123Z\n---\n"
+                    "Green tea.\n")
+    assert stamped("No frontmatter here.\n", now) == "No frontmatter here.\n"
+
+
+async def test_the_tool_and_the_user_both_stamp_a_memory_and_not_the_index(tmp_path: Path):
+    memory, project, _conv, run = await _tool(tmp_path)
+    text = "---\nname: tea\ndescription: Tea\nmetadata:\n  type: user\n---\n\nGreen tea.\n"
+    await run(command="create", path="tea.md", file_text=text)
+    await run(command="create", path="MEMORY.md", file_text="- [Tea](tea.md) — tea\n")
+    viewed = (await run(command="view", path="tea.md")).content
+    assert "modified: 20" in viewed
+    # The agent goes on from what is stored, stamp included.
+    assert not (await run(command="str_replace", path="tea.md", old_str="Green",
+                          new_str="Oolong")).is_error
+    await memory.save_note("cat.md", "Has a cat", "A grey cat.", folder=project)
+    notes = {n.title: n for n in await memory.notes(folder=project)}
+    assert notes["cat.md"].text == "A grey cat.\n" and notes["tea.md"].description == "Tea"
+    folder = next((tmp_path / "p").iterdir()) / "memory"
+    assert "modified:" in (folder / "cat.md").read_text()
+    assert "modified" not in (folder / "MEMORY.md").read_text()
     await memory.aclose()
 
 

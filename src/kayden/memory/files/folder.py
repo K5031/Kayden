@@ -7,7 +7,9 @@ Blocking: call these from a worker thread (asyncio.to_thread).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 MEMORY_INDEX = "MEMORY.md"
@@ -79,12 +81,61 @@ def loaded_index(text: str) -> list[str]:
     return lines
 
 
+def project_root(folder: Path) -> Path:
+    """The folder a project's memory is named after, as in Claude Code: the git repository
+    `folder` is in, the main one when it is a worktree, so that every folder and worktree
+    of a repository shares one memory; `folder` itself outside any repository. Blocking."""
+    folder = folder.expanduser().resolve()
+    for candidate in (folder, *folder.parents):
+        git = candidate / ".git"
+        if git.is_dir():
+            return candidate
+        if git.is_file():  # a worktree or a submodule: "gitdir: <where its git data is>"
+            try:
+                pointer = git.read_text(encoding="utf-8").strip()
+                gitdir = (candidate / pointer.removeprefix("gitdir:").strip()).resolve()
+                # A worktree's git data names the main repository's .git in `commondir`.
+                main = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()
+                        ).resolve()
+            except OSError:
+                return candidate
+            return main.parent if main.name == ".git" else candidate
+    return folder
+
+
 def project_key(folder: str | None) -> str:
-    """The memory folder's name for a work folder: its absolute path with / turned into -,
-    as Claude Code names its project folders; DEFAULT_PROJECT without one."""
+    """The memory folder's name for a work folder: the absolute path of its project_root
+    with / turned into -, as Claude Code names its project folders; DEFAULT_PROJECT
+    without one. Blocking."""
     if not folder:
         return DEFAULT_PROJECT
-    return str(Path(folder).expanduser().resolve()).replace("/", "-")
+    return str(project_root(Path(folder))).replace("/", "-")
+
+
+_MODIFIED = re.compile(r"\s+modified:")
+
+
+def stamped(text: str, now: datetime | None = None) -> str:
+    """A memory file with the time it is written in its frontmatter (`modified` under
+    `metadata`), as Claude Code records it; as it is when it has no frontmatter."""
+    lines = text.split("\n")
+    end = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+    if not lines or lines[0].strip() != "---" or end is None:
+        return text
+    when = (now or datetime.now(UTC)).astimezone(UTC).isoformat(timespec="milliseconds")
+    stamp = f"  modified: {when.replace('+00:00', 'Z')}"
+    front = lines[1:end]
+    old = next((i for i, line in enumerate(front) if _MODIFIED.match(line)), None)
+    if old is not None:
+        front[old] = stamp
+    elif "metadata:" in (line.rstrip() for line in front):
+        at = [line.rstrip() for line in front].index("metadata:") + 1
+        while at < len(front) and front[at].startswith((" ", "\t")):
+            at += 1
+        front.insert(at, stamp)
+    else:
+        front += ["metadata:", stamp]
+    return "\n".join([lines[0], *front, *lines[end:]])
 
 
 class MemoryFolder:
@@ -118,7 +169,8 @@ class MemoryFolder:
     def write(self, relative: str, text: str) -> MemoryFile:
         path = self.path(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text if path.name == MEMORY_INDEX and path.parent == self.root
+                        else stamped(text), encoding="utf-8")
         return self._file(path)
 
     def delete(self, relative: str) -> None:
