@@ -43,7 +43,8 @@ How a child runs:
 
 - `<python> -m kayden --headless --data-dir <data>/sessions/<id>`: its own data folder,
   with the parent's `config.toml` and `settings.toml` copied in, its spending limit set to
-  `budget_usd` and its work folder set to the conversation's. Keys come from the same OS
+  `budget_usd` when it has one (none by default, never the parent's) and its work folder
+  set to the conversation's. Keys come from the same OS
   keychain. The permission ceiling passes down as for any child process.
 - The manager starts its conversation and gives it the task as a goal, with short
   intervals (it checks in at least every 2 minutes), so a child that ends its turn
@@ -116,8 +117,9 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
 
 - The agent can run side tasks in parallel without filling its own context, and the user
   opens, talks to, approves and stops each as in the Claude app.
-- **Cost.** Each child is a full agent with its own context. Its spending limit caps it,
-  and the parent's own limit does not include it.
+- **Cost.** Each child is a full agent with its own context. A spending limit caps it only
+  when the user or the agent sets one, as with Claude's sub-agents; the parent's own limit
+  does not include it.
 - **Children wait for approvals.** A child whose step needs the user's OK waits until the
   user opens it; the sidebar says so. Routing prompts to a supervisor agent is the KFM's
   escalation, not built.

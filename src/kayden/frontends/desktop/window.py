@@ -101,6 +101,7 @@ from kayden.frontends.common import (
     PERMISSION_LABELS,
     PERMISSION_SHORT,
     PLAN_HINT,
+    UNCHANGED,
     Card,
     call_parts,
     delete_details,
@@ -117,6 +118,7 @@ from kayden.frontends.common import (
     parse_plan_text,
     plan_text,
     proposal_parts,
+    raises_limit,
     request_note,
     restart_notice,
 )
@@ -2160,20 +2162,23 @@ class MainWindow(QMainWindow):
         sessions = self.sessions
         dialog = QInputDialog(self)
         dialog.setWindowTitle("Sub-session spending limit")
-        dialog.setLabelText(f"Most “{clip(session.name, 60)}” may spend, in US dollars "
-                            f"(${session.spent:.2f} spent so far):")
+        dialog.setLabelText(f"Most “{clip(session.name, 60)}” may spend, in US dollars; 0 "
+                            f"for no limit (${session.spent:.2f} spent so far):")
         dialog.setInputMode(QInputDialog.InputMode.DoubleInput)
         dialog.setDoubleDecimals(2)
-        dialog.setDoubleRange(0.01, 1_000_000)
-        dialog.setDoubleValue(session.budget_usd)
+        dialog.setDoubleRange(0, 1_000_000)
+        dialog.setDoubleValue(session.budget_usd or 0)
 
-        def chosen(usd: float) -> None:
+        def chosen(value: float) -> None:
+            usd = value or None
+
             def apply() -> None:
                 self.home.command(sessions.set_child_limit(session, usd))
 
-            if usd > session.budget_usd:
+            if raises_limit(session.budget_usd, usd):
                 confirm(self, "Raise this sub-session's limit?", apply, yes="Raise",
-                        details=f"It may then spend up to ${usd:g}.")
+                        details=("It may then spend without a limit of its own." if usd is None
+                                 else f"It may then spend up to ${usd:g}."))
             else:
                 apply()
 
@@ -2756,7 +2761,9 @@ class SettingsDialog(QDialog):
         self.limit = QLineEdit("" if settings.budget.max_cost_usd is None
                                else f"{settings.budget.max_cost_usd:g}")
         self.limit.setPlaceholderText("No limit")
-        self.child_limit = QLineEdit(f"{sessions.limit_usd:g}" if sessions else "")
+        self.child_limit = QLineEdit(f"{sessions.limit_usd:g}" if sessions is not None
+                                     and sessions.limit_usd is not None else "")
+        self.child_limit.setPlaceholderText("No limit")
         self.child_limit.setToolTip("What a sub-session may spend unless the agent gives it "
                                     "less. It is not part of your own limit.")
         self.permissions = QComboBox()
@@ -2810,7 +2817,8 @@ class SettingsDialog(QDialog):
                 "Spending", _setting("Spending limit (US$)", f"Kayden stops when it reaches it. "
                          f"{dollars(spent)} spent so far.", self.limit),
                 *((_setting("Limit per sub-session (US$)", "What a sub-session may spend "
-                            "unless the agent gives it less; not part of your own limit.",
+                            "unless the agent gives it less; empty for no limit. Not part "
+                            "of your own limit.",
                             self.child_limit),) if sessions is not None else ())),
             "Permissions": _page(
                 "Permissions", _setting("What the agent may do", "When it asks you before acting.",
@@ -2907,12 +2915,14 @@ class SettingsDialog(QDialog):
         except ValueError as e:
             self._show_error(str(e))
             return
-        if update == SettingsUpdate() and child_limit is None and not restart:
+        if update == SettingsUpdate() and child_limit is UNCHANGED and not restart:
             self.accept()
             return
         reasons = loosening(self.settings, update)
-        if self.sessions is not None and child_limit and child_limit > self.sessions.limit_usd:
-            reasons.append("raises the limit per sub-session")
+        if (self.sessions is not None and child_limit is not UNCHANGED
+                and raises_limit(self.sessions.limit_usd, child_limit)):
+            reasons.append("raises the limit per sub-session" if child_limit is not None
+                           else "removes the limit per sub-session")
         if reasons:
             confirm(self, "Save these changes?",
                     lambda: self._apply(update, restart, child_limit),
@@ -2920,26 +2930,29 @@ class SettingsDialog(QDialog):
         else:
             self._apply(update, restart, child_limit)
 
-    def _child_limit(self) -> float | None:
-        """The new limit per sub-session, None when unchanged."""
+    def _child_limit(self) -> Any:
+        """The new limit per sub-session (None: no limit), UNCHANGED when it is as it was."""
         if self.sessions is None:
-            return None
+            return UNCHANGED
+        text = self.child_limit.text().strip().lstrip("$")
         try:
-            usd = float(self.child_limit.text().strip().lstrip("$"))
+            usd = float(text) if text else None
         except ValueError:
-            raise ValueError("Write the limit per sub-session as a number of dollars.") from None
-        if usd <= 0:
-            raise ValueError("The limit per sub-session must be more than $0.")
-        return None if usd == self.sessions.limit_usd else usd
+            raise ValueError("Write the limit per sub-session as a number of dollars, or "
+                             "leave it empty for no limit.") from None
+        if usd is not None and usd <= 0:
+            raise ValueError("The limit per sub-session must be more than $0; leave it "
+                             "empty for no limit.")
+        return UNCHANGED if usd == self.sessions.limit_usd else usd
 
     def _apply(self, update: SettingsUpdate, restart: bool,
-               child_limit: float | None = None) -> None:
+               child_limit: Any = UNCHANGED) -> None:
         self.save_button.setEnabled(False)
         self.error.hide()
 
         async def apply() -> Settings:
             settings = self.settings
-            if child_limit is not None and self.sessions is not None:
+            if child_limit is not UNCHANGED and self.sessions is not None:
                 await self.sessions.set_limit(child_limit)
             if update != SettingsUpdate():
                 settings = await self.runtime.update_settings(update)

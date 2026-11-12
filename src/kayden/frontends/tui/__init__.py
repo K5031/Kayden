@@ -144,6 +144,7 @@ from kayden.frontends.common import (
     plan_text,
     proposal_parts,
     provider_step,
+    raises_limit,
     request_note,
     restart_notice,
 )
@@ -1341,29 +1342,31 @@ class SessionsScreen(ModalScreen[str | None]):
         if session is not None:
             self.query_one("#archive-session", Button).label = (
                 "Unarchive" if session.archived else "Archive")
+        limit = self.sessions.limit_usd
         self.query_one("#default-limit", Button).label = (
-            f"Limit per sub-session: ${self.sessions.limit_usd:g}")
+            "Limit per sub-session: " + ("none" if limit is None else f"${limit:g}"))
 
-    def _ask_limit(self, title: str, current: float,
-                   then: Callable[[float], Awaitable[None]]) -> None:
-        """Asks for dollars; raising is confirmed first."""
+    def _ask_limit(self, title: str, current: float | None,
+                   then: Callable[[float | None], Awaitable[None]]) -> None:
+        """Asks for dollars, 0 or nothing for no limit; raising is confirmed first."""
         def chosen(text: str | None) -> None:
             if text is None:
                 return
             try:
-                usd = float(text.strip().lstrip("$"))
+                usd = float(text.strip().lstrip("$") or 0) or None
             except ValueError:
                 self.notify("Write the limit as a number of dollars.", severity="error")
                 return
-            if usd > current:
+            if raises_limit(current, usd):
+                question = "Remove the limit?" if usd is None else f"Raise it to ${usd:g}?"
                 self.app.push_screen(
-                    ConfirmScreen(f"Raise it to ${usd:g}?", yes="Raise"),
+                    ConfirmScreen(question, yes="Remove" if usd is None else "Raise"),
                     lambda yes: yes and self._run(then(usd)))
             else:
                 self._run(then(usd))
 
-        self.app.push_screen(TextPromptScreen(title, f"{current:g}",
-                                              hint="US dollars."), chosen)
+        self.app.push_screen(TextPromptScreen(title, "" if current is None else f"{current:g}",
+                                              hint="US dollars; 0 for no limit."), chosen)
 
     @on(Button.Pressed, "#limit-session")
     def _limit(self) -> None:

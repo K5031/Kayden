@@ -1005,15 +1005,23 @@ async def test_settings_set_the_limit_per_sub_session(make, qapp, tmp_path):
     sessions = SubSessions(tmp_path)
     dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0,
                             sessions)
-    assert dialog.child_limit.text() == "1"
+    assert dialog.child_limit.text() == ""  # none, unless the user sets one
+    assert dialog.child_limit.placeholderText() == "No limit"
     dialog.child_limit.setText("4")
-    dialog.save_button.click()  # raising asks first
-    box = message_box(dialog)
-    assert "raises the limit per sub-session" in box.informativeText()
-    [save] = [b for b in box.buttons() if b.text() == "Save"]
-    save.click()
+    dialog.save_button.click()  # a limit where there was none: nothing to confirm
     await eventually(lambda: sessions.limit_usd == 4)
     assert SubSessions(tmp_path).limit_usd == 4
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0,
+                            sessions)
+    assert dialog.child_limit.text() == "4"
+    dialog.child_limit.setText("")
+    dialog.save_button.click()  # removing it asks first, as raising does
+    box = message_box(dialog)
+    assert "removes the limit per sub-session" in box.informativeText()
+    [save] = [b for b in box.buttons() if b.text() == "Save"]
+    save.click()
+    await eventually(lambda: sessions.limit_usd is None)
+    assert SubSessions(tmp_path).limit_usd is None
 
 
 async def test_a_long_notice_is_folded(make, qapp):

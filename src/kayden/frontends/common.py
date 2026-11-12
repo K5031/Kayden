@@ -384,6 +384,15 @@ PLAN_HINT = ("One step per line: [todo], [doing], [done] or [dropped], the step,
 _PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")
 
 
+UNCHANGED: Any = object()  # in a form: a value the user left as it was
+
+
+def raises_limit(old: float | None, new: float | None) -> bool:
+    """Whether a spending limit goes up or away (None: no limit), which is confirmed
+    first."""
+    return old is not None and (new is None or new > old)
+
+
 def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
                 help_needed: str | None = None) -> str | None:
     """The duty's state for a status line; without a duty, when the agent is next woken

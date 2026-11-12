@@ -63,7 +63,6 @@ from kayden.frontends.remote import Channel, RemoteRuntime
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BUDGET_USD = 1.0
 CHECK_IN_S = (5.0, 120.0)  # a child's duty intervals: it continues soon after a turn ends
 STOP_GRACE_S = 10.0  # after stdin closes, before the child is killed
 RECORD = "session.json"
@@ -85,9 +84,10 @@ START = ToolSpec(
      "properties": {
          "task": {"type": "string", "minLength": 1},
          "budget_usd": {"type": "number", "exclusiveMinimum": 0,
-                        "description": "The most it may spend, in US dollars; at most the "
-                                       "user's limit per sub-session, which is also the "
-                                       "default."}},
+                        "description": "The most it may spend, in US dollars. Leave it "
+                                       "out unless the task calls for a limit; the "
+                                       "user's limit per sub-session, where they set "
+                                       "one, applies anyway."}},
      "required": ["task"]},
     timeout=math.inf,
 )
@@ -155,7 +155,7 @@ class SubSession:
     title: str | None = None  # the user's name for it; None: its task
     archived: bool = False
     has_goal: bool = False  # its goal is not reached yet
-    budget_usd: float = DEFAULT_BUDGET_USD
+    budget_usd: float | None = None  # its own spending limit; None: none
     step: str | None = field(default=None, compare=False)  # what it is doing now
     approvals: int = field(default=0, compare=False)  # permission prompts open
     messages: list[Message] = field(default_factory=list, compare=False)
@@ -194,7 +194,8 @@ class SubSession:
             parts.append(self.step)
         if self.state == "failed" and self.failure:
             parts.append(self.failure)
-        parts.append(f"${self.spent:.2f} of ${self.budget_usd:g}")
+        parts.append(f"${self.spent:.2f}" + (f" of ${self.budget_usd:g}"
+                                             if self.budget_usd is not None else ""))
         return " · ".join(parts)
 
     def lines(self) -> list[tuple[str, str]]:
@@ -299,14 +300,17 @@ class SubSessions(Tools):
     # ── Tools ─────────────────────────────────────────────────────────────
 
     async def list_tools(self) -> Sequence[ToolSpec]:
+        if self.limit_usd is None:
+            return (START, MESSAGE, STOP)
         start = replace(START, description=(
             f"{START.description} Each may spend up to ${self.limit_usd:g} unless you give "
             "it less."))
         return (start, MESSAGE, STOP)
 
-    async def set_limit(self, usd: float) -> None:
-        """The user's limit per sub-session: what one gets unless the agent gives it less."""
-        if not usd > 0:
+    async def set_limit(self, usd: float | None) -> None:
+        """The user's limit per sub-session: what one gets unless the agent gives it less.
+        None: no limit."""
+        if usd is not None and not usd > 0:
             raise ValueError("the limit per sub-session must be more than $0")
         self.limit_usd = usd
         path = self.data_dir / "sessions" / LIMIT_FILE
@@ -314,10 +318,10 @@ class SubSessions(Tools):
         await asyncio.to_thread(path.write_text, json.dumps({"usd": usd}))
         self._notify()
 
-    async def set_child_limit(self, session: SubSession, usd: float) -> None:
-        """Change one child's spending limit, while it runs or not. A child stopped by its
-        limit can then be resumed."""
-        if not usd > 0:
+    async def set_child_limit(self, session: SubSession, usd: float | None) -> None:
+        """Change one child's spending limit (None: remove it), while it runs or not. A
+        child stopped by its limit can then be resumed."""
+        if usd is not None and not usd > 0:
             raise ValueError("the limit must be more than $0")
         channel = self._channels.get(session.id)
         if channel is not None:
@@ -327,18 +331,19 @@ class SubSessions(Tools):
             await asyncio.to_thread(self._write_limit, session.data_dir, usd)
         self._set(session, budget_usd=usd)
 
-    def _read_limit(self) -> float:
+    def _read_limit(self) -> float | None:
         try:
             usd = float(json.loads((self.data_dir / "sessions" / LIMIT_FILE).read_text())["usd"])
         except (OSError, ValueError, KeyError, TypeError):
-            return DEFAULT_BUDGET_USD
-        return usd if usd > 0 else DEFAULT_BUDGET_USD
+            return None
+        return usd if usd > 0 else None
 
     @staticmethod
-    def _write_limit(folder: Path, usd: float) -> None:
+    def _write_limit(folder: Path, usd: float | None) -> None:
         settings_file = folder / "settings.toml"
         settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
-        settings["budget"] = {**settings.get("budget", {}), "max_cost_usd": usd}
+        budget = {k: v for k, v in settings.get("budget", {}).items() if k != "max_cost_usd"}
+        settings["budget"] = budget if usd is None else {**budget, "max_cost_usd": usd}
         settings_file.write_text(tomli_w.dumps(settings))
 
     async def use_folder(self, folder: Path | None) -> None:
@@ -347,7 +352,9 @@ class SubSessions(Tools):
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         args = call.arguments
         if call.name == START.name:
-            budget = min(args.get("budget_usd", self.limit_usd), self.limit_usd)
+            budget = args.get("budget_usd", self.limit_usd)
+            if budget is not None and self.limit_usd is not None:
+                budget = min(budget, self.limit_usd)
             session = await self._new(args["task"], budget, ctx.conversation_id)
             try:
                 await self._launch(session)
@@ -386,7 +393,8 @@ class SubSessions(Tools):
 
     # ── Children ──────────────────────────────────────────────────────────
 
-    async def _new(self, task: str, budget: float, conversation_id: str) -> SubSession:
+    async def _new(self, task: str, budget: float | None, conversation_id: str
+                   ) -> SubSession:
         session_id = str(self._next)
         self._next += 1
         folder = self.data_dir / "sessions" / f"{conversation_id[:8]}-{session_id}"
@@ -414,7 +422,7 @@ class SubSessions(Tools):
         if session.state == "starting":
             self._set(session, state="working")
 
-    def _prepare(self, folder: Path, budget: float) -> None:
+    def _prepare(self, folder: Path, budget: float | None) -> None:
         """The child's data folder: the parent's configuration, its limit and folder."""
         folder.mkdir(parents=True, exist_ok=True)
         config = self.data_dir / "config.toml"
@@ -422,7 +430,8 @@ class SubSessions(Tools):
             shutil.copyfile(config, folder / "config.toml")
         settings_file = self.data_dir / "settings.toml"
         settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
-        settings["budget"] = {"max_cost_usd": budget}  # only this: not the parent's others
+        # Only its own limit, if it has one: not the parent's.
+        settings["budget"] = {} if budget is None else {"max_cost_usd": budget}
         if self._folder is not None:
             settings["work_folder"] = str(self._folder)
         (folder / "settings.toml").write_text(tomli_w.dumps(settings))

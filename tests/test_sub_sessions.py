@@ -300,6 +300,29 @@ async def test_cancelling_while_a_child_starts_stops_it(tmp_path):
     assert child.state == "stopped"
 
 
+async def test_a_sub_session_has_no_spending_limit_unless_one_is_set(
+        make, tmp_path, child_env):
+    """As Claude's sub-agents: a limit is the user's or the agent's choice."""
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Free"}, id="a"),
+                    call("start_session", {"task": "Frugal", "budget_usd": 0.2}, id="b")]),
+        Step(text="Started.")],
+        [{"hang": True}])
+    assert sessions.limit_usd is None
+    assert "may spend up to" not in (await sessions.list_tools())[0].description
+    await h.turn("Go")
+    await eventually(lambda: len(sessions.sessions) == 2, timeout=30)
+    budgets = {s.task: s.budget_usd for s in sessions.sessions}
+    assert budgets == {"Free": None, "Frugal": 0.2}
+    free, frugal = sorted(sessions.sessions, key=lambda s: s.task)
+    assert tomllib.loads((free.data_dir / "settings.toml").read_text())["budget"] == {}
+    assert " of $" not in free.summary and "of $0.2" in frugal.summary
+    await sessions.set_child_limit(frugal, None)  # the user removes it
+    assert frugal.budget_usd is None
+    for child in sessions.sessions:
+        sessions.stop(child)
+
+
 async def test_the_users_limit_is_the_default_and_the_most_a_child_gets(
         make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [

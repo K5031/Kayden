@@ -449,7 +449,7 @@ async def test_the_sessions_screen_sets_limits(tmp_path):
         app.push_screen(SessionsScreen(sessions, CONVERSATION.id))
         await until(pilot, lambda: isinstance(app.screen, SessionsScreen))
         await pilot.pause()
-        assert "$1" in str(app.screen.query_one("#default-limit", Button).label)
+        assert "none" in str(app.screen.query_one("#default-limit", Button).label)
         app.screen.query_one("#limit-session", Button).press()
         await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
         app.screen.query_one(Input).value = "5"
@@ -460,5 +460,5 @@ async def test_the_sessions_screen_sets_limits(tmp_path):
         app.screen.query_one("#default-limit", Button).press()
         await until(pilot, lambda: isinstance(app.screen, TextPromptScreen))
         app.screen.query_one(Input).value = "0.5"
-        await pilot.press("enter")  # lowering: no question
+        await pilot.press("enter")  # a limit where there was none: no question
         await until(pilot, lambda: sessions.limit_usd == 0.5)
