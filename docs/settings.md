@@ -63,7 +63,9 @@ set with `[memory]` in [config.toml](#configtoml). Kayden comes with two:
   folder, `~/.kayden/projects/<project>/memory/`, with a `MEMORY.md` index and one
   Markdown file per fact. The agent writes them itself while it works, and every
   conversation in that folder sees the index as it was when the conversation started: a
-  memory saved or edited meanwhile shows up in the next conversation. Choose it with:
+  memory saved or edited meanwhile shows up in the next conversation. The agent reads a
+  memory before it changes it, edits it in place, and keeps each to one short fact and the
+  index to 200 lines. Choose it with:
 
   ```toml
   [memory]

@@ -77,6 +77,26 @@ models know: `view`, `create`, `str_replace`, `insert`, `delete`, `rename`. Path
 relative to the memory folder; anything that leaves it is refused. No pass after an answer
 saves anything, and there is no profile: facts about the user are `user` memories.
 
+### What keeps it from going wrong
+
+The layout is the smaller part. An agent that writes its own memory can save a wrong
+fact, turn one remark into a trait, or leave an entry to go stale; what holds that in
+check are the limits on writing, as in Claude Code, where its file tools refuse to change
+a file that was not read:
+
+- **Rules in every request** for what may be saved and what may not.
+- **Read before write.** The tool changes, deletes or renames a file only if this
+  conversation has read it and it is still as it was read (`tool.run_command`, `seen`): a
+  memory written by another conversation or by the user is never altered unseen, and one
+  that changed meanwhile is read again. `MEMORY.md` counts as read while it is what the
+  conversation's prompt shows.
+- **Small edits.** `create` writes only a new file; an existing one is changed with
+  `str_replace` or `insert`.
+- **Sizes that force condensing.** A memory holds at most 4000 characters and `MEMORY.md`
+  at most 200 lines; a write that would exceed either is refused with what to do (cut,
+  split, merge, delete). The user's own edits are not limited.
+- **Everything is visible.** The Memory window shows every file, and they are plain files.
+
 ### The contract
 
 The notes API serves both modules. Each file is a `MemoryNote`: its path is the id and the
@@ -110,5 +130,10 @@ emptied (the built-in profile), so frontends no longer know the profile's title.
   file and come back when switched back.
 - Memory is written by the model doing the work, one fact per file; when it forgets to
   save, nothing catches it, as in Claude Code.
+- The guards cost a tool call: to change a memory the agent first views it. Checked with
+  Opus 5.5: asked to update a memory another conversation wrote, it viewed the file, then
+  replaced one sentence.
+- A full index stops new memories until the agent condenses it; an agent that does not
+  will fail to save.
 - Memory is per project: what Kayden learns in one project is not seen in another.
 - The files can be read and edited outside Kayden. Their edits keep no revisions.

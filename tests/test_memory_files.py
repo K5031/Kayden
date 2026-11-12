@@ -140,6 +140,92 @@ async def test_the_memory_tool_works_on_the_conversations_project(tmp_path: Path
     await memory.aclose()
 
 
+async def _tool(tmp_path: Path):
+    """A files memory, a conversation in a project, and its memory tool as a function."""
+    from kayden.api import ToolCall
+
+    memory = FilesMemory(tmp_path / "m.db", CONFIG, projects=tmp_path / "p")
+    project = str(tmp_path / "project")
+    conv = await memory.create_conversation(folder=project)
+    await memory.append(conv.id, [text_message("tok0001")])
+
+    async def run(**args):
+        return await memory.execute(ToolCall("c", "memory", args), Context(conv.id))
+
+    return memory, project, conv, run
+
+
+async def test_a_memory_is_read_before_it_is_changed(tmp_path: Path):
+    """What the agent has not read in this conversation it cannot overwrite or edit: a
+    memory another conversation or the user wrote stays as it is until it is looked at."""
+    memory, project, _conv, run = await _tool(tmp_path)
+    await memory.save_note("tea.md", "Drinks tea", "Only green tea.", folder=project)
+    edit = {"command": "str_replace", "path": "tea.md", "old_str": "green", "new_str": "black"}
+    for blind in (edit, {"command": "delete", "path": "tea.md"},
+                  {"command": "insert", "path": "tea.md", "insert_line": 0, "insert_text": "x"},
+                  {"command": "rename", "old_path": "tea.md", "new_path": "drinks.md"}):
+        refused = await run(**blind)
+        assert refused.is_error and "View tea.md" in refused.content
+    over = await run(command="create", path="tea.md", file_text="Coffee now.")
+    assert over.is_error and "exists" in over.content  # never a blind rewrite
+    assert "green" in (await run(command="view", path="tea.md")).content
+    assert not (await run(**edit)).is_error
+    assert not (await run(**{**edit, "old_str": "black", "new_str": "oolong"})).is_error
+    assert "oolong" in (await memory.notes(folder=project))[0].text
+    await memory.aclose()
+
+
+async def test_a_memory_changed_since_it_was_read_is_read_again(tmp_path: Path):
+    memory, project, _conv, run = await _tool(tmp_path)
+    await memory.save_note("tea.md", "Drinks tea", "Only green tea.", folder=project)
+    await run(command="view", path="tea.md")
+    await memory.save_note("tea.md", "Drinks tea", "Only black tea.", folder=project)  # the user
+    stale = await run(command="str_replace", path="tea.md", old_str="tea.", new_str="tea!")
+    assert stale.is_error and "changed since" in stale.content
+    assert "black" in (await run(command="view", path="tea.md")).content
+    assert not (await run(command="str_replace", path="tea.md", old_str="tea.",
+                          new_str="tea!")).is_error
+    await memory.aclose()
+
+
+async def test_the_index_in_the_prompt_counts_as_read_while_it_is_current(tmp_path: Path):
+    memory, project, conv, run = await _tool(tmp_path)
+    await memory.save_note("MEMORY.md", "", "- [Tea](tea.md) — drinks tea\n", folder=project)
+    await memory.assemble(context(conv.id, 200_000))  # every request shows it the index
+    added = await run(command="insert", path="MEMORY.md", insert_line=1,
+                      insert_text="- [Cat](cat.md) — has a cat")
+    assert not added.is_error
+    other = await memory.create_conversation(folder=project)
+    await memory.append(other.id, [text_message("tok0002")])
+    await memory.assemble(context(other.id, 200_000))
+    await memory.save_note("MEMORY.md", "", "- [Dog](dog.md) — has a dog\n", folder=project)
+    from kayden.api import ToolCall
+    late = await memory.execute(ToolCall("c", "memory", {
+        "command": "insert", "path": "MEMORY.md", "insert_line": 0, "insert_text": "- x"}),
+        Context(other.id))
+    assert late.is_error and "View MEMORY.md" in late.content  # not what its prompt showed
+    await memory.aclose()
+
+
+async def test_the_index_and_each_memory_have_a_size_the_agent_must_keep_to(tmp_path: Path):
+    """A full index is condensed before more goes in, and a memory stays one fact."""
+    from kayden.memory.files.tool import INDEX_MAX_LINES, MEMORY_MAX_CHARS
+
+    memory, project, _conv, run = await _tool(tmp_path)
+    full = "".join(f"- [M{i}](m{i}.md) — fact {i}\n" for i in range(INDEX_MAX_LINES))
+    assert not (await run(command="create", path="MEMORY.md", file_text=full)).is_error
+    more = await run(command="insert", path="MEMORY.md", insert_line=0,
+                     insert_text="- [One more](more.md) — fact")
+    assert more.is_error and str(INDEX_MAX_LINES) in more.content
+    assert "merge" in more.content.lower()
+    assert len((await memory.notes(folder=project))[0].text.splitlines()) == INDEX_MAX_LINES
+    long = await run(command="create", path="essay.md", file_text="x" * (MEMORY_MAX_CHARS + 1))
+    assert long.is_error and "one fact" in long.content
+    # The user is not held to them: it is their memory.
+    await memory.save_note("essay.md", "An essay", "x" * (MEMORY_MAX_CHARS + 1), folder=project)
+    await memory.aclose()
+
+
 async def test_the_built_in_memorys_store_is_not_this_ones(tmp_path: Path):
     """A different Memory is a different archive: the built-in one's file is refused."""
     built_in = SqliteMemory(tmp_path / "memory.db", CONFIG)

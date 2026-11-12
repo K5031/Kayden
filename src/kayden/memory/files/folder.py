@@ -54,7 +54,9 @@ After writing a file, add a one-line pointer to {MEMORY_INDEX}: `- [Title](file.
 {MEMORY_INDEX} holds one line per memory and nothing else.
 
 Before saving, check for a file that already covers it and update that one rather than
-writing a duplicate; delete memories that turn out wrong. Don't save what the project's
+writing a duplicate; delete memories that turn out wrong. View a memory before you change
+it, and change it with a small edit rather than by writing it again. Keep each memory to
+one fact and the index short: when either grows long, condense it. Don't save what the project's
 files, code or history already record, or what only matters to this conversation.
 Memories reflect what was true when they were written: check a file, name or setting a
 memory mentions before relying on it."""

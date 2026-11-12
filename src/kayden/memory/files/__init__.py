@@ -62,6 +62,8 @@ class FilesMemory(SqliteArchive):
         self._projects = Path(projects)
         # The index each conversation started with, and the summary it had then.
         self._loaded: dict[ConversationId, tuple[str, list[str]]] = {}
+        # What each conversation has read of its folder: path -> text (tool.run_command).
+        self._seen: dict[ConversationId, dict[str, str]] = {}
 
     def _folder(self, folder: str | None) -> MemoryFolder:
         return MemoryFolder(self._projects / project_key(folder) / "memory")
@@ -82,6 +84,7 @@ class FilesMemory(SqliteArchive):
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
         await super().delete_conversation(conversation_id)
         self._loaded.pop(conversation_id, None)
+        self._seen.pop(conversation_id, None)
 
     # ── The agent's tool ──────────────────────────────────────────────────
 
@@ -92,9 +95,20 @@ class FilesMemory(SqliteArchive):
         if call.name != MEMORY.name:
             return await super().execute(call, ctx)
         info = await self._conversation(ctx.conversation_id)
+        folder = self._folder(info.folder)
+        seen = self._seen.setdefault(info.id, {})
+
+        def run() -> str:
+            # The index its prompt shows counts as read while that is still the index.
+            shown = self._loaded.get(info.id)
+            if MEMORY_INDEX not in seen and shown is not None:
+                index = folder.index()
+                if index and [line for line in index.splitlines() if line.strip()] == shown[1]:
+                    seen[MEMORY_INDEX] = index
+            return run_command(folder, dict(call.arguments), seen)
+
         try:
-            return ToolOutput(await asyncio.to_thread(
-                run_command, self._folder(info.folder), dict(call.arguments)))
+            return ToolOutput(await asyncio.to_thread(run))
         except (KeyError, ValueError) as e:
             return ToolOutput(str(e.args[0] if e.args else e), is_error=True)
 
