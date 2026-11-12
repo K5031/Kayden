@@ -60,6 +60,14 @@ The memory rules (Claude Code's: the four types, what not to save, saving in two
 with `[[name]]`) and then the folder's `MEMORY.md`, from the top within the long-term
 budget. Memory files are not loaded; the agent opens one when it is relevant.
 
+The index is read when a conversation is first assembled in this process and kept for that
+conversation, as Claude Code loads memory once per session: what the agent saves meanwhile
+is in the conversation itself (its memory calls), and the start of every request stays the
+same, so a provider's prompt cache stays valid. It is read again when the conversation's
+rolling summary changes, since the prompt changes then anyway. A change made elsewhere
+(the Memory window, another conversation) reaches an open conversation only then, or when
+Kayden starts again.
+
 ### The agent's tool
 
 Claude Code writes memory with its ordinary file tools. Kayden's file tools belong to the

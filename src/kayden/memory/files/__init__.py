@@ -60,14 +60,28 @@ class FilesMemory(SqliteArchive):
                  projects: str | PathLike[str]) -> None:
         super().__init__(path, config)
         self._projects = Path(projects)
+        # The index each conversation started with, and the summary it had then.
+        self._loaded: dict[ConversationId, tuple[str, list[str]]] = {}
 
     def _folder(self, folder: str | None) -> MemoryFolder:
         return MemoryFolder(self._projects / project_key(folder) / "memory")
 
-    async def _long_term(self, info: ConversationInfo) -> LongTerm:
-        index = await asyncio.to_thread(self._folder(info.folder).index)
-        return LongTerm(RULES, [line for line in index.splitlines() if line.strip()],
-                        _render)
+    async def _long_term(self, info: ConversationInfo, summary: str) -> LongTerm:
+        """The index as it was when the conversation started here, as Claude Code loads
+        memory once per session: a memory saved meanwhile is in the conversation itself
+        (the agent's memory calls), and the start of every request stays the same, which
+        keeps a provider's prompt cache valid. Read again when the summary changes, since
+        the request's start changes then anyway."""
+        loaded = self._loaded.get(info.id)
+        if loaded is None or loaded[0] != summary:
+            index = await asyncio.to_thread(self._folder(info.folder).index)
+            loaded = (summary, [line for line in index.splitlines() if line.strip()])
+            self._loaded[info.id] = loaded
+        return LongTerm(RULES, loaded[1], _render)
+
+    async def delete_conversation(self, conversation_id: ConversationId) -> None:
+        await super().delete_conversation(conversation_id)
+        self._loaded.pop(conversation_id, None)
 
     # ── The agent's tool ──────────────────────────────────────────────────
 

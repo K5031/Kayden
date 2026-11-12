@@ -76,7 +76,8 @@ set with `[memory]` in [config.toml](#configtoml). Kayden comes with two:
 - **Files per project**, as in Claude Code: each project folder gets its own memory
   folder, `~/.kayden/projects/<project>/memory/`, with a `MEMORY.md` index and one
   Markdown file per fact. The agent writes them itself while it works, and every
-  conversation in that folder sees the index. Choose it with:
+  conversation in that folder sees the index as it was when the conversation started: a
+  memory saved or edited meanwhile shows up in the next conversation. Choose it with:
 
   ```toml
   [memory]

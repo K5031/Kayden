@@ -68,10 +68,34 @@ async def test_every_request_sees_the_rules_and_the_index_not_the_files(tmp_path
     budget = 6_000  # the index from the top within the long-term budget
     index = "".join(f"- [Memory {i}](m{i}.md) — {'x' * 100}\n" for i in range(100))
     await memory.save_note("MEMORY.md", "", index, folder=project)
-    added = (await memory.assemble(context(conv.id, budget))).system_addendum
+    later = await memory.create_conversation(folder=project)
+    await memory.append(later.id, [text_message("tok0002")])
+    added = (await memory.assemble(context(later.id, budget))).system_addendum
     kept = [line for line in added.splitlines() if line.startswith("- [Memory")]
     assert kept[0].startswith("- [Memory 0]") and len(kept) < 100
     assert count_tokens("\n".join(kept)) <= CONFIG.long_term_fraction * budget + 10
+    await memory.aclose()
+
+
+async def test_a_conversation_keeps_the_index_it_started_with(tmp_path: Path):
+    """As in Claude Code, memory is loaded when a conversation starts: a memory saved
+    meanwhile changes nothing at the start of its prompt, which keeps the provider's cache
+    valid. A later conversation, or this one once it is summarized, sees the new index."""
+    memory = FilesMemory(tmp_path / "m.db", CONFIG, projects=tmp_path / "p")
+    project = str(tmp_path / "project")
+    conv = await memory.create_conversation(folder=project)
+    await memory.append(conv.id, [text_message("tok0001")])
+    await memory.save_note("MEMORY.md", "", "- [Tea](tea.md) — drinks tea\n", folder=project)
+    first = (await memory.assemble(context(conv.id, 200_000))).system_addendum
+    await memory.save_note("MEMORY.md", "", "- [Tea](tea.md) — drinks tea\n"
+                                            "- [Cat](cat.md) — has a cat\n", folder=project)
+    assert (await memory.assemble(context(conv.id, 200_000))).system_addendum == first
+    assert "has a cat" not in " ".join((await memory.inspect(conv.id)).long_term)
+    later = await memory.create_conversation(folder=project)
+    await memory.append(later.id, [text_message("tok0002")])
+    assert "has a cat" in (await memory.assemble(context(later.id, 200_000))).system_addendum
+    summarized = await memory._long_term(conv, "What happened so far.")
+    assert any("has a cat" in line for line in summarized.lines)
     await memory.aclose()
 
 
@@ -147,7 +171,8 @@ async def test_the_runtime_runs_on_it_unchanged(make, tmp_path: Path):
                                    call("memory", {"command": "create", "path": "MEMORY.md",
                                                    "file_text": "- [Tea](user-tea.md) — tea\n"},
                                         id="i")]),
-                       Step(text="Noted."), Step(text="Green tea, then.")],
+                       Step(text="Noted."), Step(text="Green tea, then."),
+                       Step(text="Green tea.")],
                                         maintenance=Step(text="Tea")))
     project = tmp_path / "project"
     project.mkdir()
@@ -158,6 +183,12 @@ async def test_the_runtime_runs_on_it_unchanged(make, tmp_path: Path):
     notes = {n.title: n for n in await h.runtime.notes()}
     assert list(notes) == ["MEMORY.md", "user-tea.md"]
     assert notes["user-tea.md"].description == "Drinks green tea"
+    turns = [r for r in h.core.requests if not r.maintenance]
     await h.turn("what do I drink?")
+    # The same conversation: its prompt is as it was (the agent's own calls show what it
+    # saved), so the provider's cache stays valid.
+    assert h.core.requests[-1].system == turns[0].system
+    await h.start(folder=str(project))  # a later conversation in the project
+    await h.turn("and what do I drink?")
     system = h.core.requests[-1].system
     assert "- [Tea](user-tea.md) — tea" in system and "Only green tea." not in system

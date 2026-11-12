@@ -507,7 +507,7 @@ class SqliteArchive(Memory):
 
     async def assemble(self, request: ContextRequest) -> AssembledContext:
         state = await self._run(_read_state, request.conversation_id)
-        long_term = await self._long_term(state.info)
+        long_term = await self._long_term(state.info, state.summary)
         return _fit(state, long_term, request, self._config.long_term_fraction)
 
     # ── Maintenance ───────────────────────────────────────────────────────
@@ -679,7 +679,7 @@ class SqliteArchive(Memory):
 
     async def inspect(self, conversation_id: ConversationId) -> MemoryView:
         state = await self._run(_read_state, conversation_id, False)
-        long_term = await self._long_term(state.info)
+        long_term = await self._long_term(state.info, state.summary)
         return MemoryView(summary=state.summary,
                           long_term=[long_term.head, *long_term.lines])
 
@@ -689,8 +689,9 @@ class SqliteArchive(Memory):
         """KeyError if unknown."""
         return await self._run(_require_conversation, conversation_id)
 
-    async def _long_term(self, info: ConversationInfo) -> LongTerm:
-        """What long-term memory adds to every request of this conversation."""
+    async def _long_term(self, info: ConversationInfo, summary: str) -> LongTerm:
+        """What long-term memory adds to every request of this conversation. `summary` is
+        its rolling summary: when that changes, the request's start changes anyway."""
         return LongTerm()
 
     async def _after_answer(self, conversation_id: ConversationId, complete: Completion,
@@ -738,7 +739,7 @@ class SqliteMemory(SqliteArchive):
     SCHEMA = _ARCHIVE_SCHEMA + _MEMORY_TABLES
     SCHEMA_VERSION = SCHEMA_VERSION
 
-    async def _long_term(self, info: ConversationInfo) -> LongTerm:
+    async def _long_term(self, info: ConversationInfo, summary: str) -> LongTerm:
         notes = await self.notes()
         return LongTerm(notes[0].text, [f"{n.title}: {n.description}" for n in notes[1:]],
                         _render_notes)
