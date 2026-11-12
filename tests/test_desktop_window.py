@@ -1436,9 +1436,9 @@ async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
 
 
 async def test_the_checklist_is_part_of_the_conversation(make, qapp):
-    """It sits under the turn's newest message while the agent works, stays there when the
-    turn ends, and scrolls away as the conversation goes on."""
-    from kayden.frontends.desktop.viewmodel import ChecklistItem
+    """It stays where the agent first wrote its plan, is changed there by later updates,
+    and scrolls away as the conversation goes on."""
+    from kayden.frontends.desktop.viewmodel import ChecklistItem, ToolItem
     from kayden.frontends.desktop.window import PlanCard
 
     h: Harness = await make()
@@ -1456,7 +1456,10 @@ async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     items = controller.model.items
     lists = [i for i in items if isinstance(i, ChecklistItem)]
-    assert len(lists) == 1 and items[-1] is lists[0]  # one per turn, under its last message
+    assert len(lists) == 1  # one per turn, where the plan was first written
+    assert [type(i).__name__ for i in items[-4:]] == [
+        "UserItem", "ChecklistItem", "ToolItem", "AssistantItem"]
+    assert isinstance(items[-2], ToolItem)
     assert [str(s.status) for s in lists[0].steps] == ["done", "done", "done"]
     assert not lists[0].live  # the turn is over: it stays, at rest
     card = window._widgets[id(lists[0])]
@@ -1467,7 +1470,8 @@ async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     await eventually(lambda: not controller.model.busy and len(h.core.requests) == 4)
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     kinds = [type(i).__name__ for i in controller.model.items]
-    assert kinds[-3:] == ["ChecklistItem", "UserItem", "AssistantItem"]  # it is history now
+    assert kinds[-5:] == ["ChecklistItem", "ToolItem", "AssistantItem", "UserItem",
+                          "AssistantItem"]  # it is history now
 
 
 async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(

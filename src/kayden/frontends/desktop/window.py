@@ -1162,15 +1162,29 @@ class PlanCard(QFrame):
     def __init__(self, item: ChecklistItem) -> None:
         super().__init__()
         self.item = item
-        plan = item.steps
-        self._spinners: list[Spinner] = []
         self.setObjectName("plan")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
+        self.setAccessibleName("Plan")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 12, 16, 12)
+        self._body: QWidget | None = None
+        self._build()
+
+    def _build(self) -> None:
+        item, outer = self.item, self.layout()
+        assert outer is not None
+        if self._body is not None:
+            outer.removeWidget(self._body)
+            self._body.deleteLater()
+        self._body = QWidget()
+        outer.addWidget(self._body)
+        layout = QVBoxLayout(self._body)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+        self._steps = item.steps
+        self._spinners: list[Spinner] = []
         colors = theme.current()
         self._rows: list[tuple[str, str]] = []
-        for step in plan:
+        for step in self._steps:
             mark = str(step.status)  # done, doing, todo or dropped
             row = QHBoxLayout()
             row.setSpacing(8)
@@ -1198,9 +1212,10 @@ class PlanCard(QFrame):
             row.addWidget(text, 1)
             layout.addLayout(row)
             self._rows.append((mark, step.text))
-        self.setAccessibleName("Plan")
 
     def refresh(self) -> None:
+        if self.item.steps != self._steps:
+            self._build()
         for spinner in self._spinners:
             spinner.set_turning(self.item.live)
 

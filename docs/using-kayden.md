@@ -95,9 +95,10 @@ For a task with several steps, the agent writes a plan first and ticks the steps
 works: ✓ done, ◐ under way, ○ still to do, and struck through for steps it dropped. A quick
 question gets no plan.
 
-- **In the desktop app** the checklist is part of the conversation. It sits under the
-  newest message while the agent works, stays there when the turn ends, and scrolls away
-  as the conversation goes on, so you can look back at what each turn did.
+- **In the desktop app** the checklist is part of the conversation. It appears where the
+  agent writes its plan and is ticked off there while the agent works below it. It stays
+  when the turn ends and scrolls away as the conversation goes on, so you can look back
+  at what each turn did.
 - **In the terminal app** it shows above the message box while the agent works.
 - **The agent finishes its plan before it stops.** If it ends a turn with steps open, Kayden
   sends it back once to do them or close them. A step can stay open when it waits for

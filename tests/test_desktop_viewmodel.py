@@ -420,9 +420,10 @@ def _plan(call_id: str, *steps: tuple[str, str]) -> ToolCall:
         {"text": text, "status": status} for text, status in steps]})
 
 
-def test_a_reopened_conversation_shows_each_turns_checklist_where_it_ended():
+def test_a_reopened_conversation_shows_each_turns_checklist_where_it_began():
     """The checklist is drawn from the agent's update_plan calls, so it is there again
-    after a restart: one per turn, with the turn's last state, under its last message."""
+    after a restart: one per turn, with the turn's last state, where the plan was first
+    written."""
     from kayden.frontends.desktop.viewmodel import ChecklistItem
 
     def said(i: str, role: Role, *blocks: object) -> Message:
@@ -442,7 +443,7 @@ def test_a_reopened_conversation_shows_each_turns_checklist_where_it_ended():
     model = ConversationModel()
     model.load(_snapshot(), history)
     kinds = [type(i).__name__ for i in model.items]
-    assert kinds == ["UserItem", "AssistantItem", "ChecklistItem", "UserItem",
+    assert kinds == ["UserItem", "ChecklistItem", "AssistantItem", "UserItem",
                      "AssistantItem"]
     [shown] = of(model, ChecklistItem)
     assert [(s.text, str(s.status)) for s in shown.steps] == [("Read", "done"),
@@ -450,23 +451,30 @@ def test_a_reopened_conversation_shows_each_turns_checklist_where_it_ended():
     assert not shown.live
     model.prepend(earlier)  # an older page keeps its own
     kinds = [type(i).__name__ for i in model.items]
-    assert kinds[:3] == ["UserItem", "AssistantItem", "ChecklistItem"]
+    assert kinds[:3] == ["UserItem", "ChecklistItem", "AssistantItem"]
     assert len(of(model, ChecklistItem)) == 2
 
 
-def test_thinking_before_and_after_a_plan_update_is_one_line():
-    """A plan update is not shown as a step, so the thinking on both sides of it would be
-    two Thinking lines one under the other."""
+def test_thinking_before_and_after_a_later_plan_update_is_one_line():
+    """A plan update that changes the checklist further up shows nothing where it is made,
+    so the thinking on both sides of it would be two Thinking lines one under the other."""
     from kayden.api import Reasoning
+    from kayden.frontends.desktop.viewmodel import ChecklistItem
+
+    def result(call_id: str) -> MessageCommitted:
+        return MessageCommitted(Message(
+            "t" + call_id, Role.TOOL, (ToolResult(call_id, ToolStatus.OK, "Plan saved."),), 0.0))
 
     model = ConversationModel()
     model.load(_snapshot(), ())
     model.apply(StateChanged(AgentState.THINKING))
     model.apply(MessageCommitted(Message("u", Role.USER, (Text("try again"),), 0.0)))
+    model.apply(MessageCommitted(Message("a0", Role.ASSISTANT, (
+        _plan("p0", ("Try", "doing")),), 0.0), StopReason.TOOL_USE))
+    model.apply(result("p0"))
     model.apply(MessageCommitted(Message("a1", Role.ASSISTANT, (
-        Reasoning("First I plan."), _plan("p", ("Try", "doing"))), 0.0), StopReason.TOOL_USE))
-    model.apply(MessageCommitted(Message(
-        "t", Role.TOOL, (ToolResult("p", ToolStatus.OK, "Plan saved."),), 0.0)))
+        Reasoning("First I check."), _plan("p", ("Try", "done"))), 0.0), StopReason.TOOL_USE))
+    model.apply(result("p"))
     [first] = of(model, AssistantItem)
     model.apply(ReasoningDelta("Now I try."))  # streaming: still one line on screen
     shown = [i for i in of(model, AssistantItem) if not i.hidden]
@@ -475,7 +483,10 @@ def test_thinking_before_and_after_a_plan_update_is_one_line():
         Reasoning("Now I try."), Text("Done.")), 0.0), StopReason.END_TURN))
     [only] = of(model, AssistantItem)
     assert only is first and not only.hidden
-    assert only.reasoning == "First I plan.\n\nNow I try." and only.text == "Done."
+    assert only.reasoning == "First I check.\n\nNow I try." and only.text == "Done."
+    [plan] = of(model, ChecklistItem)  # changed where it was first shown, above the reply
+    assert model.items.index(plan) < model.items.index(only)
+    assert [str(s.status) for s in plan.steps] == ["done"]
     # Across a step that is shown, thinking stays where it was said.
     model.apply(MessageCommitted(Message("u2", Role.USER, (Text("again"),), 0.0)))
     model.apply(MessageCommitted(Message("a3", Role.ASSISTANT, (
