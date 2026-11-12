@@ -209,17 +209,23 @@ class _Stream:
     output_estimate: int = 0
     report: Usage | None = None
     completed: Completed | None = None
-    thought_s: float = 0.0  # reasoning streamed for this long
+    thought_s: float = 0.0  # the model thought for this long
     thinking_since: float | None = None
+    # When the call began or last produced something other than reasoning: thinking counts
+    # from there, since a provider may send it whole, only once it is over.
+    quiet_since: float = field(default_factory=time.monotonic)
 
     def thought(self, thinking: bool) -> None:
         """An event arrived: reasoning, or something that ends a stretch of it."""
         now = time.monotonic()
-        if thinking and self.thinking_since is None:
-            self.thinking_since = now
-        elif not thinking and self.thinking_since is not None:
+        if thinking:
+            if self.thinking_since is None:
+                self.thinking_since = self.quiet_since
+            return
+        if self.thinking_since is not None:
             self.thought_s += now - self.thinking_since
             self.thinking_since = None
+        self.quiet_since = now
 
     def timed(self, event: Completed) -> Completed:
         """`event` with the time thought on its message's first Reasoning block."""

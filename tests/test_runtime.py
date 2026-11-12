@@ -371,7 +371,8 @@ async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) 
     await h.turn("go")
     thought, said = (await h.transcript())[-1].blocks
     assert isinstance(thought, Reasoning) and thought.text == "hmm"
-    assert thought.seconds is not None and 0.03 <= thought.seconds < 1  # until the text came
+    # From the start of the call until the text came: both waits of the script.
+    assert thought.seconds is not None and 0.09 <= thought.seconds < 1
     assert said == Text("ok")
     await h.turn("again")
     assert (await h.transcript())[-1].blocks == (Text("plain"),)

@@ -820,7 +820,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 
 | Choice | Decision |
 |---|---|
-| Measured | By the runtime, not the Core: the time reasoning streamed in one model call, from a `ReasoningDelta` to the next event that is not one, summed (`_Stream.thought`) |
+| Measured | By the runtime, not the Core: the time the model spent before answering in one model call: from the call's start, or its last output that was not reasoning, to the first output after reasoning that is not reasoning, summed (`_Stream.thought`). Counting only between reasoning deltas gave 0.001 s with Opus 5.5, which sends its thinking summary in one piece once it is over |
 | Kept | In `Reasoning.seconds` on the message's first Reasoning block, so the archive has it and a reopened conversation shows the same line; a model call without streamed reasoning has none |
 | Shown | Desktop: the line above a reply reads "Thinking…" while it streams, then "Thought for 4s" (the sum when thinking was joined across a plan update), or "Thought" where no time is stored |
 
