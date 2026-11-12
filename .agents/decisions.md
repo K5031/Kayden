@@ -823,7 +823,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Offered | `update_plan` with every open conversation, not only with a duty or a plan; its description says when to keep one (several steps) and when not (a quick answer) |
 | Shown | While a step is todo or doing (`common.checklist`): desktop `PlanCard` in the conversation under the newest message, scrolling with it, a rounded card as in Claude's app: a filled tick for done (dimmed), a turning arc for the step under way (`Spinner`), a dashed circle for the rest, dropped steps struck through; terminal `PlanPanel` at the top of the prompts. Gone once every step is done or dropped |
 | Steps | `update_plan` and `wrap_up` calls are not shown as steps (`common.CARD_TOOLS`): the checklist and the card show them |
-| Caching | The plan is in the system prompt, as with duties and the Memory summary, so a plan change starts a new prompt prefix |
+| Where the agent sees it | In its own `update_plan` call and the answer (`duty.saved`: the time, due steps, a reminder while steps are open) as long as that call is among the request's messages (`Runtime._plan_call`). Otherwise in the system prompt. So a plan update leaves the prompt unchanged and the provider's cache valid: measured on Opus 5.5, a three-update task cost $0.09 instead of $0.27 |
 | Closing it | While a conversation without a duty has open steps, the plan section ends with `duty.CLOSE_PLAN`: bring the plan up to date before ending the turn, leaving a step open only when it waits for the user or background work. A duty's plan stays open between check-ins, so it gets no such line |
 
 ## Streaming thinking (Anthropic)
@@ -874,4 +874,4 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Not cached | The runtime's one-off requests (`InferenceRequest.maintenance`: titles, summaries, the save pass, permission reviews): nothing would read what they wrote, so they would only pay the write premium |
 | Configured | A `cache_control` in the Core's or the model's options is sent as it is (`ttl = "1h"`) |
 | Cost | Written tokens count as input at the input price; the premium (25 %, or 100 % for an hour's cache) is added as `Usage.extra_cost_usd`, from the model's input price |
-| Limit | The plan, the duty and Memory's addendum are in the system prompt, which comes before the messages: when one changes, the next request writes the conversation again instead of reading it |
+| Limit | The duty and Memory's addendum (its index, its summary) are in the system prompt, which comes before the messages: when one changes, the next request writes the conversation again instead of reading it. The plan is kept out of it while the conversation shows it |

@@ -26,8 +26,10 @@ from kayden.api import (
     PlanStatus,
     RuntimeStateError,
     Text,
+    ToolResult,
     ToolStatus,
 )
+from kayden.runtime import duty as duties
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -114,7 +116,34 @@ async def test_an_ordinary_conversation_keeps_a_plan_but_has_no_duty_tools(make)
         ("Read the code", PlanStatus.DONE), ("Fix the bug", PlanStatus.DOING),
         ("Run the tests", PlanStatus.TODO)]
     assert h.runtime.snapshot().conversation.duty is None
-    assert "Fix the bug" in h.core.requests[1].system  # every request shows it
+    # The agent's own call shows the plan from here on: the prompt does not repeat it,
+    # so a plan update leaves the start of every later request as it was.
+    assert h.core.requests[1].system == h.core.requests[0].system
+    assert "Fix the bug" not in h.core.requests[1].system
+    result = (await h.results())["p"].content
+    assert "Plan saved" in result and "before you end your turn" in result
+
+
+async def test_the_prompt_shows_a_plan_the_conversation_does_not(make):
+    """A plan the user edited, or one whose update_plan call is no longer in view (a
+    conversation opened again, older messages summarized), is in the prompt."""
+    h = await duty_harness(make, [
+        Step(calls=[call("update_plan", {"items": [{"text": "Fix the bug"}]}, id="p")]),
+        Step(text="On it."), Step(text="Sure."),
+        Step(calls=[call("update_plan", {"items": [{"text": "Ship it"}]}, id="q")]),
+        Step(text="Planned."), Step(text="Hello again.")])
+    await h.turn("fix the bug")
+    await h.runtime.set_plan([PlanItem("Write the docs first")])
+    await h.turn("carry on")
+    system = h.core.requests[2].system
+    assert "## Plan\n- [todo] Write the docs first" in system and duties.CLOSE_PLAN in system
+    await h.turn("plan again")  # the agent's own update is in the conversation again
+    assert "## Plan" not in h.core.requests[4].system
+    first = h.conversation.id
+    await h.chat("Other")  # away and back: what the conversation shows is not known
+    await h.start(conversation_id=first)
+    await h.turn("hello again")
+    assert "- [todo] Ship it" in h.core.requests[5].system
 
 
 async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
@@ -138,7 +167,9 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
     await h.rec.wait_for(lambda r: r.of(DutyScheduled)[-1] == DutyScheduled(None))
     await h.turn("thanks")
     request = h.core.requests[-1]
-    assert "Read mail" in request.system  # the plan is still shown
+    # The plan is still in view: the agent's own call shows it.
+    assert any(getattr(b, "name", None) == "update_plan" and b.arguments["items"]
+               for m in request.messages for b in m.blocks)
     assert "update_plan" in [t.name for t in request.tools]
 
 
@@ -147,9 +178,6 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
 
 def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
     """An agent tends to stop ticking steps off once the work is done."""
-    from kayden.api import PlanItem, PlanStatus
-    from kayden.runtime import duty as duties
-
     done = PlanItem("Read the code", PlanStatus.DONE)
     doing = PlanItem("Fix the bug", PlanStatus.DOING)
     assert duties.CLOSE_PLAN in duties.prompt(None, [done, doing])
@@ -176,7 +204,10 @@ async def test_update_plan_saves_the_plan_and_every_request_shows_it(make):
     assert plan[1].due == pytest.approx(
         datetime(2030, 1, 7, 9).astimezone().timestamp())
     assert before + 90 * 60 <= plan[2].due <= time.time() + 90 * 60
-    assert "Weekly report" in h.core.requests[1].system
+    assert "Weekly report" not in h.core.requests[1].system  # the result shows it
+    result = next(b for m in h.core.requests[1].messages for b in m.blocks
+                  if isinstance(b, ToolResult))
+    assert "- Weekly report: due 2030-01-07T09:00" in result.content
     assert h.store.conversations[h.conversation.id].info.plan == plan
 
 

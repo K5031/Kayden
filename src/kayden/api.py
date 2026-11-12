@@ -411,7 +411,8 @@ class PlanStatus(StrEnum):
 @dataclass(frozen=True, slots=True)
 class PlanItem:
     """One step of a conversation's plan, which the agent keeps with update_plan and the
-    user edits (RuntimeAPI.set_plan). Every request shows the whole plan."""
+    user edits (RuntimeAPI.set_plan). Every request has the whole plan in view: the agent's
+    own call, or the system prompt when the messages do not show it."""
 
     text: str
     status: PlanStatus = PlanStatus.TODO
@@ -825,7 +826,7 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         "done as you go, in the same call as other work where you can. Skip it for a quick "
         "answer or a single step. When a new task starts, replace the old plan. Never end "
         "your turn with the plan out of date: when the work is finished, every step is "
-        "done or dropped. Every request shows the plan; with a "
+        "done or dropped. Your last update stays in view; with a "
         "duty, an open item that falls due wakes you.",
         {"type": "object",
          "properties": {"items": {"type": "array", "items": _PLAN_ITEM}},

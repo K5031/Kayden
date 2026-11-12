@@ -330,6 +330,9 @@ class Runtime:
         self._grants: dict[str, bool] = {}
         self._memory_tools: set[str] = set()  # offered by Memory this request
         self._skills: dict[str, skill_files.Loaded] = {}  # found for this request
+        # The update_plan call that wrote the open conversation's plan; None when a person
+        # did, or it is not known (the conversation was opened again).
+        self._plan_call: CallId | None = None
         self._skill_problems: list[str] = []
         self._tool_owner: dict[str, Tools] = {}  # the Tools module that offered each name
         self._own_description: set[str] = set()  # tools whose schema declares DESCRIPTION_ARG
@@ -455,6 +458,7 @@ class Runtime:
         conversation, resumed = await self._open_conversation(options)
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
+        self._plan_call = None
         self._conversation = conversation
         self._draft = not resumed and options.seed_from is None
         self._model = model
@@ -686,6 +690,7 @@ class Runtime:
         if self._conversation is None:
             raise RuntimeStateError("no conversation is open")
         await self._save_duty(self._conversation.duty, plan)
+        self._plan_call = None
         self._log.decision("plan", items=len(plan), by="user")
         if self._duty_timer is not None:
             self._schedule_duty()
@@ -1407,7 +1412,11 @@ class Runtime:
         if assembled.system_addendum:
             system = f"{system}\n\n{assembled.system_addendum}"
         assert self._conversation is not None
-        if section := duties.prompt(self._conversation.duty, self._conversation.plan):
+        in_view = self._plan_call is not None and any(
+            isinstance(b, ToolCall) and b.id == self._plan_call
+            for m in assembled.messages for b in m.blocks)
+        if section := duties.prompt(self._conversation.duty, self._conversation.plan,
+                                    in_view=in_view):
             system = f"{system}\n\n{section}"
         self._unseen = self._proposal_done = False
         messages = [_stamped(m) for m in assembled.messages]
@@ -1961,8 +1970,9 @@ class Runtime:
                 except ValueError as e:
                     return ToolStatus.ERROR, str(e)
                 await self._save_duty(self._conversation.duty, plan)
+                self._plan_call = call.id
                 self._log.decision("plan", items=len(plan), by="model")
-                return ToolStatus.OK, f"Plan saved. It is now {duties.local(now)}."
+                return ToolStatus.OK, duties.saved(plan, self._conversation.duty, now)
             case "ask_for_help":
                 if self._conversation.duty is None:
                     return ToolStatus.ERROR, "There is no duty to pause."

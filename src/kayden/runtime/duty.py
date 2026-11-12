@@ -36,8 +36,24 @@ def _span(seconds: float) -> str:
     return f"{n} {unit}{'s' if n != 1 else ''}"
 
 
-def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
-    """The system prompt section for a conversation with a duty or a plan."""
+STILL_OPEN = ("Steps are still open: update the plan again before you end your turn, "
+              "unless they wait for the user or for background work.")
+
+
+def saved(plan: Sequence[PlanItem], duty: Duty | None, now: float) -> str:
+    """What update_plan answers. The call and this answer are how the plan stays in view,
+    so it says what the call's arguments do not: the time, and when each step is due."""
+    lines = [f"Plan saved. It is now {local(now)}."]
+    lines += [f"- {i.text}: due {local(i.due)}" for i in plan if i.due and i.status in OPEN]
+    if duty is None and any(i.status in OPEN for i in plan):
+        lines.append(STILL_OPEN)
+    return "\n".join(lines)
+
+
+def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False) -> str:
+    """The system prompt section for a conversation with a duty or a plan. A plan the
+    conversation itself shows (`in_view`: the agent's update_plan call is among the
+    messages) is left out, so that updating it does not change the prompt."""
     parts = []
     if duty is not None:
         until = (" until the goal is reached; then call finish_goal with a short report"
@@ -53,7 +69,9 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem]) -> str:
             "you. If you are blocked and only your supervisor "
             "can unblock you, call ask_for_help and end your turn; solve what you can "
             "yourself first.")
-    if plan:
+    if plan and in_view:
+        pass
+    elif plan:
         lines = [f"- [{i.status}] {i.text}" + (f" (due {local(i.due)})" if i.due else "")
                  + (f" — {i.note}" if i.note else "") for i in plan]
         section = "## Plan\n" + "\n".join(lines)
