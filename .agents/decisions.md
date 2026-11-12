@@ -749,6 +749,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 |---|---|
 | Marker | `api.NOTICE_PREFIX` ("[Runtime notice] ") starts every USER message Kayden writes for the model: the activation notice, a duty's wake-up, a sub-session's report to its parent |
 | Shown | Frontends show such a message as a notice line without the prefix (desktop `NoticeItem`, TUI `SystemEntry`), never as the user's bubble; a long one (several lines or over 160 characters, such as a new goal's brief) is folded to its first line, with Show all on the desktop and a collapsed entry in the TUI; a queued one is shown once it is committed. A conversation whose first message is a notice is labelled "New chat" until it gets a title |
+| Not shown | A notice that only tells the model how to behave (the voice notices) starts with `api.HIDDEN_NOTICE_PREFIX`, the marker followed by "(The user does not see this notice.) ". Frontends show nothing for it; it is in the archive and in every request like any other message |
 
 ## Desktop look (a calmer, more professional window)
 
@@ -830,6 +831,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 | Models folder | `<data dir>/voice/`, beside `desktop.json`; a window without a data folder has no voice mode |
 | Download | One model after another from sherpa-onnx's GitHub releases to `<name>.part`, unpacked beside it and renamed into place; the sizes in `download.MODELS` are for the question and the progress only |
 | Sentences | Cut at `.`, `!` or `?` before a space (not after a digit) and at line ends; an open code block is waited out |
+| What the agent is told | `config.VOICE_ON_NOTICE`: write only what sounds right when spoken (short plain sentences; no emoji, kaomoji, emoticons, symbols, markup, lists, tables or code unless asked; numbers, units and abbreviations as they are said), over any other instruction on style, and do not mention the notice. `VOICE_OFF_NOTICE`: write as before, without mentioning the change. Both are hidden notices |
 | Looking up what the agent was told | The newest voice notice among the conversation's last 200 messages (`config.VOICE_NOTICE_LOOKBACK`), once per opened conversation |
 | A Core that does not stream | The committed reply is read when no text deltas came for it |
 

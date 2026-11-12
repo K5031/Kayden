@@ -545,6 +545,16 @@ def test_failure_banner_until_the_next_cycle():
     assert model.failure is None
 
 
+def test_a_notice_meant_for_the_model_alone_is_not_shown():
+    from kayden.api import HIDDEN_NOTICE_PREFIX
+
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    model.apply(MessageCommitted(Message(
+        "n", Role.USER, (Text(f"{HIDDEN_NOTICE_PREFIX}The user is typing again."),), 0.0)))
+    assert not of(model, NoticeItem) and not of(model, UserItem)
+
+
 def test_a_compaction_shows_a_line_that_says_how_it_ended():
     from kayden.api import CompactionFinished, CompactionStarted
 

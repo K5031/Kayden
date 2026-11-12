@@ -30,6 +30,7 @@ import tomli_w
 
 from kayden.api import (
     DESCRIPTION_ARG,
+    HIDDEN_NOTICE_PREFIX,
     NOTICE_PREFIX,
     AgentState,
     Budget,
@@ -124,7 +125,8 @@ def message_lines(messages: Sequence[Message]) -> list[tuple[str, str]]:
     for message in messages:
         for block in message.blocks:
             match block:
-                case Text(text=text) if text.strip():
+                case Text(text=text) if text.strip() and not text.startswith(
+                        HIDDEN_NOTICE_PREFIX):
                     who = {Role.USER: "You", Role.ASSISTANT: "Agent"}.get(message.role,
                                                                         message.role)
                     if text.startswith(NOTICE_PREFIX):

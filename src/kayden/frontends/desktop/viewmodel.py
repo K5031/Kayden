@@ -765,7 +765,8 @@ class ConversationModel:
             if said:
                 self._drop_plan()
             if (notice := notice_of(text)) is not None:
-                self._add(NoticeItem(notice, "info"))
+                if notice:
+                    self._add(NoticeItem(notice, "info"))
             elif said:
                 self._add(UserItem(text, message.id, attachments=attached))
             for block in message.blocks:

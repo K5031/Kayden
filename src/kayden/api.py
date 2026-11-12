@@ -945,6 +945,9 @@ RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS) | {SKILL_
 # activation, a duty's wake-up, a sub-session's report) starts with this. Frontends show
 # such a message as a notice, not as something the user said.
 NOTICE_PREFIX = "[Runtime notice] "
+# A notice that only tells the model how to behave starts with this. Frontends show nothing
+# for it.
+HIDDEN_NOTICE_PREFIX = f"{NOTICE_PREFIX}(The user does not see this notice.) "
 
 # Every tool the runtime offers takes an optional argument under this name: a few plain
 # words the model writes about what the call does, which frontends show in place of the

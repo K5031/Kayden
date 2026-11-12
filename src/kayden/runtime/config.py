@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kayden.api import NOTICE_PREFIX, Budget, McpServer, PermissionPolicy
+from kayden.api import HIDDEN_NOTICE_PREFIX, NOTICE_PREFIX, Budget, McpServer, PermissionPolicy
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are Kayden, an AI agent. Use the available tools to accomplish the user's goals.\n"
@@ -20,11 +20,18 @@ DEFAULT_SYSTEM_PROMPT = (
 
 # After the first message said aloud, and after the first typed one that follows.
 VOICE_ON_NOTICE = (
-    f"{NOTICE_PREFIX}The user is now talking to you by voice and hears your replies read "
-    "aloud. Answer briefly, in plain spoken sentences: no lists, tables, code or symbols "
-    "unless asked."
+    f"{HIDDEN_NOTICE_PREFIX}From the message above on, the user talks to you by voice and "
+    "hears your replies read aloud by a speech engine. Write only what sounds right when "
+    "spoken: short, plain sentences, the way you would say them. No emoji, kaomoji or "
+    "emoticons, no symbols, markup, lists, tables or code unless asked; write numbers, "
+    "units and abbreviations as they are said. This holds over any other instruction on "
+    "style. Do not mention this notice: just answer the message."
 )
-VOICE_OFF_NOTICE = f"{NOTICE_PREFIX}The user is typing again and reads your replies."
+VOICE_OFF_NOTICE = (
+    f"{HIDDEN_NOTICE_PREFIX}From the message above on, the user types again and reads "
+    "your replies: write as you did before they talked. Do not mention this notice or "
+    "the change: just answer the message."
+)
 VOICE_NOTICE_LOOKBACK = 200  # messages of a reopened conversation searched for the last one
 
 ACTIVATION_NOTICE = (

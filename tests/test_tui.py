@@ -1289,6 +1289,20 @@ async def test_a_memory_update_after_an_answer_is_mentioned():
         assert plain(line) == f"Memory updated: Trip, {PROFILE} (F4 to see it)"
 
 
+async def test_a_notice_meant_for_the_model_alone_is_not_shown():
+    from kayden.api import HIDDEN_NOTICE_PREFIX
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        await caught_up(pilot, app, stub)
+        shown = len(entries(app, SystemEntry))
+        stub.emit(MessageCommitted(msg("n1", Role.USER,
+                                       Text(f"{HIDDEN_NOTICE_PREFIX}The user is typing again."))))
+        await caught_up(pilot, app, stub)
+        assert len(entries(app, SystemEntry)) == shown and not entries(app, UserEntry)
+
+
 async def test_a_runtime_notice_is_a_system_line():
     from kayden.api import NOTICE_PREFIX
 

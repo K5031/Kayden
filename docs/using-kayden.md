@@ -41,7 +41,8 @@ message box:
 - **Only words are read.** Code, tables, links and symbols stay on screen.
 - **Esc stops the reading** and Kayden listens again. You cannot talk over it: while it
   speaks, it does not listen.
-- **The agent knows you are talking**, so it answers briefly, in plain sentences.
+- **The agent knows you are talking**, so it answers briefly, in plain sentences, without
+  emoji, kaomoji or symbols, until you type again.
 - **Speech runs on your computer.** What you say is not sent to a speech service; only
   the text goes to the model, as when you type. The first time, Kayden asks to download
   the speech models (about 830 MB) into its data folder.

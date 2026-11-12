@@ -16,6 +16,7 @@ from typing import Any
 
 from kayden.api import (
     DESCRIPTION_ARG,
+    HIDDEN_NOTICE_PREFIX,
     NOTICE_PREFIX,
     SUGGESTION_TOOLS,
     AgentState,
@@ -92,7 +93,10 @@ def card_of(call: ToolCall) -> Card | None:
 
 def notice_of(text: str) -> str | None:
     """What a message Kayden wrote for the model (api.NOTICE_PREFIX) says, to show as a
-    notice; None for anything the user wrote."""
+    notice; None for anything the user wrote, "" for a notice that is not shown
+    (api.HIDDEN_NOTICE_PREFIX)."""
+    if text.startswith(HIDDEN_NOTICE_PREFIX):
+        return ""
     return text.removeprefix(NOTICE_PREFIX).strip() if text.startswith(NOTICE_PREFIX) else None
 
 

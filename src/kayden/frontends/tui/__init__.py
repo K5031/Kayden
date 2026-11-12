@@ -2012,7 +2012,9 @@ class KaydenApp(App[None]):
             if text and notice_of(text) is None and self._insert_before is None:
                 await self._set_card(None)  # answered: results and notices leave it up
             if (notice := notice_of(text)) is not None:
-                if "\n" in notice or len(notice) > 160:  # a new goal's brief: folded
+                if not notice:
+                    pass
+                elif "\n" in notice or len(notice) > 160:  # a new goal's brief: folded
                     title = _clip(notice.splitlines()[0], 100)
                     await self._mount(Collapsible(Static(notice, markup=False), title=title,
                                                   collapsed=True, classes="notice"))

@@ -20,8 +20,13 @@ the archive is the same as a typed one, and stays readable on screen while it is
 
 The one thing the runtime learns is that a message was said aloud: `send(..., spoken=True)`.
 When that differs from the conversation's message before, the runtime appends a runtime
-notice after the message (`config.VOICE_ON_NOTICE`: answer briefly, in plain spoken
-sentences; `VOICE_OFF_NOTICE` when typing is back). A notice is part of the conversation,
+notice after the message (`config.VOICE_ON_NOTICE`: write only what sounds right when
+spoken, without emoji, kaomoji, symbols or markup, whatever else its instructions say
+about style; `VOICE_OFF_NOTICE` when typing is back). Both tell the agent not to mention
+them and are not shown to the user (`api.HIDDEN_NOTICE_PREFIX`): the first version was a
+visible line, and the agent greeted the user back to typing. This is the usual pair for
+voice agents: the model is told its words will be spoken, and what still is not a word
+is taken out before the speech engine (`voice/speech.py`). A notice is part of the conversation,
 so the start of every request stays the same and a provider's prompt cache stays valid.
 It follows the message, so that a conversation still begins with the user's words, which
 its title is made of. A reopened conversation finds what the agent was last told in its

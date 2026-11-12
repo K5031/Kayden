@@ -380,6 +380,7 @@ async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) 
 
 async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: Any) -> None:
     """In a runtime notice after the message, so the system prompt stays as it is."""
+    from kayden.api import HIDDEN_NOTICE_PREFIX
     from kayden.runtime.config import VOICE_OFF_NOTICE, VOICE_ON_NOTICE
 
     def texts(transcript: Any) -> list[str]:
@@ -403,6 +404,9 @@ async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: An
     await h.start(conversation_id=first.id)
     await h.turn("typed again")
     assert texts(await h.transcript())[-2:] == ["typed again", VOICE_OFF_NOTICE]
+    for notice in (VOICE_ON_NOTICE, VOICE_OFF_NOTICE):  # for the model alone, unremarked
+        assert notice.startswith(HIDDEN_NOTICE_PREFIX) and "Do not mention" in notice
+    assert "kaomoji" in VOICE_ON_NOTICE and "emoji" in VOICE_ON_NOTICE
 
 
 # ── Stop ──
