@@ -73,6 +73,7 @@ from kayden.api import (
     PermissionRequested,
     PermissionResolved,
     PlanItem,
+    PlanStatus,
     Proposal,
     ProposalMade,
     ProposalResolved,
@@ -2092,7 +2093,11 @@ class Runtime:
                 duty = self._conversation.duty
                 if duty is None or duty.kind != DutyKind.GOAL:
                     return ToolStatus.ERROR, "There is no goal to finish."
-                await self._save_duty(None, self._conversation.plan)
+                # The step the agent was on is the one this call completes.
+                plan = [replace(item, status=PlanStatus.DONE)
+                        if item.status == PlanStatus.DOING else item
+                        for item in self._conversation.plan]
+                await self._save_duty(None, plan)
                 self._log.decision("goal_finished")
                 return ToolStatus.OK, "Goal reached; the duty has ended."
             case "skill":

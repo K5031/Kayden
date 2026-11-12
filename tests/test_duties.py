@@ -561,6 +561,36 @@ def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action
     assert "with your very first tool call" in told
 
 
+async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
+    """The step in progress when the agent declares the goal reached is the one that
+    call completes (often "Report"): it is not sent back to tick it off. A step it never
+    began stays open, and for that it is sent back."""
+    plan = [{"text": "Launch", "status": "done"}, {"text": "Report", "status": "doing"}]
+    h = await duty_harness(make, [
+        Step(calls=[call("update_plan", {"items": plan}),
+                    call("finish_goal", {"report": "Launched."})]),
+        Step(text="All done.")])
+    await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
+                                  max_interval_s=30))
+    await idle(h, 2)
+    await asyncio.sleep(0.2)
+    assert len(h.core.requests) == 2  # not sent back
+    assert [(i.text, i.status) for i in h.runtime.snapshot().conversation.plan] == [
+        ("Launch", PlanStatus.DONE), ("Report", PlanStatus.DONE)]
+
+    plan.append({"text": "Tell the press", "status": "todo"})
+    h = await duty_harness(make, [
+        Step(calls=[call("update_plan", {"items": plan}),
+                    call("finish_goal", {"report": "Launched."})]),
+        Step(text="All done."), Step(text="The press is told.")])
+    await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
+                                  max_interval_s=30))
+    await idle(h, 3)
+    assert "still has open steps: Tell the press" in notices(h.core.requests[2])[-1]
+    assert [i.status for i in h.runtime.snapshot().conversation.plan] == [
+        PlanStatus.DONE, PlanStatus.DONE, PlanStatus.TODO]
+
+
 def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
     """Else it is sent back after the goal, for one more request, to tick the steps off."""
     from kayden.api import DUTY_TOOLS
@@ -568,4 +598,4 @@ def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
     told = DUTY_TOOLS["finish_goal"].description
     assert "update_plan" in told and "in the same message" in told
     assert "done or dropped" in told
-    assert "A step for reporting or finishing is done by this call" in told
+    assert "reporting" not in told  # the runtime closes the step in progress itself

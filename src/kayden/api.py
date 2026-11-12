@@ -912,9 +912,9 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         "finish_goal",
         "Declare your goal reached, with a short report for the user. Your duty then ends. "
         "Bring your plan up to date first, with update_plan in the same message, before "
-        "this call: every step done or dropped, as it really is. A step for reporting or "
-        "finishing is done by this call, so mark it done too. A plan left with open steps "
-        "sends you back to close them.",
+        "this call: every step done or dropped, as it really is. The step you are on "
+        "counts as done with this call; a step you never began stays open and sends you "
+        "back to close it.",
         {"type": "object", "properties": {"report": {"type": "string", "minLength": 1}},
          "required": ["report"]},
     ),
