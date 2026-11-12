@@ -1062,6 +1062,11 @@ async def test_the_window_draws_its_own_title_bar(make, qapp):
     assert edges(window.mapToGlobal(QPoint(799, 599))) == (Qt.Edge.RightEdge
                                                           | Qt.Edge.BottomEdge)
     assert not edges(window.mapToGlobal(QPoint(400, 300)))
+    # A scroll bar along the edge keeps all but the outermost pixels for itself.
+    bar = window.scroll.verticalScrollBar()
+    assert edges(window.mapToGlobal(QPoint(795, 300))) == Qt.Edge.RightEdge
+    assert not edges(window.mapToGlobal(QPoint(795, 300)), bar)
+    assert edges(window.mapToGlobal(QPoint(799, 300)), bar) == Qt.Edge.RightEdge
     window.window_buttons["maximize"].click()
     await eventually(lambda: window.isMaximized())
     assert window.window_buttons["maximize"].toolTip() == "Restore"
@@ -1625,3 +1630,21 @@ def test_the_thinking_line_unfolds_what_was_thought(qapp):
     assert bubble.thinking.sizeHint().width() == words + 16
     bubble.thinking.click()
     assert not bubble.reasoning.isHidden() and bubble.reasoning.text() == "Looking at the files"
+
+
+def test_a_scroll_bar_takes_clicks_across_its_whole_width(qapp):
+    """Also on its outermost pixel, where the pointer lands at the edge of the screen."""
+    from PySide6.QtWidgets import QScrollArea
+
+    theme.apply(qapp, dark=True)
+    area = QScrollArea()
+    area.setWidget(QLabel("line\n" * 400))
+    area.resize(300, 300)
+    area.show()
+    qapp.processEvents()
+    bar = area.verticalScrollBar()
+    for x in (0, bar.width() - 1):
+        bar.setValue(0)
+        QTest.mouseClick(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                         QPoint(x, bar.height() - 20))
+        assert bar.value() > 0  # it paged down

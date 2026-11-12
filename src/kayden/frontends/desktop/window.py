@@ -80,6 +80,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QScrollBar,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
@@ -988,6 +989,7 @@ class WindowEdges(QObject):
     pressing there hands the resize to the window system."""
 
     MARGIN = 6  # px from the edge
+    OVER_SCROLL_BAR = 2  # px that still resize where a scroll bar lies along the edge
 
     def __init__(self, window: QWidget) -> None:
         super().__init__(window)
@@ -995,11 +997,14 @@ class WindowEdges(QObject):
         self.cursor_set = False
         QApplication.instance().installEventFilter(self)
 
-    def edges(self, global_pos: QPoint) -> Qt.Edge:
+    def edges(self, global_pos: QPoint, over: QWidget | None = None) -> Qt.Edge:
+        """The edges `global_pos` is on; `over` is the widget under it. A scroll bar keeps
+        all but the outermost pixels, or it could hardly be grabbed."""
         if self.window.isMaximized() or self.window.isFullScreen():
             return Qt.Edge(0)
         pos = self.window.mapFromGlobal(global_pos)
-        rect, m = self.window.rect(), self.MARGIN
+        rect = self.window.rect()
+        m = self.OVER_SCROLL_BAR if isinstance(over, QScrollBar) else self.MARGIN
         found = Qt.Edge(0)
         if pos.x() <= m:
             found |= Qt.Edge.LeftEdge
@@ -1017,7 +1022,7 @@ class WindowEdges(QObject):
             return False
         if not isinstance(watched, QWidget) or watched.window() is not self.window:
             return False
-        edges = self.edges(event.globalPosition().toPoint())  # type: ignore[attr-defined]
+        edges = self.edges(event.globalPosition().toPoint(), watched)  # type: ignore[attr-defined]
         if kind == QEvent.Type.MouseMove:
             self._show_cursor(edges)
             return False

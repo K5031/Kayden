@@ -218,8 +218,9 @@ QMenu::item:selected {{ background: {c.accent_soft}; color: {c.accent_text}; }}
 QMenu::item:disabled {{ color: {c.muted}; }}
 QMenu::separator {{ height: 1px; background: {c.line}; margin: 4px 8px; }}
 
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: {c.track}; border-radius: 3px; min-height: 32px; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar::handle:vertical {{ background: {c.track}; border: 2px solid transparent;
+    border-radius: 5px; background-clip: padding; min-height: 32px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 
