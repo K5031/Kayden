@@ -196,6 +196,8 @@ QToolButton#removeAttachment {{ background: transparent; border-radius: 9px; pad
 QToolButton#removeAttachment:hover {{ background: {c.select}; }}
 QToolButton#send {{ background: transparent; border-radius: 8px; padding: 0; }}
 QToolButton#send:hover {{ background: {c.select}; }}
+QToolButton#send[active="true"] {{ background: {c.accent}; }}
+QToolButton#send[active="true"]:hover {{ background: {c.accent_hover}; }}
 QToolButton#modelPicker {{ color: {c.muted}; padding: 2px 6px; font-size: {small}; }}
 QToolButton#modelPicker:hover {{ background: {c.select}; color: {c.text}; }}
 QToolButton#modelPicker::menu-indicator {{ image: none; width: 0; }}
@@ -299,7 +301,7 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
     """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", "menu" (three
-    lines), "plus", "copy", "check", "folded" and "unfolded" (chevrons), a plan step's "done", "todo" or "dropped", or a
+    lines), "plus", "voice" (a sound wave), "copy", "check", "folded" and "unfolded" (chevrons), a plan step's "done", "todo" or "dropped", or a
     window control:
     "minimize", "maximize", "restore", "close"."""
     scale = 2
@@ -352,6 +354,11 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
                                 Qt.PenCapStyle.RoundCap))
             for y in (0.3, 0.5, 0.7):
                 painter.drawLine(QPointF(s * 0.2, s * y), QPointF(s * 0.8, s * y))
+        case "voice":  # a sound wave: five bars
+            painter.setPen(QPen(QColor(color), size / 9, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap))
+            for x, half in ((0.2, 0.1), (0.35, 0.24), (0.5, 0.34), (0.65, 0.18), (0.8, 0.1)):
+                painter.drawLine(QPointF(s * x, s * (0.5 - half)), QPointF(s * x, s * (0.5 + half)))
         case "plus":
             painter.setPen(QPen(QColor(color), size / 11, Qt.PenStyle.SolidLine,
                                 Qt.PenCapStyle.RoundCap))

@@ -1323,6 +1323,7 @@ class MessageQueued:
     message_id: str
     text: str
     attachments: Sequence[Attachment] = ()  # what the user attached to it
+    spoken: bool = False  # said aloud (RuntimeAPI.send)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1687,7 +1688,8 @@ class RuntimeAPI(Protocol):
         Settings.restart_frontend names, reopening the open conversation unless the Memory
         module changes. The event stream ends, so the frontend's run() returns."""
 
-    async def send(self, text: str, files: Sequence[str] = ()) -> None:
+    async def send(self, text: str, files: Sequence[str] = (), *,
+                   spoken: bool = False) -> None:
         """Submit a user message and authorize a cycle. While a cycle runs or the agent
         is stopping, the message is queued (MessageQueued) and delivered at the next
         turn boundary; a turn that ended without tool calls starts the next cycle.
@@ -1698,7 +1700,12 @@ class RuntimeAPI(Protocol):
         Document, a file that reads as text (up to 200 kB) or a Word, Excel or PowerPoint
         file a File with its content, any other a File without. ValueError for one that
         cannot be read; nothing is sent then. `text` may
-        be empty when there are files."""
+        be empty when there are files.
+
+        `spoken`: the user said this aloud and hears the reply read (a voice
+        conversation). When it differs from the conversation's message before, the runtime
+        puts a runtime notice after this one that tells the agent, so that it
+        answers in a way that can be listened to; the system prompt does not change."""
 
     async def activate(self) -> None:
         """User-initiated cycle with no new message. If the transcript is empty or its

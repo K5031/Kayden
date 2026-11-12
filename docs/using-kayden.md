@@ -30,6 +30,23 @@ agent's thinking between them, fold into one line that shows the step under way,
 many there were and any that failed ("4 steps · 1 failed"); open it to see them all. In the
 terminal app, select the line and press Enter.
 
+### Talking with Kayden
+
+In the desktop app you can talk instead of typing. Click the sound-wave button in the
+message box:
+
+- **You talk, Kayden answers aloud.** It sends what you said once you have been silent for
+  about a second, and reads the reply while it is still being written. The conversation
+  is on screen as usual, and you can type in between.
+- **Only words are read.** Code, tables, links and symbols stay on screen.
+- **Esc stops the reading** and Kayden listens again. You cannot talk over it: while it
+  speaks, it does not listen.
+- **The agent knows you are talking**, so it answers briefly, in plain sentences.
+- **Speech runs on your computer.** What you say is not sent to a speech service; only
+  the text goes to the model, as when you type. The first time, Kayden asks to download
+  the speech models (about 830 MB) into its data folder.
+- **English only** for now.
+
 ### Attaching files
 
 In the desktop app, click **+** in the message box, drop files on the window or paste

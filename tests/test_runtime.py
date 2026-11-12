@@ -378,6 +378,33 @@ async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) 
     assert (await h.transcript())[-1].blocks == (Text("plain"),)
 
 
+async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: Any) -> None:
+    """In a runtime notice after the message, so the system prompt stays as it is."""
+    from kayden.runtime.config import VOICE_OFF_NOTICE, VOICE_ON_NOTICE
+
+    def texts(transcript: Any) -> list[str]:
+        return [b.text for m in transcript if m.role == Role.USER
+                for b in m.blocks if isinstance(b, Text)]
+
+    core = ScriptedCore([Step(text=str(i)) for i in range(5)])
+    h: Harness = await make(core=core)
+    first = await h.start()
+    async def turn(text: str, spoken: bool, answered: int) -> None:
+        await h.runtime.send(text, spoken=spoken)
+        await eventually(lambda: len(core.requests) == answered
+                         and h.runtime.snapshot().state == AgentState.IDLE)
+
+    await turn("typed", False, 1)
+    await turn("said one", True, 2)
+    await turn("said two", True, 3)
+    assert texts(await h.transcript()) == ["typed", "said one", VOICE_ON_NOTICE, "said two"]
+    assert len({r.system for r in core.requests}) == 1  # the prompt never changed
+    await h.start()  # another conversation, then back: it remembers what it was told
+    await h.start(conversation_id=first.id)
+    await h.turn("typed again")
+    assert texts(await h.transcript())[-2:] == ["typed again", VOICE_OFF_NOTICE]
+
+
 # ── Stop ──
 
 

@@ -1004,6 +1004,8 @@ class Controller:
         self._switching = asyncio.Lock()  # conversation switches, one after another
         self.can_delete = True  # False once Memory said it cannot delete conversations
         self.sessions: SubSessions | None = None  # deleted with their conversation
+        # Called with each event after the model took it (voice mode reads replies aloud).
+        self.listeners: list[Callable[[RuntimeEvent], None]] = []
 
     async def run(self) -> None:
         """Until the event stream ends or ShuttingDown arrives."""
@@ -1025,6 +1027,8 @@ class Controller:
                         continue
                 self.model.last_seq = item.seq
                 self.model.apply(item.event)
+                for listener in self.listeners:
+                    listener(item.event)
                 if self.model.closed:
                     break
         finally:
@@ -1083,11 +1087,11 @@ class Controller:
 
     # ── commands ──────────────────────────────────────────────────────────
 
-    def send(self, text: str, files: Sequence[str] = ()) -> None:
-        """The user's message with the files they attached to it."""
+    def send(self, text: str, files: Sequence[str] = (), *, spoken: bool = False) -> None:
+        """The user's message with the files they attached to it; `spoken` in a voice
+        conversation."""
         if text.strip() or files:
-            self.command(self.runtime.send(text.strip(), files=list(files)) if files
-                         else self.runtime.send(text.strip()))
+            self.command(self.runtime.send(text.strip(), files=list(files), spoken=spoken))
 
     def stop(self) -> None:
         self.model.notice = "Stop requested"

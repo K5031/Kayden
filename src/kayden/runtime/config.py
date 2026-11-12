@@ -18,6 +18,15 @@ DEFAULT_SYSTEM_PROMPT = (
     "no longer in context, or with scope \"all\" the user's other conversations."
 )
 
+# After the first message said aloud, and after the first typed one that follows.
+VOICE_ON_NOTICE = (
+    f"{NOTICE_PREFIX}The user is now talking to you by voice and hears your replies read "
+    "aloud. Answer briefly, in plain spoken sentences: no lists, tables, code or symbols "
+    "unless asked."
+)
+VOICE_OFF_NOTICE = f"{NOTICE_PREFIX}The user is typing again and reads your replies."
+VOICE_NOTICE_LOOKBACK = 200  # messages of a reopened conversation searched for the last one
+
 ACTIVATION_NOTICE = (
     f"{NOTICE_PREFIX}You were activated without a new user message. Continue your work, "
     "or just say so if there is nothing to do."

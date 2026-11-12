@@ -68,6 +68,7 @@ another reason, the Settings window opens with the message.
 | Find the menus | **☰** at the top of the sidebar: new chat, duty, stop, view (zoom, theme, archived conversations) and model. Your name at the bottom left: settings, memory, tool servers, help and quit; the gear next to it opens Settings. Shortcuts work without opening a menu. |
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
 | Attach a file | Click **+** in the message box, drop it anywhere on the window, or paste it (a copied picture or screenshot works too). It waits above the message box, a picture with a small preview, until you send; ✕ takes it off. See [Attaching files](using-kayden.md#attaching-files). |
+| Talk instead of typing | Click the sound-wave button in the message box. Kayden listens, sends what you said when you stop talking, and reads the reply aloud; the message box shows whether it is listening, thinking or speaking. **Esc** stops the reading. Click the button again to end. See [Talking with Kayden](using-kayden.md#talking-with-kayden). |
 | Run a skill | Send its name as a message: `/consolidate-memory`. See [Skills](concepts.md#skills). |
 | Stop Kayden | Press the round button in the message box (it shows a square while Kayden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |

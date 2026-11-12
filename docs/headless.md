@@ -32,7 +32,7 @@ and the terminal app drive their sub-sessions this way:
 | Method | Params |
 |---|---|
 | `start` | `conversation_id`, `model`, `seed_from`, `folder` (all optional) |
-| `send` | `text`, optional `files`: paths of files to attach (an image or a PDF the model sees, a text file with its content) |
+| `send` | `text`, optional `files`: paths of files to attach (an image or a PDF the model sees, a text file with its content), optional `spoken`: `true` when the user said it aloud and hears the reply, so the agent is told to answer in a way that can be listened to |
 | `activate`, `stop` | none |
 | `cancel_operation` | `call_id` |
 | `select_model` | `model_id` |

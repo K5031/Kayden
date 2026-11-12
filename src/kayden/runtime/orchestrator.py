@@ -116,6 +116,9 @@ from kayden.runtime import skills as skill_files
 from kayden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
 from kayden.runtime.config import (
     ACTIVATION_NOTICE,
+    VOICE_NOTICE_LOOKBACK,
+    VOICE_OFF_NOTICE,
+    VOICE_ON_NOTICE,
     Restart,
     RuntimeConfig,
 )
@@ -351,6 +354,8 @@ class Runtime:
         self._mem_lock = asyncio.Lock()
         self._backlog: deque[tuple[Message, list[RuntimeEvent], StopReason | None]] = deque()
         self._inbox: list[MessageQueued] = []
+        # Whether the agent was last told the user talks to it; None: not looked up yet.
+        self._spoken: bool | None = None
         self._pending_results: list[tuple[OperationResult, ToolFinished]] = []
         self._ops: dict[CallId, Operation] = {}  # running
         self._known_ops: dict[CallId, Operation] = {}  # launched by this process
@@ -493,6 +498,7 @@ class Runtime:
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
         self._plan_call = None
+        self._spoken = None
         self._conversation = conversation
         self._draft = not resumed and options.seed_from is None
         self._model = model
@@ -542,7 +548,8 @@ class Runtime:
                            conversation=self.restart_request.conversation_id)
         await self.aclose()
 
-    async def send(self, text: str, files: Sequence[str] = ()) -> None:
+    async def send(self, text: str, files: Sequence[str] = (), *,
+                   spoken: bool = False) -> None:
         state = self._state()
         if state == AgentState.NOT_STARTED:
             raise RuntimeStateError("not started")
@@ -550,7 +557,7 @@ class Runtime:
             raise RuntimeStateError(f"budget exhausted: {reason}")
         attached = tuple([await self._attach(path) for path in files])
         state = self._state()  # the files were read meanwhile
-        queued = MessageQueued(_new_id(), text, attached)
+        queued = MessageQueued(_new_id(), text, attached, spoken)
         self._inbox.append(queued)
         self._answered()
         if state in _RUNNING or state == AgentState.STOPPING:
@@ -1174,7 +1181,30 @@ class Runtime:
             q = self._inbox.pop(0)
             await self._append(Message(q.message_id, Role.USER,
                                        (Text(q.text), *q.attachments), time.time()))
+            if q.spoken != await self._was_spoken():
+                # After the message, so that a conversation still starts with the user's
+                # words (its title is made of them).
+                self._spoken = q.spoken
+                notice = VOICE_ON_NOTICE if q.spoken else VOICE_OFF_NOTICE
+                await self._append(Message(_new_id(), Role.USER, (Text(notice),), time.time()))
         return True
+
+    async def _was_spoken(self) -> bool:
+        """Whether the agent was last told that the user talks to it; a reopened
+        conversation says so in its newest voice notice."""
+        if self._spoken is None:
+            assert self._conversation is not None
+            self._spoken = False
+            recent = [] if self._draft else await self._memory.history(
+                self._conversation.id, limit=VOICE_NOTICE_LOOKBACK)
+            for message in reversed(recent):
+                said = message.blocks[0].text if (
+                    message.role == Role.USER and message.blocks
+                    and isinstance(message.blocks[0], Text)) else ""
+                if said in (VOICE_ON_NOTICE, VOICE_OFF_NOTICE):
+                    self._spoken = said == VOICE_ON_NOTICE
+                    break
+        return self._spoken
 
     async def _ensure_user_last(self) -> None:
         """A cycle without a new user message starts with a runtime notice when the

@@ -818,6 +818,21 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Offered | With `recall`, also by a Memory that keeps no notes |
 | Next | Segment summaries ([proposed note](notes/proposed/2026-11-11-segment-summaries.md)) build on it |
 
+## Voice conversation
+
+The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md); the choices it leaves open:
+
+| Choice | Decision |
+|---|---|
+| End of a turn | 0.9 s of silence (`engine.END_OF_TURN_S`); sounds under 0.25 s are not speech |
+| Voice | Kokoro speaker 3, `af_heart`, at normal speed; not a setting |
+| Threads | Half the CPU's cores, at most 8, for recognition and for speech |
+| Models folder | `<data dir>/voice/`, beside `desktop.json`; a window without a data folder has no voice mode |
+| Download | One model after another from sherpa-onnx's GitHub releases to `<name>.part`, unpacked beside it and renamed into place; the sizes in `download.MODELS` are for the question and the progress only |
+| Sentences | Cut at `.`, `!` or `?` before a space (not after a digit) and at line ends; an open code block is waited out |
+| Looking up what the agent was told | The newest voice notice among the conversation's last 200 messages (`config.VOICE_NOTICE_LOOKBACK`), once per opened conversation |
+| A Core that does not stream | The committed reply is read when no text deltas came for it |
+
 ## How long the model thought
 
 | Choice | Decision |

@@ -177,6 +177,7 @@ from kayden.frontends.desktop.viewmodel import (
     step_segments,
     user_message,
 )
+from kayden.frontends.desktop.voice.mode import VoiceMode
 from kayden.frontends.remote import RemoteRuntime
 from kayden.frontends.sessions import SubSession, SubSessions
 
@@ -186,6 +187,7 @@ PARAGRAPH_SPACING = 10  # px below a reply paragraph
 TURN_GAP = 18  # px more below your message, before Kayden's reply, than between its steps
 LIST_ITEM_SPACING = 4  # px below a list item
 ZOOM_SAVE_DELAY_S = 0.4
+VOICE_DIR = "voice"  # the speech models, in the data folder
 HEADING_SPACING = 6  # px above a heading, on top of the paragraph below the previous block
 RENDER_INTERVAL_MS = 100  # Markdown of a streaming reply is re-rendered at most this often
 DEFAULT_WORK_FOLDER = Path("~/Kayden")
@@ -1490,10 +1492,16 @@ class MainWindow(QMainWindow):
     closed = Signal()
 
     def __init__(self, runtime: RuntimeAPI, controller: Controller,
-                 zoom_file: Path | None = None, sessions: SubSessions | None = None) -> None:
+                 zoom_file: Path | None = None, sessions: SubSessions | None = None,
+                 voice: VoiceMode | None = None) -> None:
         super().__init__()
         self.runtime = runtime
         self.controller = controller
+        # Talking with Kayden; its speech models are kept beside the zoom's file.
+        self.voice = voice or VoiceMode(
+            controller, zoom_file.parent / VOICE_DIR if zoom_file is not None else None,
+            self._ask)
+        self.voice.changed.connect(self._show_voice)
         self.sessions = sessions  # the sub-sessions this window hosts
         self.home = controller  # this window's own runtime; `controller` is the one shown
         controller.sessions = sessions
@@ -1721,6 +1729,13 @@ class MainWindow(QMainWindow):
         self.file_dialog: QFileDialog | None = None
         composer.addWidget(self.attach_button, 0, Qt.AlignmentFlag.AlignBottom)
         composer.addWidget(self.input, 1, Qt.AlignmentFlag.AlignVCenter)
+        self.voice_button = QToolButton(objectName="send")
+        self.voice_button.setFixedSize(32, 32)
+        self.voice_button.setIconSize(QSize(16, 16))
+        self.voice_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.voice_button.setAccessibleName("Voice conversation")
+        self.voice_button.clicked.connect(self.voice.toggle)
+        composer.addWidget(self.voice_button, 0, Qt.AlignmentFlag.AlignBottom)
         composer.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
         self.model_button = QToolButton(objectName="modelPicker")
         self.model_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -1770,7 +1785,7 @@ class MainWindow(QMainWindow):
         sidebar_width = round(SIDEBAR_WIDTH * theme.zoom())
         splitter.setSizes([sidebar_width, max(self.width() - sidebar_width, COLUMN_WIDTH)])
         self.setCentralWidget(splitter)
-        self._paint_icons()
+        self._show_voice()
 
     def _paint_icons(self) -> None:
         colors = theme.current()
@@ -1780,6 +1795,8 @@ class MainWindow(QMainWindow):
         self.menu_button.setIcon(theme.icon("menu", colors.muted, 18))
         self.new_button.setIcon(theme.icon("plus", colors.text, 16))
         self.attach_button.setIcon(theme.icon("plus", colors.muted, 16))
+        self.voice_button.setIcon(theme.icon(
+            "voice", colors.on_accent if self.voice.on else colors.muted, 16))
         self.folder_button.setIcon(theme.icon("folder", colors.text, 18))
         maximized = self.isMaximized()
         for name, button in self.window_buttons.items():
@@ -1868,7 +1885,7 @@ class MainWindow(QMainWindow):
         settings.setShortcuts([QKeySequence("Ctrl+,")])  # Preferences is unbound on Linux
         settings.triggered.connect(lambda: self.open_settings())
         stop = QAction("S&top", self, shortcut=QKeySequence("Esc"))
-        stop.triggered.connect(self.controller.stop)
+        stop.triggered.connect(self._stop)
         quit_action = QAction("&Quit", self, shortcut=QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         self.memory_action = QAction("&Memory…", self)
@@ -2522,7 +2539,7 @@ class MainWindow(QMainWindow):
         if text or files:
             self.input.clear()
             self.attachments.clear()
-            self.controller.send(text, files)
+            self.controller.send(text, files, spoken=self.voice.spoken)
 
     def _paste_image(self, image: QImage) -> None:
         """A picture pasted from the clipboard: saved as a file, then attached like one."""
@@ -2541,6 +2558,32 @@ class MainWindow(QMainWindow):
             self.attachments.add(files)
             self.input.setFocus()
             event.acceptProposedAction()
+
+    def _stop(self) -> None:
+        """Esc: while a reply is read aloud it stops the reading, otherwise the agent."""
+        if not self.voice.interrupt():
+            self.controller.stop()
+
+    def _show_voice(self) -> None:
+        """The voice button and what voice mode is doing, where the message is typed."""
+        on = self.voice.on
+        theme.mark(self.voice_button, "active", on)
+        self.voice_button.setToolTip("End the voice conversation" if on
+                                     else "Talk with Kayden")
+        self.input.setPlaceholderText(self.voice.status or "Message Kayden")
+        self._paint_icons()
+
+    def _ask(self, text: str, details: str) -> asyncio.Future[bool]:
+        """A question to the user; the future says whether they agreed."""
+        answer: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        box = QMessageBox(QMessageBox.Icon.NoIcon, "Kayden", text, parent=self)
+        box.setInformativeText(details)
+        box.setDefaultButton(box.addButton(QMessageBox.StandardButton.Cancel))
+        agree = box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+        box.finished.connect(
+            lambda _: answer.done() or answer.set_result(box.clickedButton() is agree))
+        box.open()
+        return answer
 
     def _send_or_stop(self) -> None:
         if self.model.busy:
@@ -2596,6 +2639,7 @@ class MainWindow(QMainWindow):
         self.controller.command(load())
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.voice.stop()
         if self._pasted is not None:
             shutil.rmtree(self._pasted, ignore_errors=True)
         self.closed.emit()
