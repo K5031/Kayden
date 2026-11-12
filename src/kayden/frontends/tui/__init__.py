@@ -190,6 +190,8 @@ HELP = (
     "Messages can be sent while the agent runs; they are queued."
 )
 UNTITLED = "New chat"
+WORKING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
+           AgentState.STOPPING)
 # States in which runtime.start() may switch conversations (given no outstanding call).
 SWITCHABLE = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 HISTORY_PAGE = 100  # messages loaded per history page
@@ -1798,6 +1800,7 @@ class KaydenApp(App[None]):
         match event:
             case StateChanged(state=state, pending_ops=pending_ops):
                 self.state, self.pending_ops = state, pending_ops
+                await self._set_checklist()
                 if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
                     self._end_stream()
                 if state is not AgentState.STOPPING:
@@ -2065,8 +2068,9 @@ class KaydenApp(App[None]):
         await self.query_one("#permissions", Vertical).mount(prompt)
 
     async def _set_checklist(self) -> None:
-        """The plan, while a step is open, at the top of the prompts."""
-        steps = checklist(self.conversation.plan) if self.conversation is not None else ()
+        """The plan, while the agent works on it, at the top of the prompts."""
+        steps = (checklist(self.conversation.plan, self.state in WORKING)
+                 if self.conversation is not None else ())
         if self._plan is not None and self._plan.plan == steps:
             return
         if self._plan is not None:

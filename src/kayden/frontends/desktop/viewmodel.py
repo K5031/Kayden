@@ -453,7 +453,10 @@ class ConversationModel:
                 if state is AgentState.THINKING and self.state is not AgentState.THINKING:
                     self.failure = None
                     self._model_next = True
+                shown = self.checklist
                 self.state, self.pending_ops = state, pending_ops
+                if self.checklist != shown:
+                    self.on_change(PromptsChanged())
                 if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
                     self._end_stream()
                 if state is not AgentState.STOPPING:
@@ -619,8 +622,9 @@ class ConversationModel:
 
     @property
     def checklist(self) -> tuple[PlanItem, ...]:
-        """The open conversation's plan while a step is open (common.checklist)."""
-        return checklist(self.conversation.plan) if self.conversation is not None else ()
+        """The open conversation's plan while the agent works on it (common.checklist)."""
+        return (checklist(self.conversation.plan, self.busy)
+                if self.conversation is not None else ())
 
     def close_card(self) -> None:
         """The user put the card away; typing an answer still works."""

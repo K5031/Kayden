@@ -808,7 +808,7 @@ _PLAN_ITEM = {
         "status": {"type": "string", "enum": [s.value for s in PlanStatus], "default": "todo"},
         "due": {"type": "string", "description":
                 "When it falls due, ISO 8601 (e.g. 2026-11-12T09:00), local time unless an "
-                "offset is given."},
+                "offset is given. Only a duty wakes you at that time."},
         "due_in_minutes": {"type": "number", "minimum": 0,
                            "description": "Instead of due: minutes from now."},
         "note": {"type": "string"},

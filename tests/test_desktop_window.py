@@ -1437,7 +1437,7 @@ async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
     assert not mascot.pixmap().isNull() and mascot.accessibleName() == "Kayden"
 
 
-async def test_the_plan_shows_as_a_checklist_while_steps_are_open(make, qapp):
+async def test_the_plan_shows_as_a_checklist_while_the_agent_works(make, qapp):
     from kayden.frontends.desktop.window import PlanCard
 
     h: Harness = await make()
@@ -1445,23 +1445,21 @@ async def test_the_plan_shows_as_a_checklist_while_steps_are_open(make, qapp):
                    {"text": "Read the code", "status": "done"},
                    {"text": "Fix the bug", "status": "doing"},
                    {"text": "Run the tests"}]})]),
-               Step(text="Fixing it."),
-               Step(calls=[call("update_plan", {"items": [
-                   {"text": "Read the code", "status": "done"},
-                   {"text": "Fix the bug", "status": "done"},
-                   {"text": "Run the tests", "status": "done"}]})]),
-               Step(text="All done."))
+               Step(text="Fixing it.", hang=True))
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("fix the bug")
-    await eventually(lambda: controller.model.checklist and not controller.model.busy)
+    await eventually(lambda: controller.model.checklist and window.findChildren(PlanCard))
     card = window.findChildren(PlanCard)[-1]
     assert window.scroll.isAncestorOf(card)  # part of the conversation: it scrolls with it
     assert card.rows() == [("done", "Read the code"), ("doing", "Fix the bug"),
                            ("todo", "Run the tests")]
-    controller.send("carry on")
-    await eventually(lambda: not controller.model.busy and len(h.core.requests) >= 4)
-    await eventually(lambda: controller.model.checklist == ())  # all done: it goes
+    # The turn ends with a step open: the checklist goes with the work, it does not stay
+    # above the message box as a to-do list.
+    await h.runtime.stop()
+    await eventually(lambda: not controller.model.busy and controller.model.checklist == ())
+    await eventually(lambda: window.plan_slot.count() == 0)
+    assert [i.text for i in controller.model.conversation.plan][1] == "Fix the bug"  # kept
 
 
 def test_a_reply_shows_copy_and_its_age_on_hover(qapp):

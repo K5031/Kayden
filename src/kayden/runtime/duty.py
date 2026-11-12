@@ -40,11 +40,19 @@ STILL_OPEN = ("Steps are still open: update the plan again before you end your t
               "unless they wait for the user or for background work.")
 
 
+NO_WAKE = ("This conversation has no duty, so nothing wakes you when a step falls due: do "
+           "not end your turn to wait for it. If the user wants to be reminded or have "
+           "work done later, say that it needs a duty, which only they can turn on.")
+
+
 def saved(plan: Sequence[PlanItem], duty: Duty | None, now: float) -> str:
     """What update_plan answers. The call and this answer are how the plan stays in view,
     so it says what the call's arguments do not: the time, and when each step is due."""
     lines = [f"Plan saved. It is now {local(now)}."]
-    lines += [f"- {i.text}: due {local(i.due)}" for i in plan if i.due and i.status in OPEN]
+    due = [f"- {i.text}: due {local(i.due)}" for i in plan if i.due and i.status in OPEN]
+    lines += due
+    if due and duty is None:
+        lines.append(NO_WAKE)
     if duty is None and any(i.status in OPEN for i in plan):
         lines.append(STILL_OPEN)
     return "\n".join(lines)

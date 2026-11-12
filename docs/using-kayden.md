@@ -58,8 +58,10 @@ agent or switch conversations are withdrawn.
 
 For a task with several steps, the agent writes a plan first and ticks the steps off as it
 works. You see it as a checklist under the conversation: ✓ done, ◐ under way, ○ still to
-do, and struck through for steps it dropped. It goes away once every step is done. A quick
-question gets no plan.
+do, and struck through for steps it dropped. It shows while the agent is working and goes
+away when it stops or every step is done. A quick question gets no plan. A step can have a
+due time, but the agent is only woken for it in a conversation with a
+[duty](concepts.md#duties).
 
 ### The wrap-up card
 

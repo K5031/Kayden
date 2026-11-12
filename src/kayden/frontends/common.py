@@ -413,11 +413,12 @@ MEMORY_HINT = 'What Kayden remembers across conversations: every request sees th
 CARD_TOOLS = frozenset({"wrap_up", "update_plan"})
 
 
-def checklist(plan: Sequence[PlanItem]) -> tuple[PlanItem, ...]:
-    """The plan as frontends show it, a checklist while a step is open; empty once every
-    step is done or dropped."""
+def checklist(plan: Sequence[PlanItem], working: bool) -> tuple[PlanItem, ...]:
+    """The plan as frontends show it: a checklist while the agent works and a step is
+    open. Empty once every step is done or dropped, and whenever the agent is not working:
+    the checklist follows the work, it does not stay behind as a to-do list."""
     open_ = any(i.status in (PlanStatus.TODO, PlanStatus.DOING) for i in plan)
-    return tuple(plan) if open_ else ()
+    return tuple(plan) if working and open_ else ()
 
 
 def plan_text(plan: Sequence[PlanItem]) -> str:

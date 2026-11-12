@@ -176,6 +176,14 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
 # ── The plan ──
 
 
+def test_a_due_step_without_a_duty_is_said_not_to_wake_the_agent():
+    """Only a duty wakes the agent; without one it would wait for a reminder forever."""
+    later = PlanItem("Check the build", PlanStatus.TODO, due=time.time() + 600)
+    assert duties.NO_WAKE in duties.saved([later], None, time.time())
+    assert duties.NO_WAKE not in duties.saved([later], Duty("Watch the build"), time.time())
+    assert duties.NO_WAKE not in duties.saved([PlanItem("Fix it")], None, time.time())
+
+
 def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
     """An agent tends to stop ticking steps off once the work is done."""
     done = PlanItem("Read the code", PlanStatus.DONE)
@@ -437,7 +445,7 @@ async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
             {"text": "Read the code", "status": "done"},
             {"text": "Fix the bug", "status": "doing"},
             {"text": "Run the tests"}]})]),
-        Step(text="Working on it.")])
+        Step(text="Working on it.", hang=True)])  # still working: the checklist shows
     app = KaydenApp(h.runtime)
     async with app.run_test(size=(100, 40)) as pilot:
         await until(pilot, lambda: app.conversation is not None)
@@ -446,3 +454,5 @@ async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
         await until(pilot, lambda: app.query(PlanPanel), timeout=10)
         assert app.query_one(PlanPanel).lines() == [
             "✓ Read the code", "◐ Fix the bug", "○ Run the tests"]
+        await h.runtime.stop()  # no longer working: it goes, though a step is open
+        await until(pilot, lambda: not app.query(PlanPanel), timeout=10)
