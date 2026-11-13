@@ -13,7 +13,7 @@ A light model reading one exchange cannot tell what is worth keeping.
 
 Claude Code keeps memory differently, and well: one Markdown file per fact, typed, with a
 `MEMORY.md` index loaded into every session, written by the main agent itself while it
-works under written rules. The owner wants exactly that (2026-11-11), and wants it as a
+works under written rules. The user wants exactly that (2026-11-11), and wants it as a
 test of the architecture: keep the old Memory, build the new one as a module of its own,
 and swap it in by configuration, starting from an empty store.
 
@@ -120,11 +120,11 @@ emptied (the built-in profile), so frontends no longer know the profile's title.
 
 - **Replace the built-in Memory.** Built first: the store went to schema 9 without notes,
   and the contract got memory-file methods instead of notes. It works, but leaves no
-  choice, needs the owner's store converted by hand, and does not show that a Memory can
+  choice, needs the user's store converted by hand, and does not show that a Memory can
   be swapped.
 - **Refuse a write that takes the index past its limit, and cap each memory file.** Built
   first (200 lines, 4000 characters). Stricter than Claude Code, which lets the write
-  stand and reports it, and has no limit per file; the owner wants it the same.
+  stand and reports it, and has no limit per file; the user wants it the same.
 - **Topic files that group related memories.** One file per memory is what Claude Code
   does ("one topic file per memory", one index line each): a single fact can be corrected
   or deleted without touching others, and files do not grow into pages.

@@ -74,7 +74,7 @@ chats".
   worked, after a restart or a change of the default.
 - `Tools` gained an optional method, and `start()` can now fail for a folder that cannot
   be created.
-- **Schema 6 refuses a schema 5 store.** The owner's store is converted once with an ALTER;
+- **Schema 6 refuses a schema 5 store.** The user's store is converted once with an ALTER;
   Kayden carries no migration code.
 - **A deleted folder is recreated empty** when its conversation reopens; the agent may be
   confused that its files are gone. The folder is shown, so the user can see why.

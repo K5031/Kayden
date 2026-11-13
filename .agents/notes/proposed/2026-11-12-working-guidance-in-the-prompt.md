@@ -5,7 +5,7 @@ Status: proposed — a built-in page on how Kayden works, always in the system p
 ## Problem
 
 Kayden's built-in system prompt is 509 characters: who it is, how background operations
-work, and that `recall` exists. A prompt the user writes replaces it, so the owner's
+work, and that `recall` exists. A prompt the user writes replaces it, so the user's
 Kayden runs on one sentence of persona. What the agent knows about how to work comes from
 the tool descriptions, the Memory module's rules and the model's own habits.
 
@@ -32,7 +32,7 @@ Three layers, so that the agent stays general and puts its specialisation on:
 
 - The base page is short and holds only habits that are true for any work. Nothing about
   a trade goes in it: no rules about diffs or tests.
-- **Nothing is hardcoded for a case** (the owner's rule: it is brittle and does not
+- **Nothing is hardcoded for a case** (the user's rule: it is brittle and does not
   generalize). What an agent should do is reached for in this order: the model's own
   judgment; structure, so that the right behaviour falls out of how Kayden works; one
   general principle, stated once; never a rule for a specific case or a patch for one

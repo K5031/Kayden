@@ -4,7 +4,7 @@ Status: proposed — a PySide6 (Qt Widgets) frontend on a qasync event loop, pac
 
 ## Problem
 
-Kayden is meant for people who never open a terminal, and the owner chose a desktop app as
+Kayden is meant for people who never open a terminal, and the user chose a desktop app as
 the first graphical frontend, before any web frontend
 ([settings note](../implemented/2026-11-07-settings-for-non-technical-users.md)). Today
 the only frontend is the Textual TUI. Using Kayden means installing Python and uv, running
@@ -253,7 +253,7 @@ know about the look.
   web, but QtWebEngine bundles Chromium, which multiplies the bundle size.
   `QTextBrowser` Markdown covers what the TUI shows.
 - **The platform's own widget style.** Plain Qt widgets need no styling code and match the
-  system, but the owner found them gray and dated for a chat app aimed at non-technical
+  system, but the user found them gray and dated for a chat app aimed at non-technical
   users, and they look different on every platform.
 - **QML (Qt Quick) for a chat look.** It makes custom chat visuals easier, but it is a
   second UI technology next to Widgets and would mean rewriting every window. A style sheet
@@ -265,7 +265,7 @@ know about the look.
   cannot call `RuntimeAPI` directly, so the runtime must be exposed over a local connection
   that has to be secured against other local processes (the NiceGUI problem), the app
   becomes two processes and two languages, and each OS bundle carries two runtimes
-  (Chromium or a system web view, plus Python). The owner chose the simpler single-process
+  (Chromium or a system web view, plus Python). The user chose the simpler single-process
   app over web reuse.
 - **Tauri or PyTauri.** Tauri has a tiny shell on system web views. But PyTauri has not
   released since 0.8.0 (2025-09-01), it adds Rust and Node tooling, and bundling Python

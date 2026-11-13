@@ -4,7 +4,7 @@ Status: implemented — the frontend hosts sub-sessions: it starts headless Kayd
 
 ## Problem
 
-The owner uses an app (the Claude desktop app) where an agent hands self-contained tasks to
+The user uses an app (the Claude desktop app) where an agent hands self-contained tasks to
 sub-sessions. They work on their own, report back, and the user can open any of them to see
 what it is doing. Kayden could not do this. An agent can only work in its one conversation; a
 long side task fills its context and blocks the conversation while it runs.
@@ -100,7 +100,7 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
 - **Children in the same process.** Faster to start, but SPEC 4.3 has one agent per
   process, and a child's crash or runaway loop would take the parent with it.
 - **Refusing a child's permission prompts,** since nobody watches it. Simpler, and shipped
-  first, but a child could then do only what its policy allowed, and the owner wanted the
+  first, but a child could then do only what its policy allowed, and the user wanted the
   Claude app's behaviour, where a session asks the user.
 - **A window per child,** or a plain text view of its work. Less code than switching the
   conversation area, but not what the Claude app does, and the plain view could not show

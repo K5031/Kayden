@@ -5,7 +5,7 @@ Status: implemented — a `screenshot` tool in the built-in Tools module lets th
 ## Problem
 
 Kayden works on the user's computer but is blind to it: it reads files and command
-output, not what is on screen. The owner wants to say "look at my screen" or "what is
+output, not what is on screen. The user wants to say "look at my screen" or "what is
 wrong with this window", typed or in voice mode, and have the agent see it.
 
 ## Decision
@@ -44,7 +44,7 @@ its model shows this one. Both apps have it, since it belongs to the Tools modul
 
 ## Consequences
 
-- Checked on the owner's desktop (KDE Plasma on Wayland, Spectacle 6.8): a call returned
+- Checked on the user's desktop (KDE Plasma on Wayland, Spectacle 6.8): a call returned
   a 1920 x 1080 PNG of 174 kB without a prompt or a notification. Not checked with a real
   model.
 - Everything on screen goes to the model provider: other chats, a password in view.

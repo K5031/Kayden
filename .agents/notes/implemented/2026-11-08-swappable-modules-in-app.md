@@ -9,7 +9,7 @@ able to write their own modules, frontends included. A different module meant ed
 `[core]`, `[memory]`, `[tools]` or `[frontend]` in `config.toml` with a Python import path,
 which a non-technical user cannot do, and Kayden could not list what is installed. The
 settings screen offered only a fixed list of providers, and a frontend could not be chosen
-at all, since a frontend cannot replace itself while it runs. The owner's main need is to
+at all, since a frontend cannot replace itself while it runs. The user's main need is to
 change the frontend from inside the app: from the TUI to the desktop app and back.
 
 ## Decision

@@ -4,7 +4,7 @@ Status: implemented — the desktop app has a voice mode: it listens, sends what
 
 ## Problem
 
-Kayden is used by typing and reading. The owner wants a conversation by voice in the
+Kayden is used by typing and reading. The user wants a conversation by voice in the
 desktop app: speak, hear the answer, speak again, without touching the keyboard. Claude's
 API takes and gives text only, so the listening and the speaking have to come from
 somewhere else.
@@ -74,7 +74,7 @@ connects it to the window, the controller's events, the microphone and the downl
 
 - **A cloud speech service** (OpenAI, ElevenLabs, Deepgram). Better voices and nothing
   to download, but a second API key, a cost per minute, and everything said goes to
-  another company. Kayden's direction is an agent that runs by itself on the owner's
+  another company. Kayden's direction is an agent that runs by itself on the user's
   machine.
 - **Qt's own text to speech** (speech-dispatcher). Nothing to download, but the voice is
   robotic, and it does not listen, so a speech library is needed anyway.
@@ -99,7 +99,7 @@ connects it to the window, the controller's events, the microphone and the downl
 - Checked with the real models, no sound device: a question spoken by the engine and fed
   in as microphone sound was heard as one utterance, transcribed word for word, sent, and
   the scripted reply read in three sentences, its code block and kaomoji left out. On the
-  owner's laptop the models load in under 2 s, 4 s of speech is understood in 0.1 s and
+  user's laptop the models load in under 2 s, 4 s of speech is understood in 0.1 s and
   spoken in 0.5 s.
 - Checked with Opus 5.5: asked aloud how to list files on Linux, it answered in plain
   sentences without a list or a code block.

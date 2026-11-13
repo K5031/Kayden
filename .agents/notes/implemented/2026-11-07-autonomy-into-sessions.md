@@ -176,7 +176,7 @@ command-line flags of the per-mode versions.
   under standing instructions). A different product, closer to a scheduled assistant;
   open-ended spending and no task to finish.
 - **A Remember switch per conversation** (off = a private chat that neither uses nor adds
-  to long-term memory and cannot search other conversations). The owner did not ask for
+  to long-term memory and cannot search other conversations). The user did not ask for
   it; forgetting an entry and deleting a conversation already cover what the agent keeps.
 - **Keep Continuous Mode and add conversation management to sessions.** The smallest
   change. It leaves the unresettable conversation, the invisible long-term memory and the
@@ -201,7 +201,7 @@ command-line flags of the per-mode versions.
   what the agent had learned. Revisions keep each change visible and allow an undo later.
 - **Erasing what a conversation taught long-term memory with it.** Built first: deleting would leave
   nothing of the chat behind. In use it erased the user's name, which they had asked Kayden
-  to remember, and that surprised the owner; a saved fact is a standing instruction, not
+  to remember, and that surprised the user; a saved fact is a standing instruction, not
   part of the chat. Erasing both stays two visible steps (delete, then forget).
 - **Archive and forget only, no deletion.** Keeps the archive strictly append-only, so
   nothing is ever lost by accident. But anything sensitive pasted into a chat would stay on

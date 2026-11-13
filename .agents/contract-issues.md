@@ -702,7 +702,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Status:** Resolved in the implementation.
 - **Where:** [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md), "Migrating
   existing data": "schema version 2, migrated in place".
-- **Problem:** Stores were already at version 2 (stable block tags); the owner's
+- **Problem:** Stores were already at version 2 (stable block tags); the user's
   `~/.kayden/memory.db` is version 2, not 1.
 - **Assumed:** The new layout is version 3.
 - **Fix:** None needed beyond the note, which now says version 3.
@@ -789,7 +789,7 @@ was used.
 ## 13. Found while building swappable modules
 
 ### S1 (A) "Settings of the running modules apply live"
-- **Status:** Resolved by the owner.
+- **Status:** Resolved by the user.
 - **Where:** The swappable modules note (proposed) kept the API key and work folder live;
   `RuntimeAPI.update_settings` rebuilt the Core or Tools for them.
 - **Problem:** Two rules for module settings, and the live rebuild with its quiescence
@@ -822,7 +822,7 @@ was used.
   supervisors and duties) against SPEC 1 ("Kayden does not implement a bespoke multi-agent
   organization framework"), 10.2 (no centralized fleet management, no hardcoded hierarchy)
   and 13 (centralized fleet management and scheduled wake-ups out of scope).
-- **Problem:** The owner's direction needs units that run by themselves, headless, and
+- **Problem:** The user's direction needs units that run by themselves, headless, and
   report upward; the spec rules out the fleet and the self-scheduling.
 - **Assumed:** Both hold if the fleet manager is a separate program: the spec stays about
   one Kayden instance, and ranks and teams stay out of it. What a unit needs is added to

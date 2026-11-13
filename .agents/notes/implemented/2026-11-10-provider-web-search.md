@@ -53,7 +53,7 @@ search stays for other providers: [web search](2026-11-10-web-search.md).
 
 - **Retries only** (shipped first). Fewer misses, same cause.
 - **A search API with its own key** (Brave, Tavily, Exa). Reliable, but another account,
-  and paid beyond a small free tier; the owner declined it.
+  and paid beyond a small free tier; the user declined it.
 - **The provider's search as a Tools module.** A Tools module cannot see inside the
   provider's request; the search runs there, mid-answer.
 - **Sending searches back in every later request.** Best recall of what was read, but in a

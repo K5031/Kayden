@@ -84,7 +84,7 @@ class TestSqliteMemory(MemoryConformance):
         await memory.append(conv.id, [text_message("tok0001")])
         await memory.save_note(PROFILE, "", "Lives in Oslo.")
         note = await memory.save_note("Kayden", "The user's AI agent project",
-                                      "Written in Python; the owner pushes to main.")
+                                      "Written in Python; the user pushes to main.")
         assert note.source_conversation_id is None
         text = await addendum(memory, conv.id)
         assert "Lives in Oslo." in text and "Kayden" in text

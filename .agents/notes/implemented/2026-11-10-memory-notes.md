@@ -19,7 +19,7 @@ Agents that remember well keep topic files with a small index always in view and
 file when it is relevant (Claude Code's memory: a `MEMORY.md` index and one file per fact;
 Anthropic's memory tool: a folder of files the model checks before a task), and save as
 they go (Claude's app saves "individual topics as you chat"). This copies that pattern
-(the owner, 2026-11-10).
+(the user, 2026-11-10).
 
 ## Decision
 
@@ -64,7 +64,7 @@ notes by title and description and opens one in an editor.
 ### No migration
 
 The SQLite store moved to schema 7; a store of schema 6 is refused, as for every schema
-change. The owner's store is converted once, by hand.
+change. The user's store is converted once, by hand.
 
 Choices and limits are listed in `.agents/decisions.md` (Memory notes). Another Memory,
 [Memory like Claude Code](2026-11-11-memory-like-claude-code.md), keeps long-term memory

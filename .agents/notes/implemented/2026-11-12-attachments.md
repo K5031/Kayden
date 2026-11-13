@@ -6,7 +6,7 @@ Status: implemented — the user drops files into a message: images and PDFs the
 
 A message was text only. To show the agent a screenshot the user had to describe it, and
 to give it a file they typed its path and, when the file was outside the work folder,
-answered a permission prompt. The owner wants to drop files into the chat, as in Claude's
+answered a permission prompt. The user wants to drop files into the chat, as in Claude's
 apps (2026-11-12), with a small preview above the message box for images.
 
 ## Decision
@@ -93,7 +93,7 @@ apps (2026-11-12), with a small preview above the message box for images.
   picture in a project or a scanned PDF it found.
 - **Office files through a skill**, the agent running a converter in its shell. No code
   and no dependencies, but it needs the converter installed and the sandbox to see the
-  file, and a dropped file would still arrive as a bare path. The owner asked for them to
+  file, and a dropped file would still arrive as a bare path. The user asked for them to
   work like the rest.
 - **markitdown**, one library for many formats. It brings pandas for spreadsheets; the
   three libraries used are what it wraps, without that.

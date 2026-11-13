@@ -386,7 +386,7 @@ Keep the runtime responsible for orchestration.
 Preserve developer freedom within module APIs.
 Prefer established libraries and proven mechanisms.
 Avoid unnecessary refactoring.
-Do not introduce features the owner has not asked for; add each feature to this spec when it is built.
+Do not introduce features the user has not asked for; add each feature to this spec when it is built.
 Keep interfaces documented and independently implementable.
 Test end-to-end workflows.
 Prioritize useful product progress over architectural sophistication.
