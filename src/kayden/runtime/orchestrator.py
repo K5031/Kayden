@@ -1325,6 +1325,8 @@ class Runtime:
                 self._emit(MemoriesChanged(saved))
             if self._stopping:
                 return
+            if await self._deliver_inbox():  # sent while Memory was saving: the next turn
+                continue
             self._enter_idle()
             return
 

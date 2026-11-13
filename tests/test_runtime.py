@@ -448,6 +448,34 @@ async def test_stop_queue_while_stopping(make: Any) -> None:
     assert AgentState.THINKING in h.rec.states[stopped_at:]
 
 
+async def test_a_message_queued_after_the_last_turn_is_still_answered(make: Any) -> None:
+    """A message that arrives while Memory saves what the exchange taught it, after the
+    cycle's last look at its inbox, starts the next turn instead of waiting for whatever
+    wakes the agent next."""
+    from kayden.api import Completion
+
+    core = ScriptedCore([Step(text="first answer"), Step(text="second answer")])
+    h: Harness = await make(core=core)
+    passes = 0
+
+    async def maintain(complete: Completion) -> bool:
+        nonlocal passes
+        passes += 1
+        if passes == 2:  # after the answer
+            await h.runtime.send("one more thing")
+        return False
+
+    h.memory.maintain_override = maintain
+    await h.start()
+    await h.runtime.send("go")
+    queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
+    await eventually(lambda: len(core.requests) == 2)
+    await h.rec.wait_state(AgentState.IDLE)
+    said = [e.message for e in h.rec.of(MessageCommitted)]
+    assert [m.blocks for m in said if m.id == queued.message_id] == [(Text("one more thing"),)]
+    assert said[-1].blocks == (Text("second answer"),)
+
+
 async def test_stop_in_idle_with_background_ops(make: Any) -> None:
     tools = FakeTools()
     tools.hanging("bg")
