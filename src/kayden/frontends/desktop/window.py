@@ -208,7 +208,6 @@ KEY_PAGES = {
 }
 DOCS_URL = "https://github.com/K5031/Kayden/blob/main/docs/desktop-app.md"
 EMPTY_TITLE = "Start a conversation"
-EMPTY_HINT = "Ask a question or describe a task."
 THUMBNAIL = 56  # px: a picture waiting above the message box
 SHOWN_IMAGE = 260  # px: a picture in a message you sent, at most
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
@@ -1820,10 +1819,9 @@ class MainWindow(QMainWindow):
         empty = QVBoxLayout(self.empty_state)
         empty.addStretch(2)
         empty.addWidget(_mascot(MASCOT_WIDTH), 0, Qt.AlignmentFlag.AlignHCenter)
-        for line in (_label(EMPTY_TITLE, selectable=False, role="title"),
-                     _label(EMPTY_HINT, selectable=False, tone="muted")):
-            line.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            empty.addWidget(line)
+        title = _label(EMPTY_TITLE, selectable=False, role="title")
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        empty.addWidget(title)
         # A new chat's folder, and recent ones to start it in instead; only before the first
         # message (the header's tooltip shows it after).
         self.folder_button = QToolButton(objectName="folderPicker")
@@ -3041,8 +3039,6 @@ class McpDialog(QDialog):
         layout.setContentsMargins(*((4, 16, 18, 4) if embedded else (20, 18, 20, 16)))
         layout.addWidget(_label("Tool servers (MCP)", selectable=False,
                                 role="title" if embedded else "heading"))
-        layout.addWidget(_label("Each server gives Kayden more tools, such as GitHub, a "
-                                "database or your calendar.", tone="muted"))
         self.servers = QListWidget()
         self.servers.setAccessibleName("Tool servers")
         self.servers.setItemDelegate(RowDelegate(self.servers))
@@ -3312,8 +3308,7 @@ class SettingsDialog(QDialog):
             "Spending": _page(
                 "Spending", _setting("Spending limit (US$)", f"Kayden stops when it reaches it. "
                          f"{dollars(spent)} spent so far.", self.limit),
-                *((_setting("Limit per sub-session (US$)", "What a sub-session may spend "
-                            "unless the agent gives it less; empty for no limit. Not part "
+                *((_setting("Limit per sub-session (US$)", "Empty for no limit. Not part "
                             "of your own limit.",
                             self.child_limit),) if sessions is not None else ())),
             "Permissions": _page(
@@ -3498,8 +3493,7 @@ class WelcomeDialog(QDialog):
         page = QWidget()
         column = QVBoxLayout(page)
         column.setContentsMargins(0, 8, 0, 0)
-        column.addWidget(_label("Choose your AI provider. Kayden uses its models and you pay "
-                                "it directly for what you use."))
+        column.addWidget(_label("Choose your AI provider. You pay it directly."))
         self.provider = QListWidget(objectName="choices")
         # Rows are sized by the style sheet, and the list lays them out as soon as one is
         # selected: without this they are placed by their unstyled height and overlap.
@@ -3565,14 +3559,12 @@ class WelcomeDialog(QDialog):
         folder_row.addWidget(self.folder, 1)
         folder_row.addWidget(browse)
         column.addLayout(folder_row)
-        column.addWidget(_label("Spending limit in US dollars (optional). Kayden stops when it "
-                                "is reached."))
+        column.addWidget(_label("Spending limit in US dollars (optional)."))
         self.limit = QLineEdit()
         self.limit.setPlaceholderText("No limit")
         column.addWidget(self.limit)
-        column.addWidget(_label("Kayden works freely in its work folder and asks before "
-                                "anything outside it. You can change that, and everything "
-                                "here, in Settings."))
+        column.addWidget(_label("Kayden works freely in this folder and asks before "
+                                "anything outside it."))
         self.finish_error = _label()
         theme.mark(self.finish_error, "tone", "error")
         self.finish_error.hide()

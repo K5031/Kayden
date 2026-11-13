@@ -342,9 +342,9 @@ def restart_notice(settings: Settings) -> str | None:
 
 
 MCP_WARNING = ("An MCP server is someone else's program running with your permissions: add "
-               "only servers you trust. Kayden checks or asks before each of its actions.")
-MCP_VARIABLES_HINT = ("One per line, NAME=value, for keys or tokens the server needs. Values "
-                      "are kept in your system's keychain; leave a value empty to keep it.")
+               "only servers you trust.")
+MCP_VARIABLES_HINT = ("One per line, NAME=value. Kept in your keychain; leave a value empty "
+                      "to keep it.")
 
 
 def mcp_server(name: str, target: str, variables: str) -> McpServer:
@@ -386,9 +386,8 @@ DUTY_KIND_LABELS = {
     DutyKind.DUTY: "Keep doing it until I turn it off",
     DutyKind.GOAL: "Until it is done",
 }
-DUTY_HINT = ("Kayden carries this on by itself: it keeps a plan, works on it, and checks in "
-             "again on its own. It pauses when you press Stop, when Kayden restarts, or when "
-             "a spending limit you set is reached.")
+DUTY_HINT = ("Kayden carries this on by itself. It pauses on Stop, on a restart, and at "
+             "your spending limit.")
 PLAN_HINT = ("One step per line: [todo], [doing], [done] or [dropped], the step, then "
              "optionally | due YYYY-MM-DD HH:MM and | a note.")
 _PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")
@@ -427,7 +426,7 @@ def _when(t: float) -> str:
     return when.strftime("%H:%M" if when.date() == datetime.now().date() else "%Y-%m-%d %H:%M")
 
 
-MEMORY_HINT = 'What Kayden remembers across conversations: every request sees the list, and Kayden opens one when it is relevant. Kayden writes them; you can too.'
+MEMORY_HINT = "What Kayden remembers across conversations. You can edit it."
 
 # Calls not shown as steps: the wrap-up card and the plan's checklist show them instead.
 CARD_TOOLS = frozenset({"wrap_up", "update_plan"})

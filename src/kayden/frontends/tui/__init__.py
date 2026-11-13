@@ -1076,8 +1076,6 @@ class McpScreen(ListScreen):
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Tool servers (MCP)", classes="title")
-            yield Label("Each server gives Kayden more tools, such as GitHub, a database or "
-                        "your calendar.", classes="hint")
             yield OptionList(id="servers")
             yield Label("", id="mcp-notice", classes="hint")
             with Horizontal(classes="buttons actions"):
