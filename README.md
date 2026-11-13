@@ -36,12 +36,6 @@ your home folder is too broad to count.
 The [documentation](docs/README.md) covers getting started, using Kayden, settings, the
 concepts behind it and development.
 
-## Fleets
-
-[KFM](https://github.com/K5031/KFM), the Kayden Fleet Manager, runs a team of Kayden agents
-on one task or a standing duty: a lead plans, hands work to agents below it, checks what
-comes back and reports to you.
-
 ## Status
 
 Early MVP, version 0.0.0. No release has been made and the API may still change.
