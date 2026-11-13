@@ -32,6 +32,12 @@ Three layers, so that the agent stays general and puts its specialisation on:
 
 - The base page is short and holds only habits that are true for any work. Nothing about
   a trade goes in it: no rules about diffs or tests.
+- **Nothing is hardcoded for a case** (the owner's rule: it is brittle and does not
+  generalize). What an agent should do is reached for in this order: the model's own
+  judgment; structure, so that the right behaviour falls out of how Kayden works; one
+  general principle, stated once; never a rule for a specific case or a patch for one
+  observed mistake. A sentence that makes up for what a model cannot yet do goes stale
+  when the model improves, and nobody removes it.
 - The user's prompt is added after the base page instead of replacing it.
 - Coding guidance becomes the first trade skill.
 - The base page is written for Kayden's own tools and tested with real models, the

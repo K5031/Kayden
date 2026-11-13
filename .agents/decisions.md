@@ -834,6 +834,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 | Download | One model after another from sherpa-onnx's GitHub releases to `<name>.part`, unpacked beside it and renamed into place; the sizes in `download.MODELS` are for the question and the progress only |
 | Sentences | Cut at `.`, `!` or `?` before a space (not after a digit) and at line ends; an open code block is waited out |
 | What the agent is told | `config.VOICE_ON_NOTICE`: write only what sounds right when spoken (short plain sentences; no emoji, kaomoji, emoticons, symbols, markup, lists, tables or code unless asked; numbers, units and abbreviations as they are said), over any other instruction on style, and do not mention the notice. `VOICE_OFF_NOTICE`: write as before, without mentioning the change. Both are hidden notices |
+| Speech libraries | `sherpa-onnx-core` is named in the desktop extra beside `sherpa-onnx`: uv's lock file does not record that the one requires the other, and without it a fresh checkout has the speech library without `libonnxruntime` |
 | Looking up what the agent was told | The newest voice notice among the conversation's last 200 messages (`config.VOICE_NOTICE_LOOKBACK`), once per opened conversation |
 | A Core that does not stream | The committed reply is read when no text deltas came for it |
 
