@@ -1296,6 +1296,9 @@ async def test_the_close_button_reaches_the_top_right_corner(make, qapp):
     assert window.childAt(corner) is window.window_buttons["close"]
     for name, button in window.window_buttons.items():
         assert button.mapTo(window, QPoint(0, 0)).y() == 0, name  # each reaches the top
+        # Small, as a title bar's are: not as tall as the header they sit in.
+        assert button.height() <= 30 and button.width() <= 40, name
+        assert button.height() < window.title_label.parentWidget().height(), name
     window.close()
 
 

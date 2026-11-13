@@ -214,6 +214,7 @@ SHOWN_IMAGE = 260  # px: a picture in a message you sent, at most
 BUBBLE_SHARE = 0.75  # a message of yours takes at most this share of the transcript's width
 COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
 RECENT_FOLDERS = 6  # a new chat's folder menu: its own and recent ones
+WINDOW_BUTTON = QSize(38, 28)  # minimize, maximize and close, at the header's top
 COPIED_MS = 1500  # a reply's copy button shows a tick this long
 MASCOT_WIDTH = 200  # px: the new chat's mascot
 ASSETS = Path(__file__).parent / "assets"
@@ -1780,7 +1781,7 @@ class MainWindow(QMainWindow):
         self.duty_label = _label(wrap=False, selectable=False, role="small")
         self.duty_label.hide()  # only with a duty: when it checks in next, or paused
         titles = QHBoxLayout()
-        titles.setContentsMargins(0, 14, 0, 14)  # the header's height; the buttons fill it
+        titles.setContentsMargins(0, 14, 0, 14)  # the header's height
         titles.setSpacing(4)
         titles.addWidget(self.title_label, 1)
         titles.addWidget(self.duty_label)
@@ -1794,10 +1795,10 @@ class MainWindow(QMainWindow):
                                  else "titleControl")
             button.setToolTip(tip)
             button.setAccessibleName(tip)
-            button.setIconSize(QSize(16, 16))
-            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+            button.setIconSize(QSize(14, 14))
+            button.setFixedSize(WINDOW_BUTTON)
             button.clicked.connect(command)
-            head.addWidget(button)
+            head.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
             self.window_buttons[name] = button
 
         self.scroll = QScrollArea(widgetResizable=True)

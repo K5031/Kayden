@@ -267,7 +267,7 @@ QListWidget#settingsNav::item {{ padding: 0 10px; border-radius: 8px; }}
 QListWidget#settingsNav::item:selected, QListWidget#settingsNav::item:hover {{
     background: {c.select}; color: {c.text}; }}
 QToolButton#windowControl:hover {{ background: {c.select}; }}
-QToolButton#titleControl, QToolButton#titleClose {{ padding: 0 14px; border-radius: 0; }}
+QToolButton#titleControl, QToolButton#titleClose {{ padding: 0; border-radius: 0; }}
 QToolButton#titleControl:hover {{ background: {c.select}; }}
 QToolButton#titleClose:hover {{ background: {c.error}; }}
 QToolButton#profile:hover, QToolButton#gear:hover {{ background: {c.select}; }}
