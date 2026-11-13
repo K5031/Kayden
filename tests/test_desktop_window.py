@@ -1164,6 +1164,26 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     assert dialog.stack.currentIndex() == 0
 
 
+async def test_the_window_has_rounded_corners_unless_maximized(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
+    for shown in (window, dialog):
+        shown.resize(800, 600)
+        shown.show()
+        qapp.processEvents()
+        image = shown.grab().toImage()
+        for x, y in ((0, 0), (799, 0), (0, 599), (799, 599)):
+            assert image.pixelColor(x, y).alpha() == 0  # the desktop shows through
+        assert image.pixelColor(400, 300).alpha() == 255
+        assert image.pixelColor(400, 0).alpha() == 255 == image.pixelColor(0, 300).alpha()
+        assert image.pixelColor(780, 592).alpha() == 255  # the window's own background
+    window.showMaximized()
+    qapp.processEvents()
+    assert window.grab().toImage().pixelColor(0, 0).alpha() == 255
+
+
 async def test_the_window_draws_its_own_title_bar(make, qapp):
     from PySide6.QtCore import QPoint
 

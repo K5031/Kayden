@@ -1211,6 +1211,51 @@ class WindowEdges(QObject):
                 self.cursor_set = True
 
 
+class RoundedCorners(QWidget):
+    """Rounds a frameless window's corners: it lies over the whole window, lets the mouse
+    through, and clears what is outside the rounded outline, so the desktop shows there
+    whatever the widgets underneath painted. Square while maximized or full screen. Made
+    once the window's contents are."""
+
+    RADIUS = 12  # px
+
+    def __init__(self, window: QWidget) -> None:
+        super().__init__(window)
+        window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        window.installEventFilter(self)
+        self._fit()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.WindowStateChange):
+            self._fit()
+        elif event.type() == QEvent.Type.Paint:  # a translucent window has no background
+            QPainter(self.parentWidget()).fillRect(self.parentWidget().rect(),
+                                                   QColor(theme.current().bg))
+        return False
+
+    def _fit(self) -> None:
+        window = self.parentWidget()
+        self.setGeometry(window.rect())
+        self.setVisible(not (window.isMaximized() or window.isFullScreen()))
+        self.raise_()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        whole = QRectF(self.rect())
+        outside = QPainterPath()
+        outside.addRect(whole)
+        inside = QPainterPath()
+        inside.addRoundedRect(whole, self.RADIUS, self.RADIUS)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        painter.fillPath(outside - inside, Qt.GlobalColor.black)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.setPen(QPen(QColor(theme.current().line), 1))
+        painter.drawRoundedRect(whole.adjusted(0.5, 0.5, -0.5, -0.5),
+                                self.RADIUS, self.RADIUS)
+
+
 _E = Qt.Edge
 _EDGE_CURSORS = {
     _E.LeftEdge: Qt.CursorShape.SizeHorCursor, _E.RightEdge: Qt.CursorShape.SizeHorCursor,
@@ -1688,6 +1733,7 @@ class MainWindow(QMainWindow):
         self._build()
         self._build_menus()
         self._refresh_status()
+        self._corners = RoundedCorners(self)
         if sessions is not None:
             sessions.listeners.append(self._sessions_changed)
 
@@ -3361,6 +3407,7 @@ class SettingsDialog(QDialog):
         outer.addWidget(header)
         outer.addLayout(body, 1)
         outer.addLayout(footer)
+        self._corners = RoundedCorners(self)
 
     def show_page(self, name: str) -> None:
         self.nav.setCurrentRow(list(self.pages).index(name))
