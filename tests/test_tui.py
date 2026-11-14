@@ -17,6 +17,7 @@ from kadence.api import (
     PROFILE,
     AgentConfig,
     AgentState,
+    Author,
     Budget,
     ConversationDeleted,
     ConversationInfo,
@@ -1290,27 +1291,25 @@ async def test_a_memory_update_after_an_answer_is_mentioned():
 
 
 async def test_a_notice_meant_for_the_model_alone_is_not_shown():
-    from kadence.api import HIDDEN_NOTICE_PREFIX
-
     stub = StubRuntime()
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
         shown = len(entries(app, SystemEntry))
-        stub.emit(MessageCommitted(msg("n1", Role.USER,
-                                       Text(f"{HIDDEN_NOTICE_PREFIX}The user is typing again."))))
+        stub.emit(MessageCommitted(replace(
+            msg("n1", Role.USER, Text("The user is typing again.")),
+            author=Author.KADENCE, hidden=True)))
         await caught_up(pilot, app, stub)
         assert len(entries(app, SystemEntry)) == shown and not entries(app, UserEntry)
 
 
 async def test_a_runtime_notice_is_a_system_line():
-    from kadence.api import NOTICE_PREFIX
-
     stub = StubRuntime()
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
-        stub.emit(MessageCommitted(msg("n1", Role.USER, Text(f"{NOTICE_PREFIX}Woken for the duty."))))
+        stub.emit(MessageCommitted(replace(
+            msg("n1", Role.USER, Text("Woken for the duty.")), author=Author.KADENCE)))
         await caught_up(pilot, app, stub)
         assert plain(entries(app, SystemEntry)[-1]) == "Woken for the duty."
         assert not any("Woken" in plain(e) for e in entries(app, UserEntry))
@@ -1319,14 +1318,13 @@ async def test_a_runtime_notice_is_a_system_line():
 async def test_a_long_notice_is_folded():
     from textual.widgets import Collapsible
 
-    from kadence.api import NOTICE_PREFIX
-
     stub = StubRuntime()
     app = make(stub)
     async with app.run_test() as pilot:
         await caught_up(pilot, app, stub)
-        brief = f"{NOTICE_PREFIX}New goal: Research Worlds.\n\nFind every series."
-        stub.emit(MessageCommitted(msg("n2", Role.USER, Text(brief))))
+        brief = "New goal: Research Worlds.\n\nFind every series."
+        stub.emit(MessageCommitted(replace(msg("n2", Role.USER, Text(brief)),
+                                           author=Author.KADENCE)))
         await caught_up(pilot, app, stub)
         [folded] = app.query(Collapsible).filter(".notice")
         assert folded.collapsed and folded.title == "New goal: Research Worlds."

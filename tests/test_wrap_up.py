@@ -10,8 +10,8 @@ from typing import Any
 import pytest
 
 from kadence.api import (
-    NOTICE_PREFIX,
     AgentState,
+    Author,
     Message,
     OperationResult,
     PermissionPolicy,
@@ -258,8 +258,8 @@ async def test_a_background_result_or_notice_leaves_the_card_up(make):
     model._render(Message("a", Role.ASSISTANT, (wrap,), 0.0))
     assert model.card is not None
     model._render(Message("b", Role.USER, (OperationResult("op", ToolStatus.OK, "built"),), 0.0))
-    model._render(Message("c", Role.USER, (TextBlock(NOTICE_PREFIX + " Sub-session ended."),),
-                          0.0))
+    model._render(Message("c", Role.USER, (TextBlock("Sub-session ended."),), 0.0,
+                          Author.KADENCE))
     assert model.card is not None  # neither is the user's answer
     model._render(Message("d", Role.USER, (TextBlock("Not now"),), 0.0))
     assert model.card is None

@@ -23,6 +23,7 @@ from kadence.api import (
     MemoryNote,
     Message,
     OperationResult,
+    Role,
     ServerToolUse,
     Text,
     ToolCall,
@@ -182,7 +183,8 @@ def _format_hits(hits: Sequence[ArchiveHit]) -> str:
 
 def _line(conversation_id: str, m: Message, *, mark: bool = False) -> str:
     when = datetime.fromtimestamp(m.created_at, UTC).isoformat(timespec="seconds")
-    return (f"{'→ ' if mark else ''}[{conversation_id}/{m.id} {m.role} {when}] "
+    who = m.role if m.role is not Role.USER or m.from_user else "notice"  # Kadence's own
+    return (f"{'→ ' if mark else ''}[{conversation_id}/{m.id} {who} {when}] "
             f"{_render(m)[:HIT_PREVIEW_CHARS]}")
 
 

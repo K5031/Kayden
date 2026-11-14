@@ -13,6 +13,12 @@ Message conventions:
 - USER messages hold Text and OperationResult blocks (OperationResult carries the
   late outcome of a backgrounded call; Cores render it as text for providers), and what
   the user attached: Image, Document and File blocks, after the Text.
+- A USER message says who wrote it (Message.author): the user, or Kadence itself, for
+  the model (an activation, a duty's wake-up, a due step, a sub-session's report,
+  background outcomes). Its stored text is what was written and nothing else; in a
+  request the runtime starts a message of Kadence's with "[Runtime notice] ", so the
+  model can tell them apart. Frontends show Kadence's as a notice, never as something
+  the user said, and nothing for a hidden one (Message.hidden).
 - Message ids are unique within a conversation. Core assigns the id of the assistant
   message it returns in Completed; the runtime assigns all others.
 
@@ -261,12 +267,28 @@ BLOCK_TYPES: Mapping[str, type] = {
 }
 
 
+class Author(StrEnum):
+    """Who wrote a USER message."""
+
+    USER = "user"
+    KADENCE = "kadence"  # the runtime, or a frontend through RuntimeAPI.notify
+
+
 @dataclass(frozen=True, slots=True)
 class Message:
     id: str
     role: Role
     blocks: tuple[Block, ...]
     created_at: float  # unix seconds
+    author: Author = Author.USER  # of a USER message; see from_user
+    hidden: bool = False  # one of Kadence's that only tells the model how to behave
+    spoken: bool = False  # the user said it aloud (RuntimeAPI.send)
+
+    @property
+    def from_user(self) -> bool:
+        """Whether the user wrote this message: the one test that tells their words from
+        everything else in a conversation."""
+        return self.role is Role.USER and self.author is Author.USER
 
 
 @dataclass(frozen=True, slots=True)
@@ -441,7 +463,7 @@ class ConversationInfo:
     updated_at: float
     archived: bool = False  # hidden from list_conversations() and recall(scope="all")
     seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
-    preview: str | None = None  # start of the first user message, for display
+    preview: str | None = None  # start of the first message the user wrote, for display
     folder: str | None = None  # work folder, an absolute path; None = the Tools' default
     duty: Duty | None = None  # standing work the conversation does by itself
     plan: Sequence[PlanItem] = ()  # kept when the duty ends
@@ -945,14 +967,6 @@ SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
 # No module may declare these names.
 RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS) | {SKILL_TOOL.name}
 
-# Text Kadence itself writes into a conversation as a USER message, for the model (an
-# activation, a duty's wake-up, a sub-session's report) starts with this. Frontends show
-# such a message as a notice, not as something the user said.
-NOTICE_PREFIX = "[Runtime notice] "
-# A notice that only tells the model how to behave starts with this. Frontends show nothing
-# for it.
-HIDDEN_NOTICE_PREFIX = f"{NOTICE_PREFIX}(The user does not see this notice.) "
-
 # Every tool the runtime offers takes an optional argument under this name: a few plain
 # words the model writes about what the call does, which frontends show in place of the
 # tool and its input. The runtime adds it to each offered schema and removes it from the
@@ -1324,13 +1338,15 @@ class StateChanged:
 
 @dataclass(frozen=True, slots=True)
 class MessageQueued:
-    """User message accepted mid-cycle or while stopping; delivered at the next turn
-    boundary (or starts the next cycle). The committed Message reuses message_id."""
+    """A message of the user's, or a notice, accepted mid-cycle or while stopping;
+    delivered at the next turn boundary (or starts the next cycle). The committed Message
+    reuses message_id."""
 
     message_id: str
     text: str
     attachments: Sequence[Attachment] = ()  # what the user attached to it
     spoken: bool = False  # said aloud (RuntimeAPI.send)
+    author: Author = Author.USER  # KADENCE: a notice (RuntimeAPI.notify)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1597,6 +1613,8 @@ class RuntimeAPI(Protocol):
       **  this also drops a pending wake-up.
       *** not while FAILED because a hard budget is exhausted (send raises there too).
 
+    notify follows send's column.
+
     resolve_permission is first-wins; an unknown or already-resolved id raises
     RuntimeStateError. cancel_operation is valid in any state while the call is running
     and raises RuntimeStateError otherwise.
@@ -1710,14 +1728,21 @@ class RuntimeAPI(Protocol):
         be empty when there are files.
 
         `spoken`: the user said this aloud and hears the reply read (a voice
-        conversation). When it differs from the conversation's message before, the runtime
-        puts a runtime notice after this one that tells the agent, so that it
-        answers in a way that can be listened to; the system prompt does not change."""
+        conversation), kept as Message.spoken. When it differs from the message the user
+        wrote before, the runtime puts a hidden notice after this one that tells the
+        agent, so that it answers in a way that can be listened to; the system prompt
+        does not change."""
+
+    async def notify(self, text: str) -> None:
+        """Write a notice into the conversation as Kadence, for the model: something that
+        happened outside it which the agent should know (a sub-session's report to its
+        parent). Queued and delivered as send's message is, and authorizes a cycle the
+        same way; stored with Author.KADENCE, so nothing takes it for the user's words."""
 
     async def activate(self) -> None:
         """User-initiated cycle with no new message. If the transcript is empty or its
-        newest message is an assistant message, the runtime first appends a short runtime
-        notice as a USER message, so requests never end on an assistant message."""
+        newest message is an assistant message, the runtime first appends a short notice
+        of its own as a USER message, so requests never end on an assistant message."""
 
     async def stop(self) -> None:
         """Idempotent; returns immediately. Cancels inference, maintenance and running

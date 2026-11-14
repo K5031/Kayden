@@ -17,7 +17,7 @@ project's folder, and starting work somewhere else should be one click, not a re
 - `ConversationInfo.folder` is the conversation's work folder, an absolute path; None
   means the Tools' default and occurs only with Tools that have a fixed folder.
   `Memory.create_conversation(..., folder=)` stores it. SqliteMemory has a `folder`
-  column (schema version 6).
+  column.
 - `StartOptions.folder` picks the folder of a new conversation (ValueError with
   `conversation_id`, or when it is not a folder). Without it the new conversation gets the
   `seed_from` conversation's folder, else `Settings.work_folder`, stored as a path, so

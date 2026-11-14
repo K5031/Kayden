@@ -170,7 +170,7 @@ class InMemoryMemory(Memory):
         return sorted(infos, key=lambda i: i.updated_at, reverse=True)
 
     def _info(self, conv: Conversation) -> ConversationInfo:
-        first = next((m for m in conv.messages if m.role == Role.USER), None)
+        first = next((m for m in conv.messages if m.from_user), None)
         return replace(conv.info, preview=render(first)[:100] if first else None)
 
     async def update_conversation(self, conversation_id: ConversationId, *,
@@ -333,7 +333,7 @@ class InMemoryMemory(Memory):
         return bool(conv.summary)
 
     async def _title(self, conv: Conversation, complete: Completion) -> bool:
-        first = next((m for m in conv.messages if m.role == Role.USER), None)
+        first = next((m for m in conv.messages if m.from_user), None)
         if not self.auto_title or conv.info.title or first is None:
             return False
         try:

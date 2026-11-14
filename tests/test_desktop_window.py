@@ -1074,10 +1074,10 @@ async def test_a_notice_from_a_child_wakes_the_open_conversation(make, qapp, tmp
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     assert window.home is controller
-    sessions.notes[info.id] = ["[Runtime notice] Sub-session 1 (x) ended a turn: done."]
+    sessions.notes[info.id] = ["Sub-session 1 (x) ended a turn: done."]
     sessions._notify()
     await eventually(lambda: info.id in h.store.conversations and any(
-        "Sub-session 1 (x) ended a turn" in str(m.blocks)
+        "Sub-session 1 (x) ended a turn" in str(m.blocks) and not m.from_user
         for m in h.store.conversations[info.id].messages))
     assert sessions.notes == {}
 

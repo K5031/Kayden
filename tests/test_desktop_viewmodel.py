@@ -546,12 +546,13 @@ def test_failure_banner_until_the_next_cycle():
 
 
 def test_a_notice_meant_for_the_model_alone_is_not_shown():
-    from kadence.api import HIDDEN_NOTICE_PREFIX
+    from kadence.api import Author
 
     model = ConversationModel()
     model.load(_snapshot(), ())
     model.apply(MessageCommitted(Message(
-        "n", Role.USER, (Text(f"{HIDDEN_NOTICE_PREFIX}The user is typing again."),), 0.0)))
+        "n", Role.USER, (Text("The user is typing again."),), 0.0, Author.KADENCE,
+        hidden=True)))
     assert not of(model, NoticeItem) and not of(model, UserItem)
 
 
@@ -775,9 +776,9 @@ async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make
     await h.runtime.set_duty(Duty("Watch the inbox"))
     await eventually(lambda: any("New duty: Watch the inbox" in n.text
                                  for n in of(model, NoticeItem)))
-    assert not any("Runtime notice" in u.text for u in of(model, UserItem))
+    assert not any("New duty" in u.text for u in of(model, UserItem))
     [notice] = [n for n in of(model, NoticeItem) if "New duty" in n.text]
-    assert not notice.text.startswith("[Runtime notice]")
+    assert notice.text == "New duty: Watch the inbox"
     [stored] = await h.runtime.list_conversations()
     assert stored.id == info.id and conversation_label(stored) == "New chat"
 

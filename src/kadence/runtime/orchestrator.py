@@ -29,6 +29,7 @@ from kadence.api import (
     AgentState,
     ArchiveHit,
     Attachment,
+    Author,
     Budget,
     BudgetExhausted,
     CallId,
@@ -117,7 +118,9 @@ from kadence.runtime import skills as skill_files
 from kadence.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
 from kadence.runtime.config import (
     ACTIVATION_NOTICE,
-    VOICE_NOTICE_LOOKBACK,
+    HIDDEN_NOTICE_MARK,
+    NOTICE_MARK,
+    VOICE_LOOKBACK,
     VOICE_OFF_NOTICE,
     VOICE_ON_NOTICE,
     Restart,
@@ -159,13 +162,16 @@ _RUNTIME_TOOLS = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS) | {SKILL_TOOL.
 
 def _stamped(message: Message) -> Message:
     """A user message as the model sees it: its text starts with when it was sent, from
-    the stored time, so the request stays the same from one turn to the next."""
+    the stored time, so the request stays the same from one turn to the next, and then,
+    for one Kadence wrote, with the mark that says so."""
     if message.role != Role.USER:
         return message
     for i, block in enumerate(message.blocks):
         if isinstance(block, Text):
             sent = datetime.fromtimestamp(message.created_at).astimezone()
             stamp = f"[Sent {sent.strftime('%a %Y-%m-%d %H:%M')} {sent.isoformat()[-6:]}] "
+            if not message.from_user:
+                stamp += HIDDEN_NOTICE_MARK if message.hidden else NOTICE_MARK
             blocks = (*message.blocks[:i], Text(stamp + block.text), *message.blocks[i + 1:])
             return replace(message, blocks=blocks)
     return message
@@ -546,20 +552,29 @@ class Runtime:
 
     async def send(self, text: str, files: Sequence[str] = (), *,
                    spoken: bool = False) -> None:
+        self._sendable()
+        attached = tuple([await self._attach(path) for path in files])
+        self._answered()
+        self._queue(MessageQueued(_new_id(), text, attached, spoken), "user message")
+
+    async def notify(self, text: str) -> None:
+        self._sendable()
+        self._queue(MessageQueued(_new_id(), text, author=Author.KADENCE), "notice")
+
+    def _sendable(self) -> None:
         state = self._state()
         if state == AgentState.NOT_STARTED:
             raise RuntimeStateError("not started")
         if state == AgentState.FAILED and (reason := self._budget.exhausted()):
             raise RuntimeStateError(f"budget exhausted: {reason}")
-        attached = tuple([await self._attach(path) for path in files])
-        state = self._state()  # the files were read meanwhile
-        queued = MessageQueued(_new_id(), text, attached, spoken)
+
+    def _queue(self, queued: MessageQueued, reason: str) -> None:
+        state = self._state()
         self._inbox.append(queued)
-        self._answered()
         if state in _RUNNING or state == AgentState.STOPPING:
             self._emit(queued)
         else:
-            self._request_cycle("user message")
+            self._request_cycle(reason)
 
     async def _attach(self, path: str) -> Attachment:
         """A file the user attached, as the first Tools module that reads attachments
@@ -1100,7 +1115,8 @@ class Runtime:
         if orphans:
             note = "Interrupted: the process ended while this operation was running."
             await self._append(Message(_new_id(), Role.USER, tuple(
-                OperationResult(cid, ToolStatus.INTERRUPTED, note) for cid in orphans), now))
+                OperationResult(cid, ToolStatus.INTERRUPTED, note) for cid in orphans), now,
+                Author.KADENCE))
         if missing or orphans:
             self._log.decision("resume_repair", interrupted_calls=missing,
                                interrupted_operations=orphans)
@@ -1134,7 +1150,8 @@ class Runtime:
         if not self._pending_results:
             return
         pending, self._pending_results = self._pending_results, []
-        message = Message(_new_id(), Role.USER, tuple(r for r, _ in pending), time.time())
+        message = Message(_new_id(), Role.USER, tuple(r for r, _ in pending), time.time(),
+                          Author.KADENCE)
         self._unseen = True
         await self._append(message, [finished for _, finished in pending])
 
@@ -1151,31 +1168,28 @@ class Runtime:
                 await self._flush_results()
         for _ in range(waiting):
             q = self._inbox.pop(0)
-            await self._append(Message(q.message_id, Role.USER,
-                                       (Text(q.text), *q.attachments), time.time()))
-            if q.spoken != await self._was_spoken():
-                # After the message, so that a conversation still starts with the user's
-                # words (its title is made of them).
+            changed = q.author is Author.USER and q.spoken != await self._was_spoken()
+            await self._append(Message(q.message_id, Role.USER, (Text(q.text), *q.attachments),
+                                       time.time(), q.author, spoken=q.spoken))
+            if changed:  # the user began to talk, or to type again: tell the agent
                 self._spoken = q.spoken
                 notice = VOICE_ON_NOTICE if q.spoken else VOICE_OFF_NOTICE
-                await self._append(Message(_new_id(), Role.USER, (Text(notice),), time.time()))
+                await self._notice(notice, hidden=True)
         return True
 
+    async def _notice(self, text: str, *, hidden: bool = False) -> None:
+        """Write into the conversation as Kadence."""
+        await self._append(Message(_new_id(), Role.USER, (Text(text),), time.time(),
+                                   Author.KADENCE, hidden))
+
     async def _was_spoken(self) -> bool:
-        """Whether the agent was last told that the user talks to it; a reopened
-        conversation says so in its newest voice notice."""
+        """Whether the user said their last message aloud; a reopened conversation's
+        messages say so."""
         if self._spoken is None:
             assert self._conversation is not None
-            self._spoken = False
             recent = [] if self._draft else await self._memory.history(
-                self._conversation.id, limit=VOICE_NOTICE_LOOKBACK)
-            for message in reversed(recent):
-                said = message.blocks[0].text if (
-                    message.role == Role.USER and message.blocks
-                    and isinstance(message.blocks[0], Text)) else ""
-                if said in (VOICE_ON_NOTICE, VOICE_OFF_NOTICE):
-                    self._spoken = said == VOICE_ON_NOTICE
-                    break
+                self._conversation.id, limit=VOICE_LOOKBACK)
+            self._spoken = next((m.spoken for m in reversed(recent) if m.from_user), False)
         return self._spoken
 
     async def _ensure_user_last(self) -> None:
@@ -1186,8 +1200,7 @@ class Runtime:
                                                                     limit=1)
         if not newest or newest[-1].role == Role.ASSISTANT:
             self._log.decision("activation_notice")
-            await self._append(
-                Message(_new_id(), Role.USER, (Text(ACTIVATION_NOTICE),), time.time()))
+            await self._notice(ACTIVATION_NOTICE)
 
     async def _flush_outside_cycle(self) -> None:
         try:
@@ -1252,7 +1265,7 @@ class Runtime:
             if duty is None and cause == duties.DUE and self._conversation is not None:
                 self._reminded = time.time()
                 notice = duties.reminder(self._conversation.plan, self._reminded)
-            await self._append(Message(_new_id(), Role.USER, (Text(notice),), time.time()))
+            await self._notice(notice)
         else:
             await self._ensure_user_last()
         while True:

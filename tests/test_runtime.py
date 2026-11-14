@@ -13,6 +13,7 @@ import pytest
 from kadence.api import (
     PERMISSION_CEILING_ENV,
     AgentState,
+    Author,
     ContextOverflowError,
     CoreError,
     Decision,
@@ -39,7 +40,7 @@ from kadence.api import (
     ToolStatus,
     TransientCoreError,
 )
-from kadence.runtime.config import VOICE_ON_NOTICE
+from kadence.runtime.config import ACTIVATION_NOTICE, VOICE_ON_NOTICE
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -384,7 +385,6 @@ async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) 
 
 async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: Any) -> None:
     """In a runtime notice after the message, so the system prompt stays as it is."""
-    from kadence.api import HIDDEN_NOTICE_PREFIX
     from kadence.runtime.config import VOICE_OFF_NOTICE, VOICE_ON_NOTICE
 
     def texts(transcript: Any) -> list[str]:
@@ -408,8 +408,16 @@ async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: An
     await h.start(conversation_id=first.id)
     await h.turn("typed again")
     assert texts(await h.transcript())[-2:] == ["typed again", VOICE_OFF_NOTICE]
-    for notice in (VOICE_ON_NOTICE, VOICE_OFF_NOTICE):  # for the model alone, unremarked
-        assert notice.startswith(HIDDEN_NOTICE_PREFIX) and "Do not mention" in notice
+    stored = await h.transcript()
+    assert [m.spoken for m in stored if m.from_user] == [False, True, True, False]
+    for m in stored:  # for the model alone, unremarked
+        if m.blocks[0] in (Text(VOICE_ON_NOTICE), Text(VOICE_OFF_NOTICE)):
+            assert m.author is Author.KADENCE and m.hidden
+            assert "Do not mention" in m.blocks[0].text
+    told = next(m for m in core.requests[-1].messages
+                if m.role is Role.USER and VOICE_ON_NOTICE in m.blocks[0].text)
+    assert told.blocks[0].text.endswith(
+        f"] [Runtime notice] (The user does not see this notice.) {VOICE_ON_NOTICE}")
     assert "kaomoji" in VOICE_ON_NOTICE and "emoji" in VOICE_ON_NOTICE
 
 
@@ -523,7 +531,8 @@ async def test_a_message_queued_before_stop_is_saved_as_any_other(make: Any, tmp
     saved = await h.transcript()
     message = next(m for m in saved if m.id == queued.message_id)
     assert message.blocks == (Text("and this"), File(str(attached), "oat milk"))
-    assert saved[-1].blocks == (Text(VOICE_ON_NOTICE),)
+    assert message.spoken and message.from_user
+    assert saved[-1].blocks == (Text(VOICE_ON_NOTICE),) and saved[-1].hidden
     assert len(core.requests) == 1
 
 
@@ -805,8 +814,47 @@ async def test_activate_appends_notice_after_assistant(make: Any) -> None:
     transcript = await h.transcript()
     assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT, Role.USER, Role.ASSISTANT]
     notice = transcript[2]
-    assert "runtime notice" in notice.blocks[0].text.lower()
-    assert h.core.requests[1].messages[-1].id == notice.id
+    assert notice.author is Author.KADENCE and not notice.from_user
+    assert notice.blocks == (Text(ACTIVATION_NOTICE),)
+    sent = h.core.requests[1].messages[-1]  # the model is told whose words these are
+    assert sent.id == notice.id
+    assert sent.blocks[0].text.endswith(f"] [Runtime notice] {ACTIVATION_NOTICE}")
+
+
+async def test_a_notice_is_written_as_kadence_and_wakes_the_agent(make: Any) -> None:
+    """notify: queued while a turn runs, like a message, and never taken for the user's."""
+    core = ScriptedCore([Step(text="working", hang=True), Step(text="Noted.")])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.runtime.notify("Sub-session 1 ended a turn: done.")
+    await eventually(lambda: core.requests)
+    await h.runtime.notify("Sub-session 2 ended a turn: done.")
+    [queued] = await h.rec.wait_for(lambda r: r.of(MessageQueued))
+    assert queued.author is Author.KADENCE
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED)
+    first, _partial, second = await h.transcript()
+    assert first.blocks == (Text("Sub-session 1 ended a turn: done."),)
+    assert first.author is second.author is Author.KADENCE
+    assert second.id == queued.message_id and not second.from_user
+    assert core.requests[0].messages[0].blocks[0].text.endswith(
+        "] [Runtime notice] Sub-session 1 ended a turn: done.")
+    assert (await h.runtime.list_conversations())[0].preview is None  # nothing the user wrote
+
+
+async def test_background_outcomes_are_not_the_users_message(make: Any) -> None:
+    tools = FakeTools()
+    tools.slow("bg", 0.4)
+    core = ScriptedCore([Step(calls=[call("bg", id="b")]), Step(text="Started."),
+                         Step(text="It finished.")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: len(core.requests) == 3
+                     and h.runtime.snapshot().state == AgentState.IDLE)
+    outcome = next(m for m in await h.transcript()
+                   if any(isinstance(b, OperationResult) for b in m.blocks))
+    assert outcome.role is Role.USER and outcome.author is Author.KADENCE
 
 
 async def test_activate_empty_conversation(make: Any) -> None:

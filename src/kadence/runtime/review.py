@@ -1,9 +1,9 @@
 """Automatic permission review: one light-model request decides whether a tool call that
 can reach outside the work folder runs without asking the user.
 
-The reviewer sees what the user asked (the text of their messages) and the call, never
-tool results or the agent's own text, so content the agent read cannot argue for its own
-call. Anything but a clear ALLOW counts as ASK.
+The reviewer sees what the user asked (the text of the messages they wrote, never
+Kadence's own notices) and the call, never tool results or the agent's own text, so
+content the agent read cannot argue for its own call. Anything but a clear ALLOW counts as ASK.
 
 Calls that mention credential files or Kadence's own data folder are never reviewed: they
 always ask (`always_ask`). Reading a secret sends it to the AI provider and, once in the
@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kadence.api import Message, Role, Text, ToolCall, ToolSpec
-from kadence.runtime.config import ACTIVATION_NOTICE
 
 MAX_USER_CHARS = 16_000  # about 4 000 tokens of the user's messages, newest first
 MAX_ARGUMENT_CHARS = 4_000
@@ -97,13 +96,13 @@ def always_ask(call: ToolCall, data_dir: Path) -> str | None:
 
 
 def user_requests(history: Sequence[Message]) -> list[str]:
-    """The text of the user's messages, newest last, within MAX_USER_CHARS."""
+    """The text of the messages the user wrote, newest last, within MAX_USER_CHARS."""
     texts, size = [], 0
     for message in reversed(history):
-        if message.role != Role.USER:
+        if not message.from_user:
             continue
         text = "\n".join(b.text for b in message.blocks if isinstance(b, Text)).strip()
-        if not text or text == ACTIVATION_NOTICE:
+        if not text:
             continue
         if size + len(text) > MAX_USER_CHARS:
             if not texts:

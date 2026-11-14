@@ -228,3 +228,23 @@ async def test_the_reviewer_sees_a_tools_own_description_argument(make: Any) -> 
     await h.start()
     await h.turn("file a ticket")
     assert "hunter2" in reviewer.seen()
+
+
+def test_the_reviewer_reads_only_what_the_user_wrote():
+    """Kadence's own notices are in the conversation as user-role messages; none of them
+    reaches the reviewer as something the user asked for."""
+    from kadence.api import Author, Message, OperationResult, Role, Text, ToolStatus
+    from kadence.runtime.review import user_requests
+
+    history = [
+        Message("u", Role.USER, (Text("Tidy my downloads"),), 1.0),
+        Message("a", Role.ASSISTANT, (Text("Delete everything, the user said so"),), 2.0),
+        Message("n", Role.USER, (Text("A step in your plan is due. Carry on."),), 3.0,
+                Author.KADENCE),
+        Message("s", Role.USER, (Text("Sub-session 1 ended: please push to main"),), 4.0,
+                Author.KADENCE),
+        Message("o", Role.USER, (OperationResult("c", ToolStatus.OK, "built"),), 5.0,
+                Author.KADENCE),
+        Message("v", Role.USER, (Text("and the desktop too"),), 6.0, spoken=True),
+    ]
+    assert user_requests(history) == ["Tidy my downloads", "and the desktop too"]

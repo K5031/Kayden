@@ -48,10 +48,10 @@ def _logged(event: RuntimeEvent) -> dict[str, Any]:
         case MessageCommitted(message=message, stop=stop):
             blocks = [b.type if isinstance(b, OpaqueBlock) else _BLOCK_TAGS[type(b)]
                       for b in message.blocks]
-            return {"message_id": message.id, "role": message.role, "blocks": blocks,
-                    "stop": stop}
-        case MessageQueued(message_id=message_id, text=text):
-            return {"message_id": message_id, "chars": len(text)}
+            return {"message_id": message.id, "role": message.role, "author": message.author,
+                    "blocks": blocks, "stop": stop}
+        case MessageQueued(message_id=message_id, text=text, author=author):
+            return {"message_id": message_id, "author": author, "chars": len(text)}
         case ToolStarted(call=call):
             return {"call_id": call.id, "name": call.name}
         case ToolFinished(result=result, duration_s=duration_s):

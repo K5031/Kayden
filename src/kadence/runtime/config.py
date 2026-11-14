@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kadence.api import HIDDEN_NOTICE_PREFIX, NOTICE_PREFIX, Budget, McpServer, PermissionPolicy
+from kadence.api import Budget, McpServer, PermissionPolicy
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are Kadence, an AI agent. Use the available tools to accomplish the user's goals.\n"
@@ -18,9 +18,15 @@ DEFAULT_SYSTEM_PROMPT = (
     "no longer in context, or with scope \"all\" the user's other conversations."
 )
 
-# After the first message said aloud, and after the first typed one that follows.
+# What starts, in a request, a message Kadence wrote (api.Author.KADENCE), and one of
+# those the user is not shown (Message.hidden): how the model tells them from the user's.
+NOTICE_MARK = "[Runtime notice] "
+HIDDEN_NOTICE_MARK = f"{NOTICE_MARK}(The user does not see this notice.) "
+
+# Hidden notices: after the first message said aloud, and after the first typed one that
+# follows.
 VOICE_ON_NOTICE = (
-    f"{HIDDEN_NOTICE_PREFIX}From the message above on, the user talks to you by voice and "
+    "From the message above on, the user talks to you by voice and "
     "hears your replies read aloud by a speech engine. Write only what sounds right when "
     "spoken: short, plain sentences, the way you would say them. No emoji, kaomoji or "
     "emoticons, no symbols, markup, lists, tables or code unless asked; write numbers, "
@@ -28,14 +34,14 @@ VOICE_ON_NOTICE = (
     "style. Do not mention this notice: just answer the message."
 )
 VOICE_OFF_NOTICE = (
-    f"{HIDDEN_NOTICE_PREFIX}From the message above on, the user types again and reads "
+    "From the message above on, the user types again and reads "
     "your replies: write as you did before they talked. Do not mention this notice or "
     "the change: just answer the message."
 )
-VOICE_NOTICE_LOOKBACK = 200  # messages of a reopened conversation searched for the last one
+VOICE_LOOKBACK = 200  # messages of a reopened conversation searched for the user's last
 
 ACTIVATION_NOTICE = (
-    f"{NOTICE_PREFIX}You were activated without a new user message. Continue your work, "
+    "You were activated without a new user message. Continue your work, "
     "or just say so if there is nothing to do."
 )
 

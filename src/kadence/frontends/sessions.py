@@ -30,8 +30,6 @@ import tomli_w
 
 from kadence.api import (
     DESCRIPTION_ARG,
-    HIDDEN_NOTICE_PREFIX,
-    NOTICE_PREFIX,
     AgentState,
     Budget,
     ConversationUpdated,
@@ -125,11 +123,10 @@ def message_lines(messages: Sequence[Message]) -> list[tuple[str, str]]:
     for message in messages:
         for block in message.blocks:
             match block:
-                case Text(text=text) if text.strip() and not text.startswith(
-                        HIDDEN_NOTICE_PREFIX):
+                case Text(text=text) if text.strip() and not message.hidden:
                     who = {Role.USER: "You", Role.ASSISTANT: "Agent"}.get(message.role,
                                                                         message.role)
-                    if text.startswith(NOTICE_PREFIX):
+                    if message.role is Role.USER and not message.from_user:
                         who = "Kadence"
                     shown.append((who, text))
                 case ToolCall(name=name, arguments=args):
@@ -236,7 +233,8 @@ class SubSessions(Tools):
                 and (include_archived or not s.archived)]
 
     def take_notes(self, conversation_id: str) -> list[str]:
-        """The notices waiting for this conversation; the frontend sends them to it."""
+        """The notices waiting for this conversation; the frontend writes them into it
+        (RuntimeAPI.notify)."""
         return self.notes.pop(conversation_id, [])
 
     # ── For frontends ─────────────────────────────────────────────────────
@@ -532,7 +530,7 @@ class SubSessions(Tools):
                       for b in m.blocks if isinstance(b, Text) and b.text.strip()), "")
         if len(reply) > NOTE_CHARS:
             reply = reply[:NOTE_CHARS] + "…"
-        note = (f"{NOTICE_PREFIX}Sub-session {session.id} ({session.name[:80]}) ended a "
+        note = (f"Sub-session {session.id} ({session.name[:80]}) ended a "
                 f"turn: {STATE_LABELS[session.state].lower()}.")
         if session.state == "waiting":
             note += f" It asks: {session.question}"

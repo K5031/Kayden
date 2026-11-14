@@ -1697,7 +1697,7 @@ class KadenceApp(App[None]):
         snapshot = self.home.snapshot()
         if self.sessions is not None and snapshot.conversation is not None:
             for note in self.sessions.take_notes(snapshot.conversation.id):
-                self._call(self.home.send(note))
+                self._call(self.home.notify(note))
 
     async def _consume(self) -> None:
         while (item := await self._inbox.get()) is not None:
@@ -1815,9 +1815,9 @@ class KadenceApp(App[None]):
                     self._stream.append(entry)
                 entry.stream_arguments(name, chunk)
             case MessageQueued(message_id=message_id, text=text, attachments=attached):
-                if notice_of(text) is None:
+                if notice_of(event) is None:
                     await self._set_card(None)
-                if message_id not in self._queued and notice_of(text) is None:
+                if message_id not in self._queued and notice_of(event) is None:
                     entry = UserEntry(with_attachments(text, attached), queued=True,
                                       message_id=message_id)
                     self._queued[message_id] = await self._mount(entry)
@@ -2005,11 +2005,11 @@ class KadenceApp(App[None]):
         self._rendered_ids.add(message.id)
         if message.role is Role.USER:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
-            if notice_of(text) is None:
+            if notice_of(message) is None:
                 text = with_attachments(text, message.blocks)
-            if text and notice_of(text) is None and self._insert_before is None:
+            if text and notice_of(message) is None and self._insert_before is None:
                 await self._set_card(None)  # answered: results and notices leave it up
-            if (notice := notice_of(text)) is not None:
+            if (notice := notice_of(message)) is not None:
                 if not notice:
                     pass
                 elif "\n" in notice or len(notice) > 160:  # a new goal's brief: folded

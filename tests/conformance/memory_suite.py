@@ -26,6 +26,7 @@ import pytest
 
 from kadence.api import (
     AssembledContext,
+    Author,
     BudgetExhausted,
     ContextRequest,
     CoreError,
@@ -387,6 +388,36 @@ class MemoryConformance:
         reopened = open_memory()
         assert await reopened.history(conv.id) == messages
         assert [h.message for h in await reopened.search("tok0001")] == [messages[0]]
+
+    async def test_a_message_keeps_who_wrote_it(self, open_memory: MemoryFactory):
+        """The author is in the message, not in its text: a notice of Kadence's is neither
+        the conversation's preview nor what its title is made of."""
+        memory = open_memory()
+        conv = await memory.create_conversation()
+        messages = [
+            Message("n", Role.USER, (Text("tok0001 New duty: watch the inbox"),), 1.0,
+                    Author.KADENCE),
+            Message("h", Role.USER, (Text("tok0002 the user talks"),), 2.0, Author.KADENCE,
+                    hidden=True),
+            Message("u", Role.USER, (Text("tok0003 said aloud"),), 3.0, spoken=True),
+        ]
+        await memory.append(conv.id, messages[:2])
+        [listed] = await memory.list_conversations()
+        assert listed.preview is None
+        titler = FakeCompletion(render=lambda _kept, _text: "Inbox")
+        assert not await self.maintain(memory, conv.id, titler)  # nothing the user wrote
+        await memory.append(conv.id, messages[2:])
+        await memory.aclose()
+
+        reopened = open_memory()
+        assert await reopened.history(conv.id) == messages
+        assert [m.from_user for m in await reopened.history(conv.id)] == [False, False, True]
+        assert [h.message for h in await reopened.search("tok0001")] == [messages[0]]
+        [listed] = await reopened.list_conversations()
+        assert listed.preview == "tok0003 said aloud"
+        assert await self.maintain(reopened, conv.id, titler)
+        assert "tok0003" in str(titler.calls[0]["messages"]) and "tok0001" not in str(
+            titler.calls[0]["messages"])
 
     async def test_opaque_block_round_trips_unchanged(self, open_memory: MemoryFactory):
         memory = open_memory()

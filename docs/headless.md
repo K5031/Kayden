@@ -60,6 +60,11 @@ under `"type"`, such as `MessageCommitted`, `StateChanged`, `PermissionRequested
 `HelpNeeded` and `DutyScheduled`. A jump in `seq` means events were dropped: take a
 `snapshot`, ignore events up to its `seq`, and read `history`.
 
+**A message says who wrote it.** A `Message` with role `user` has an `author`: `user`,
+or `kadence` for what Kadence itself wrote for the agent (a duty's wake-up, a reminder,
+background results). Its `text` is exactly what was written. To tell the agent something
+that is not the user's words, use `notify` with a `text` instead of `send`.
+
 **Prompts reach the program.** A tool call that needs approval comes as
 `PermissionRequested`: answer it with `resolve_permission`. A call the agent proposes
 comes as `ProposalMade`: answer it with `resolve_proposal`. A question the agent asks

@@ -18,19 +18,19 @@ turns what the user says into a message (`RuntimeAPI.send`) and reads the reply 
 from the events it already gets (`TextDelta`, `MessageCommitted`). The conversation in
 the archive is the same as a typed one, and stays readable on screen while it is spoken.
 
-The one thing the runtime learns is that a message was said aloud: `send(..., spoken=True)`.
-When that differs from the conversation's message before, the runtime appends a runtime
-notice after the message (`config.VOICE_ON_NOTICE`: write only what sounds right when
+The one thing the runtime learns is that a message was said aloud: `send(..., spoken=True)`,
+kept with the message (`Message.spoken`). When that differs from the message the user
+wrote before, the runtime appends a notice of its own after the message
+(`config.VOICE_ON_NOTICE`: write only what sounds right when
 spoken, without emoji, kaomoji, symbols or markup, whatever else its instructions say
 about style; `VOICE_OFF_NOTICE` when typing is back). Both tell the agent not to mention
-them and are not shown to the user (`api.HIDDEN_NOTICE_PREFIX`): the first version was a
+them and are not shown to the user (`Message.hidden`): the first version was a
 visible line, and the agent greeted the user back to typing. This is the usual pair for
 voice agents: the model is told its words will be spoken, and what still is not a word
 is taken out before the speech engine (`voice/speech.py`). A notice is part of the conversation,
 so the start of every request stays the same and a provider's prompt cache stays valid.
-It follows the message, so that a conversation still begins with the user's words, which
-its title is made of. A reopened conversation finds what the agent was last told in its
-newest voice notice (`Runtime._was_spoken`).
+It follows the message it speaks of ("from the message above on"). A reopened conversation
+finds whether the user was talking in the last message they wrote (`Runtime._was_spoken`).
 
 ### Speech runs on the user's machine
 
@@ -89,8 +89,10 @@ connects it to the window, the controller's events, the microphone and the downl
   through the runtime only to turn it into text at the other end.
 - **A system prompt section while voice is on.** Simpler, but every switch rewrites the
   provider's cache for the whole conversation.
-- **The notice in front of the message.** Built first; the conversation's title was then
-  made of the notice ("Voice Chat Response Style Instructions").
+- **The notice as the user's message, marked by its first words.** Built first, in front
+  of the message: the conversation's title was then made of the notice ("Voice Chat
+  Response Style Instructions"). A message says who wrote it (`Message.author`), so titles
+  and previews read only what the user wrote.
 - **`RuntimeAPI.set_spoken(on)`**, a mode on the runtime. A flag on each message says the
   same without state a frontend has to keep in step.
 

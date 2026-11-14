@@ -32,10 +32,10 @@ from pathlib import Path
 from typing import Any
 
 from kadence.api import (
-    NOTICE_PREFIX,
     PROFILE,
     ArchiveHit,
     AssembledContext,
+    Author,
     Block,
     Completion,
     ContextRequest,
@@ -73,7 +73,7 @@ from . import codec
 
 logger = logging.getLogger(__name__)
 # A store of another version is refused.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 # Output headroom on top of the summary budget, for its tags.
 _SUMMARY_TAG_TOKENS = 64  # the summary and topics tags
 _SAVE_OUTPUT_TOKENS = 1024  # the pass after an answer: the changes it writes
@@ -176,6 +176,9 @@ CREATE TABLE messages (
     format INTEGER NOT NULL,
     blocks TEXT NOT NULL,
     archived_at REAL NOT NULL,
+    author TEXT NOT NULL,
+    hidden INTEGER NOT NULL,
+    spoken INTEGER NOT NULL,
     UNIQUE (conversation_id, id)
 );
 CREATE INDEX messages_conversation ON messages(conversation_id, seq);
@@ -274,6 +277,8 @@ _SAVE_RE = re.compile(r'<save title="([^"]*)"(?: description="([^"]*)")?>(.*?)</
 _APPEND_RE = re.compile(r'<append title="([^"]*)">(.*?)</append>', re.DOTALL)
 _WORD_RE = re.compile(r"\w+")
 _INFO_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder, duty, plan"
+_MESSAGE_COLUMNS = "id, role, created_at, blocks, author, hidden, spoken"  # see _message
+_FROM_USER = "role = 'user' AND author = 'user'"  # api.Message.from_user
 _NEW_COLUMNS = "id, title, created_at, updated_at, archived, seed_from, folder"
 _CURRENT_NOTES = (
     "SELECT n.id, r.title, r.description, r.text, r.source_conversation_id, r.created_at"
@@ -310,7 +315,7 @@ class SqliteArchive(Memory):
     upkeep after an answer, what it erases with a conversation, and its tools."""
 
     SCHEMA = _ARCHIVE_SCHEMA  # a subclass adds its own tables
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(
         self, path: str | PathLike[str], config: CompactionConfig = CUT_HALF
@@ -356,7 +361,7 @@ class SqliteArchive(Memory):
         def run(conn: sqlite3.Connection) -> list[ConversationInfo]:
             rows = conn.execute(
                 f"SELECT {_INFO_COLUMNS}, (SELECT blocks FROM messages m"
-                " WHERE m.conversation_id = c.id AND m.role = 'user' ORDER BY seq LIMIT 1)"
+                f" WHERE m.conversation_id = c.id AND {_FROM_USER} ORDER BY seq LIMIT 1)"
                 " FROM conversations c WHERE ? OR archived = 0"
                 " ORDER BY updated_at DESC, created_at DESC",
                 (include_archived,),
@@ -450,7 +455,7 @@ class SqliteArchive(Memory):
                 _require_conversation(conn, conversation_id)
                 for message, role, created_at, blocks in rows:
                     stored = conn.execute(
-                        "SELECT id, role, created_at, blocks FROM messages"
+                        f"SELECT {_MESSAGE_COLUMNS} FROM messages"
                         " WHERE conversation_id = ? AND id = ?",
                         (conversation_id, message.id),
                     ).fetchone()
@@ -462,9 +467,11 @@ class SqliteArchive(Memory):
                         continue
                     cursor = conn.execute(
                         "INSERT INTO messages (conversation_id, id, role, created_at, format,"
-                        " blocks, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        " blocks, archived_at, author, hidden, spoken)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (conversation_id, message.id, role, created_at,
-                         codec.FORMAT_VERSION, blocks, now),
+                         codec.FORMAT_VERSION, blocks, now, message.author.value,
+                         message.hidden, message.spoken),
                     )
                     conn.execute(
                         "INSERT INTO messages_fts (rowid, body) VALUES (?, ?)",
@@ -502,7 +509,7 @@ class SqliteArchive(Memory):
                 _require_conversation(conn, conversation_id)
                 upper, lower = seq_of(conn, before), seq_of(conn, after)
                 rows = conn.execute(
-                    "SELECT id, role, created_at, blocks FROM messages"
+                    f"SELECT {_MESSAGE_COLUMNS} FROM messages"
                     " WHERE conversation_id = ? AND (? IS NULL OR seq < ?)"
                     " AND (? IS NULL OR seq > ?)"
                     f" ORDER BY seq {'ASC' if after is not None else 'DESC'} LIMIT ?",
@@ -616,7 +623,7 @@ class SqliteArchive(Memory):
     async def _title(self, conversation_id: ConversationId, complete: Completion) -> bool:
         def first_text(conn: sqlite3.Connection) -> str:
             for (blocks,) in conn.execute(
-                "SELECT blocks FROM messages WHERE conversation_id = ? AND role = 'user'"
+                f"SELECT blocks FROM messages WHERE conversation_id = ? AND {_FROM_USER}"
                 " ORDER BY seq", (conversation_id,)
             ):
                 if text := _text_of(blocks):
@@ -629,7 +636,7 @@ class SqliteArchive(Memory):
         try:
             output = await complete(
                 _TITLE_PROMPT, [_user_message(_TITLE_REQUEST.format(
-                    text=text.removeprefix(NOTICE_PREFIX)[:_TITLE_INPUT_CHARS]))],
+                    text=text[:_TITLE_INPUT_CHARS]))],
                 max_tokens=_TITLE_OUTPUT_TOKENS, light=True,
             )
         except CoreError as e:  # leave it untitled; the next maintain tries again
@@ -661,8 +668,7 @@ class SqliteArchive(Memory):
         match = " OR ".join(f'"{w}"' for w in dict.fromkeys(words))
         scope = None if conversation_ids is None else list(dict.fromkeys(conversation_ids))
         sql = (
-            "SELECT m.conversation_id, m.id, m.role, m.created_at, m.blocks,"
-            " bm25(messages_fts) AS rank"
+            f"SELECT m.conversation_id, {_MESSAGE_COLUMNS}, bm25(messages_fts) AS rank"
             " FROM messages_fts JOIN messages m ON m.seq = messages_fts.rowid"
             " WHERE messages_fts MATCH ?"
         )
@@ -680,7 +686,7 @@ class SqliteArchive(Memory):
                 if not words or limit <= 0 or scope == []:
                     return []
                 return [
-                    ArchiveHit(row[0], _message(row[1:5]), -row[5])
+                    ArchiveHit(row[0], _message(row[1:-1]), -row[-1])
                     for row in conn.execute(sql, params)
                 ]
 
@@ -1025,7 +1031,7 @@ def _unsaved(conn: sqlite3.Connection, conversation_id: ConversationId
                            (conversation_id,)).fetchone()
         through = row[0] if row else 0
         rows = conn.execute(
-            "SELECT seq, id, role, created_at, blocks FROM messages"
+            f"SELECT seq, {_MESSAGE_COLUMNS} FROM messages"
             " WHERE conversation_id = ? AND seq > ? ORDER BY seq",
             (conversation_id, through)).fetchall()
         notes = [_note(r) for r in conn.execute(_CURRENT_NOTES + _NOTES_ORDER)]
@@ -1052,7 +1058,9 @@ def _replace_summary(conn: sqlite3.Connection, conversation_id: ConversationId,
 
 
 def _message(row: Sequence[Any]) -> Message:
-    return Message(row[0], Role(row[1]), codec.decode_blocks(row[3]), row[2])
+    """A row of _MESSAGE_COLUMNS."""
+    return Message(row[0], Role(row[1]), codec.decode_blocks(row[3]), row[2],
+                   Author(row[4]), bool(row[5]), bool(row[6]))
 
 
 def _user_message(text: str) -> Message:
@@ -1072,7 +1080,7 @@ def _read_state(
         through_seq, summary = row if row else (0, "")
         rows = (
             conn.execute(
-                "SELECT seq, id, role, created_at, blocks FROM messages"
+                f"SELECT seq, {_MESSAGE_COLUMNS} FROM messages"
                 " WHERE conversation_id = ? AND seq > ? ORDER BY seq",
                 (conversation_id, through_seq),
             ).fetchall()
@@ -1082,7 +1090,7 @@ def _read_state(
         task = None
         if rows and rows[0][2] != Role.USER.value:
             task_row = conn.execute(
-                "SELECT id, role, created_at, blocks FROM messages WHERE conversation_id = ?"
+                f"SELECT {_MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ?"
                 " AND seq <= ? AND role = ? ORDER BY seq DESC LIMIT 1",
                 (conversation_id, through_seq, Role.USER.value),
             ).fetchone()
@@ -1163,6 +1171,9 @@ def _choose_cut(
     return (cut, text[:keep]) if keep else None
 
 
+_NOTICE = "notice from Kadence, not the user"  # the writer of an Author.KADENCE message
+
+
 def _render_transcript(messages: Sequence[Message]) -> str:
     lines = []
     for message in messages:
@@ -1170,7 +1181,8 @@ def _render_transcript(messages: Sequence[Message]) -> str:
         for block in message.blocks:
             match block:
                 case Text(text):
-                    lines.append(f"[{stamp} {message.role}] {text}")
+                    who = _NOTICE if message.author is Author.KADENCE else message.role
+                    lines.append(f"[{stamp} {who}] {text}")
                 case Reasoning():
                     continue
                 case ToolCall(_, name, arguments, raw):

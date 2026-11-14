@@ -144,6 +144,9 @@ class SetupRuntime:
     async def send(self, text: str) -> None:
         self._refuse()
 
+    async def notify(self, text: str) -> None:
+        self._refuse()
+
     async def activate(self) -> None:
         self._refuse()
 

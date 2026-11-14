@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from kadence.api import NOTICE_PREFIX, Duty, DutyKind, PlanItem, PlanStatus
+from kadence.api import Duty, DutyKind, PlanItem, PlanStatus
 
 TURNED_ON = "the duty was turned on"
 DUE = "a plan item is due"
@@ -86,9 +86,9 @@ def notice(cause: str, duty: Duty | None) -> str:
     task, so the transcript keeps it after the duty ends (a goal reached mid-cycle)."""
     kind = "goal" if duty is not None and duty.kind == DutyKind.GOAL else "duty"
     if cause == TURNED_ON and duty is not None:
-        return f"{NOTICE_PREFIX}New {kind}: {duty.instruction}"
+        return f"New {kind}: {duty.instruction}"
     says = _SAYS.get(cause, "{cause}").format(kind=kind, cause=cause)
-    return (f"{NOTICE_PREFIX}{says} Carry on with your {kind}, or end your turn if there is "
+    return (f"{says} Carry on with your {kind}, or end your turn if there is "
             "nothing to do now.")
 
 
@@ -103,7 +103,7 @@ def reminder(plan: Sequence[PlanItem], now: float) -> str:
     """The message that starts a cycle for a due step in a conversation without a duty."""
     due = "; ".join(i.text for i in plan
                     if i.due is not None and i.status in OPEN and i.due <= now)
-    return (f"{NOTICE_PREFIX}Due now in your plan: {due}. This is the time you set: do what "
+    return (f"Due now in your plan: {due}. This is the time you set: do what "
             "the step says (for a reminder, tell the user), then update the plan.")
 
 

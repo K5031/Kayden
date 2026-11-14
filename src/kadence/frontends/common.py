@@ -16,16 +16,17 @@ from typing import Any
 
 from kadence.api import (
     DESCRIPTION_ARG,
-    HIDDEN_NOTICE_PREFIX,
-    NOTICE_PREFIX,
     SUGGESTION_TOOLS,
     AgentState,
+    Author,
     Document,
     Duty,
     DutyKind,
     File,
     Image,
     McpServer,
+    Message,
+    MessageQueued,
     ModelInfo,
     ModuleChoice,
     OperationResult,
@@ -37,6 +38,7 @@ from kadence.api import (
     ServerToolUse,
     Settings,
     SettingsUpdate,
+    Text,
     ToolCall,
     ToolResult,
     ToolStatus,
@@ -91,13 +93,17 @@ def card_of(call: ToolCall) -> Card | None:
     return None
 
 
-def notice_of(text: str) -> str | None:
-    """What a message Kadence wrote for the model (api.NOTICE_PREFIX) says, to show as a
-    notice; None for anything the user wrote, "" for a notice that is not shown
-    (api.HIDDEN_NOTICE_PREFIX)."""
-    if text.startswith(HIDDEN_NOTICE_PREFIX):
+def notice_of(message: Message | MessageQueued) -> str | None:
+    """What a message Kadence wrote for the model (api.Author.KADENCE) says, to show as a
+    notice; None for any other message, "" for one that shows nothing (Message.hidden, or
+    one without text: background outcomes)."""
+    if message.author is not Author.KADENCE:
+        return None
+    if isinstance(message, MessageQueued):
+        return message.text.strip()
+    if message.hidden:
         return ""
-    return text.removeprefix(NOTICE_PREFIX).strip() if text.startswith(NOTICE_PREFIX) else None
+    return "".join(b.text for b in message.blocks if isinstance(b, Text)).strip()
 
 
 def proposal_parts(proposal: Proposal) -> tuple[str, str]:

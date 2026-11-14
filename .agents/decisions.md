@@ -56,7 +56,8 @@ Event log records:
 ```
 
 `data` holds the event's dataclass fields, except that content is replaced: `MessageCommitted`
-has `message_id`, `role`, `blocks` (type tags) and `stop`; `MessageQueued` has `chars`;
+has `message_id`, `role`, `author`, `blocks` (type tags) and `stop`; `MessageQueued` has
+`author` and `chars`;
 `ToolStarted`, `ToolFinished` and `PermissionRequested` name the call without arguments or
 output; `SettingsChanged` has `system_prompt_chars`; `ConversationUpdated` has no title or
 preview.
@@ -88,9 +89,9 @@ Memory's `system_addendum` follows, separated by a blank line.
   and was abandoned; it may still have effects." plus the last progress text.
 - INTERRUPTED (resume repair): "Interrupted: the process ended while this call was in
   flight." / "... while this operation was running."
-- Activation notice (USER message, `config.ACTIVATION_NOTICE`): "[Runtime notice] You were
-  activated without a new user message. Continue your work, or idle if there is nothing to
-  do."
+- Activation notice (USER message by `Author.KADENCE`, `config.ACTIVATION_NOTICE`): "You
+  were activated without a new user message. Continue your work, or just say so if there
+  is nothing to do."
 - REFUSED: names the reason (policy, denial, non-interactive frontend, or the exhausted
   budget dimension).
 - recall: one line per hit, `[conversation/message role ISO-time] text`, text capped at
@@ -476,8 +477,8 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 
 ### SqliteMemory schema
 
-- Version 6 (`PRAGMA user_version`). A store of any other version is refused; Kadence
-  carries no migration code. Erasing a row from `messages_fts` repeats the text it was
+- Version 9 (`PRAGMA user_version`; the archive alone, `SqliteArchive`, is at 2). A store
+  of any other version is refused; Kadence carries no migration code. Erasing a row from `messages_fts` repeats the text it was
   indexed with, so `codec.searchable_text` must not change without a new schema version.
 - `conversations`: `archived`, `seed_from`, `folder` columns.
 - Long-term memory: `memory_entries` (id, source conversation or NULL for the user's,
@@ -572,7 +573,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-auto-permissions.md).
 |---|---|
 | Order in `_gate` | DENY, grants, read-only (ALLOW_READ_ONLY), confined (ALLOW_WORKSPACE and AUTO), review (AUTO), then prompt or non-interactive refusal |
 | Review request | Maintenance model, `REVIEW_PROMPT` (runtime/review.py) as system prompt, one USER message, no tools, `maintenance=True`, at most 1 024 output tokens |
-| What it sees | Text of USER messages among the newest 200 (activation notices left out), newest first up to 16 000 characters; the work folder; tool name, description and arguments (cut at 4 000 characters) |
+| What it sees | Text of the messages the user wrote (`Message.from_user`; none of Kadence's notices) among the newest 200, newest first up to 16 000 characters; the work folder; tool name, description and arguments (cut at 4 000 characters) |
 | Answer | First line `ALLOW` or `ASK` (case and `*`, `` ` ``, `.` ignored), second line the reason (300 characters); anything else asks |
 | Always ask | `review.always_ask` on the JSON of the arguments: the data folder (absolute, `~/`, `$HOME/` forms), then credential paths and tools (`CREDENTIALS`); logged as `permission_review` with `by: "rule"` |
 | Failures | Exhausted budget (checked first), any exception from the request: ask, with a reason saying Kadence could not check. No transient retries |
@@ -689,7 +690,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 
 | Choice | Value |
 |---|---|
-| Stamp | In the request only, the first text block of every USER message (the user's, runtime notices, the activation notice) starts with `[Sent Wed 2026-11-11 10:15 +01:00] `: its `created_at` in local time with weekday and offset. Tool results and operation results are not stamped |
+| Stamp | In the request only, the first text block of every USER message (the user's and Kadence's notices) starts with `[Sent Wed 2026-11-11 10:15 +01:00] `: its `created_at` in local time with weekday and offset; one Kadence wrote continues with `[Runtime notice] `. Tool results and operation results are not stamped |
 | Why there | Computed from the stored time, so a message reads the same in every request and the provider's prompt cache holds; the transcript, the frontends and search keep the text as typed |
 
 ## Headless frontend
@@ -723,7 +724,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-sub-sessions.md).
 | Proxy | `kadence.frontends.remote.RemoteRuntime` over `Channel` (JSON-RPC client): every RuntimeAPI command but `restart`, each method made from the protocol (same signature, a request of that name, the reply decoded by its return type); `snapshot()` is read once and kept current from the events (state, conversation, model, usage, duty wake, help, operations, prompts, queue). A reply to a cancelled request is ignored. `kadence.frontends.wire` encodes and decodes the values |
 | Desktop | The sidebar groups conversations by folder (a heading with the folder's name, folded by a click; "Other" for none) and lists each conversation's children under it (indented, a tree line, a dot while working, the summary as second line). Clicking a child shows it in the conversation area through its own Controller and model; clicking a conversation returns. Memory, tool servers and settings stay the window's own |
 | Initiation | The agent starts a child when the user asked for the work, and proposes `start_session` (Proposals) when it is its own idea |
-| Notices | When a child's agent goes from working to not working, its state is not "working" (a goal between check-ins is), and no parent call waits on it: `[Runtime notice] Sub-session <id> (<name>) ended a turn: <state>.` with its question, report, or last reply (first 400 characters). Kept per parent conversation; the frontend sends them with `send` to its own runtime when that conversation is open (on each change, and after opening a conversation) |
+| Notices | When a child's agent goes from working to not working, its state is not "working" (a goal between check-ins is), and no parent call waits on it: `Sub-session <id> (<name>) ended a turn: <state>.` with its question, report, or last reply (first 400 characters). Kept per parent conversation; the frontend writes them with `notify` to its own runtime when that conversation is open (on each change, and after opening a conversation) |
 | Resume | No automatic resume after a restart (SPEC 11). `resume`: start it again on its conversation, then `activate`; offered when it is stopped, failed or idle with its goal not reached. `message_session` starts a stopped child again too |
 | Limits | Optional. The user's limit per sub-session (none by default) is kept by the manager in `<data>/sessions/limit.json`, not in the runtime's settings; `start_session` gives `budget_usd`, capped by the user's limit when there is one, and its description states that limit. Desktop: a Settings field; TUI: a `/sessions` button. A child's own limit changes with `set_child_limit`: through the child's `update_settings` while it runs, else in its settings.toml; raising or removing either is confirmed (`common.raises_limit`); empty or 0 means none. Rows show "$spent", and "of $limit" with one |
 | Deletion | Deleting a conversation (desktop and TUI) deletes its sub-sessions after it (`SubSessions.delete_of`), archived ones included; the confirmation names them. Archiving the parent hides them, since they are listed only under it |
@@ -748,9 +749,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 
 | Choice | Value |
 |---|---|
-| Marker | `api.NOTICE_PREFIX` ("[Runtime notice] ") starts every USER message Kadence writes for the model: the activation notice, a duty's wake-up, a sub-session's report to its parent |
-| Shown | Frontends show such a message as a notice line without the prefix (desktop `NoticeItem`, TUI `SystemEntry`), never as the user's bubble; a long one (several lines or over 160 characters, such as a new goal's brief) is folded to its first line, with Show all on the desktop and a collapsed entry in the TUI; a queued one is shown once it is committed. A conversation whose first message is a notice is labelled "New chat" until it gets a title |
-| Not shown | A notice that only tells the model how to behave (the voice notices) starts with `api.HIDDEN_NOTICE_PREFIX`, the marker followed by "(The user does not see this notice.) ". Frontends show nothing for it; it is in the archive and in every request like any other message |
+| Who wrote it | `Message.author`: `Author.USER`, or `Author.KADENCE` for every USER message Kadence writes for the model: the activation notice, a duty's wake-up, a due step, the voice notices, background outcomes, and a sub-session's report to its parent, which a frontend writes with `RuntimeAPI.notify`. The stored text is what was written, with no marker |
+| One test | `Message.from_user` (USER role and `Author.USER`) is what every reader uses: the permission review's "what the user asked", Memory's title and preview (`_FROM_USER` in SQL), the voice lookup, the frontends (`common.notice_of`) |
+| For the model | In a request the runtime starts a notice with `[Runtime notice] ` after the time stamp (`config.NOTICE_MARK`, added in `orchestrator._stamped`); a hidden one with `[Runtime notice] (The user does not see this notice.) `. Memory's summarizing transcript names its writer "notice from Kadence, not the user"; `recall` lines say `notice` in place of the role |
+| Shown | Frontends show such a message as a notice line (desktop `NoticeItem`, TUI `SystemEntry`), never as the user's bubble; a long one (several lines or over 160 characters, such as a new goal's brief) is folded to its first line, with Show all on the desktop and a collapsed entry in the TUI; a queued one (`MessageQueued.author`) is shown once it is committed. A conversation in which the user wrote nothing yet has no preview and is labelled "New chat" until it gets a title |
+| Not shown | A notice that only tells the model how to behave (the voice notices) has `Message.hidden`. Frontends show nothing for it; it is in the archive and in every request like any other message |
+| Stored | Columns `author`, `hidden`, `spoken` of `messages` |
 
 ## Desktop look (a calmer, more professional window)
 
@@ -836,9 +840,9 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 | Models folder | `<data dir>/voice/`, beside `desktop.json`; a window without a data folder has no voice mode |
 | Download | One model after another from sherpa-onnx's GitHub releases to `<name>.part`, unpacked beside it and renamed into place; the sizes in `download.MODELS` are for the question and the progress only |
 | Sentences | Cut at `.`, `!` or `?` before a space (not after a digit) and at line ends; an open code block is waited out |
-| What the agent is told | `config.VOICE_ON_NOTICE`: write only what sounds right when spoken (short plain sentences; no emoji, kaomoji, emoticons, symbols, markup, lists, tables or code unless asked; numbers, units and abbreviations as they are said), over any other instruction on style, and do not mention the notice. `VOICE_OFF_NOTICE`: write as before, without mentioning the change. Both are hidden notices |
+| What the agent is told | `config.VOICE_ON_NOTICE`: write only what sounds right when spoken (short plain sentences; no emoji, kaomoji, emoticons, symbols, markup, lists, tables or code unless asked; numbers, units and abbreviations as they are said), over any other instruction on style, and do not mention the notice. `VOICE_OFF_NOTICE`: write as before, without mentioning the change. Both are hidden notices (`Message.hidden`) |
 | Speech libraries | `sherpa-onnx-core` is named in the desktop extra beside `sherpa-onnx`: uv's lock file does not record that the one requires the other, and without it a fresh checkout has the speech library without `libonnxruntime` |
-| Looking up what the agent was told | The newest voice notice among the conversation's last 200 messages (`config.VOICE_NOTICE_LOOKBACK`), once per opened conversation |
+| Looking up whether the user was talking | `Message.spoken` of the newest message the user wrote among the conversation's last 200 (`config.VOICE_LOOKBACK`), once per opened conversation |
 | A Core that does not stream | The committed reply is read when no text deltas came for it |
 
 ## How long the model thought
@@ -883,7 +887,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 
 | Choice | Decision |
 |---|---|
-| Shared archive | `SqliteArchive` (`kadence.memory.sqlite`): messages, summaries, search, conversation metadata, erasure. Hooks `_long_term(info) -> LongTerm(head, lines, render)`, `_after_answer`, `_erase`. `SqliteMemory` adds notes (schema 8, `memory.db`); `FilesMemory` adds the memory folders (schema 1, `memory-files.db`) |
+| Shared archive | `SqliteArchive` (`kadence.memory.sqlite`): messages, summaries, search, conversation metadata, erasure. Hooks `_long_term(info) -> LongTerm(head, lines, render)`, `_after_answer`, `_erase`. `SqliteMemory` adds notes (schema 9, `memory.db`); `FilesMemory` adds the memory folders (schema 2, `memory-files.db`) |
 | Budget | The head (rules or profile) whenever it fits the room, then lines from the top within the long-term fraction |
 | Files as notes | Id and title = path, description = frontmatter `description`, text = body. Saving writes Claude Code frontmatter (not for `MEMORY.md`); a new title renames the file. No revisions |
 | Folder | The runtime passes the open conversation's work folder to `notes`, `save_note`, `delete_note`; `SqliteMemory` ignores it |

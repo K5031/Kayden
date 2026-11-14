@@ -229,3 +229,22 @@ def test_delete_details_name_the_sub_sessions():
     assert "sub-session" not in delete_details(False)
     assert "Its sub-session stops and is deleted too." in delete_details(False, 1)
     assert "Its 3 sub-sessions stop and are deleted too." in delete_details(True, 3)
+
+
+def test_a_notice_is_told_by_its_author_not_its_words():
+    from kadence.api import Author, Message, MessageQueued, OperationResult, Role, Text, ToolStatus
+    from kadence.frontends.common import notice_of
+
+    def message(text: str, **fields) -> Message:
+        return Message("m", Role.USER, (Text(text),), 0.0, **fields)
+
+    assert notice_of(message("[Runtime notice] I typed this myself")) is None
+    assert notice_of(message(" Woken for the duty. ", author=Author.KADENCE)) == \
+        "Woken for the duty."
+    assert notice_of(message("The user talks.", author=Author.KADENCE, hidden=True)) == ""
+    assert notice_of(Message("o", Role.USER, (OperationResult("c", ToolStatus.OK, "ok"),),
+                             0.0, Author.KADENCE)) == ""
+    assert notice_of(Message("a", Role.ASSISTANT, (Text("Done."),), 0.0)) is None
+    assert notice_of(MessageQueued("q", "hello")) is None
+    assert notice_of(MessageQueued("q", "Sub-session 1 ended.", author=Author.KADENCE)) == \
+        "Sub-session 1 ended."

@@ -2609,7 +2609,7 @@ class MainWindow(QMainWindow):
         own = self.home.model.conversation
         if self.sessions is not None and own is not None:
             for note in self.sessions.take_notes(own.id):
-                self.home.send(note)
+                self.home.notify(note)
 
     def _session_of(self, session_id: str) -> SubSession | None:
         return next((s for s in (self.sessions.sessions if self.sessions else ())

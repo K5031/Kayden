@@ -831,3 +831,18 @@ was used.
   then a headless frontend ([note](notes/implemented/2026-11-11-headless-units.md)).
 - **Fix:** SPEC 1 and 13 point to PHILOSOPHY.md for the fleet and name what Kadence
   provides toward it.
+
+## 15. Found while fixing the causes of patch code (2026-11-14)
+
+### P1 (C) Kadence's own messages were told apart by their first words
+- **Status:** Resolved in `api.py`.
+- **Where:** `api.NOTICE_PREFIX`, `HIDDEN_NOTICE_PREFIX`; `Message`.
+- **Problem:** A notice Kadence wrote was an ordinary USER message whose text began with
+  a marker. Each reader recognised it its own way: the frontends, Memory's title, the
+  voice lookup (a search for the notice's exact text), and the permission review, which
+  left out one kind of notice only, so the others reached the reviewer as the user's
+  words. A frontend wrote a sub-session's report with `send`, as the user.
+- **Fix:** `Message.author` (`Author.USER` or `Author.KADENCE`), `Message.hidden`,
+  `Message.spoken`, the one test `Message.from_user`, `MessageQueued.author`, and
+  `RuntimeAPI.notify` for a notice a frontend writes. The marker is added in the request
+  only. The archive's schema version went up; a store of the older version is refused.

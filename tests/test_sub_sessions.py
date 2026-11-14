@@ -232,7 +232,7 @@ async def test_a_turn_nobody_waited_for_becomes_a_notice_for_the_parent(
     remote = await sessions.open(child)
     await remote.send("Shorter, please")  # the user talks to it directly
     [note] = await eventually(lambda: sessions.notes.get(h.conversation.id), timeout=20)
-    assert note.startswith("[Runtime notice] Sub-session 1 (Write a haiku) ended a turn")
+    assert note.startswith("Sub-session 1 (Write a haiku) ended a turn")
     assert sessions.take_notes(h.conversation.id) == [note]
     assert sessions.take_notes(h.conversation.id) == []
     sessions.release(child, remote)

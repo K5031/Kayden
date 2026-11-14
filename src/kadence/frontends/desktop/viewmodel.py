@@ -672,7 +672,7 @@ class ConversationModel:
         self._set_card(None)
 
     def _queue(self, event: MessageQueued) -> None:
-        if notice_of(event.text) is not None:
+        if notice_of(event) is not None:
             return  # shown once it is committed, as a notice
         self._set_card(None)
         if event.message_id not in self._queued and event.message_id not in self._seen:
@@ -760,11 +760,11 @@ class ConversationModel:
             attached = tuple(b for b in message.blocks
                              if isinstance(b, (Image, File, Document)))
             said = bool(text or attached)
-            if said and notice_of(text) is None and self._insert_at is None:
+            if said and notice_of(message) is None and self._insert_at is None:
                 self._set_card(None)  # answered: results and notices leave it up
             if said:
                 self._drop_plan()
-            if (notice := notice_of(text)) is not None:
+            if (notice := notice_of(message)) is not None:
                 if notice:
                     self._add(NoticeItem(notice, "info"))
             elif said:
@@ -839,15 +839,14 @@ def conversation_label(info: ConversationInfo, *, full: bool = False) -> str:
     "New chat"."""
     if info.title:
         return info.title
-    if info.preview and info.preview.strip() and notice_of(info.preview) is None:
+    if info.preview and info.preview.strip():
         return info.preview.strip() if full else clip(info.preview, LABEL_CHARS)
     return "New chat"
 
 
 def conversation_preview(info: ConversationInfo) -> str:
     """The sidebar's second line: the start of the first message, unless it is the label."""
-    if (not info.title or not info.preview or not info.preview.strip()
-            or notice_of(info.preview) is not None):
+    if not info.title or not info.preview or not info.preview.strip():
         return ""
     return clip(info.preview, LABEL_CHARS)
 
@@ -1093,6 +1092,10 @@ class Controller:
         conversation."""
         if text.strip() or files:
             self.command(self.runtime.send(text.strip(), files=list(files), spoken=spoken))
+
+    def notify(self, text: str) -> None:
+        """A notice for the agent, written into the conversation as Kadence."""
+        self.command(self.runtime.notify(text))
 
     def stop(self) -> None:
         self.model.notice = "Stop requested"
