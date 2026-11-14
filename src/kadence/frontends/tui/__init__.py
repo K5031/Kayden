@@ -8,7 +8,6 @@ order; runtime commands run as separate workers, so a slow or hanging runtime ca
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
@@ -23,7 +22,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
-from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import (
@@ -1287,20 +1285,14 @@ class SessionsScreen(ModalScreen[str | None]):
                 yield Button("Close", id="close")
 
     def on_mount(self) -> None:
-        self.sessions.listeners.append(self.refresh_view)
         self.refresh_view()
-
-    def on_unmount(self) -> None:
-        with contextlib.suppress(ValueError):
-            self.sessions.listeners.remove(self.refresh_view)
 
     def _selected(self) -> SubSession | None:
         option = self.query_one(OptionList).highlighted_option
         return next((s for s in self.sessions.sessions if option and s.id == option.id), None)
 
     def refresh_view(self) -> None:
-        if not self.is_attached:  # told of a change while closing
-            return
+        """The list as it is now; the app calls this on every change while this is open."""
         archived = self.query_one("#show-archived", Checkbox).value
         listed = self.sessions.of(self.conversation_id, include_archived=archived)
         option_list = self.query_one(OptionList)
@@ -1322,8 +1314,6 @@ class SessionsScreen(ModalScreen[str | None]):
 
     @on(OptionList.OptionHighlighted)
     def _buttons(self) -> None:
-        if not self.is_attached:
-            return
         session = self._selected()
         shown = {
             "#open-session": session is not None,
@@ -1528,6 +1518,13 @@ class _LoadEarlier:
     pass
 
 
+class _Ended:
+    """A runtime's event stream ended by itself."""
+
+    def __init__(self, runtime: RuntimeAPI) -> None:
+        self.runtime = runtime
+
+
 RESYNC = _Resync()
 
 
@@ -1594,11 +1591,10 @@ class KadenceApp(App[None]):
         self.runtime = runtime
         self.start_options = start_options
         self.sessions = sessions
-        self.home = runtime  # this app's own runtime; `runtime` is the one shown
+        # `home` is this app's own runtime; `runtime` is the one shown, a sub-session's while
+        # one is open. Conversations, memory, tool servers and settings are always home's.
+        self.home = runtime
         self.viewing: tuple[SubSession, RemoteRuntime] | None = None
-        self._generation = 0  # which pump feeds the inbox
-        if sessions is not None:
-            sessions.listeners.append(self._sessions_changed)
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
         self.pending_ops = 0
@@ -1609,7 +1605,8 @@ class KadenceApp(App[None]):
         self.duty_wake_at: float | None = None
         self.help_needed: str | None = None
         self.notice = ""
-        self._inbox: asyncio.Queue[EventEnvelope | _Resync | None] = asyncio.Queue()
+        self._inbox: asyncio.Queue[EventEnvelope | _Resync | _LoadEarlier | _Ended] = \
+            asyncio.Queue()
         self._tool_entries: dict[str, ToolEntry] = {}
         self._card: WrapUpPrompt | None = None
         self._plan: PlanPanel | None = None
@@ -1634,16 +1631,22 @@ class KadenceApp(App[None]):
     def on_mount(self) -> None:
         self._inbox.put_nowait(RESYNC)
         self.run_worker(self._consume(), name="consume", exit_on_error=True)
-        self.run_worker(self._pump(self._generation), group="pump", exit_on_error=False)
+        self.run_worker(self._pump(self.runtime), group="pump")
         self.query_one("#prompt", Input).focus()
-        if self.runtime.snapshot().conversation is None:
+        if self.sessions is not None:
+            self.sessions.listeners.append(self._sessions_changed)
+        if self.home.snapshot().conversation is None:
             self._call(self._begin())
         self._render_status()
+
+    def on_unmount(self) -> None:
+        if self.sessions is not None:
+            self.sessions.listeners.remove(self._sessions_changed)
 
     async def _begin(self) -> None:
         """Settings with the error when Kadence could not start (first run: no key yet);
         otherwise the start options or the start screen."""
-        settings = await self.runtime.settings()
+        settings = await self.home.settings()
         if settings.already_open:  # nothing to fix in Settings: the other one is in use
             self.exit(return_code=1, message=f"{settings.startup_error}. Use that one, or "
                                              "quit it and start Kadence again.")
@@ -1654,27 +1657,22 @@ class KadenceApp(App[None]):
         elif self.start_options is not None:
             await self.start_conversation(self.start_options)
         else:
-            self.push_screen(StartScreen(self.runtime), self._on_start_chosen)
+            self.push_screen(StartScreen(self.home), self._on_start_chosen)
 
     # ── event plumbing ───────────────────────────────────────────────────
 
-    async def _pump(self, generation: int) -> None:
-        runtime = self.runtime
-        try:
-            async for envelope in runtime.events():
-                await self._inbox.put(envelope)
-        finally:
-            if generation == self._generation:  # not when another runtime is shown
-                await self._inbox.put(None)
+    async def _pump(self, runtime: RuntimeAPI) -> None:
+        async for envelope in runtime.events():
+            await self._inbox.put(envelope)
+        await self._inbox.put(_Ended(runtime))  # not reached when cancelled (_show)
 
     def _show(self, runtime: RuntimeAPI) -> None:
         """Show another runtime: this app's own or a sub-session's."""
-        self._generation += 1
         self.workers.cancel_group(self, "pump")
         self.runtime = runtime
         self.last_seq = -1
         self._inbox.put_nowait(RESYNC)
-        self.run_worker(self._pump(self._generation), group="pump", exit_on_error=False)
+        self.run_worker(self._pump(runtime), group="pump")
 
     async def view_session(self, session: SubSession) -> None:
         """Show a sub-session in place of this conversation; /back returns."""
@@ -1701,7 +1699,14 @@ class KadenceApp(App[None]):
                 self._call(self.home.notify(note))
 
     async def _consume(self) -> None:
-        while (item := await self._inbox.get()) is not None:
+        """Until this app's own runtime ends; a sub-session that ends is left."""
+        while not (isinstance(item := await self._inbox.get(), _Ended)
+                   and item.runtime is self.home):
+            if isinstance(item, _Ended):
+                if self.viewing is not None and item.runtime is self.viewing[1]:
+                    self._leave_session()
+                    self.notify("Sub-session ended")
+                continue
             if isinstance(item, _Resync):
                 await self._resync()
                 continue
@@ -1899,7 +1904,6 @@ class KadenceApp(App[None]):
                 await self._mount(SystemEntry(f"{kind.value} failure: {message}", severity="error"))
             case ShuttingDown(reason=reason):
                 await self._mount(SystemEntry(f"Kadence is closing: {reason}", severity="warning"))
-                self.exit()
 
     def _reload(self, kind: type[ListScreen]) -> None:
         for screen in self.screen_stack:
@@ -2123,8 +2127,10 @@ class KadenceApp(App[None]):
         await self.query_one("#permissions", Vertical).mount(prompt)
 
     def _sessions_changed(self) -> None:
-        with contextlib.suppress(NoMatches):  # before the status line is mounted
-            self._render_status()
+        self._render_status()
+        for screen in self.screen_stack:
+            if isinstance(screen, SessionsScreen):
+                screen.refresh_view()
         self._deliver_notes()
 
     def _render_status(self) -> None:
@@ -2177,8 +2183,10 @@ class KadenceApp(App[None]):
         self.run_worker(run(), group="commands")
 
     def _can_switch(self) -> bool:
-        """Whether runtime.start() may open another conversation now; tells the user if not."""
-        if self.state in SWITCHABLE and not self.pending_ops:
+        """Whether this app's own runtime may open another conversation now; tells the user
+        if not."""
+        own = self.home.snapshot()
+        if own.state in SWITCHABLE and not own.operations:
             return True
         self.notify("Finish or stop the current task first.", severity="warning")
         return False
@@ -2188,8 +2196,13 @@ class KadenceApp(App[None]):
             self._call(self.start_conversation(options))
 
     async def start_conversation(self, options: StartOptions) -> None:
-        self.conversation = await self.runtime.start(options)
-        await self._inbox.put(RESYNC)
+        """Open a conversation in this app's own runtime and show it."""
+        conversation = await self.home.start(options)
+        if self.viewing is not None:
+            self._leave_session()
+        else:
+            await self._inbox.put(RESYNC)
+        self.conversation = conversation
         self._deliver_notes()
 
     @on(Input.Submitted, "#prompt")
@@ -2229,8 +2242,7 @@ class KadenceApp(App[None]):
                 else:
                     self.resolve_proposal(next(iter(self._proposals)), name == "approve")
             case "mcp":
-                self._leave_session()
-                self.push_screen(McpScreen(self.runtime))
+                self.push_screen(McpScreen(self.home))
             case "duty" | "goal" if arg == "off":
                 self._call(self.runtime.set_duty(None))
             case "duty" | "goal" if arg:
@@ -2244,12 +2256,10 @@ class KadenceApp(App[None]):
                 if self.sessions is None:
                     self.notify("Sub-sessions are not available here.", severity="warning")
                 else:
-                    self._leave_session()
                     own = self.home.snapshot().conversation
                     self.push_screen(SessionsScreen(self.sessions, own.id if own else None),
                                      self._on_session_chosen)
             case "folder" if arg:
-                self._leave_session()
                 self.new_in_folder(str(Path(arg).expanduser()))
             case "folder":
                 folder = self.conversation.folder if self.conversation is not None else None
@@ -2315,31 +2325,29 @@ class KadenceApp(App[None]):
             self._call(self.view_session(session))
 
     def action_conversations(self) -> None:
-        self._leave_session()
-        open_id = None if self.conversation is None else self.conversation.id
-        self.push_screen(ConversationsScreen(self.runtime, open_id),
+        own = self.home.snapshot().conversation
+        self.push_screen(ConversationsScreen(self.home, own.id if own else None),
                          self._on_conversation_chosen)
 
     def _on_conversation_chosen(self, choice: str | None) -> None:
-        if choice is None or (self.conversation is not None
-                              and choice == self.conversation.id):
+        own = self.home.snapshot().conversation
+        if choice is None or (own is not None and choice == own.id):
             return
         if not self._can_switch():
             return
         if choice == NEW_CONVERSATION:
-            self.push_screen(StartScreen(self.runtime, cancellable=True), self._on_start_chosen)
+            self.push_screen(StartScreen(self.home, cancellable=True), self._on_start_chosen)
         else:
             self._call(self.start_conversation(StartOptions(conversation_id=choice)))
 
     def action_memory(self) -> None:
-        self._leave_session()
         async def open_screen() -> None:
             try:
-                await self.runtime.notes()
+                await self.home.notes()
             except NotImplementedError:
                 self.notify("This memory module cannot edit memories.", severity="warning")
                 return
-            self.push_screen(MemoryScreen(self.runtime))
+            self.push_screen(MemoryScreen(self.home))
 
         self._call(open_screen())
 
@@ -2377,14 +2385,13 @@ class KadenceApp(App[None]):
         self._call(pick())
 
     def action_settings(self) -> None:
-        self._leave_session()
         async def open_screen() -> None:
-            settings = await self.runtime.settings()
+            settings = await self.home.settings()
             try:
-                models = await self.runtime.list_models()
+                models = await self.home.list_models()
             except Exception:  # noqa: BLE001 - e.g. no key yet; the provider can still be set
                 models = []
-            spent = self.runtime.snapshot().usage.usage.cost_usd or 0.0
+            spent = self.home.snapshot().usage.usage.cost_usd or 0.0
             self.push_screen(SettingsScreen(settings, models, spent), self._on_settings_chosen)
 
         self._call(open_screen())
@@ -2395,12 +2402,12 @@ class KadenceApp(App[None]):
         update, restart = result
 
         async def apply() -> None:
-            settings = await self.runtime.settings()
+            settings = await self.home.settings()
             if update != SettingsUpdate():
-                settings = await self.runtime.update_settings(update)
+                settings = await self.home.update_settings(update)
                 self.notify("Settings saved")
             if restart:
-                await self.runtime.restart()
+                await self.home.restart()
             elif needs_restart(update) and (notice := restart_notice(settings)):
                 self.push_screen(RestartScreen(notice), self._on_restart_chosen)
 
@@ -2408,7 +2415,7 @@ class KadenceApp(App[None]):
 
     def _on_restart_chosen(self, now: bool | None) -> None:
         if now:
-            self._call(self.runtime.restart())
+            self._call(self.home.restart())
 
     def _on_model_chosen(self, model_id: str | None) -> None:
         if model_id is not None:

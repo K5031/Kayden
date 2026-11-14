@@ -81,7 +81,8 @@ therefore shows a child with the same code as its own conversation.
   back; the child keeps working. Memory, tool servers and settings stay the window's own.
 - **Row actions:** open, resume, stop, rename, archive and delete.
 - **TUI:** `/sessions` lists the children with the same actions; opening one shows it in
-  place of the conversation, the app's runtime swapped for the child's, until `/back`.
+  place of the conversation, the app's runtime swapped for the child's, until `/back` or
+  until the child ends. Conversations, memory, tool servers and settings stay the app's own.
 - Both status lines count the children working; the parent conversation shows each child
   as a step, with its report as the result.
 

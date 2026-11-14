@@ -165,7 +165,7 @@ recap of what is done and what is not. Other answers have no card.
 | | `/duty <what to do>`, `/goal <what to do>` | Give this conversation a duty that keeps going, or one that ends when done |
 | | `/duty off` | End the duty; the plan stays |
 | | `/sessions` | This conversation's [sub-sessions](concepts.md#sub-sessions): open one in place, resume, stop, change its spending limit (or the limit per sub-session), rename, archive or delete |
-| | `/back` | Leave the sub-session you opened, back to your conversation |
+| | `/back` | Leave the sub-session you opened, back to your conversation. One that ends takes you back by itself |
 | | `/approve`, `/dismiss` | Answer the agent's open [proposal](#proposals) |
 | | `/folder [path]` | Show the work folder, or start a chat in another one |
 | | `/allow [once\|conversation]`, `/deny` | Answer the open approval |

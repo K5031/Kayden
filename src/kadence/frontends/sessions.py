@@ -603,11 +603,7 @@ class SubSessions(Tools):
             path = session.data_dir / RECORD
             self._write = asyncio.ensure_future(self._save(self._write, path, record))
         session.changed.set()
-        for listener in list(self.listeners):
-            try:
-                listener()
-            except Exception:
-                logger.exception("sub-session listener failed")
+        self._notify()
 
     @staticmethod
     async def _save(previous: asyncio.Future[None] | None, path: Path,

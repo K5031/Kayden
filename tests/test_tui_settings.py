@@ -442,3 +442,32 @@ async def test_the_sessions_screen_sets_limits(tmp_path):
         app.screen.query_one(Input).value = "0.5"
         await pilot.press("enter")  # a limit where there was none: no question
         await until(pilot, lambda: sessions.limit_usd == 0.5)
+
+
+async def test_the_app_hears_of_sub_sessions_while_it_is_up_and_tells_the_open_list(tmp_path):
+    from kadence.frontends.sessions import SubSession, SubSessions
+    from kadence.frontends.tui import SessionsScreen
+    from tests.test_tui import CONVERSATION
+
+    stub = StubRuntime()
+    sessions = SubSessions(tmp_path)
+    child = SubSession("1", "Write a haiku", CONVERSATION.id, tmp_path / "s1", state="done")
+    sessions.sessions.append(child)
+    app = make(stub, sessions=sessions)
+    assert sessions.listeners == []  # nothing to tell before there is a screen
+    async with app.run_test(size=(100, 50)) as pilot:
+        await caught_up(pilot, app, stub)
+        app.push_screen(SessionsScreen(sessions, CONVERSATION.id))
+        await until(pilot, lambda: isinstance(app.screen, SessionsScreen))
+        await pilot.pause()
+        rows = app.screen.query_one("#sessions")
+        assert "Write a haiku" in str(rows.get_option_at_index(0).prompt)
+        sessions.rename(child, "Haiku")
+        assert str(rows.get_option_at_index(0).prompt).startswith("Haiku")
+        assert len(sessions.listeners) == 1  # the app, which tells the list
+        await pilot.press("escape")
+        sessions.rename(child, "Poem")  # the list is closing: not told
+        await pilot.pause()
+    assert sessions.listeners == []
+    sessions.rename(child, "Verse")
+    await sessions.aclose()

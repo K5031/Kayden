@@ -779,6 +779,7 @@ async def test_shutting_down_and_closed_stream_exit_the_app():
     app = make(stub)
     async with app.run_test() as pilot:
         stub.emit(ShuttingDown("budget exhausted"))
+        stub.close()  # the stream ends after ShuttingDown
         await until(pilot, lambda: app._exit)
 
     stub = StubRuntime()
@@ -1330,3 +1331,85 @@ async def test_a_long_notice_is_folded():
         await caught_up(pilot, app, stub)
         [folded] = app.query(Collapsible).filter(".notice")
         assert folded.collapsed and folded.title == "New goal: Research Worlds."
+
+
+class StubSessions:
+    """The sub-session manager as the app uses it, opening a scripted runtime."""
+
+    def __init__(self, child: StubRuntime, tmp_path) -> None:
+        from kadence.frontends.sessions import SubSession
+
+        self.child = child
+        self.listeners: list[Callable[[], None]] = []
+        self.sessions = [SubSession("1", "Write a haiku", CONVERSATION.id, tmp_path / "s1",
+                                    state="working", child_conversation_id="child-1")]
+        self.released: list[StubRuntime] = []
+        self.limit_usd = None
+
+    def of(self, conversation_id, *, include_archived: bool = False):
+        return [s for s in self.sessions if s.conversation_id == conversation_id]
+
+    def take_notes(self, conversation_id):
+        return []
+
+    async def open(self, session):
+        return self.child
+
+    def release(self, session, runtime) -> None:
+        self.released.append(runtime)
+
+
+async def viewing_a_child(pilot: Pilot, app: KadenceApp, stub: StubRuntime,
+                          sessions: StubSessions) -> None:
+    await caught_up(pilot, app, stub)
+    await app.view_session(sessions.sessions[0])
+    await until(pilot, lambda: app.conversation is sessions.child.conversation)
+    await caught_up(pilot, app, sessions.child)
+
+
+async def test_a_viewed_sub_session_that_ends_returns_to_the_conversation(tmp_path):
+    stub, child = StubRuntime(), StubRuntime()
+    child.conversation = ConversationInfo("child-1", "Haiku", 0.0, 0.0)
+    sessions = StubSessions(child, tmp_path)
+    app = make(stub, sessions=sessions)
+    async with app.run_test() as pilot:
+        await viewing_a_child(pilot, app, stub, sessions)
+        child.emit(ShuttingDown("stopped"))
+        child.close()  # it crashed, or the agent stopped it
+        await until(pilot, lambda: app.viewing is None and app.conversation == CONVERSATION)
+        await caught_up(pilot, app, stub)
+        assert not app._exit and sessions.released == [child]
+        stub.emit(TextDelta("Still here"))
+        await caught_up(pilot, app, stub)
+        assert entries(app, AssistantEntry)[-1].body == "Still here"
+        stub.close()  # the app's own runtime ending ends the app
+        await until(pilot, lambda: app._exit)
+
+
+async def test_the_apps_own_screens_open_over_a_viewed_sub_session(tmp_path):
+    stub, child = StubRuntime(), StubRuntime()
+    child.conversation = ConversationInfo("child-1", "Haiku", 0.0, 0.0)
+    child.entries = []
+    sessions = StubSessions(child, tmp_path)
+    app = make(stub, sessions=sessions)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await viewing_a_child(pilot, app, stub, sessions)
+        child.emit(StateChanged(AgentState.THINKING))  # the child works; this app's own is idle
+        await caught_up(pilot, app, child)
+        await pilot.press("f4")
+        await until(pilot, lambda: isinstance(app.screen, MemoryScreen))
+        assert app.screen.runtime is stub and app.viewing is not None
+        await until(pilot, lambda: len(memory_rows(app.screen)) == len(MEMORIES))
+        await pilot.press("escape")
+        await pilot.press("f3")
+        await until(pilot, lambda: isinstance(app.screen, ConversationsScreen))
+        screen = app.screen
+        await until(pilot, lambda: listed(screen))
+        assert screen.open_id == CONVERSATION.id and app.viewing is not None
+        highlight(screen, "conv-2")
+        screen.query_one("#open", Button).press()  # another conversation: the child is left
+        await until(pilot, lambda: app.viewing is None and app.conversation is not None
+                    and app.conversation.id == "conv-2")
+        assert sessions.released == [child]
+        assert ("start", StartOptions(conversation_id="conv-2")) in stub.calls
+        assert not any(c[0] == "start" for c in child.calls)
