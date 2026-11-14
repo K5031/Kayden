@@ -23,7 +23,6 @@ from kadence.api import (
     HelpNeeded,
     PlanItem,
     PlanStatus,
-    Role,
     RuntimeStateError,
     Text,
     ToolResult,
@@ -124,7 +123,7 @@ async def test_an_ordinary_conversation_keeps_a_plan_but_has_no_duty_tools(make)
     assert h.core.requests[1].system == h.core.requests[0].system
     assert "Fix the bug" not in h.core.requests[1].system
     result = (await h.results())["p"].content
-    assert "Plan saved" in result
+    assert "Plan saved" in result and "before you end your turn" in result
 
 
 async def test_the_prompt_shows_a_plan_the_conversation_does_not(make):
@@ -133,7 +132,7 @@ async def test_the_prompt_shows_a_plan_the_conversation_does_not(make):
     h = await duty_harness(make, [
         Step(calls=[call("update_plan", {"items": [
             {"text": "Fix the bug", "status": "done"}]}, id="p")]),
-        Step(text="Fixed."), Step(text="Sure."),
+        Step(text="Fixed."), Step(text="Sure."), Step(text="That one is yours to do."),
         Step(calls=[call("update_plan", {"items": [
             {"text": "Ship it", "status": "done"}]}, id="q")]),
         Step(text="Shipped."), Step(text="Hello again.")])
@@ -141,14 +140,14 @@ async def test_the_prompt_shows_a_plan_the_conversation_does_not(make):
     await h.runtime.set_plan([PlanItem("Write the docs first")])
     await h.turn("carry on")
     system = h.core.requests[2].system
-    assert system.endswith("## Plan\n- [todo] Write the docs first")
+    assert "## Plan\n- [todo] Write the docs first" in system and duties.CLOSE_PLAN in system
     await h.turn("plan again")  # the agent's own update is in the conversation again
-    assert "## Plan" not in h.core.requests[4].system
+    assert "## Plan" not in h.core.requests[5].system
     first = h.conversation.id
     await h.chat("Other")  # away and back: what the conversation shows is not known
     await h.start(conversation_id=first)
     await h.turn("hello again")
-    assert "- [done] Ship it" in h.core.requests[5].system
+    assert "- [done] Ship it" in h.core.requests[6].system
 
 
 async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
@@ -242,19 +241,46 @@ def plan_call(*items: tuple[str, str], id: str = "p") -> Step:
         {"text": text, "status": status} for text, status in items]}, id=id)])
 
 
-async def test_a_turn_may_end_with_steps_open(make):
-    """Whether its plan is finished is the agent's to judge: the runtime neither asks it
-    again nor writes into the conversation."""
+async def test_a_turn_does_not_end_with_steps_open(make):
+    """The agent is sent back once to finish or close its plan, as Claude works until its
+    checklist is done."""
     h = await duty_harness(make, [
         plan_call(("Read the code", "done"), ("Fix the bug", "doing")),
-        Step(text="I looked at it.")])
+        Step(text="I looked at it."),  # ends its turn with a step open
+        plan_call(("Read the code", "done"), ("Fix the bug", "done"), id="q"),
+        Step(text="Fixed.")])
     await h.turn("fix the bug")
-    await asyncio.sleep(0.2)
-    assert len(h.core.requests) == 2
+    assert len(h.core.requests) == 4
+    sent_back = notices(h.core.requests[2])[-1]
+    assert "still has open steps: Fix the bug" in sent_back
+    assert [i.status for i in h.runtime.snapshot().conversation.plan] == [
+        PlanStatus.DONE, PlanStatus.DONE]
+
+
+async def test_it_is_sent_back_once_and_may_then_leave_steps_open(make):
+    """What waits for the user cannot be finished: the agent says so and the turn ends."""
+    h = await duty_harness(make, [
+        plan_call(("Ask which colour", "doing")), Step(text="Which colour?"),
+        Step(text="I need your answer on the colour first.")])
+    await h.turn("paint it")
+    assert len(h.core.requests) == 3
     assert h.runtime.snapshot().state == AgentState.IDLE
-    assert h.runtime.snapshot().conversation.plan[1].status == PlanStatus.DOING
-    assert [m.role for m in await h.transcript()] == [
-        Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT]
+    assert h.runtime.snapshot().conversation.plan[0].status == PlanStatus.DOING
+
+
+async def test_steps_that_wait_are_not_sent_back_for(make):
+    """A step with a due time waits for it, and a duty keeps its plan between check-ins."""
+    h = await duty_harness(make, [
+        Step(calls=[call("update_plan", {"items": [
+            {"text": "Call back", "due": "2099-01-01T09:00"}]})]),
+        Step(text="I will.")])
+    await h.turn("remind me")
+    assert len(h.core.requests) == 2
+    duty = await duty_harness(make, [plan_call(("Read mail", "doing")), Step(text="On it.")])
+    await duty.runtime.set_duty(QUIET)
+    await idle(duty, 2)
+    await asyncio.sleep(0.2)
+    assert len(duty.core.requests) == 2
 
 
 def test_what_update_plan_says_about_due_steps():
@@ -263,6 +289,16 @@ def test_what_update_plan_says_about_due_steps():
     assert duties.WAKES in duties.saved([later], None, now)
     assert duties.WAKES not in duties.saved([later], Duty("Watch the build"), now)
     assert duties.WAKES not in duties.saved([PlanItem("Fix it")], None, now)
+
+
+def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
+    """An agent tends to stop ticking steps off once the work is done."""
+    done = PlanItem("Read the code", PlanStatus.DONE)
+    doing = PlanItem("Fix the bug", PlanStatus.DOING)
+    assert duties.CLOSE_PLAN in duties.prompt(None, [done, doing])
+    assert duties.CLOSE_PLAN not in duties.prompt(None, [done])  # nothing open
+    # A duty's plan stays open between check-ins: its steps fall due later.
+    assert duties.CLOSE_PLAN not in duties.prompt(Duty("Watch the inbox"), [done, doing])
 
 
 async def test_update_plan_saves_the_plan_and_every_request_shows_it(make):
@@ -527,7 +563,8 @@ def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action
 
 async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
     """The step in progress when the agent declares the goal reached is the one that
-    call completes (often "Report"). A step it never began stays open."""
+    call completes (often "Report"): it is not sent back to tick it off. A step it never
+    began stays open, and for that it is sent back."""
     plan = [{"text": "Launch", "status": "done"}, {"text": "Report", "status": "doing"}]
     h = await duty_harness(make, [
         Step(calls=[call("update_plan", {"items": plan}),
@@ -537,7 +574,7 @@ async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
                                   max_interval_s=30))
     await idle(h, 2)
     await asyncio.sleep(0.2)
-    assert len(h.core.requests) == 2
+    assert len(h.core.requests) == 2  # not sent back
     assert [(i.text, i.status) for i in h.runtime.snapshot().conversation.plan] == [
         ("Launch", PlanStatus.DONE), ("Report", PlanStatus.DONE)]
 
@@ -545,18 +582,20 @@ async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
     h = await duty_harness(make, [
         Step(calls=[call("update_plan", {"items": plan}),
                     call("finish_goal", {"report": "Launched."})]),
-        Step(text="All done.")])
+        Step(text="All done."), Step(text="The press is told.")])
     await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
                                   max_interval_s=30))
-    await idle(h, 2)
-    await asyncio.sleep(0.2)
-    assert len(h.core.requests) == 2
+    await idle(h, 3)
+    assert "still has open steps: Tell the press" in notices(h.core.requests[2])[-1]
     assert [i.status for i in h.runtime.snapshot().conversation.plan] == [
         PlanStatus.DONE, PlanStatus.DONE, PlanStatus.TODO]
 
 
-def test_finish_goal_says_what_it_does_to_the_plan():
+def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
+    """Else it is sent back after the goal, for one more request, to tick the steps off."""
     from kadence.api import DUTY_TOOLS
 
     told = DUTY_TOOLS["finish_goal"].description
-    assert "The step you are on counts as done" in told and "stays open" in told
+    assert "update_plan" in told and "in the same message" in told
+    assert "done or dropped" in told
+    assert "reporting" not in told  # the runtime closes the step in progress itself

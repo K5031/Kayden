@@ -393,6 +393,7 @@ class Runtime:
         # Without a duty: steps due up to this time have reminded, or fell due while the
         # conversation was closed and wait for the user.
         self._reminded = 0.0
+        self._sent_back = False  # this cycle: the agent was told to finish its plan
         self._help: str | None = None  # the agent's open question (ask_for_help)
         # Proposals waiting for the user, by the propose call's id (also their operation's).
         self._proposals: dict[CallId, tuple[Proposal, asyncio.Future[bool]]] = {}
@@ -998,6 +999,19 @@ class Runtime:
         budget = window - reserve - count(self._system()) - count(tool_json)
         return ContextRequest(self._conversation.id, max(0, int(budget * factor)), count), reserve
 
+    async def _send_back(self) -> bool:
+        """The agent ended its turn with steps of its plan open: send it back, once a
+        cycle, to do them or close them (duties.finish). Not with a duty, whose plan stays
+        open between check-ins, nor while background work may still finish them."""
+        conversation = self._conversation
+        if (self._sent_back or conversation is None or conversation.duty is not None
+                or self._ops or not duties.unfinished(conversation.plan)):
+            return False
+        self._sent_back = True
+        self._log.decision("sent_back", open=len(duties.unfinished(conversation.plan)))
+        await self._notice(duties.finish(conversation.plan))
+        return True
+
     # ── Tools offered to the model ───────────────────────────────────────
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
@@ -1263,6 +1277,7 @@ class Runtime:
 
     async def _cycle_body(self) -> None:
         self._set_phase(AgentState.THINKING)
+        self._sent_back = False
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
@@ -1313,6 +1328,8 @@ class Runtime:
             ended = (len(calls) == 1 and calls[0].name == "wrap_up"
                      and results[0].status in (ToolStatus.OK, ToolStatus.BACKGROUNDED))
             if (calls and not ended) or delivered:  # a queued message authorizes the next turn
+                continue
+            if not calls and await self._send_back():
                 continue
             # After the answer: Memory saves what the exchange taught it.
             self._set_phase(AgentState.FINISHING)
@@ -1695,6 +1712,11 @@ class Runtime:
         tasks: dict[CallId, asyncio.Task[tuple[ToolResult, float]]] = {}
         barrier: asyncio.Task[Any] | None = None
         for call in calls:
+            if call.name == "wrap_up" and len(calls) > 1:
+                results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, (
+                    "Not shown: call wrap_up alone, in a message of its own after your other "
+                    "work.")), 0.0)
+                continue
             if error := self._validate(call, specs):
                 results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, error), 0.0)
                 continue
@@ -1703,7 +1725,7 @@ class Runtime:
                 after = [barrier] if barrier is not None else []
             else:
                 after = list(tasks.values())
-            task = asyncio.create_task(self._run_call(call, spec, after, len(calls) == 1))
+            task = asyncio.create_task(self._run_call(call, spec, after))
             tasks[call.id] = task
             if not spec.read_only:
                 barrier = task
@@ -1716,16 +1738,15 @@ class Runtime:
                                         if r.status != ToolStatus.BACKGROUNDED]
         return [r for r, _ in ordered], finished
 
-    async def _run_call(self, call: ToolCall, spec: ToolSpec, after: list[asyncio.Task[Any]],
-                        alone: bool) -> tuple[ToolResult, float]:
-        """`alone`: it is the only call of its message."""
+    async def _run_call(self, call: ToolCall, spec: ToolSpec, after: list[asyncio.Task[Any]]
+                        ) -> tuple[ToolResult, float]:
         if after:
             await asyncio.wait(after)
         try:
             if call.name == "propose":
                 return self._propose(call), 0.0
             if call.name == "wrap_up":
-                return self._wrap_up(call, alone), 0.0
+                return self._wrap_up(call), 0.0
             if call.name in _RUNTIME_TOOLS or call.name in self._memory_tools:
                 return await self._run_builtin(call, spec)
             return await self._run_module_call(call, spec)
@@ -1862,12 +1883,8 @@ class Runtime:
                           "the call's result if they approve it, or that they dismissed it. "
                           "Carry on, or end your turn.")
 
-    def _wrap_up(self, call: ToolCall, alone: bool) -> ToolResult:
-        """Show the card; an option with a call is a card proposal pending with it. The
-        answer says whether the turn ended: it does when the call came `alone`."""
-        shown = "Shown to the user; " + (
-            "your turn has ended." if alone else
-            "your turn goes on, since other calls came with this one.")
+    def _wrap_up(self, call: ToolCall) -> ToolResult:
+        """Show the card; an option with a call is a card proposal pending with it."""
         actions = [o for o in call.arguments.get("options", ()) if "call" in o]
         if len(actions) > 1:
             return ToolResult(call.id, ToolStatus.ERROR,
@@ -1875,12 +1892,12 @@ class Runtime:
         self._log.decision("wrap_up", options=len(call.arguments.get("options", ())),
                            action=bool(actions))
         if not actions:
-            return ToolResult(call.id, ToolStatus.OK, shown)
+            return ToolResult(call.id, ToolStatus.OK, "Shown to the user; your turn has ended.")
         option = actions[0]
         if error := self._make_proposal(call, option["call"], option["label"], card=True):
             return ToolResult(call.id, ToolStatus.ERROR, f"Not shown: {error}")
         return ToolResult(call.id, ToolStatus.BACKGROUNDED,
-                          f"{shown} If they click "
+                          f"Shown to the user; your turn has ended. If they click "
                           f"{option['label']!r}, its call runs and you are woken with the "
                           "result; if they write instead, it is withdrawn.")
 
