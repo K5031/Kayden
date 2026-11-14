@@ -1,5 +1,5 @@
 """Toolkit-free state of the desktop app: the transcript as items, permission prompts and
-the status line, built from runtime events. Widgets render it; nothing here imports Qt.
+what the agent is doing, built from runtime events. Widgets render it; nothing here imports Qt.
 
 `ConversationModel` is pure state: `apply` takes one event, `load` rebuilds from a
 snapshot and a history page. `Controller` connects it to a RuntimeAPI: it subscribes,
@@ -38,8 +38,6 @@ from kadence.api import (
     HelpNeeded,
     Image,
     InstanceLockedError,
-    MaintenanceFinished,
-    MaintenanceStarted,
     MemoriesChanged,
     MemoryNote,
     Message,
@@ -58,6 +56,7 @@ from kadence.api import (
     ProposalResolved,
     Reasoning,
     ReasoningDelta,
+    Refusal,
     Role,
     RuntimeAPI,
     RuntimeEvent,
@@ -93,7 +92,6 @@ from kadence.frontends.common import (
     Card,
     call_parts,
     card_of,
-    duty_status,
     group_title,
     help_text,
     money,
@@ -109,17 +107,6 @@ HISTORY_PAGE = 100
 MAX_ARGS_CHARS = 120
 LABEL_CHARS = 60  # a conversation's label in the sidebar
 
-STATE_LABELS = {
-    AgentState.NOT_STARTED: "Not started",
-    AgentState.IDLE: "Ready",
-    AgentState.THINKING: "Thinking",
-    AgentState.RUNNING_TOOLS: "Working",
-    AgentState.AWAITING_PERMISSION: "Waiting for you",
-    AgentState.FINISHING: "Finishing",
-    AgentState.STOPPING: "Stopping",
-    AgentState.STOPPED: "Stopped",
-    AgentState.FAILED: "Failed",
-}
 BUSY_STATES = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
                AgentState.FINISHING, AgentState.STOPPING)
 
@@ -337,20 +324,18 @@ class ConversationModel:
         self.card: Card | None = None  # the agent's wrap-up card under its answer
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
-        self.pending_ops = 0
         self.conversation: ConversationInfo | None = None
         self.model: str | None = None
         self.usage: UsageSnapshot | None = None
         self.duty_wake_at: float | None = None
         self.help_needed: str | None = None
         self.permissions: PermissionPolicy | None = None  # what the agent may do
-        self.notice = ""  # transient status text: retries, maintenance, stop stalled
         self.failure: Failure | None = None  # shown as a banner until the next cycle
         self.has_earlier = False
         self.closed = False
         self._tools: dict[str, ToolItem] = {}
+        self._cards: set[str] = set()  # calls shown as the card or the checklist, not as steps
         self._stream: list[AssistantItem | ToolItem] = []  # not yet committed
-        self._model_next = True  # the cycle's next step is the model's (waiting)
         self._queued: dict[str, UserItem] = {}
         self._seen: set[str] = set()  # message ids rendered
         self._oldest_id: str | None = None
@@ -369,23 +354,9 @@ class ConversationModel:
 
     @property
     def waiting(self) -> bool:
-        """The model works on its next step and nothing of it shows yet: before the first
-        token, which a thinking model can take long to send."""
-        return self.state is AgentState.THINKING and self._model_next and not self._stream
-
-    @property
-    def status_text(self) -> str:
-        parts = [STATE_LABELS[self.state]]
-        if background := sum(1 for t in self._tools.values()
-                             if t.phase is Phase.BACKGROUND and t.status is None):
-            parts.append(f"{background} task{'s' if background != 1 else ''} running in the "
-                         "background")
-        if self.conversation is not None and (duty := duty_status(
-                self.conversation.duty, self.duty_wake_at, self.state, self.help_needed)):
-            parts.append(duty)
-        if self.notice:
-            parts.append(self.notice)
-        return " · ".join(parts)
+        """The model is asked for its next step and nothing of it shows yet: before the
+        first token, which a thinking model can take long to send."""
+        return self.state is AgentState.THINKING and not self._stream
 
     @property
     def limit_share(self) -> float | None:
@@ -420,19 +391,18 @@ class ConversationModel:
         self.proposals.clear()
         self.card = None
         self._tools.clear()
+        self._cards.clear()
         self._stream.clear()
         self._queued.clear()
         self._seen.clear()
         self.last_seq = snapshot.seq
         self.state = snapshot.state
-        self.pending_ops = len(snapshot.operations)
         self.conversation = snapshot.conversation
         self.model = snapshot.model
         self.usage = snapshot.usage
         self.duty_wake_at = snapshot.duty_wake_at
         self.help_needed = snapshot.help_needed
         self.permissions = snapshot.config.permissions if snapshot.config else None
-        self.notice = ""
         self.failure = None
         self.has_earlier = len(history) >= page
         self._oldest_id = history[0].id if history else None
@@ -441,6 +411,8 @@ class ConversationModel:
         if not self.busy:
             self._drop_plan()
         for op in snapshot.operations:
+            if not self._shows(op.call):
+                continue
             item = self._tools.get(op.call.id) or self._add_tool(op.call)
             item.phase = Phase.BACKGROUND if op.backgrounded else Phase.RUNNING
             item.progress = op.last_progress or item.progress
@@ -473,40 +445,32 @@ class ConversationModel:
 
     def apply(self, event: RuntimeEvent) -> None:
         match event:
-            case StateChanged(state=state, pending_ops=pending_ops):
+            case StateChanged(state=state):
                 if state is AgentState.THINKING and self.state is not AgentState.THINKING:
                     self.failure = None
-                    self._model_next = True
-                self.state, self.pending_ops = state, pending_ops
+                self.state = state
                 if not self.busy:
                     self._drop_plan()
                 if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
                     self._end_stream()
-                if state is not AgentState.STOPPING:
-                    self.notice = ""
             case TextDelta(text=text):
                 self._stream_text(text, reasoning=False)
             case ReasoningDelta(text=text):
                 self._stream_text(text, reasoning=True)
             case ToolCallDelta(call_id=call_id, name=name, arguments_chunk=chunk):
                 item = self._tools.get(call_id)
-                if item is None:
+                if item is None and self._shows(ToolCall(call_id, name or "tool", {})):
                     item = self._add_tool(ToolCall(call_id, name or "tool", {}), streaming=True)
                     item.phase = Phase.PREPARING
-                    if item in self.items:  # a wrap_up call is shown as the card instead
-                        self._stream.append(item)
-                if name:
-                    item.name = name
-                item.arguments += chunk
-                self.on_change(Updated(item))
+                    self._stream.append(item)
+                if item is not None:
+                    item.arguments += chunk
+                    self.on_change(Updated(item))
             case MessageQueued():
                 self._queue(event)
             case MessageCommitted(message=message, stop=stop):
-                # After an answer without calls the cycle only tidies up (Memory's upkeep).
-                self._model_next = message.role is not Role.ASSISTANT or any(
-                    isinstance(b, ToolCall) for b in message.blocks)
                 self._commit(message, stop)
-            case ToolStarted(call=call):
+            case ToolStarted(call=call) if self._shows(call):
                 item = self._tools.get(call.id) or self._add_tool(call)
                 item.arguments = json.dumps(call.arguments, ensure_ascii=False)
                 item.phase = Phase.RUNNING
@@ -535,8 +499,7 @@ class ConversationModel:
             case ProposalResolved(proposal_id=proposal_id):
                 if self.proposals.pop(proposal_id, None) is not None:
                     self.on_change(PromptsChanged())
-            case ModelRetry(attempt=attempt, max_attempts=max_attempts):
-                self.notice = f"Retrying ({attempt + 1} of {max_attempts})…"
+            case ModelRetry():
                 self._discard_stream()
             case ModelSelected(model_id=model_id):
                 self.model = model_id
@@ -544,10 +507,6 @@ class ConversationModel:
                 self.model = settings.model or self.model
                 self.permissions = settings.permissions
                 self.on_change(StatusChanged())
-            case MaintenanceStarted():
-                self.notice = "Tidying up memory…"
-            case MaintenanceFinished():
-                self.notice = ""
             case CompactionStarted():
                 self._compaction = self._add(NoticeItem(COMPACTING))
             case CompactionFinished(compacted=compacted):
@@ -559,7 +518,6 @@ class ConversationModel:
                         self._remove(line)
                 self._compaction = None
             case StopStalled(call_ids=call_ids):
-                self.notice = "Some tasks did not stop in time"
                 self._add(NoticeItem(
                     f"{len(call_ids)} task{'s' if len(call_ids) != 1 else ''} did not confirm "
                     "that they stopped and may still be running.", "warning"))
@@ -651,12 +609,16 @@ class ConversationModel:
         self.items.remove(item)
         self.on_change(Removed(item))
 
+    def _shows(self, call: ToolCall) -> bool:
+        """Whether a call is a step. One shown as the card or the checklist is not, and
+        what is later said of it by its id alone (its result) is passed over."""
+        if call.name in CARD_TOOLS:
+            self._cards.add(call.id)
+        return call.id not in self._cards
+
     def _add_tool(self, call: ToolCall, *, streaming: bool = False) -> ToolItem:
         arguments = "" if streaming else json.dumps(call.arguments, ensure_ascii=False)
-        item = ToolItem(call.id, call.name, arguments)
-        if call.name not in CARD_TOOLS:  # shown as a card instead
-            self._add(item)
-        self._tools[call.id] = item
+        item = self._tools[call.id] = self._add(ToolItem(call.id, call.name, arguments))
         return item
 
     def _set_card(self, card: Card | None) -> None:
@@ -797,7 +759,7 @@ class ConversationModel:
                     current.reasoning += text
                     self.on_change(Updated(current))
                 case ToolCall() as call:
-                    if call.id not in self._tools:
+                    if self._shows(call) and call.id not in self._tools:
                         self._add_tool(call)
                     if (card := card_of(call)) and self._insert_at is None:
                         self._set_card(card)
@@ -816,6 +778,8 @@ class ConversationModel:
         return last
 
     def _finish(self, result: ToolResult | OperationResult, duration: float | None) -> None:
+        if result.call_id in self._cards:
+            return
         item = self._tools.get(result.call_id)
         if item is None:
             item = self._add_tool(ToolCall(result.call_id, "tool", {}))
@@ -976,7 +940,7 @@ def limit_update(current: Settings, text: str) -> Budget:
 BUSY_MESSAGE = "Finish or stop the current task first."
 NO_DELETE_MESSAGE = "Deleting conversations is not available with this memory setup."
 BUDGET_MESSAGE = "The spending limit is reached. Raise it in Settings to continue."
-_BUSY_REFUSALS = ("cannot start while", "outstanding", "idle")
+REFUSAL_MESSAGES = {Refusal.BUSY: BUSY_MESSAGE, Refusal.BUDGET: BUDGET_MESSAGE}
 
 
 def user_message(error: Exception) -> str:
@@ -985,10 +949,7 @@ def user_message(error: Exception) -> str:
     if isinstance(error, InstanceLockedError):
         return f"{text}."
     if isinstance(error, RuntimeStateError):
-        if text.startswith("budget exhausted"):
-            return BUDGET_MESSAGE
-        if any(refusal in text for refusal in _BUSY_REFUSALS):
-            return BUSY_MESSAGE
+        return REFUSAL_MESSAGES.get(error.reason, text)
     return text
 
 
@@ -1099,8 +1060,6 @@ class Controller:
         self.command(self.runtime.notify(text))
 
     def stop(self) -> None:
-        self.model.notice = "Stop requested"
-        self.model.on_change(StatusChanged())
         self.command(self.runtime.stop())
 
     def cancel(self, call_id: str) -> None:

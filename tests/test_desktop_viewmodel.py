@@ -18,8 +18,6 @@ from kadence.api import (
     Failure,
     FailureKind,
     InstanceLockedError,
-    MaintenanceFinished,
-    MaintenanceStarted,
     MemoryNote,
     Message,
     MessageCommitted,
@@ -40,7 +38,10 @@ from kadence.api import (
     Text,
     TextDelta,
     ToolCall,
+    ToolCallDelta,
+    ToolFinished,
     ToolResult,
+    ToolStarted,
     ToolStatus,
     TransientCoreError,
     Usage,
@@ -52,6 +53,7 @@ from kadence.frontends.desktop.viewmodel import (
     LABEL_CHARS,
     NO_DELETE_MESSAGE,
     AssistantItem,
+    ChecklistItem,
     Closed,
     Controller,
     ConversationListChanged,
@@ -60,6 +62,7 @@ from kadence.frontends.desktop.viewmodel import (
     NoticeItem,
     Phase,
     ToolItem,
+    Updated,
     UserItem,
     conversation_label,
     conversation_preview,
@@ -115,7 +118,6 @@ async def test_a_turn_with_reasoning_and_a_tool(make):
     assert tool.status is ToolStatus.OK and tool.state_label == "done"
     assert tool.content.startswith("found it") and tool.duration_s is not None
     assert isinstance(last, AssistantItem) and last.text == "**Done.**"
-    assert model.status_text == "Ready"
     assert model.spending_text.endswith("spent")
 
 
@@ -127,7 +129,7 @@ async def test_permission_prompt_is_answered_and_removed(make):
     model, controller, _ = await attach(h)
     controller.send("write a")
     await eventually(lambda: model.prompts)
-    assert model.status_text == "Waiting for you"
+    assert model.state is AgentState.AWAITING_PERMISSION
     (request,) = model.prompts.values()
     assert request.call.name == "write" and not request.read_only
     (waiting,) = of(model, ToolItem)  # nothing runs until the user answers
@@ -172,16 +174,13 @@ async def test_retry_discards_the_partial_stream(make):
     h.core.add(Step(text="partial", error=TransientCoreError("busy")), Step(text="final"))
     await h.start()
     model, controller, _ = await attach(h)
-    notices: list[str] = []
-    model.on_change = lambda change: notices.append(model.notice)
     controller.send("hi")
     await eventually(lambda: not model.busy and of(model, AssistantItem))
     await settle(h, controller)
     assert [a.text for a in of(model, AssistantItem)] == ["final"]
-    assert "Retrying (2 of 4)…" in notices
 
 
-async def test_background_task_shows_in_the_status_and_finishes(make):
+async def test_a_background_task_can_be_cancelled_until_it_finishes(make):
     h: Harness = await make()
     h.tools.slow("build", 0.6)
     h.core.add(Step(calls=[call("build")]), Step(text="started"))
@@ -192,10 +191,8 @@ async def test_background_task_shows_in_the_status_and_finishes(make):
                      is Phase.BACKGROUND)
     tool = of(model, ToolItem)[0]
     assert tool.cancellable
-    await eventually(lambda: "1 task running in the background" in model.status_text)
     await eventually(lambda: tool.status is ToolStatus.OK, timeout=5)
     assert not tool.cancellable and tool.progress.startswith("build")
-    assert "background" not in model.status_text
 
 
 async def test_cancel_a_running_tool(make):
@@ -219,7 +216,6 @@ async def test_stop_with_a_call_that_ignores_cancellation(make):
     controller.send("go")
     await eventually(lambda: of(model, ToolItem) and of(model, ToolItem)[0].cancellable)
     controller.stop()
-    assert model.notice == "Stop requested"
     await until_state(h, controller, AgentState.STOPPED)
     assert of(model, ToolItem)[0].status is ToolStatus.ABANDONED
     assert any(n.severity == "warning" and "may still be running" in n.text
@@ -511,7 +507,7 @@ def test_waiting_until_something_of_the_next_step_shows():
 
 
 def test_not_waiting_while_memory_tidies_up_after_the_answer():
-    """The cycle stays THINKING for Memory's upkeep, but nothing more is coming."""
+    """The runtime says when the model is asked nothing more: FINISHING."""
     model = ConversationModel()
     model.load(_snapshot(), ())
     model.apply(StateChanged(AgentState.THINKING))
@@ -519,9 +515,9 @@ def test_not_waiting_while_memory_tidies_up_after_the_answer():
     assert model.waiting
     model.apply(MessageCommitted(Message("a", Role.ASSISTANT, (Text("Hello."),), 0.0),
                                  StopReason.END_TURN))
-    model.apply(MaintenanceStarted(CONVERSATION.id))
-    assert not model.waiting
-    model.apply(MaintenanceFinished(CONVERSATION.id))
+    assert model.waiting  # still THINKING: the model may be asked again
+    model.apply(StateChanged(AgentState.FINISHING))
+    assert not model.waiting and model.busy
     model.apply(StateChanged(AgentState.IDLE))
     model.apply(StateChanged(AgentState.THINKING))  # the next cycle
     assert model.waiting
@@ -703,8 +699,13 @@ def test_welcome_conversation_labels_and_refusals():
     assert conversation_preview(old) == ""
     assert conversation_label(replace(previewed, preview="x" * 200)).endswith("…")
     assert len(conversation_label(replace(previewed, preview="x" * 200))) == LABEL_CHARS
-    assert user_message(RuntimeStateError("cannot start while thinking", Refusal.BUSY)) == BUSY_MESSAGE
-    assert user_message(RuntimeStateError("budget exhausted: max_cost_usd", Refusal.BUDGET)) == BUDGET_MESSAGE
+    # By the refusal's reason, whatever its sentence says.
+    assert user_message(RuntimeStateError("no", Refusal.BUSY)) == BUSY_MESSAGE
+    assert user_message(RuntimeStateError("no", Refusal.BUDGET)) == BUDGET_MESSAGE
+    assert user_message(RuntimeStateError("call c1 is idle", Refusal.NOT_PENDING)
+                        ) == "call c1 is idle"
+    assert user_message(ValueError("the idle timeout is outstanding")
+                        ) == "the idle timeout is outstanding"
     assert user_message(InstanceLockedError("Kadence is already open in another window (x)")
                         ) == "Kadence is already open in another window (x)."
     assert user_message(ValueError("unknown model x")) == "unknown model x"
@@ -750,7 +751,7 @@ async def test_a_tool_the_provider_ran_is_a_finished_step(make):
     assert "w.example" in step.content
 
 
-async def test_a_question_for_help_is_shown_and_named_in_the_status(make):
+async def test_a_question_for_help_is_shown_until_it_is_answered(make):
     from kadence.api import Budget, Duty
 
     h: Harness = await make(budget=Budget(max_cost_usd=5))
@@ -761,7 +762,7 @@ async def test_a_question_for_help_is_shown_and_named_in_the_status(make):
     await h.runtime.set_duty(Duty("Run socials"))
     await eventually(lambda: any("Which account?" in n.text for n in of(model, NoticeItem)))
     await until_state(h, controller, AgentState.IDLE)
-    assert "Duty waiting for your answer" in model.status_text
+    assert model.help_needed == "Which account?"
     controller.send("The main one.")
     await eventually(lambda: model.help_needed is None)
 
@@ -820,3 +821,23 @@ async def test_opening_a_conversation_finishes_once_it_is_shown(make):
     await task
     await asyncio.sleep(0)
     assert seen == [other.id]  # the sidebar refreshed then highlights the new one
+
+
+def test_a_tool_shown_as_a_card_is_never_an_item():
+    """wrap_up and update_plan show as the card and the checklist, not as steps."""
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    changes: list[object] = []
+    model.on_change = changes.append
+    model.apply(StateChanged(AgentState.THINKING))
+    model.apply(ToolCallDelta("p", "update_plan", '{"items": ['))
+    plan = ToolCall("p", "update_plan", {"items": [{"text": "Look", "status": "doing"}]})
+    model.apply(MessageCommitted(Message("a", Role.ASSISTANT, (plan,), 0.0),
+                                 StopReason.TOOL_USE))
+    model.apply(ToolStarted(plan))
+    model.apply(MessageCommitted(Message(
+        "r", Role.TOOL, (ToolResult("p", ToolStatus.OK, "ok"),), 0.0)))
+    model.apply(ToolFinished(ToolResult("p", ToolStatus.OK, "ok"), 0.1))
+    assert not of(model, ToolItem) and len(of(model, ChecklistItem)) == 1
+    shown = {id(item) for item in model.items}
+    assert all(id(c.item) in shown for c in changes if isinstance(c, Updated))

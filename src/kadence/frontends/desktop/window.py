@@ -2284,13 +2284,13 @@ class MainWindow(QMainWindow):
                 self._arrange_soon()
                 self._show_empty_state()
             case Updated(item=item):
-                if (widget := self._widgets.get(id(item))) is not None:
-                    widget.refresh()  # type: ignore[attr-defined]
-                    if isinstance(group := self._group_of(widget), StepGroup):
-                        if isinstance(item, AssistantItem) and (item.text or item.refused):
-                            self._arrange_soon()  # a reply now: out of the group
-                        else:
-                            group.refresh()
+                widget = self._widgets[id(item)]
+                widget.refresh()  # type: ignore[attr-defined]
+                if isinstance(group := self._group_of(widget), StepGroup):
+                    if isinstance(item, AssistantItem) and (item.text or item.refused):
+                        self._arrange_soon()  # a reply now: out of the group
+                    else:
+                        group.refresh()
             case Removed(item=item):
                 if (widget := self._widgets.pop(id(item), None)) is not None:
                     _detach(widget)
