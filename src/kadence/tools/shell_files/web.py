@@ -120,15 +120,9 @@ class Web:
         self._retry_delay = retry_delay
 
     async def run(self, name: str, args: dict[str, Any]) -> str:
-        try:
-            if name == "web_search":
-                return await self.search(args["query"],
-                                         args.get("max_results", DEFAULT_RESULTS))
-            return await self.fetch(args["url"], args.get("start", 0))
-        except ImportError as e:  # an install that predates these libraries
-            raise WebError(f"{name} is not available: the library {e.name!r} is not "
-                           "installed. Tell the user to reinstall Kadence (Getting started, "
-                           "Updating) and restart it.") from None
+        if name == "web_search":
+            return await self.search(args["query"], args.get("max_results", DEFAULT_RESULTS))
+        return await self.fetch(args["url"], args.get("start", 0))
 
     async def search(self, query: str, max_results: int) -> str:
         """Tries an empty or failed search again, SEARCH_ATTEMPTS times in all."""

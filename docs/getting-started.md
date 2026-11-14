@@ -22,8 +22,7 @@ uv tool install --python 3.13 --editable "Kadence[desktop]"
 ```
 
 **Updating.** `git pull` in the `Kadence` folder updates the code. When an update adds a
-library, Kadence says one is missing; install again with `--reinstall` added, then restart
-Kadence:
+library, install again with `--reinstall` added, then restart Kadence:
 
 ```bash
 uv tool install --python 3.13 --editable "Kadence[desktop]" --reinstall
