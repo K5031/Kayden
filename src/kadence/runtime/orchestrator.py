@@ -80,6 +80,7 @@ from kadence.api import (
     ProposalResolved,
     Reasoning,
     ReasoningDelta,
+    Refusal,
     Role,
     RuntimeEvent,
     RuntimeSnapshot,
@@ -142,7 +143,8 @@ from kadence.runtime.review import (
 
 logger = logging.getLogger(__name__)
 
-_RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
+_RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
+            AgentState.FINISHING)
 _OP_STATUS_MAX_WAIT_S = 60
 # The description every offered tool takes (api.DESCRIPTION_ARG).
 _DESCRIPTION_SCHEMA = {
@@ -464,13 +466,13 @@ class Runtime:
 
     async def start(self, options: StartOptions) -> ConversationInfo:
         if self._closed:
-            raise RuntimeStateError("the runtime is shut down")
+            raise RuntimeStateError("the runtime is shut down", Refusal.UNAVAILABLE)
         if self._state() not in (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED,
                                  AgentState.FAILED):
-            raise RuntimeStateError(f"cannot start while {self._state()}")
+            raise RuntimeStateError(f"cannot start while {self._state()}", Refusal.BUSY)
         await self._withdraw_proposals()  # a proposal belongs to its conversation
         if self._ops:
-            raise RuntimeStateError("operations are still outstanding")
+            raise RuntimeStateError("operations are still outstanding", Refusal.BUSY)
         if options.conversation_id is not None and (options.seed_from is not None
                                                     or options.folder is not None):
             raise ValueError("seed_from and folder apply to a new conversation only")
@@ -564,9 +566,9 @@ class Runtime:
     def _sendable(self) -> None:
         state = self._state()
         if state == AgentState.NOT_STARTED:
-            raise RuntimeStateError("not started")
+            raise RuntimeStateError("not started", Refusal.NOT_STARTED)
         if state == AgentState.FAILED and (reason := self._budget.exhausted()):
-            raise RuntimeStateError(f"budget exhausted: {reason}")
+            raise RuntimeStateError(f"budget exhausted: {reason}", Refusal.BUDGET)
 
     def _queue(self, queued: MessageQueued, reason: str) -> None:
         state = self._state()
@@ -594,9 +596,11 @@ class Runtime:
         state = self._state()
         if state == AgentState.FAILED:
             if reason := self._budget.exhausted():
-                raise RuntimeStateError(f"budget exhausted: {reason}")
+                raise RuntimeStateError(f"budget exhausted: {reason}", Refusal.BUDGET)
         elif state not in (AgentState.IDLE, AgentState.STOPPED):
-            raise RuntimeStateError(f"cannot activate while {state}")
+            raise RuntimeStateError(
+                f"cannot activate while {state}",
+                Refusal.NOT_STARTED if state == AgentState.NOT_STARTED else Refusal.BUSY)
         self._answered()
         self._request_cycle("user activation")
 
@@ -627,7 +631,7 @@ class Runtime:
     async def cancel_operation(self, call_id: CallId) -> None:
         op = self._ops.get(call_id)
         if op is None:
-            raise RuntimeStateError(f"call {call_id} is not running")
+            raise RuntimeStateError(f"call {call_id} is not running", Refusal.NOT_PENDING)
         self._log.decision("cancel_operation", call_id=call_id, by="user")
         op.request_cancel()
 
@@ -652,7 +656,8 @@ class Runtime:
 
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
         if self._conversation is not None and conversation_id == self._conversation.id:
-            raise RuntimeStateError("this conversation is open; open another one first")
+            raise RuntimeStateError("this conversation is open; open another one first",
+                                    Refusal.CONVERSATION_OPEN)
         try:
             await self._memory.delete_conversation(conversation_id)
         except NotImplementedError:
@@ -733,7 +738,7 @@ class Runtime:
 
     async def set_duty(self, duty: Duty | None) -> None:
         if self._conversation is None:
-            raise RuntimeStateError("no conversation is open")
+            raise RuntimeStateError("no conversation is open", Refusal.NOT_STARTED)
         if duty is not None:
             duty = duties.check(duty)
         turned_on = duty is not None and self._conversation.duty is None
@@ -752,7 +757,7 @@ class Runtime:
 
     async def set_plan(self, plan: Sequence[PlanItem]) -> None:
         if self._conversation is None:
-            raise RuntimeStateError("no conversation is open")
+            raise RuntimeStateError("no conversation is open", Refusal.NOT_STARTED)
         await self._save_duty(self._conversation.duty, plan)
         self._plan_call = None
         self._log.decision("plan", items=len(plan), by="user")
@@ -770,10 +775,11 @@ class Runtime:
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:
         if self._state() != AgentState.AWAITING_PERMISSION:
-            raise RuntimeStateError("no permission prompt is open")
+            raise RuntimeStateError("no permission prompt is open", Refusal.NOT_PENDING)
         entry = self._prompts.pop(request_id, None)
         if entry is None:
-            raise RuntimeStateError(f"unknown or already resolved request {request_id}")
+            raise RuntimeStateError(f"unknown or already resolved request {request_id}",
+                                    Refusal.NOT_PENDING)
         request, future = entry
         self._log.decision("permission", call_id=request.call.id, outcome=decision, by="user")
         self._emit(PermissionResolved(request_id, decision, request.call.id))
@@ -1307,6 +1313,7 @@ class Runtime:
             if (calls and not ended) or delivered:  # a queued message authorizes the next turn
                 continue
             # After the answer: Memory saves what the exchange taught it.
+            self._set_phase(AgentState.FINISHING)
             before = await self._note_versions()
             if await self._maintain(list(specs.values())):
                 after = await self._note_versions()
@@ -1932,7 +1939,8 @@ class Runtime:
     async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
         entry = self._proposals.pop(proposal_id, None)
         if entry is None:
-            raise RuntimeStateError(f"no proposal {proposal_id} is pending")
+            raise RuntimeStateError(f"no proposal {proposal_id} is pending",
+                                    Refusal.NOT_PENDING)
         proposal, decided = entry
         self._log.decision("permission", call_id=proposal.call.id, by="proposal",
                            outcome=Decision.ALLOW_ONCE if accept else Decision.DENY)

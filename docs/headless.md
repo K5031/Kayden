@@ -52,13 +52,19 @@ and the terminal app drive their sub-sessions this way:
 
 A refusal (asking before `start`, a duty without an instruction, an unknown
 conversation) is error `-32000` with the runtime's message and `data.type`, such as
-`RuntimeStateError`. Missing parameters are `-32602`, unknown methods `-32601`.
+`RuntimeStateError`. A `RuntimeStateError` also has `data.reason`, a word to act on:
+`not_started`, `busy`, `budget`, `not_pending`, `conversation_open` or `unavailable`. Missing parameters are `-32602`, unknown methods `-32601`.
 
 **Events** come as notifications: `{"method": "event", "params": {"seq": 12, "event":
 {...}}}`, every event the runtime emits, in order. Values are JSON objects with their kind
 under `"type"`, such as `MessageCommitted`, `StateChanged`, `PermissionRequested`,
 `HelpNeeded` and `DutyScheduled`. A jump in `seq` means events were dropped: take a
 `snapshot`, ignore events up to its `seq`, and read `history`.
+
+**States.** `StateChanged` carries `not_started`, `idle`, `thinking`, `running_tools`,
+`awaiting_permission`, `finishing`, `stopping`, `stopped` or `failed`. The agent is at
+work from `thinking` until it is `idle` again; in `finishing` its answer is complete and
+Kadence saves what it learned.
 
 **A message says who wrote it.** A `Message` with role `user` has an `author`: `user`,
 or `kadence` for what Kadence itself wrote for the agent (a duty's wake-up, a reminder,

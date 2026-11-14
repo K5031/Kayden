@@ -958,3 +958,11 @@ Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md).
 | Read | At a cycle's start and at each turn boundary (`Runtime._deliver_inbox`). One rule where every cycle ends (`Runtime._cycle`): a message still queued starts the next cycle, so no pause inside a turn can leave one behind |
 | Not started | After Stop (kept, starts nothing), after a failed append (the agent is FAILED until one succeeds) and on an exhausted budget, where `send` is refused too |
 | Stop and shutdown | Deliver through the same `_deliver_inbox`: files and the voice notice go with a message queued before Stop |
+
+## States and refusals
+
+| Choice | Decision |
+|---|---|
+| FINISHING | Entered when the cycle's last answer (or a `wrap_up` that ends the turn) is appended, before Memory's upkeep after the answer; left for IDLE, or for THINKING when a queued message starts the next cycle. Commands as in THINKING: `send` queues, `start` and `activate` are refused as BUSY |
+| Refusal | NOT_STARTED: `send`, `notify`, `activate`, `set_duty`, `set_plan` before `start`. BUSY: `start` or `activate` during a cycle, while stopping, or with operations outstanding. BUDGET: `send`, `notify`, `activate` on an exhausted budget. NOT_PENDING: an unknown or finished call, prompt or proposal. CONVERSATION_OPEN: deleting the open conversation. UNAVAILABLE: any command after shutdown, every command the setup runtime cannot serve, a sub-session whose process ended, `restart` of a sub-session |
+| On the channel | `error.data` is `{"type": "RuntimeStateError", "reason": "<refusal>"}`; other exceptions have `type` only |

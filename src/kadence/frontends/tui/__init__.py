@@ -159,6 +159,7 @@ STATE_LABELS = {
     AgentState.THINKING: "Thinking…",
     AgentState.RUNNING_TOOLS: "Working…",
     AgentState.AWAITING_PERMISSION: "Waiting for you",
+    AgentState.FINISHING: "Finishing…",
     AgentState.STOPPING: "Stopping…",
     AgentState.STOPPED: "Stopped",
     AgentState.FAILED: "Failed",
@@ -194,7 +195,7 @@ HELP = (
 )
 UNTITLED = "New chat"
 WORKING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
-           AgentState.STOPPING)
+           AgentState.FINISHING, AgentState.STOPPING)
 # States in which runtime.start() may switch conversations (given no outstanding call).
 SWITCHABLE = (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
 HISTORY_PAGE = 100  # messages loaded per history page

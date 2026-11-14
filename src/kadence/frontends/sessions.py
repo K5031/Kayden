@@ -41,6 +41,7 @@ from kadence.api import (
     PermissionRequested,
     PermissionResolved,
     ReasoningDelta,
+    Refusal,
     Role,
     RuntimeStateError,
     SettingsUpdate,
@@ -67,7 +68,8 @@ STOP_GRACE_S = 10.0  # after stdin closes, before the child is killed
 RECORD = "session.json"
 LIMIT_FILE = "limit.json"  # in <data dir>/sessions: the user's limit per sub-session
 _SESSION = {"type": "string", "description": "The sub-session's id."}
-_ACTIVE = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION)
+_ACTIVE = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
+           AgentState.FINISHING)
 _QUIET = (TextDelta, ReasoningDelta, ToolCallDelta, ToolProgress)
 
 START = ToolSpec(
@@ -243,7 +245,7 @@ class SubSessions(Tools):
         """A RuntimeAPI for the child, starting it again when it is not running; call
         release() with it when the view closes."""
         if session.child_conversation_id is None:
-            raise RuntimeStateError("this sub-session has not started")
+            raise RuntimeStateError("this sub-session has not started", Refusal.NOT_STARTED)
         channel = self._channels.get(session.id)
         if channel is None:
             channel = await self._spawn(session, resume=True)

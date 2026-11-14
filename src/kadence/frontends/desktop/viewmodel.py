@@ -115,12 +115,13 @@ STATE_LABELS = {
     AgentState.THINKING: "Thinking",
     AgentState.RUNNING_TOOLS: "Working",
     AgentState.AWAITING_PERMISSION: "Waiting for you",
+    AgentState.FINISHING: "Finishing",
     AgentState.STOPPING: "Stopping",
     AgentState.STOPPED: "Stopped",
     AgentState.FAILED: "Failed",
 }
 BUSY_STATES = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
-               AgentState.STOPPING)
+               AgentState.FINISHING, AgentState.STOPPING)
 
 
 def clip(text: str, limit: int) -> str:

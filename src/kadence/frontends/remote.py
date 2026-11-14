@@ -26,6 +26,7 @@ from kadence.api import (
     PermissionResolved,
     ProposalMade,
     ProposalResolved,
+    Refusal,
     RuntimeAPI,
     RuntimeSnapshot,
     RuntimeStateError,
@@ -39,13 +40,25 @@ from kadence.api import (
 from kadence.frontends.wire import COMMANDS, from_json, result_hint, to_json
 
 STDERR_LINES = 20
-_ERRORS: dict[str, type[Exception]] = {
+_ERRORS: dict[str, type[Exception]] = {  # by the "type" of an error's data
     "RuntimeStateError": RuntimeStateError, "ValueError": ValueError, "KeyError": KeyError,
     "NotImplementedError": NotImplementedError}
 
 
+def _error(error: dict[str, Any]) -> Exception:
+    """The exception the runtime raised, from a request's error."""
+    data = error.get("data") or {}
+    kind = _ERRORS.get(data.get("type"), RuntimeError)
+    if kind is RuntimeStateError:
+        return RuntimeStateError(error["message"], Refusal(data["reason"]))
+    return kind(error["message"])
+
+
 class ChannelClosed(RuntimeStateError):
     """The child process ended."""
+
+    def __init__(self) -> None:
+        super().__init__("the sub-session has ended", Refusal.UNAVAILABLE)
 
 
 class Channel:
@@ -64,7 +77,7 @@ class Channel:
 
     async def request(self, method: str, **params: Any) -> Any:
         if self.ended.is_set():
-            raise ChannelClosed("the sub-session has ended")
+            raise ChannelClosed
         request_id = next(self._ids)
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
@@ -88,16 +101,14 @@ class Channel:
                 elif ((future := self._pending.pop(message.get("id"), None)) is not None
                       and not future.done()):  # done: its caller was cancelled
                     if "error" in message:
-                        error = message["error"]
-                        kind = _ERRORS.get((error.get("data") or {}).get("type"), RuntimeError)
-                        future.set_exception(kind(error["message"]))
+                        future.set_exception(_error(message["error"]))
                     else:
                         future.set_result(message.get("result"))
         finally:
             self.ended.set()
             for future in self._pending.values():
                 if not future.done():
-                    future.set_exception(ChannelClosed("the sub-session has ended"))
+                    future.set_exception(ChannelClosed())
             for listener in list(self.listeners):
                 listener(None)  # type: ignore[arg-type]
 
@@ -171,7 +182,7 @@ class RemoteRuntime:
         return self._snapshot
 
     async def restart(self) -> None:
-        raise RuntimeStateError("a sub-session restarts with its parent")
+        raise RuntimeStateError("a sub-session restarts with its parent", Refusal.UNAVAILABLE)
 
 
 def _command(name: str) -> Callable[..., Any]:

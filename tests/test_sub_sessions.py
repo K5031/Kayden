@@ -101,7 +101,7 @@ async def test_cancelling_the_call_stops_the_child(make, tmp_path, child_env):
 
 
 async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, child_env):
-    from kadence.api import Decision
+    from kadence.api import Decision, Refusal, RuntimeStateError
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("start_session", {"task": "Look it up"}, id="s")]),
@@ -116,6 +116,9 @@ async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, chi
     [request] = remote.snapshot().pending_permissions
     assert request.call.name == "lookup"
     await remote.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    with pytest.raises(RuntimeStateError) as again:  # the child's refusal, with its reason
+        await remote.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    assert again.value.reason is Refusal.NOT_PENDING
     result = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                               .messages, "s"), timeout=30)
     assert "Looked it up." in result.content

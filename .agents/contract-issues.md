@@ -846,3 +846,21 @@ was used.
   `Message.spoken`, the one test `Message.from_user`, `MessageQueued.author`, and
   `RuntimeAPI.notify` for a notice a frontend writes. The marker is added in the request
   only. The archive's schema version went up; a store of the older version is refused.
+
+### P2 (C) THINKING covered a stretch in which the model is not asked
+- **Status:** Resolved in `api.py`.
+- **Where:** `AgentState`.
+- **Problem:** After a cycle's last answer the runtime stayed THINKING while Memory's
+  upkeep ran. The desktop frontend remembered whether the last message was a final answer
+  so as not to show "Thinking…" then.
+- **Fix:** `AgentState.FINISHING` for that stretch. THINKING now means the model is asked
+  for its next step, or is about to be. Every list of working states includes FINISHING
+  (`orchestrator._RUNNING`, `sessions._ACTIVE`, the frontends' own).
+
+### P3 (C) A refusal carried only a sentence
+- **Status:** Resolved in `api.py`.
+- **Where:** `RuntimeStateError`.
+- **Problem:** The desktop frontend turned refusals into its own messages by matching
+  fragments of their English text ("cannot start while", "outstanding", "idle").
+- **Fix:** `RuntimeStateError(message, reason)` with `api.Refusal`. The headless channel
+  sends the reason in the error's `data.reason`; the remote runtime raises it again.

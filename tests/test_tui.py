@@ -42,6 +42,7 @@ from kadence.api import (
     PermissionResolved,
     Reasoning,
     ReasoningDelta,
+    Refusal,
     Role,
     RuntimeEvent,
     RuntimeSnapshot,
@@ -250,7 +251,8 @@ class StubRuntime:
     async def delete_conversation(self, conversation_id: str) -> None:
         await self._record("delete_conversation", conversation_id)
         if self.conversation is not None and conversation_id == self.conversation.id:
-            raise RuntimeStateError("cannot delete the open conversation")
+            raise RuntimeStateError("cannot delete the open conversation",
+                                    Refusal.CONVERSATION_OPEN)
         self.conversations = [c for c in self.conversations if c.id != conversation_id]
         self.emit(ConversationDeleted(conversation_id))
 
@@ -485,7 +487,7 @@ async def test_permission_commands_and_runtime_side_resolution():
 
 async def test_failed_permission_resolution_reenables_prompt():
     stub = StubRuntime()
-    stub.fail_with["resolve_permission"] = RuntimeStateError("already resolved")
+    stub.fail_with["resolve_permission"] = RuntimeStateError("already resolved", Refusal.NOT_PENDING)
     app = make(stub)
     async with app.run_test(size=(120, 40)) as pilot:
         stub.emit(PermissionRequested(PermissionRequest("p1", ToolCall("c", "x", {}), True)))
@@ -756,7 +758,7 @@ async def test_start_options_skip_the_start_screen():
 
 async def test_usage_failure_and_command_errors_are_shown():
     stub = StubRuntime()
-    stub.fail_with["send"] = RuntimeStateError("agent failed")
+    stub.fail_with["send"] = RuntimeStateError("agent failed", Refusal.BUSY)
     app = make(stub)
     async with app.run_test(notifications=True) as pilot:
         snapshot = UsageSnapshot(Usage(1200, 340, cost_usd=0.0123), 2, 5.0, {"tool_calls": 8})

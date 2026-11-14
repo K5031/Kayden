@@ -117,7 +117,8 @@ async def test_errors_keep_their_message(make, clients):
     client = clients()
     await client.run(h.runtime)
     refused = (await client.request("send", text="too early"))["error"]
-    assert refused["code"] == -32000 and refused["data"]["type"] == "RuntimeStateError"
+    assert refused["code"] == -32000 and refused["data"] == {
+        "type": "RuntimeStateError", "reason": "not_started"}  # the reason is for programs
     assert "not started" in refused["message"]
     assert (await client.request("fly"))["error"]["code"] == -32601
     assert (await client.request("send", words="x"))["error"]["code"] == -32602

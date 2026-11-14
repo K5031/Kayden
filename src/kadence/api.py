@@ -35,7 +35,8 @@ Runtime guarantees to modules:
 - Mutating Memory calls (append, maintain) are serialized per conversation. maintain
   runs before every inference (the first of a cycle included, after the user message
   is appended), after a turn's results are appended and before the next assemble, and
-  once after a cycle's last answer is appended, before the agent goes idle; never
+  once after a cycle's last answer is appended, before the agent goes idle (the state is
+  FINISHING meanwhile); never
   concurrently with inference or appends. Stop cancels it; the runtime re-checks the
   budget after it returns. Inference, maintain and built-in Memory calls get Stop's
   grace period like operations; one that does not stop in time is reported as
@@ -1064,9 +1065,12 @@ class Tools(abc.ABC):
 class AgentState(StrEnum):
     NOT_STARTED = "not_started"  # before start()
     IDLE = "idle"  # background ops may still run; see StateChanged.pending_ops
-    THINKING = "thinking"
+    THINKING = "thinking"  # the model is asked for its next step, or is about to be
     RUNNING_TOOLS = "running_tools"
     AWAITING_PERMISSION = "awaiting_permission"  # any prompt open; other ops keep running
+    # The cycle's last answer is appended and the model is asked nothing more: Memory's
+    # upkeep runs (see the module docstring), then the agent is IDLE. Commands as in THINKING.
+    FINISHING = "finishing"
     STOPPING = "stopping"
     STOPPED = "stopped"
     FAILED = "failed"
@@ -1126,8 +1130,24 @@ class FailureKind(StrEnum):
     INTERNAL = "internal"
 
 
+class Refusal(StrEnum):
+    """Why a command was refused (RuntimeStateError.reason)."""
+
+    NOT_STARTED = "not_started"  # no conversation is open yet: start() first
+    BUSY = "busy"  # a cycle runs, the agent is stopping, or operations are outstanding
+    BUDGET = "budget"  # a hard budget is exhausted
+    NOT_PENDING = "not_pending"  # the call, prompt or proposal named is not waiting (any more)
+    CONVERSATION_OPEN = "conversation_open"  # not possible for the open conversation
+    UNAVAILABLE = "unavailable"  # this runtime cannot do it: shut down, or not started up
+
+
 class RuntimeStateError(Exception):
-    """Command not valid in the current state (see RuntimeAPI)."""
+    """Command not valid in the current state (see RuntimeAPI). The message is a sentence
+    for a person; `reason` is what code acts on."""
+
+    def __init__(self, message: str, reason: Refusal) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class InstanceLockedError(RuntimeError):
@@ -1598,12 +1618,13 @@ class EventEnvelope:
 class RuntimeAPI(Protocol):
     """What a Frontend can do. Implemented by the runtime, never by modules.
 
-    Commands by state ("-" raises RuntimeStateError, "q" queues, "ok" allowed):
+    Commands by state ("-" raises RuntimeStateError with its Refusal, "q" queues, "ok"
+    allowed):
 
                         start  send  activate  stop   select_model  resolve_permission
       not started       ok     -     -         no-op  ok            -
       IDLE              ok*    ok    ok**      no-op  ok            -
-      THINKING/TOOLS    -      q     -         ok     ok            -
+      THINKING/TOOLS*4  -      q     -         ok     ok            -
       AWAITING_PERM.    -      q     -         ok     ok            ok
       STOPPING          -      q     -         no-op  ok            -
       STOPPED           ok*    ok    ok        no-op  ok            -
@@ -1612,6 +1633,7 @@ class RuntimeAPI(Protocol):
       *   only with no outstanding operations. One agent per process.
       **  this also drops a pending wake-up.
       *** not while FAILED because a hard budget is exhausted (send raises there too).
+      *4  and FINISHING.
 
     notify follows send's column.
 

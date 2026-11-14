@@ -142,11 +142,11 @@ async def test_saving_without_a_memory_choice_keeps_the_memory():
 
 async def test_a_startup_error_opens_the_settings():
     """First run (no key yet) or a broken module: settings with the error, not a crash."""
-    from kadence.api import RuntimeStateError
+    from kadence.api import Refusal, RuntimeStateError
 
     stub = StubRuntime(started=False)
     stub.current_settings = fake_settings(startup_error="ANTHROPIC_API_KEY is not set")
-    stub.fail_with["list_models"] = RuntimeStateError("Kadence could not start")
+    stub.fail_with["list_models"] = RuntimeStateError("Kadence could not start", Refusal.UNAVAILABLE)
     app = make(stub)
     async with app.run_test(size=(100, 40)) as pilot:
         await until(pilot, lambda: isinstance(app.screen, SettingsScreen))
@@ -224,10 +224,10 @@ async def test_an_invalid_spending_limit_keeps_the_screen_open():
 
 
 async def test_a_rejected_update_is_reported():
-    from kadence.api import RuntimeStateError
+    from kadence.api import Refusal, RuntimeStateError
 
     stub = StubRuntime()
-    stub.fail_with["update_settings"] = RuntimeStateError("wait until the agent is idle")
+    stub.fail_with["update_settings"] = RuntimeStateError("wait until the agent is idle", Refusal.BUSY)
     app = make(stub)
     notes: list[str] = []
     app.notify = lambda message, **kw: notes.append(str(message))  # type: ignore[method-assign]

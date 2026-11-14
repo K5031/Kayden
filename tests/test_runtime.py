@@ -14,6 +14,7 @@ from kadence.api import (
     PERMISSION_CEILING_ENV,
     AgentState,
     Author,
+    Budget,
     ContextOverflowError,
     CoreError,
     Decision,
@@ -28,7 +29,9 @@ from kadence.api import (
     PermissionPolicy,
     PermissionRequested,
     PermissionResolved,
+    Refusal,
     Role,
+    RuntimeStateError,
     ShuttingDown,
     StartOptions,
     StopReason,
@@ -486,6 +489,70 @@ async def test_a_message_queued_after_the_last_turn_is_still_answered(make: Any)
     said = [e.message for e in h.rec.of(MessageCommitted)]
     assert [m.blocks for m in said if m.id == queued.message_id] == [(Text("one more thing"),)]
     assert said[-1].blocks == (Text("second answer"),)
+
+
+async def test_a_refusal_says_why_in_a_word(make: Any) -> None:
+    """RuntimeStateError.reason: a frontend acts on it without reading the sentence."""
+    core = ScriptedCore([Step(text="working", hang=True)])
+    h: Harness = await make(core=core)
+
+    async def refused(command: Any) -> Refusal:
+        with pytest.raises(RuntimeStateError) as caught:
+            await command
+        assert str(caught.value)  # the sentence is still there, for people
+        return caught.value.reason
+
+    assert await refused(h.runtime.send("too early")) is Refusal.NOT_STARTED
+    assert await refused(h.runtime.activate()) is Refusal.NOT_STARTED
+    assert await refused(h.runtime.set_plan([])) is Refusal.NOT_STARTED
+    info = await h.chat()
+    assert await refused(h.runtime.delete_conversation(info.id)) is Refusal.CONVERSATION_OPEN
+    assert await refused(h.runtime.cancel_operation("nope")) is Refusal.NOT_PENDING
+    assert await refused(h.runtime.resolve_proposal("nope", True)) is Refusal.NOT_PENDING
+    assert await refused(h.runtime.resolve_permission("nope", Decision.DENY)) \
+        is Refusal.NOT_PENDING
+    await h.runtime.send("go")
+    await eventually(lambda: core.requests)
+    assert await refused(h.runtime.start(StartOptions())) is Refusal.BUSY
+    assert await refused(h.runtime.activate()) is Refusal.BUSY
+    await h.close()
+    assert await refused(h.runtime.start(StartOptions())) is Refusal.UNAVAILABLE
+
+
+async def test_an_exhausted_budget_refuses_with_that_reason(make: Any) -> None:
+    h: Harness = await make(core=ScriptedCore([Step(text="ok")]),
+                            budget=Budget(max_tokens=50))
+    await h.start()
+    await h.runtime.send("go")
+    await h.rec.wait_state(AgentState.FAILED)
+    for command in (h.runtime.send("more"), h.runtime.activate()):
+        with pytest.raises(RuntimeStateError) as caught:
+            await command
+        assert caught.value.reason is Refusal.BUDGET
+
+
+async def test_the_state_says_when_the_model_is_no_longer_asked(make: Any) -> None:
+    """After a cycle's last answer Memory still works, but nothing more comes from the
+    model: the state is FINISHING then, not THINKING, so no frontend has to infer it."""
+    from kadence.api import Completion
+
+    h: Harness = await make(core=ScriptedCore([Step(text="answer")]))
+    seen: list[AgentState] = []
+
+    async def maintain(complete: Completion) -> bool:
+        seen.append(h.runtime.snapshot().state)
+        return False
+
+    h.memory.maintain_override = maintain
+    await h.start()
+    await h.turn("go")
+    assert seen == [AgentState.THINKING, AgentState.FINISHING]
+    assert h.rec.states[-3:] == [AgentState.THINKING, AgentState.FINISHING, AgentState.IDLE]
+    committed = [i for i, e in enumerate(h.rec.envelopes)
+                 if isinstance(e.event, MessageCommitted)][-1]
+    finishing = next(i for i, e in enumerate(h.rec.envelopes)
+                     if getattr(e.event, "state", None) == AgentState.FINISHING)
+    assert committed < finishing  # the answer is in before the state says so
 
 
 async def test_a_message_queued_while_a_turn_fails_is_still_answered(make: Any) -> None:

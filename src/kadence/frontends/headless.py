@@ -5,7 +5,8 @@ stdout. Each request is a RuntimeAPI command of the same name (REQUESTS); every 
 event comes out as an `event` notification with its `seq`. API values are JSON objects
 with their class name under "type"; enums are their values. Permission prompts and the
 agent's questions (HelpNeeded) go out as events and are answered with resolve_permission
-and send. Closing stdin quits. Nothing else is written to stdout: the process's own stdout
+and send. A refusal is an error whose data names the exception ("type") and, for a
+RuntimeStateError, why ("reason", an api.Refusal). Closing stdin quits. Nothing else is written to stdout: the process's own stdout
 is pointed at stderr, and its stdin at /dev/null, so no library or subprocess can write to
 or read from the channel.
 """
@@ -27,6 +28,7 @@ from kadence.api import (
     Frontend,
     FrontendInfo,
     InstancePaths,
+    Refusal,
     RuntimeAPI,
     RuntimeStateError,
     StartOptions,
@@ -155,7 +157,10 @@ class HeadlessFrontend(Frontend):
         except (TypeError, AttributeError) as e:
             await self._error(request_id, INVALID_PARAMS, str(e))
             return
-        except (RuntimeStateError, ValueError, KeyError, NotImplementedError) as e:
+        except RuntimeStateError as e:
+            await self._error(request_id, REFUSED, str(e), "RuntimeStateError", e.reason)
+            return
+        except (ValueError, KeyError, NotImplementedError) as e:
             message_text = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
             await self._error(request_id, REFUSED, str(message_text) or type(e).__name__,
                               type(e).__name__)
@@ -169,10 +174,12 @@ class HeadlessFrontend(Frontend):
             await self._send({"jsonrpc": "2.0", "id": request_id, "result": to_json(result)})
 
     async def _error(self, request_id: Any, code: int, message: str,
-                     kind: str | None = None) -> None:
+                     kind: str | None = None, reason: Refusal | None = None) -> None:
         error: dict[str, Any] = {"code": code, "message": message}
         if kind is not None:
             error["data"] = {"type": kind}
+        if reason is not None:
+            error["data"]["reason"] = reason.value
         await self._send({"jsonrpc": "2.0", "id": request_id, "error": error})
 
     async def _send(self, message: dict[str, Any]) -> None:

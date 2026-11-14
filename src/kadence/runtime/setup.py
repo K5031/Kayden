@@ -19,6 +19,7 @@ from kadence.api import (
     Message,
     ModelInfo,
     PermissionPolicy,
+    Refusal,
     RuntimeSnapshot,
     RuntimeStateError,
     Settings,
@@ -55,7 +56,8 @@ class SetupRuntime:
         self.restart_request: Restart | None = None
 
     def _refuse(self) -> NoReturn:
-        raise RuntimeStateError(f"Kadence could not start: {self._error}")
+        raise RuntimeStateError(f"Kadence could not start: {self._error}",
+                                Refusal.UNAVAILABLE)
 
     # Observation
 
