@@ -4,7 +4,7 @@ Status: implemented — each conversation has its own work folder, chosen when i
 
 ## Problem
 
-Kayden had one work folder for the whole app: the Tools' `root`, a module setting that
+Kadence had one work folder for the whole app: the Tools' `root`, a module setting that
 applied at the next start. Work is organised by project, so a user who wanted the agent in
 another project changed Settings, restarted, and every conversation then pointed at that
 folder, the old ones included. A conversation about one project should stay with that
@@ -75,6 +75,6 @@ chats".
 - `Tools` gained an optional method, and `start()` can now fail for a folder that cannot
   be created.
 - **Schema 6 refuses a schema 5 store.** The user's store is converted once with an ALTER;
-  Kayden carries no migration code.
+  Kadence carries no migration code.
 - **A deleted folder is recreated empty** when its conversation reopens; the agent may be
   confused that its files are gone. The folder is shown, so the user can see why.

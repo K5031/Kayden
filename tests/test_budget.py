@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Budget,
     Decision,
@@ -237,8 +237,8 @@ async def test_usage_persists(make: Any) -> None:
 async def test_usage_is_written_off_the_loop_with_the_latest_totals(tmp_path):
     import json
 
-    from kayden.api import Budget, Usage
-    from kayden.runtime.budget import BudgetTracker
+    from kadence.api import Budget, Usage
+    from kadence.runtime.budget import BudgetTracker
 
     tracker = BudgetTracker(Budget())
     tracker.load(tmp_path / "usage.json")

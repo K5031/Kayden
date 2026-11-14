@@ -1,4 +1,4 @@
-# Kayden
+# Kadence
 
 An AI agent for your computer, in a terminal or a desktop app. It runs commands, works with
 files and searches the web, decides on its own only what is safe and asks you about the
@@ -7,33 +7,33 @@ OpenAI-compatible models.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/empty-dark.png">
-  <img src="docs/images/empty-light.png" alt="The Kayden desktop app on a new chat, with its mascot peeking over the words Start a conversation">
+  <img src="docs/images/empty-light.png" alt="The Kadence desktop app on a new chat, with its mascot peeking over the words Start a conversation">
 </picture>
 
 The [desktop app](docs/desktop-app.md), ready for a new chat.
 
 A runtime drives four swappable modules (Core, Memory, Tools, Frontend); see
-`src/kayden/api.py` and `SPEC.md`.
+`src/kadence/api.py` and `SPEC.md`.
 
 ## Quick start
 
 Requires Linux, Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/K5031/Kayden.git
-uv tool install --editable Kayden
+git clone https://github.com/K5031/Kadence.git
+uv tool install --editable Kadence
 export ANTHROPIC_API_KEY=sk-ant-...   # or enter a key in the settings screen (F2)
-mkdir ~/kayden-work && cd ~/kayden-work
-kayden
+mkdir ~/kadence-work && cd ~/kadence-work
+kadence
 ```
 
-Kayden works freely in the folder you start it from; anything outside it gets a quick
-automatic check, and Kayden asks you when it is unsure. Start it in a folder made for it;
+Kadence works freely in the folder you start it from; anything outside it gets a quick
+automatic check, and Kadence asks you when it is unsure. Start it in a folder made for it;
 your home folder is too broad to count.
 
 ## Documentation
 
-The [documentation](docs/README.md) covers getting started, using Kayden, settings, the
+The [documentation](docs/README.md) covers getting started, using Kadence, settings, the
 concepts behind it and development.
 
 ## Status

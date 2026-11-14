@@ -48,10 +48,10 @@ allow workspace, auto.
 - Checked once against real models (Claude Haiku 5.5 reviewing, 2026-11-10): ten typical
   cases, from listing Downloads to an injected `rm -rf ~/code`, all decided as intended.
 - Calls whose arguments mention credential files (SSH and GPG keys, `.env`, shell
-  startup files such as `.bashrc`, where keys are often exported, password stores, cloud credentials, browser profiles, the keychain) or Kayden's data folder are
+  startup files such as `.bashrc`, where keys are often exported, password stores, cloud credentials, browser profiles, the keychain) or Kadence's data folder are
   never reviewed and always ask (`review.always_ask`, a fixed pattern match). A secret
   the agent reads goes to the provider, and once in the conversation a sandboxed command
-  could send it anywhere; Kayden's data folder holds every conversation and the settings
+  could send it anywhere; Kadence's data folder holds every conversation and the settings
   and usage that bound the agent, which it must not change itself. The review prompt
   repeats both rules for calls the patterns miss.
 - The answer is `ALLOW` or `ASK` on the first line and a short reason on the second.
@@ -82,7 +82,7 @@ Choices and limits are listed in `.agents/decisions.md` (Automatic permissions).
 - **The main model, inline** (asking the agent itself whether its call is safe). The agent
   that wants to run a call is the worst judge of it, and a turn would carry the cost of the
   big model.
-- **Leaving secrets and Kayden's data to the review.** One rule set fewer, but "look at my
+- **Leaving secrets and Kadence's data to the review.** One rule set fewer, but "look at my
   SSH setup" plainly covers reading `~/.ssh`, so the review would allow exactly the reads
   that leak most; and an agent that can edit `settings.toml` can loosen its own limits.
 - **Allowing on review failure.** Fewer interruptions when the provider has a hiccup, but

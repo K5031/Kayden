@@ -1,9 +1,9 @@
-# Kayden
+# Kadence
 
 Modular AI agent application. Read before coding:
-- `PHILOSOPHY.md`: where Kayden is going: the base unit of a fleet (KFM) that works without supervision.
-- `SPEC.md`: product requirements: what Kayden does.
-- `src/kayden/api.py`: normative module contracts (Core, Memory, Tools, Frontend, RuntimeAPI). Spec section 16 summarizes the behavior it cannot express.
+- `PHILOSOPHY.md`: where Kadence is going: the base unit of a fleet (KFM) that works without supervision.
+- `SPEC.md`: product requirements: what Kadence does.
+- `src/kadence/api.py`: normative module contracts (Core, Memory, Tools, Frontend, RuntimeAPI). Spec section 16 summarizes the behavior it cannot express.
 
 ## Stack
 Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, ruff. SQLite (stdlib, FTS5) for the Memory archive.
@@ -64,7 +64,7 @@ Status: proposed | implemented | rejected — <one-line reason>
 - State current facts only. No "previously" or "no longer", no commit or PR history.
 
 ## Layout
-Each module is a folder named after it in the folder for its kind (`src/kayden/<kind>/<module>/`, `__init__.py` exports `factory`). Code shared by several modules of a kind sits in the kind folder, not in a module. See `docs/development.md#layout`.
+Each module is a folder named after it in the folder for its kind (`src/kadence/<kind>/<module>/`, `__init__.py` exports `factory`). Code shared by several modules of a kind sits in the kind folder, not in a module. See `docs/development.md#layout`.
 
 ## Code style
 Professional, typed, concise. Comments only where needed to understand the code.

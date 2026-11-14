@@ -1,6 +1,6 @@
-Kayden is designed to be a base agent to be used by the KFM (Kayden Fleet Manager).
+Kadence is designed to be a base agent to be used by the KFM (Kadence Fleet Manager).
 
-Within the fleet manager, Kayden units can be grouped into teams. In the context of a business, teams can include Marketing, Development, PR, HR, etc.
+Within the fleet manager, Kadence units can be grouped into teams. In the context of a business, teams can include Marketing, Development, PR, HR, etc.
 
 Each team can be linked to a supervising agent.
 
@@ -20,4 +20,4 @@ The goal of the KFM is to autonomously achieve grand, abstract tasks with respec
 
 Other than being set to a single goal, a human can set KFM to a "duty", such as simply "be the marketing team". In such a scenario, the fleet shall create tasks for itself and continue operating autonomously, indefinitely, until human instruction or interruption. Actions with real-world effect (publishing, payments, outbound messages) require human approval unless explicitly granted. The goal is to have the fleet be completely capable of achieving similar impacts as a real marketing, or any other function, team.
 
-Due to the requirements above, we can conclude that a Kayden instance must be able to be spawned in a headless way. It must have autonomous operating capabilities that allow it to operate indefinitely, or definitely, depending on the mode it's set in. It should also be able to report its work back to the instance which spawned it, respect the budgets it is given, and be paused or killed at any time. However, the communication between an agent and its supervisor does not have to be direct. It can be bridged by the KFM (this may be the better design choice).
+Due to the requirements above, we can conclude that a Kadence instance must be able to be spawned in a headless way. It must have autonomous operating capabilities that allow it to operate indefinitely, or definitely, depending on the mode it's set in. It should also be able to report its work back to the instance which spawned it, respect the budgets it is given, and be paused or killed at any time. However, the communication between an agent and its supervisor does not have to be direct. It can be bridged by the KFM (this may be the better design choice).

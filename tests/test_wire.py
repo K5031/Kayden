@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Budget,
     ConversationInfo,
@@ -39,7 +39,7 @@ from kayden.api import (
     Usage,
     UsageSnapshot,
 )
-from kayden.frontends.wire import from_json, to_json
+from kadence.frontends.wire import from_json, to_json
 
 CALL = ToolCall("c1", "search", {"type": "Text", "query": "x"})  # arguments stay a dict
 MESSAGE = Message("m1", Role.ASSISTANT, (

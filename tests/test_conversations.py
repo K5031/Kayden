@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     PROFILE,
     AgentState,
     ConversationDeleted,
@@ -227,7 +227,7 @@ async def test_users_title_is_never_overwritten(make: Any) -> None:
 
 
 async def test_failed_title_call_changes_nothing(make: Any) -> None:
-    from kayden.api import CoreError
+    from kadence.api import CoreError
 
     h: Harness = await make(core=titling_core(CoreError("down")),
                             memory_kw={"auto_title": True})
@@ -345,7 +345,7 @@ async def test_leaving_an_unused_chat_leaves_nothing_behind(make):
 
 
 async def test_naming_a_new_chat_or_giving_it_a_duty_stores_it(make):
-    from kayden.api import Budget, Duty
+    from kadence.api import Budget, Duty
 
     h: Harness = await make(budget=Budget(max_cost_usd=5.0))
     named = await h.start()

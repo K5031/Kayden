@@ -1,6 +1,6 @@
 # Agent Note: Memory like Claude Code
 
-Status: implemented — a second Memory module, `kayden.memory.files`, keeps long-term memory as Claude Code does: a folder of Markdown files per project, written by the agent itself
+Status: implemented — a second Memory module, `kadence.memory.files`, keeps long-term memory as Claude Code does: a folder of Markdown files per project, written by the agent itself
 
 Sits beside [Memory as notes](2026-11-10-memory-notes.md), which stays the built-in Memory.
 
@@ -8,7 +8,7 @@ Sits beside [Memory as notes](2026-11-10-memory-notes.md), which stays the built
 
 The built-in Memory keeps a profile and topic notes in SQLite, written mostly by a save
 pass that a light model runs after every answer. In use it kept the wrong things: a note
-on the Kayden project that repeated what the repository says, plus news of the day's work.
+on the Kadence project that repeated what the repository says, plus news of the day's work.
 A light model reading one exchange cannot tell what is worth keeping.
 
 Claude Code keeps memory differently, and well: one Markdown file per fact, typed, with a
@@ -21,10 +21,10 @@ and swap it in by configuration, starting from an empty store.
 
 ### A module of its own
 
-`kayden.memory.files` (entry point `files`), chosen with
-`[memory] factory = "kayden.memory.files:factory"`. Its archive (messages, summaries,
+`kadence.memory.files` (entry point `files`), chosen with
+`[memory] factory = "kadence.memory.files:factory"`. Its archive (messages, summaries,
 search, conversation metadata) is the built-in one's, shared through the base class
-`SqliteArchive` in `kayden.memory.sqlite`, in its own file, `memory-files.db` (schema 1).
+`SqliteArchive` in `kadence.memory.sqlite`, in its own file, `memory-files.db` (schema 1).
 `SqliteMemory`, the built-in Memory, is `SqliteArchive` plus notes, the profile and the
 save pass, in `memory.db` (schema 8). A subclass supplies what every request sees of
 long-term memory (`_long_term`), what follows an answer (`_after_answer`) and what
@@ -34,7 +34,7 @@ deleting a conversation also erases (`_erase`).
 
 - One memory folder per project, outside the project:
   `<data dir>/projects/<key>/memory/` (option `projects`), where `<key>` is the
-  project's absolute path with `/` turned into `-` (`-home-k5031-Projects-Kayden`), as
+  project's absolute path with `/` turned into `-` (`-home-k5031-Projects-Kadence`), as
   Claude Code names its project folders. The project is the git repository the
   conversation's work folder is in, the main one when that is a worktree, so every folder
   and worktree of a repository shares one memory; outside a repository it is the work
@@ -73,11 +73,11 @@ is in the conversation itself (its memory calls), and the start of every request
 same, so a provider's prompt cache stays valid. It is read again when the conversation's
 rolling summary changes, since the prompt changes then anyway. A change made elsewhere
 (the Memory window, another conversation) reaches an open conversation only then, or when
-Kayden starts again.
+Kadence starts again.
 
 ### The agent's tool
 
-Claude Code writes memory with its ordinary file tools. Kayden's file tools belong to the
+Claude Code writes memory with its ordinary file tools. Kadence's file tools belong to the
 Tools module, and modules never reach into each other's storage, so this Memory offers one
 tool on its folder, `memory`, with the commands of Anthropic's memory tool, which Claude
 models know: `view`, `create`, `str_replace`, `insert`, `delete`, `rename`. Paths are
@@ -155,6 +155,6 @@ emptied (the built-in profile), so frontends no longer know the profile's title.
   replaced one sentence.
 - An index left over its limit keeps its tail on disk but out of every conversation, until
   the agent rewrites it.
-- Memory is per project: what Kayden learns in one project is not seen in another. A
+- Memory is per project: what Kadence learns in one project is not seen in another. A
   project is a whole repository, so a chat in a subfolder or a worktree shares its memory.
-- The files can be read and edited outside Kayden. Their edits keep no revisions.
+- The files can be read and edited outside Kadence. Their edits keep no revisions.

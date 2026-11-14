@@ -10,7 +10,7 @@ import openai
 import pytest
 from openai import AsyncOpenAI
 
-from kayden.api import (
+from kadence.api import (
     InferenceRequest,
     InstancePaths,
     Message,
@@ -25,8 +25,8 @@ from kayden.api import (
     Usage,
     UsageReport,
 )
-from kayden.core._common import ModelConfig
-from kayden.core.openai_compat import OpenAICompatCore, factory
+from kadence.core._common import ModelConfig
+from kadence.core.openai_compat import OpenAICompatCore, factory
 from tests.conformance.core_suite import (
     WEATHER_TOOL,
     CoreDriver,
@@ -226,7 +226,7 @@ async def test_list_models_context_windows(oai: OpenAIDriver) -> None:
 
 
 async def test_factory(tmp_path) -> None:
-    from kayden.api import InstancePaths
+    from kadence.api import InstancePaths
 
     core = factory({"base_url": "http://localhost:1/v1",
                     "models": {"m": {"context_window": 8192}}}, InstancePaths(tmp_path))
@@ -456,7 +456,7 @@ async def test_deepseek_requires_its_own_key(tmp_path, monkeypatch) -> None:
 
 async def test_key_from_the_keychain(monkeypatch, keychain) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    keychain.store[("kayden", "DEEPSEEK_API_KEY")] = "from-keychain"
+    keychain.store[("kadence", "DEEPSEEK_API_KEY")] = "from-keychain"
     core = OpenAICompatCore(profile="deepseek")
     assert core._client.api_key == "from-keychain"
     await core.aclose()
@@ -534,7 +534,7 @@ async def test_stock_profile_still_uses_the_openai_environment(monkeypatch) -> N
 
 # ── Live (opt-in) ────────────────────────────────────────────────────────
 
-LIVE = os.environ.get("KAYDEN_LIVE_TESTS") == "1" and bool(os.environ.get("KAYDEN_OPENAI_MODEL"))
+LIVE = os.environ.get("KADENCE_LIVE_TESTS") == "1" and bool(os.environ.get("KADENCE_OPENAI_MODEL"))
 
 
 class OpenAILiveDriver(CoreDriver):
@@ -542,8 +542,8 @@ class OpenAILiveDriver(CoreDriver):
     resends_reasoning = False
 
     def __init__(self) -> None:
-        self.core = OpenAICompatCore(base_url=os.environ.get("KAYDEN_OPENAI_BASE_URL"))
-        self.model = os.environ["KAYDEN_OPENAI_MODEL"]
+        self.core = OpenAICompatCore(base_url=os.environ.get("KADENCE_OPENAI_BASE_URL"))
+        self.model = os.environ["KADENCE_OPENAI_MODEL"]
 
     def text_turn(self) -> tuple[InferenceRequest, Expect]:
         return self.request([user("Reply with exactly: hello")]), Expect()
@@ -553,7 +553,7 @@ class OpenAILiveDriver(CoreDriver):
         return self.request([user(prompt)]), Expect()
 
 
-@pytest.mark.skipif(not LIVE, reason="set KAYDEN_LIVE_TESTS=1 and KAYDEN_OPENAI_MODEL")
+@pytest.mark.skipif(not LIVE, reason="set KADENCE_LIVE_TESTS=1 and KADENCE_OPENAI_MODEL")
 class TestOpenAICompatLive(CoreSuite):
     @pytest.fixture
     async def driver(self):
@@ -562,7 +562,7 @@ class TestOpenAICompatLive(CoreSuite):
         await driver.core.aclose()
 
 
-LIVE_DEEPSEEK = os.environ.get("KAYDEN_LIVE_TESTS") == "1" and bool(
+LIVE_DEEPSEEK = os.environ.get("KADENCE_LIVE_TESTS") == "1" and bool(
     os.environ.get("DEEPSEEK_API_KEY"))
 
 
@@ -572,7 +572,7 @@ class DeepSeekLiveDriver(CoreDriver):
 
     def __init__(self) -> None:
         self.core = OpenAICompatCore(profile="deepseek")
-        self.model = os.environ.get("KAYDEN_DEEPSEEK_MODEL", "deepseek-flash")
+        self.model = os.environ.get("KADENCE_DEEPSEEK_MODEL", "deepseek-flash")
 
     def request(self, messages, **kwargs) -> InferenceRequest:
         kwargs.setdefault("max_output_tokens", 2000)  # thinking counts against the limit
@@ -589,7 +589,7 @@ class DeepSeekLiveDriver(CoreDriver):
         return self.request([user("What is 17 * 23? Answer with the number.")]), Expect()
 
 
-@pytest.mark.skipif(not LIVE_DEEPSEEK, reason="set KAYDEN_LIVE_TESTS=1 and DEEPSEEK_API_KEY")
+@pytest.mark.skipif(not LIVE_DEEPSEEK, reason="set KADENCE_LIVE_TESTS=1 and DEEPSEEK_API_KEY")
 class TestDeepSeekLive(CoreSuite):
     @pytest.fixture
     async def driver(self):

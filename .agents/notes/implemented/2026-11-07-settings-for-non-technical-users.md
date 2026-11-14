@@ -4,8 +4,8 @@ Status: implemented — the runtime owns user settings; every frontend changes t
 
 ## Problem
 
-Kayden should be usable by people who never open a terminal. Without this, every setting
-lives in `~/.kayden/config.toml`, which names Python factories and nested option tables,
+Kadence should be usable by people who never open a terminal. Without this, every setting
+lives in `~/.kadence/config.toml`, which names Python factories and nested option tables,
 and every API key must be exported as an environment variable in a shell profile. A user who
 wants a different provider, model, spending limit, permission level or set of instructions
 has to edit files and restart, and no frontend can offer a settings screen.
@@ -70,7 +70,7 @@ exported in a shell profile keep working.
 ### Persistence and startup
 
 `update_settings` merges the changed fields into `<data dir>/settings.toml`, replaced
-atomically; module choices go under `[modules]`. `kayden` builds the instance from
+atomically; module choices go under `[modules]`. `kadence` builds the instance from
 `config.toml`, then `settings.toml`, then command-line flags, each overriding the previous;
 `--show-config` notes when saved settings apply. A chosen module keeps `config.toml`'s
 options when it is the module named there, so switching back keeps them.
@@ -82,7 +82,7 @@ Code: `api.py` (`Settings`, `SettingsUpdate`, `ModuleChoice`, `ModuleInfo`,
 
 ## Alternatives considered
 
-- **A host layer above the runtime** (the grown `kayden` launcher) owning settings, keys
+- **A host layer above the runtime** (the grown `kadence` launcher) owning settings, keys
   and restarts, with a second Settings API handed to frontends. Keeps the runtime free of
   settings, but adds a layer and a second contract for every frontend. The runtime already
   persists state in the data directory, and `restart()` hands the launcher only what to

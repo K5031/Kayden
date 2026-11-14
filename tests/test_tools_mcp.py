@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from kayden.api import PERMISSION_CEILING_ENV, InstancePaths, ToolCall
-from kayden.tools.mcp import McpTools, ServerConfig, factory
+from kadence.api import PERMISSION_CEILING_ENV, InstancePaths, ToolCall
+from kadence.tools.mcp import McpTools, ServerConfig, factory
 from tests.conformance.tools_suite import RecordingContext
 from tests.fakes.mcp_server import build
 
@@ -47,7 +47,7 @@ async def test_no_call_is_confined(tools):
 
 
 async def test_a_server_that_fails_is_left_out():
-    module = McpTools({"gone": ServerConfig("gone", "kayden-no-such-command").target(),
+    module = McpTools({"gone": ServerConfig("gone", "kadence-no-such-command").target(),
                        "notes": build()})
     try:
         names = {s.name for s in await module.list_tools()}
@@ -63,7 +63,7 @@ def test_a_server_needs_a_command_or_url():
 
 async def test_a_command_server_gets_its_variables_and_the_ceiling(tmp_path, monkeypatch):
     monkeypatch.setenv(PERMISSION_CEILING_ENV, "ask")
-    monkeypatch.setenv("KAYDEN_TEST_SECRET", "leaked")
+    monkeypatch.setenv("KADENCE_TEST_SECRET", "leaked")
     module = factory({"servers": [{
         "name": "notes", "command": f"{sys.executable} -m tests.fakes.mcp_server",
         "env": {"GREETING": "hello"}}]}, InstancePaths(tmp_path))
@@ -71,7 +71,7 @@ async def test_a_command_server_gets_its_variables_and_the_ceiling(tmp_path, mon
         assert await module.list_tools()
         assert (await run(module, "mcp__notes__env", name="GREETING")).content == "hello"
         assert (await run(module, "mcp__notes__env", name=PERMISSION_CEILING_ENV)).content == "ask"
-        assert (await run(module, "mcp__notes__env", name="KAYDEN_TEST_SECRET")).content == (
-            "(unset)")  # only the safe default environment, not Kayden's
+        assert (await run(module, "mcp__notes__env", name="KADENCE_TEST_SECRET")).content == (
+            "(unset)")  # only the safe default environment, not Kadence's
     finally:
         await module.aclose()

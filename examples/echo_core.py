@@ -1,7 +1,7 @@
 """A minimal Core: a "model" that repeats what the user said, with no network.
 
 Use it with `[core] factory = "examples.echo_core:factory"` in config.toml; it lets
-Kayden run without an API key.
+Kadence run without an API key.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
-from kayden.api import (
+from kadence.api import (
     Completed,
     Core,
     CoreEvent,

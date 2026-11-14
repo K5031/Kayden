@@ -11,7 +11,7 @@ what is done and not done, one question, and buttons, the agent's pick first. A 
 either sends a reply or runs an action (commit, create a PR) directly, and typing something
 else still works. Its own ideas for later are separate cards.
 
-[Proposals](2026-11-11-proposals.md) are Kayden's separate cards: one tool call, Approve or
+[Proposals](2026-11-11-proposals.md) are Kadence's separate cards: one tool call, Approve or
 Dismiss, pending while the agent works on. `ask_for_help` asks a question but offered no
 answers to pick.
 
@@ -52,7 +52,7 @@ answers to pick.
   The Claude app keeps them apart too.
 - **A card after every working turn,** recap only when there is no decision, as the Claude
   app does. There the recap is the session's status in a sidebar of many sessions; in
-  Kayden the answer right above already says what was done, so the card would repeat it and
+  Kadence the answer right above already says what was done, so the card would repeat it and
   cost output tokens on every working turn.
 - **Replies only, no recap or actions** (`suggest_replies`). Smaller, but the user still
   scrolls back for what changed, and "Yes, push" costs a request in which the agent pushes.

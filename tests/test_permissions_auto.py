@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Budget,
     CoreError,
@@ -18,8 +18,8 @@ from kayden.api import (
     ToolStatus,
     Usage,
 )
-from kayden.runtime import RuntimeConfig
-from kayden.runtime.review import REVIEW_PROMPT
+from kadence.runtime import RuntimeConfig
+from kadence.runtime.review import REVIEW_PROMPT
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -167,12 +167,12 @@ def test_auto_is_the_default_and_the_loosest_level(tmp_path: Any) -> None:
     assert AUTO.clamp(workspace) is workspace and workspace.clamp(AUTO) is workspace
 
 
-async def test_credentials_and_kaydens_own_data_always_ask(make: Any) -> None:
+async def test_credentials_and_kadences_own_data_always_ask(make: Any) -> None:
     for argument, reason in [("cat ~/.ssh/id_ed25519", "keys or passwords"),
                              ("/home/u/project/.env", "keys or passwords"),
-                             ("secret-tool lookup service kayden", "keys or passwords"),
+                             ("secret-tool lookup service kadence", "keys or passwords"),
                              ("/home/u/.mozilla/firefox/x/logins.json", "keys or passwords"),
-                             ("{data_dir}/settings.toml", "Kayden's own data"),
+                             ("{data_dir}/settings.toml", "Kadence's own data"),
                              ("cat ~/.bashrc", "keys or passwords"),
                              ("/home/u/.zshrc", "keys or passwords"),
                              ("grep KEY ~/.profile ~/.bash_profile", "keys or passwords"),
@@ -202,8 +202,8 @@ async def test_ordinary_paths_are_still_reviewed(make: Any) -> None:
     assert len(reviewer.requests) == 1 and h.tools.started == ["o"]
 
 
-def test_the_review_rules_name_secrets_and_kaydens_data() -> None:
-    assert "passwords" in REVIEW_PROMPT and "Kayden's own" in REVIEW_PROMPT
+def test_the_review_rules_name_secrets_and_kadences_data() -> None:
+    assert "passwords" in REVIEW_PROMPT and "Kadence's own" in REVIEW_PROMPT
 
 
 async def test_the_reviewer_judges_the_command_not_its_description(make: Any) -> None:
@@ -217,7 +217,7 @@ async def test_the_reviewer_judges_the_command_not_its_description(make: Any) ->
 
 
 async def test_the_reviewer_sees_a_tools_own_description_argument(make: Any) -> None:
-    from kayden.api import ToolSpec
+    from kadence.api import ToolSpec
 
     reviewer = Reviewer("ALLOW\nFine.")
     h = await auto(make, reviewer, Step(calls=[call("ticket", {

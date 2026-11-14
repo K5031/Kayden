@@ -1,12 +1,12 @@
 # Agent Note: Working guidance in the prompt
 
-Status: proposed — a built-in page on how Kayden works, always in the system prompt, with the user's own prompt after it and each trade's guidance in a skill
+Status: proposed — a built-in page on how Kadence works, always in the system prompt, with the user's own prompt after it and each trade's guidance in a skill
 
 ## Problem
 
-Kayden's built-in system prompt is 509 characters: who it is, how background operations
+Kadence's built-in system prompt is 509 characters: who it is, how background operations
 work, and that `recall` exists. A prompt the user writes replaces it, so the user's
-Kayden runs on one sentence of persona. What the agent knows about how to work comes from
+Kadence runs on one sentence of persona. What the agent knows about how to work comes from
 the tool descriptions, the Memory module's rules and the model's own habits.
 
 Guidance that belongs to no single tool has nowhere to live. Rules added on 2026-11-12
@@ -34,20 +34,20 @@ Three layers, so that the agent stays general and puts its specialisation on:
   a trade goes in it: no rules about diffs or tests.
 - **Nothing is hardcoded for a case** (the user's rule: it is brittle and does not
   generalize). What an agent should do is reached for in this order: the model's own
-  judgment; structure, so that the right behaviour falls out of how Kayden works; one
+  judgment; structure, so that the right behaviour falls out of how Kadence works; one
   general principle, stated once; never a rule for a specific case or a patch for one
   observed mistake. A sentence that makes up for what a model cannot yet do goes stale
   when the model improves, and nobody removes it.
 - The user's prompt is added after the base page instead of replacing it.
 - Coding guidance becomes the first trade skill.
-- The base page is written for Kayden's own tools and tested with real models, the
+- The base page is written for Kadence's own tools and tested with real models, the
   smaller ones too, since it has to work across providers.
 
 ## Alternatives considered
 
 - **Copy an industry prompt (Codex's).** It is written for another agent's tools (its
   patch tool, sandbox modes, approval rules), tuned to another model family, and it is a
-  coding prompt, while Kayden is a general agent and a fleet's teams are marketing or
+  coding prompt, while Kadence is a general agent and a fleet's teams are marketing or
   support. Its structure and topics are worth taking; its text is not.
 - **One long general prompt that also carries coding.** What Claude Code does, and right
   for a tool that only codes. For a general agent every rule is paid for on every request

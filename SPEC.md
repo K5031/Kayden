@@ -1,15 +1,15 @@
-Kayden v1 — Specification
+Kadence v1 — Specification
 Status: Product spec with module contracts (Draft 3.0); implementation choices are recorded in .agents/decisions.md and open contract issues in .agents/contract-issues.md
 Purpose: Define the product, runtime responsibilities, module boundaries, and observable behavior before delegating implementation to coding agents.
-Repository: this repository is the v1 implementation; the previous Kayden repository is kept as a reference.
+Repository: this repository is the v1 implementation; the previous Kadence repository is kept as a reference.
 
 1. Product Vision
-Kayden is a complete, modular AI agent application, not a general-purpose framework for developers to assemble their own agent runtimes.
+Kadence is a complete, modular AI agent application, not a general-purpose framework for developers to assemble their own agent runtimes.
 It provides persistent conversations the user can start, continue, curate and delete. In every conversation the agent reasons, uses tools, ends its turn, and resumes by itself when background work it started finishes.
 The user controls what the agent sees: fresh starts at any time, continuity when asked for, and long-term memory the user can see and change.
-Users may run multiple independent Kayden instances concurrently as separate operating-system processes, with their own configurations, memory, and budgets.
+Users may run multiple independent Kadence instances concurrently as separate operating-system processes, with their own configurations, memory, and budgets.
 A conversation can be given a duty: standing work it plans and carries on by itself until a person ends it (4.4).
-These agents can collaborate using ordinary tools. Kayden does not implement a bespoke multi-agent organization framework: PHILOSOPHY.md describes the fleet manager (KFM) meant to be built on Kayden instances as a separate program, and duties are what a Kayden instance provides toward it.
+These agents can collaborate using ordinary tools. Kadence does not implement a bespoke multi-agent organization framework: PHILOSOPHY.md describes the fleet manager (KFM) meant to be built on Kadence instances as a separate program, and duties are what a Kadence instance provides toward it.
 Core principle: The runtime owns orchestration; modules provide capabilities; frontends control presentation.
 Engineering priorities:
 User-visible utility.
@@ -19,7 +19,7 @@ Minimal necessary abstractions.
 Product requirements before architecture.
 Proven solutions over speculative engineering.
 2. Runtime and Module Architecture
-The Runtime is Kayden's built-in, non-replaceable agent orchestrator.
+The Runtime is Kadence's built-in, non-replaceable agent orchestrator.
 It owns:
 Conversation orchestration.
 Waking up when background work finishes.
@@ -29,7 +29,7 @@ Execution state and cancellation.
 Budget enforcement.
 Module coordination.
 2.1 Four Module APIs
-Kayden v1 has four Python module APIs.
+Kadence v1 has four Python module APIs.
 Module
 Responsibility
 Core
@@ -41,20 +41,20 @@ Tool declarations, execution, parameters, results, status, and cancellation
 Frontend
 User input, output, controls, permissions UI, status display, and presentation
 
-Core is Kayden's model component. It is not a separate orchestration system.
+Core is Kadence's model component. It is not a separate orchestration system.
 There are no separate Conversation, Input, Output, Budget, or Storage modules.
 2.2 Module Development
 Module developers implement predefined Python API contracts.
 They may choose their internal technologies, including React, Qt, subprocesses, or other languages.
 The runtime already knows how supported module APIs interact.
-Kayden does not require:
+Kadence does not require:
 Arbitrary module wiring.
 Generic contribution graphs.
 Universal lifecycle hooks.
 Replaceable orchestration runtimes.
-Only information necessary for runtime integration belongs in Kayden's module APIs.
+Only information necessary for runtime integration belongs in Kadence's module APIs.
 APIs may be sophisticated when actual requirements justify it.
-Detailed Python signatures and data structures are defined in section 16 and src/kayden/api.py.
+Detailed Python signatures and data structures are defined in section 16 and src/kadence/api.py.
 3. Frontend Architecture
 Frontends may be terminal interfaces, desktop applications, web applications, or other interaction systems.
 Frontend developers control:
@@ -63,7 +63,7 @@ Placement and visibility of controls.
 Navigation and interaction patterns.
 UI frameworks.
 Rendering and presentation.
-The frontend communicates with Kayden through its supported runtime API.
+The frontend communicates with Kadence through its supported runtime API.
 A frontend may offer Tools modules of its own, offered after every other module's. The desktop app and the terminal app host sub-sessions this way: the agent hands a self-contained task to a child instance it starts headless, in its own data folder with the parent's settings, the conversation's work folder and a spending limit where the user or the agent sets one; the child's report or question is the call's result. The frontend lists each conversation's children and opens one like a conversation of its own, through a RuntimeAPI over the child's channel: the user sees its work as it happens, talks to it and answers its permission prompts. Working children stop with the parent; their records keep them listed, and opening one that is not running starts it again on its conversation.
 A headless frontend lets another program drive an instance: JSON-RPC 2.0 over the process's stdin and stdout, each request a runtime command, each runtime event a notification. Permission prompts and the agent's questions go to that program. Launch options can start an instance on a duty.
 It can submit messages, access conversation information, select models, receive execution updates, present permission requests, and control agent execution.
@@ -72,7 +72,7 @@ Tools exist primarily for the model, not for the user interface.
 Tool developers provide functionality and metadata such as names, descriptions, and parameter schemas.
 They do not need to develop custom interfaces.
 Frontends may optionally display tool activity and results through their own presentation mechanisms.
-Kayden does not implement a generic UI framework or require tool-specific React components.
+Kadence does not implement a generic UI framework or require tool-specific React components.
 3.2 Trust Model
 Installed third-party modules are trusted software.
 A malicious frontend could misrepresent user actions or permission decisions.
@@ -133,7 +133,7 @@ After Stop, results are retained until user initiation.
 The runtime does not need to invoke the model separately for every individual tool completion. A conversation with a duty is the exception: it wakes on the first completion, so a tool waiting for an outside event can wake it while other work runs (4.4).
 The wake set is every operation outstanding when the cycle ends, including operations from earlier turns. Operations that exceed their timeout end as timed out, so they cannot block the wake-up forever. If results the model has not seen exist and nothing is outstanding, the next cycle starts immediately. This is checked when the agent goes idle.
 5.3 Stop Control
-Kayden provides one user-facing Stop action.
+Kadence provides one user-facing Stop action.
 There is no separate Pause control in v1.
 When Stop is requested:
 Stop initiating new inference and tool operations.
@@ -143,11 +143,11 @@ Disable automatic wake-ups.
 Preserve conversation and memory state.
 Report when outstanding operations have terminated.
 The frontend may display Stopping… while cancellation proceeds, without freezing its interface.
-If an operation cannot terminate promptly, Kayden must report the problem instead of hanging silently.
+If an operation cannot terminate promptly, Kadence must report the problem instead of hanging silently.
 After a grace period, calls that have not confirmed cancellation are abandoned: they are reported, recorded with an abandoned result stating they may still have effects, and the agent moves to Stopped. A late completion is logged and never appended. Messages sent while stopping are queued and start a cycle once stopped; messages queued before Stop are appended to the transcript when the agent reaches Stopped, and start nothing. Stop with nothing outstanding in Idle, Stopped or Failed is a no-op; with operations outstanding it performs a full Stop.
 Previously completed external actions may not be reversible.
 6. Tool Execution
-Kayden follows Codex-inspired long-running execution behavior.
+Kadence follows Codex-inspired long-running execution behavior.
 6.1 Short Operations
 Short-running tools return their results normally.
 6.2 Long-Running Operations
@@ -159,7 +159,7 @@ The model may inspect progress, poll again, perform other work, or request cance
 This gives the model the ability to investigate slow operations without requiring every tool to finish before inference can continue.
 6.3 Tool Batches
 Multiple independent tool calls may execute concurrently.
-If the model ends its turn while a batch is outstanding, Kayden waits for all operations outstanding then (section 5.2) to finish or otherwise terminate before issuing the batch-completion wake-up.
+If the model ends its turn while a batch is outstanding, Kadence waits for all operations outstanding then (section 5.2) to finish or otherwise terminate before issuing the batch-completion wake-up.
 6.4 Tool Failures
 Failed operations return errors rather than silently disappearing.
 Unresponsive tools must have an appropriate timeout, cancellation, or failure-handling path.
@@ -170,17 +170,17 @@ The agent may propose a tool call instead of making it, for work that is its own
 6.5.1 Plan
 Every conversation offers update_plan: for a task with several steps the agent writes its plan and marks steps doing and done as it works. Frontends show the plan as a checklist and do not show the update_plan calls as steps: in the conversation under the turn that wrote it (the desktop app, from the calls themselves, so it is there again after a restart), or while the agent works (the terminal app). When the agent ends a turn with steps open that wait for nothing (no due time, no duty, no background work), the runtime sends it back once with a notice to do them or close them. An open step that falls due wakes the agent. With a duty, as part of its schedule. Without one, as a reminder: once per step, not sooner than a minute after a turn ends, only while the conversation is open, and not for a step that fell due while the conversation was closed, which waits for the user as a duty does after a restart. Stop puts reminders off until the next message.
 6.6 Wrap-up card
-Skills are instructions for one kind of task, each a folder with a SKILL.md in Claude Code's format (YAML frontmatter with name and description, then the instructions): Kayden's own, the user's in the data directory's skills folder, and a project's in the work folder's .claude/skills, a later one replacing an earlier one of the same name. The runtime rereads them with every request, lists their names and descriptions in the system prompt, and while there are any offers the skill tool, which answers with a skill's instructions and the folder its files are in. A user message that starts with /name asks for that skill; frontends with commands of their own send it on when name is a skill (RuntimeAPI.skills). No skill runs by itself.
+Skills are instructions for one kind of task, each a folder with a SKILL.md in Claude Code's format (YAML frontmatter with name and description, then the instructions): Kadence's own, the user's in the data directory's skills folder, and a project's in the work folder's .claude/skills, a later one replacing an earlier one of the same name. The runtime rereads them with every request, lists their names and descriptions in the system prompt, and while there are any offers the skill tool, which answers with a skill's instructions and the folder its files are in. A user message that starts with /name asks for that skill; frontends with commands of their own send it on when name is a skill (RuntimeAPI.skills). No skill runs by itself.
 
 When a turn leaves the user a decision, the agent ends it by calling wrap_up alone as its last step: a question, up to three options with its recommendation first, and optionally a short recap of what is done and not done. The call ends the turn without another model request. An option is sent as an ordinary user message when clicked; at most one option may instead carry a tool call, which is validated and pending like a proposal (6.5): clicking it runs exactly that call, and its result wakes the agent. A user message withdraws that pending call first, without a separate wake-up. ask_for_help may carry replies too. Frontends show the newest such call as a card while no user message follows it; the user may close it or type anything else instead.
 7. Model Failures
-For transient provider failures, Kayden:
+For transient provider failures, Kadence:
 Retries a small configurable number of times.
 Uses backoff between retries.
 Stops execution if retries continue failing.
 Reports the failure to the user.
 Preserves conversation context and memory.
-Kayden must not silently switch to another model.
+Kadence must not silently switch to another model.
 Tool calling is mandatory for Core implementations in v1.
 No tool-less fallback is required.
 8. Memory Architecture
@@ -198,18 +198,18 @@ Forgetting policies.
 The runtime requests inference context from Memory and forwards new conversation and tool events to it.
 Memory implementation details remain internal to the Memory module.
 8.1 Memory Layers
-Kayden uses four memory components.
+Kadence uses four memory components.
 1. Recent Verbatim Context
 Recent conversation messages and tool interactions preserved in their original form for inference.
 2. Rolling Summary
 A compact representation of older conversation history.
 The summary has a fixed token budget and is automatically carried into subsequent inference requests.
 3. Long-Term Memory
-Important durable information maintained by the Memory module, as notes: a profile (who the user is, how they want answers) and one note per project, person or topic, each with a one-line description. Every request sees the profile and the notes' titles and descriptions; the model reads a note's text on demand with the read_note tool the Memory module offers, and writes or deletes notes with save_note and forget_note. After each answer, Memory saves what the exchange taught (maintain is called once more before the agent goes idle). The user can see and edit notes. Notes outlive the conversation that wrote them. An alternative Memory module that comes with Kayden keeps long-term memory as Claude Code does instead: one folder of Markdown files per project (a MEMORY.md index every request sees, one file per memory), written by the agent with a memory tool and shown to the user as notes, with no pass after an answer; it has its own archive.
+Important durable information maintained by the Memory module, as notes: a profile (who the user is, how they want answers) and one note per project, person or topic, each with a one-line description. Every request sees the profile and the notes' titles and descriptions; the model reads a note's text on demand with the read_note tool the Memory module offers, and writes or deletes notes with save_note and forget_note. After each answer, Memory saves what the exchange taught (maintain is called once more before the agent goes idle). The user can see and edit notes. Notes outlive the conversation that wrote them. An alternative Memory module that comes with Kadence keeps long-term memory as Claude Code does instead: one folder of Markdown files per project (a MEMORY.md index every request sees, one file per memory), written by the agent with a memory tool and shown to the user as notes, with no pass after an answer; it has its own archive.
 4. Permanent Verbatim Archive
 Original conversation messages and tool interactions are retained for historical retrieval until the user deletes their conversation.
 Information removed from active inference context is not deleted from the archive.
-The archive is append-only. The one exception is deletion the user explicitly asks for: deleting a conversation erases its messages, summaries, search index entries and metadata, so that the erased content is not recoverable from Kayden's store. Memory notes it wrote stay until the user deletes them, like any note. Deletion cannot reach copies outside Kayden's data directory, such as backups, nor what a model provider has already received.
+The archive is append-only. The one exception is deletion the user explicitly asks for: deleting a conversation erases its messages, summaries, search index entries and metadata, so that the erased content is not recoverable from Kadence's store. Memory notes it wrote stay until the user deletes them, like any note. Deletion cannot reach copies outside Kadence's data directory, such as backups, nor what a model provider has already received.
 8.2 Shared Memory Foundation
 All conversations use the same memory architecture, with configurable compaction policies, following Codex-inspired conversation persistence and context compaction.
 Long-term memory is one set of notes per instance, shared by every conversation, while individual conversation histories remain distinct.
@@ -256,7 +256,7 @@ Consolidation may occur during an authorized inference cycle or be deferred unti
 The recall tool, offered by the Memory module, searches the current conversation's archive, or with scope "all" every conversation that is not archived. Each hit is one message; the read_around tool shows a message with the messages before and after it, so the agent can see what a hit was answering. Both are read-only and never merge conversation histories.
 9. Budgets
 Budget management belongs to the runtime.
-Each Kayden instance has independent configuration and resource limits.
+Each Kadence instance has independent configuration and resource limits.
 Possible budget dimensions include:
 Token consumption.
 API cost.
@@ -273,7 +273,7 @@ Built-in tools do not count as tool calls. Budgets are checked before each infer
 A hard budget exhausted mid-stream cancels the inference immediately, and the agent fails with a budget error.
 Exhausting any dimension stops all chargeable execution, inference included. An exhausted duration budget also cancels running operations as Stop does; the agent then fails with a budget error once they have terminated or been abandoned. A budget belongs to the data directory, across all its conversations; usage lives in usage.json, which the user deletes, while no process runs there, to reset it. A model request that fails before streaming anything is not charged. start() and select_model refuse a model without prices when a cost budget is set.
 10. Multi-Instance Operation
-Multiple Kayden instances can run independently as separate operating-system processes.
+Multiple Kadence instances can run independently as separate operating-system processes.
 Each instance has its own:
 Runtime.
 Configuration.
@@ -285,31 +285,31 @@ Budgets.
 A crash in one instance should not directly terminate other instances.
 10.1 Instance Creation
 Instances are launched through ordinary application or OS mechanisms.
-An agent with authorized terminal access may launch another Kayden process. A program can launch and drive one through the headless frontend (section 3); the fleet manager in PHILOSOPHY.md is such a program, a separate project.
+An agent with authorized terminal access may launch another Kadence process. A program can launch and drive one through the headless frontend (section 3); the fleet manager in PHILOSOPHY.md is such a program, a separate project.
 No dedicated agent-spawning API is required.
 10.2 Instance Communication
 Agents communicate through ordinary available tools and external services.
-Kayden does not need:
+Kadence does not need:
 Dedicated agent-to-agent protocols.
 Shared memory databases.
 Centralized fleet management.
 Hardcoded organizational hierarchy.
 Runtime-specific multi-agent orchestration.
 10.3 Workforce Scenario
-A user may deploy independent Kayden instances with different responsibilities, such as:
+A user may deploy independent Kadence instances with different responsibilities, such as:
 Research lead.
 Research assistant.
 Software engineer.
 Routine task assistant.
-Organizational roles and ranks are not hardcoded into Kayden.
+Organizational roles and ranks are not hardcoded into Kadence.
 Capabilities and authority depend on each instance's configuration, model, tools, and permissions.
 10.4 Instance Safety
 Each instance owns its data directory. The runtime holds an OS-level lock on it, taken before any stored data is read or changed and released at shutdown; a second process opening the same directory fails immediately with an error naming the holder, and touches none of its data.
-A launched instance cannot be more permissive than its launcher. At startup the runtime exports its permission policy as a ceiling in its environment, and every instance clamps its own policy to the stricter of its configuration and any inherited ceiling. Strictness order: deny, ask, allow read-only, allow workspace, auto. The exported ceiling is the instance's effective policy, carried in the KAYDEN_PERMISSION_CEILING environment variable; tools that launch subprocesses must pass that variable through. Launched instances have their own independent budgets.
+A launched instance cannot be more permissive than its launcher. At startup the runtime exports its permission policy as a ceiling in its environment, and every instance clamps its own policy to the stricter of its configuration and any inherited ceiling. Strictness order: deny, ask, allow read-only, allow workspace, auto. The exported ceiling is the instance's effective policy, carried in the KADENCE_PERMISSION_CEILING environment variable; tools that launch subprocesses must pass that variable through. Launched instances have their own independent budgets.
 The ceiling is a guardrail against accidental or naive escalation, not a sandbox. It follows the trust model in section 3.2: an agent with arbitrary terminal access can defeat it.
 
 11. Persistence
-Kayden preserves conversation history, relevant agent state, summaries, and memory across application restarts.
+Kadence preserves conversation history, relevant agent state, summaries, and memory across application restarts.
 Previous conversations remain available for reopening, with their context and memory.
 In-flight tool processes are not required to survive application shutdown.
 Interrupted operations must not be falsely recorded as successful.
@@ -319,7 +319,7 @@ After a restart, a conversation opens idle with its context and memory restored 
 Scenario A — Replaceable Modules
 A developer replaces a Core, Memory, Tools, or Frontend implementation without modifying the runtime.
 Scenario B — Conversation
-A user starts a conversation, exchanges messages, invokes tools, closes Kayden, and reopens the preserved conversation.
+A user starts a conversation, exchanges messages, invokes tools, closes Kadence, and reopens the preserved conversation.
 Scenario C — Background Work
 An agent reasons, uses tools, ends its turn, and continues when its background work finishes.
 Scenario D — Long-Running Tools
@@ -327,19 +327,19 @@ A slow operation returns control to the model with its status. The model can ins
 Scenario E — Idle Batch Wake-Up
 Several tools run concurrently.
 The agent enters Idle.
-Kayden wakes the agent after the entire outstanding batch reaches terminal outcomes.
+Kadence wakes the agent after the entire outstanding batch reaches terminal outcomes.
 After Stop, automatic inference does not restart.
 Scenario F — Stop
 The user presses Stop during active inference or tool execution.
-Kayden requests cancellation, prevents further automatic activation, and preserves persistent state.
+Kadence requests cancellation, prevents further automatic activation, and preserves persistent state.
 Scenario G — Restart Persistence
-Kayden restarts and restores conversation history, memory, rolling summaries, and archived records.
+Kadence restarts and restores conversation history, memory, rolling summaries, and archived records.
 Scenario H — Historical Recall
 After repeated compactions, an agent can retrieve relevant original messages from its permanent archive.
 Scenario I — Recall Across Conversations
 An agent reads relevant information from the user's other conversations without changing them.
 Scenario J — Multi-Instance Workforce
-Three independently running Kayden instances have separate memory, configuration, and budgets.
+Three independently running Kadence instances have separate memory, configuration, and budgets.
 They coordinate work through ordinary tools.
 Scenario K — Model Failure
 Transient provider failures trigger limited retries.
@@ -347,7 +347,7 @@ Persistent failures terminate execution with a visible error, without automatica
 Scenario L — Budget Enforcement
 When a hard budget is exhausted, the runtime prevents further chargeable execution.
 13. Explicitly Out of Scope
-The following are not required for Kayden v1:
+The following are not required for Kadence v1:
 Replaceable agent runtimes.
 Arbitrary module-composition frameworks.
 Generic contribution meshes.
@@ -396,13 +396,13 @@ The storage formats and numeric defaults that are now decided are recorded in .a
 New decisions of this kind are recorded in the same log without reopening settled product requirements.
 
 16. Module API Contracts (Draft 3.0)
-Normative source: src/kayden/api.py (Python 3.12+, asyncio). Types and signatures live there, and so do the runtime guarantees in its module docstring (durability order, serialization, resume repair, validation, wrapping, turn boundary). This section records the rest of the behavior the code cannot express.
+Normative source: src/kadence/api.py (Python 3.12+, asyncio). Types and signatures live there, and so do the runtime guarantees in its module docstring (durability order, serialization, resume repair, validation, wrapping, turn boundary). This section records the rest of the behavior the code cannot express.
 
 16.1 Principles
 Modules are in-process Python objects. There is no wire protocol; a module may use subprocesses or sockets internally.
 All APIs are async. Cancellation is asyncio cancellation.
 Modules never call each other. The runtime is the only caller.
-Installed modules are Python entry points in the groups kayden.cores, kayden.memories, kayden.tools and kayden.frontends; an entry point's name is the module's id and its target the factory. Instance configuration names each module by id (chosen in the app) or as an import path "package.module:factory". The factory receives its configuration and the instance paths and returns the module. An instance has exactly one module of each kind; combining several tool providers is the Tools module's job.
+Installed modules are Python entry points in the groups kadence.cores, kadence.memories, kadence.tools and kadence.frontends; an entry point's name is the module's id and its target the factory. Instance configuration names each module by id (chosen in the app) or as an import path "package.module:factory". The factory receives its configuration and the instance paths and returns the module. An instance has exactly one module of each kind; combining several tool providers is the Tools module's job.
 Contracts evolve additively: optional fields, methods, events and block types. Draft 3.0 is a breaking exception: operating modes and activation policies left the contracts, since every implementation of them lives in this repository.
 v1 messages are text and tool blocks only. Images and audio can be added later as new block types.
 One agent per process (section 4.3).
@@ -421,7 +421,7 @@ The archive is append-only, full-fidelity and schema-versioned. Blocks are persi
 history returns the full transcript from the archive regardless of compaction, or the part before or after a message. The runtime uses it for reopening conversations and for resume repair.
 assemble is read-only, performs no inference, and always fits the token budget. Its messages are a suffix that starts at a user message, never splits a call from its result, and includes the newest message. A single oversized message is truncated in the assembled view only.
 maintain runs only inside an authorized inference cycle, so it can never restart the agent by itself. It also writes a seeded conversation's first summary and a title for an untitled conversation (light model; a failed title call changes nothing; a title that is set is never overwritten). It receives the current context window, a metered Completion, and returns whether it acted. The Completion raises BudgetExhausted or CoreError. A maintain failure becomes a failure event without changing the agent state. Archive writes and compaction state are atomic.
-search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one set of notes per store, shared by every conversation, or one per project for a module that keeps it per work folder (the folder argument of the notes methods). append is idempotent by message id. A user message may carry what the user attached (RuntimeAPI.send's files, each read into a block by the first Tools module that implements the optional Tools.attach, without a permission prompt since attaching is the user's act; with none, a file goes by its path alone): Image blocks, which Cores send as the provider's image content or, to a model without vision, as a line of text; Document blocks, a PDF with its extracted text, which a Core sends whole where the provider reads PDFs and as that text otherwise; and File blocks, a text file with its content or any other by its path alone, which Cores send as text. A tool may return pictures and PDFs with its text (ToolOutput.attachments, kept on the ToolResult): a Core sends them inside the tool result where the provider takes that (Anthropic), else an image in a user message after it and a PDF as its text; a result that arrives later, from a backgrounded call, names them in its text. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. A Memory module may offer tools of its own (recall, read_note, save_note and forget_note come with the built-in SQLite Memory); they run without prompts and outside the tool-call budget, since they touch only Kayden's memory. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive; save_duty, optional, stores a conversation's duty and plan the same way. Editing long-term memory (notes, save_note, delete_note) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
+search backs recall and search_archive, limited to a set of conversations or none. Queries are plain text. Long-term memory is one set of notes per store, shared by every conversation, or one per project for a module that keeps it per work folder (the folder argument of the notes methods). append is idempotent by message id. A user message may carry what the user attached (RuntimeAPI.send's files, each read into a block by the first Tools module that implements the optional Tools.attach, without a permission prompt since attaching is the user's act; with none, a file goes by its path alone): Image blocks, which Cores send as the provider's image content or, to a model without vision, as a line of text; Document blocks, a PDF with its extracted text, which a Core sends whole where the provider reads PDFs and as that text otherwise; and File blocks, a text file with its content or any other by its path alone, which Cores send as text. A tool may return pictures and PDFs with its text (ToolOutput.attachments, kept on the ToolResult): a Core sends them inside the tool result where the provider takes that (Anthropic), else an image in a user message after it and a PDF as its text; a result that arrives later, from a backgrounded call, names them in its text. Blocks are stored under stable type tags; unknown tags come back as opaque blocks. inspect is optional. A Memory module may offer tools of its own (recall, read_note, save_note and forget_note come with the built-in SQLite Memory); they run without prompts and outside the tool-call budget, since they touch only Kadence's memory. update_conversation changes conversation metadata (title, archived), which is not part of the append-only archive; save_duty, optional, stores a conversation's duty and plan the same way. Editing long-term memory (notes, save_note, delete_note) and delete_conversation are optional; the runtime reports a module without them, and frontends hide those controls. Erasure must leave no copy of the erased content in the store's files.
 
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.
@@ -429,7 +429,7 @@ A backgrounded call gets a placeholder result with status backgrounded; its outc
 Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
 stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps the agent waiting until it ends or the user writes.
-Every tool the runtime offers takes an optional step_summary argument: a few plain words the model writes about the call, which frontends show in place of the tool and its input. The runtime adds it to each schema and removes it before the Tools module sees the call; the transcript keeps it. The runtime's own tools (op_status, op_cancel, propose, suggest_replies, skill while there are skills, and with a duty or plan update_plan, ask_for_help and finish_goal) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules. Several Tools modules may run at once; MCP servers the user adds in the settings run as one more (each a command Kayden starts or a URL, their tools named mcp__<server>__<tool>, never confined, started with the next start, their variable values kept in the keychain). A Core may offer tools its provider runs during the request (Claude's web search); the runtime never runs, gates or counts them, and each use is recorded in the answer. Tools are offered in order: the runtime's, then Memory's, then the Core's, then each Tools module's; a name already offered is dropped from a later module, and each call goes to the module that offered it.
+Every tool the runtime offers takes an optional step_summary argument: a few plain words the model writes about the call, which frontends show in place of the tool and its input. The runtime adds it to each schema and removes it before the Tools module sees the call; the transcript keeps it. The runtime's own tools (op_status, op_cancel, propose, suggest_replies, skill while there are skills, and with a duty or plan update_plan, ask_for_help and finish_goal) have schemas defined in api.py, are never gated by permissions, and cannot be redeclared by modules. Several Tools modules may run at once; MCP servers the user adds in the settings run as one more (each a command Kadence starts or a URL, their tools named mcp__<server>__<tool>, never confined, started with the next start, their variable values kept in the keychain). A Core may offer tools its provider runs during the request (Claude's web search); the runtime never runs, gates or counts them, and each use is recorded in the answer. Tools are offered in order: the runtime's, then Memory's, then the Core's, then each Tools module's; a name already offered is dropped from a later module, and each call goes to the module that offered it.
 Results are plain strings. Frontends may parse formats they know.
 Tools that launch subprocesses pass the permission ceiling variable through unmodified; they may leave out other variables, such as secrets from sandboxed commands.
 use_folder is optional: the runtime calls it whenever it opens a conversation, with that conversation's work folder, before any of its calls. A module without it has one fixed folder, and conversations cannot choose another.
@@ -439,7 +439,7 @@ A Frontend implements run(runtime) and declares whether it can answer permission
 The valid commands per state are tabulated in api.py. The user can also cancel a single running operation. The runtime appends exactly one tool message per turn, directly after the assistant message. start may be called again only when no operations are outstanding.
 Recovery for a late-attaching frontend: subscribe, take the snapshot, drop events at or below its sequence number, load history, and de-duplicate by message id. Subscriber queues are bounded.
 send during a running cycle or while stopping queues the message until the next turn boundary. A queued message is held in memory until it is appended to the transcript, at the next turn boundary, when the agent reaches Stopped, or at graceful shutdown; a crash before then loses it. MessageQueued is not a durability promise: only MessageCommitted is.
-Frontends read and change user settings through settings() and update_settings(), documented in api.py. The built-in frontends offer the choice of AI provider and Tools module, not of frontend: each launcher starts its own (kayden the terminal app, kayden-desktop and the app menu the desktop app), unless the saved settings or the configuration name another. Runtime settings, which the runtime reads while running (model, maintenance model, budget, permissions, system prompt, the folder for new conversations), apply live. Module settings, which are only passed to module factories (which module of each kind, the API key), are saved at once and apply at the next start; restart() starts the instance again with them, and Restart now may bring up a frontend of another kind (terminal to window) where it can. Other module options stay in the configuration file. When the modules cannot be built, the frontend still runs and shows the settings with the error. Frontends must ask the user to confirm before loosening permissions or raising a budget limit, and before switching Memory. The model is selectable at any time. Conversations can be renamed, archived and deleted, and long-term memory notes added, edited and deleted, in any state; each change emits an event. Deleting the open conversation is refused, and frontends must ask the user to confirm a deletion, saying it cannot be undone.
+Frontends read and change user settings through settings() and update_settings(), documented in api.py. The built-in frontends offer the choice of AI provider and Tools module, not of frontend: each launcher starts its own (kadence the terminal app, kadence-desktop and the app menu the desktop app), unless the saved settings or the configuration name another. Runtime settings, which the runtime reads while running (model, maintenance model, budget, permissions, system prompt, the folder for new conversations), apply live. Module settings, which are only passed to module factories (which module of each kind, the API key), are saved at once and apply at the next start; restart() starts the instance again with them, and Restart now may bring up a frontend of another kind (terminal to window) where it can. Other module options stay in the configuration file. When the modules cannot be built, the frontend still runs and shows the settings with the error. Frontends must ask the user to confirm before loosening permissions or raising a budget limit, and before switching Memory. The model is selectable at any time. Conversations can be renamed, archived and deleted, and long-term memory notes added, edited and deleted, in any state; each change emits an event. Deleting the open conversation is refused, and frontends must ask the user to confirm a deletion, saying it cannot be undone.
 Permission policy is auto (the default), allow workspace, allow read-only, ask, or deny, with the exact meaning documented in api.py. Under allow workspace, calls the Tools module reports as confined to its work folder run without a prompt and every other call prompts; a Tools module that cannot tell confines nothing. Under auto, confined calls run too, and every other call is first reviewed by one metered request to the maintenance model that sees only the text of the user's messages and the call; a clear allow runs it, anything else (a failed review included) prompts with the reviewer's reason. The built-in Tools confine file calls by path and shell commands with a sandbox (bubblewrap) in which only the work folder is writable and home directories are hidden; a command the model marks unsandboxed prompts. Their web search and page reading touch nothing on the computer and are confined; page reading refuses local and private network addresses. A work folder that is or contains the home directory confines nothing. Grants are once or per conversation, in memory only; a conversation grant given for a confined call covers that tool's confined calls only, one given for a call that can reach outside covers all of its calls. Calls that need no prompt start immediately; while any prompt is open the state is awaiting permission and other operations keep running. Denied calls get a refused result. Resolution is first-wins. A barrier call's permission prompt opens when its turn comes, so prompts for mutating calls open one at a time in call order.
 A frontend that cannot answer prompts is never sent any; calls that would prompt are refused.
 
@@ -450,10 +450,10 @@ Each instance writes a JSONL event log of runtime decisions to its data director
 Graceful shutdown cancels running calls. Only a crash produces interrupted results.
 
 Final Product Definition
-Kayden is a modular AI agent application whose runtime provides complete conversation orchestration.
+Kadence is a modular AI agent application whose runtime provides complete conversation orchestration.
 Core provides model intelligence.
 Memory provides continuity.
 Tools provide executable capabilities.
 Frontend provides the user experience.
-Independent Kayden instances can operate and collaborate using ordinary tools.
-Kayden's value lies in being a useful, reliable AI agent—not in requiring developers to construct their own agent runtime.
+Independent Kadence instances can operate and collaborate using ordinary tools.
+Kadence's value lies in being a useful, reliable AI agent—not in requiring developers to construct their own agent runtime.

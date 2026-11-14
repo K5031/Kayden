@@ -4,11 +4,11 @@ Status: proposed — a PySide6 (Qt Widgets) frontend on a qasync event loop, pac
 
 ## Problem
 
-Kayden is meant for people who never open a terminal, and the user chose a desktop app as
+Kadence is meant for people who never open a terminal, and the user chose a desktop app as
 the first graphical frontend, before any web frontend
 ([settings note](../implemented/2026-11-07-settings-for-non-technical-users.md)). Today
-the only frontend is the Textual TUI. Using Kayden means installing Python and uv, running
-`kayden` from a shell in the folder to work in, and reading a terminal transcript. Settings
+the only frontend is the Textual TUI. Using Kadence means installing Python and uv, running
+`kadence` from a shell in the folder to work in, and reading a terminal transcript. Settings
 already live in the runtime (`RuntimeAPI.settings()` / `update_settings()`), so a frontend
 can offer them; what is missing is an app a person can download, open by double-clicking,
 set up by pasting an API key, and chat with.
@@ -40,35 +40,35 @@ main thread.
   with releases every few weeks and Python 3.10 to 3.15 supported. Qt widgets look native
   on Windows and macOS and adopt the platform style on Linux. They expose UI Automation,
   NSAccessibility and AT-SPI to screen readers.
-- **Licensing.** PySide6 is LGPL-3.0, which is compatible with Kayden's MIT license when Qt
+- **Licensing.** PySide6 is LGPL-3.0, which is compatible with Kadence's MIT license when Qt
   is linked dynamically. Bundles ship Qt as separate shared libraries plus its license
   notices, never as one static file. qasync is BSD-2-Clause.
 
 ### Launching: a desktop entry point
 
-The `kayden` launcher calls `asyncio.run` and only then loads the frontend, so a frontend
+The `kadence` launcher calls `asyncio.run` and only then loads the frontend, so a frontend
 module cannot choose the event loop. That is wrong for any GUI toolkit, whose loop must be
 the one that runs. The desktop app therefore gets its own launcher,
-`kayden.window`, the window launcher (what the bundle runs; `kayden` hands over to it). It does the following:
+`kadence.window`, the window launcher (what the bundle runs; `kadence` hands over to it). It does the following:
 
-1. Reads `config.toml` and `settings.toml` with the same `load_config` as `kayden`.
+1. Reads `config.toml` and `settings.toml` with the same `load_config` as `kadence`.
 2. Uses the desktop frontend factory instead of the configured frontend.
-3. Sets the Tools root to `~/Kayden` when neither file sets a work folder
+3. Sets the Tools root to `~/Kadence` when neither file sets a work folder
    (`load_config(default_root=...)`). A double-clicked app's working directory is
    meaningless, often `/`, and the root must never be that.
 4. Runs `asyncio.run(run_instance(config), loop_factory=qasync.QEventLoop)` under a
    `QApplication` that does not quit when its last window closes, so the runtime shuts down
    before the loop stops.
 
-A Briefcase bundle runs `python -m <app module>`, so a two-line `kayden_desktop` package
+A Briefcase bundle runs `python -m <app module>`, so a two-line `kadence_desktop` package
 calls the same `main`.
 
 "Frontend owns the process's main loop" (`api.Frontend` docstring) does not match how the
 loop is created. That mismatch goes into `.agents/contract-issues.md` when this is built.
 
-### Talking to Kayden
+### Talking to Kadence
 
-The app is an ordinary `Frontend` module (`kayden.frontends.desktop`). Its
+The app is an ordinary `Frontend` module (`kadence.frontends.desktop`). Its
 `FrontendInfo` has `interactive_permissions=True`, and `run(runtime)` returns when the main
 window closes.
 
@@ -151,7 +151,7 @@ asking: read-only freely. Continue?"). Nothing is sent unless the user confirms.
 
 That check is pure, and the TUI already implements it as `SettingsScreen._loosening`. It
 moves to a toolkit-free function used by both frontends, so the safety rule has one
-implementation. A provider, key or work-folder change while Kayden is busy shows the
+implementation. A provider, key or work-folder change while Kadence is busy shows the
 runtime's `RuntimeStateError` as "Finish or stop the current task first". `SettingsChanged`
 refreshes the open window and the status line.
 
@@ -179,7 +179,7 @@ three-page welcome window, shown before `start()`:
    rejected key shows the runtime's message, and the old provider stays in place. When the
    machine has no keychain, the runtime refuses the key. The page then explains how to set
    the environment variable instead and links to the docs.
-3. **Pick a work folder and a spending limit.** The folder picker defaults to `~/Kayden`,
+3. **Pick a work folder and a spending limit.** The folder picker defaults to `~/Kadence`,
    and the app sends `work_folder`. An optional spending limit is suggested empty. Setting a
    limit where there was none tightens, so it needs no confirmation. Permissions stay at
    the default, "Ask me first", and the page says where to change them.
@@ -189,11 +189,11 @@ Then the app calls `start(StartOptions(mode=Mode.SESSION))` and focuses the mess
 ### Look
 
 The app draws its own look instead of the platform's: Qt's Fusion style, a palette and a
-style sheet built from it (`kayden.frontends.desktop.theme`), and a few custom-painted
+style sheet built from it (`kadence.frontends.desktop.theme`), and a few custom-painted
 widgets (the switches, sidebar and memory rows, the send and lock icons). There is one
 indigo accent; everything else is neutral gray. Light and dark follow the system's color
 scheme and switch while the app runs. Your messages are accent bubbles on the right;
-Kayden's replies are plain text beside an avatar, which stays readable when long. The
+Kadence's replies are plain text beside an avatar, which stays readable when long. The
 message box is rounded with the send button inside it, and the status line sits under it
 instead of in a status bar. The view model stays free of Qt; only `window.py` and `theme.py`
 know about the look.
@@ -224,7 +224,7 @@ know about the look.
 ## Alternatives considered
 
 - **Toga (BeeWare).** Toga 0.5.7 has native widgets, an asyncio loop on the main thread and
-  async handlers, so it fits Kayden's runtime best. It lost on three points:
+  async handlers, so it fits Kadence's runtime best. It lost on three points:
   - It is pre-1.0.
   - It has no rich-text or Markdown widget, so the transcript would be HTML in a
     `WebView`, which needs WebKitGTK on Linux.
@@ -259,7 +259,7 @@ know about the look.
   second UI technology next to Widgets and would mean rewriting every window. A style sheet
   reaches the approved design with small widget changes.
 - **PyQt6.** It has the same Qt and the same loop story, but a GPL or commercial license.
-- **A React UI in Electron or Tauri, with Kayden as a Python sidecar.** It gives the most
+- **A React UI in Electron or Tauri, with Kadence as a Python sidecar.** It gives the most
   polished UI for the least effort, the largest ecosystem (chat, Markdown, code
   highlighting) and the same UI for a later web frontend. It loses on architecture: the UI
   cannot call `RuntimeAPI` directly, so the runtime must be exposed over a local connection
@@ -328,7 +328,7 @@ know about the look.
 - **Ignoring the configured frontend.** The desktop launcher ignores `[frontend]` in
   `config.toml`, so the same data directory can be opened by either the TUI or the app. The
   instance lock refuses a second agent in the same mode. The app must show that refusal as
-  "Kayden is already open" rather than a traceback.
+  "Kadence is already open" rather than a traceback.
 
 ## Sources (checked 2026-11-07)
 

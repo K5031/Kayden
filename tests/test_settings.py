@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     PERMISSION_CEILING_ENV,
     AgentState,
     Budget,
@@ -21,8 +21,8 @@ from kayden.api import (
     SettingsUpdate,
     ToolStatus,
 )
-from kayden.runtime import ModuleState
-from kayden.runtime.config import DEFAULT_SYSTEM_PROMPT
+from kadence.runtime import ModuleState
+from kadence.runtime.config import DEFAULT_SYSTEM_PROMPT
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -206,7 +206,7 @@ async def test_the_key_applies_at_the_next_start_the_folder_at_the_next_chat(
     await h.start()
     s = await h.runtime.update_settings(SettingsUpdate(api_key="sk-1",
                                                        work_folder=str(tmp_path)))
-    assert keychain.store[("kayden", "FIRST_API_KEY")] == "sk-1"
+    assert keychain.store[("kadence", "FIRST_API_KEY")] == "sk-1"
     assert s.work_folder == str(tmp_path) and s.restart_needed
     assert h.runtime._tools == [h.tools] and not h.tools.closed  # nothing was rebuilt
     assert h.runtime._core is h.core and not h.core.closed
@@ -239,7 +239,7 @@ async def test_api_key_goes_to_the_keychain_only(make, keychain):
     await h.start()
     s = await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"},
                                                        api_key="sk-2"))
-    assert keychain.store[("kayden", "SECOND_API_KEY")] == "sk-2"
+    assert keychain.store[("kadence", "SECOND_API_KEY")] == "sk-2"
     assert [m.has_key for m in s.modules["core"].installed if m.id == "second"] == [True]
     assert "sk-2" not in (h.data_dir / "settings.toml").read_text()
     assert "sk-2" not in (h.data_dir / "events.jsonl").read_text()
@@ -249,7 +249,7 @@ async def test_api_key_is_for_the_chosen_core(make, keychain):
     h = await setup(make)
     await h.runtime.update_settings(SettingsUpdate(modules={"core": "second"}))
     await h.runtime.update_settings(SettingsUpdate(api_key="sk-2"))
-    assert keychain.store == {("kayden", "SECOND_API_KEY"): "sk-2"}
+    assert keychain.store == {("kadence", "SECOND_API_KEY"): "sk-2"}
 
 
 async def test_api_key_for_a_core_without_keys_is_refused(make):
@@ -260,16 +260,16 @@ async def test_api_key_for_a_core_without_keys_is_refused(make):
 
 
 async def test_a_failed_save_restores_the_keychain(make, keychain, monkeypatch):
-    keychain.store[("kayden", "FIRST_API_KEY")] = "old"
+    keychain.store[("kadence", "FIRST_API_KEY")] = "old"
     h = await setup(make)
 
     def fail(*args: Any, **kwargs: Any) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("kayden.runtime.modules.save_settings", fail)
+    monkeypatch.setattr("kadence.runtime.modules.save_settings", fail)
     with pytest.raises(OSError):
         await h.runtime.update_settings(SettingsUpdate(api_key="new", system_prompt="Hi."))
-    assert keychain.store[("kayden", "FIRST_API_KEY")] == "old"
+    assert keychain.store[("kadence", "FIRST_API_KEY")] == "old"
     s = await h.runtime.settings()
     assert not s.restart_needed and s.system_prompt == DEFAULT_SYSTEM_PROMPT
 

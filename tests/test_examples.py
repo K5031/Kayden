@@ -10,7 +10,7 @@ from examples.dice_tools import DiceTools
 from examples.echo_core import EchoCore
 from examples.line_frontend import LineFrontend
 from examples.ram_memory import RamMemory
-from kayden.api import Message, Role, Text, ToolStatus
+from kadence.api import Message, Role, Text, ToolStatus
 from tests.fakes.core import ScriptedCore, Step, call
 
 

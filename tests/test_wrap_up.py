@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     NOTICE_PREFIX,
     AgentState,
     Message,
@@ -21,7 +21,7 @@ from kayden.api import (
     ToolResult,
     ToolStatus,
 )
-from kayden.frontends.common import Card, card_of
+from kadence.frontends.common import Card, card_of
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -135,8 +135,8 @@ async def test_writing_instead_withdraws_the_option_before_the_message(make):
 async def test_the_desktop_shows_the_card_and_sends_a_reply(make):
     from PySide6.QtWidgets import QLabel, QPushButton, QToolButton
 
-    from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kayden.frontends.desktop.window import MainWindow, WrapUpCard
+    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kadence.frontends.desktop.window import MainWindow, WrapUpCard
 
     h = await harness(make, [
         Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")]),
@@ -165,8 +165,8 @@ async def test_the_desktop_shows_the_card_and_sends_a_reply(make):
 async def test_the_desktop_runs_the_option_with_a_call(make):
     from PySide6.QtWidgets import QPushButton
 
-    from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kayden.frontends.desktop.window import MainWindow, ProposalCard, WrapUpCard
+    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kadence.frontends.desktop.window import MainWindow, ProposalCard, WrapUpCard
 
     h = await harness(make, [
         Step(text="Committed.", calls=[call("wrap_up", ACTION, id="w")]),
@@ -192,8 +192,8 @@ async def test_the_desktop_runs_the_option_with_a_call(make):
 async def test_closing_the_card_puts_it_away(make):
     from PySide6.QtWidgets import QToolButton
 
-    from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kayden.frontends.desktop.window import MainWindow, WrapUpCard
+    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kadence.frontends.desktop.window import MainWindow, WrapUpCard
 
     h = await harness(make, [Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")])])
     await h.turn("commit it")
@@ -211,13 +211,13 @@ async def test_closing_the_card_puts_it_away(make):
 async def test_the_terminal_app_shows_the_card(make):
     from textual.widgets import Button
 
-    from kayden.frontends.tui import KaydenApp, WrapUpPrompt
+    from kadence.frontends.tui import KadenceApp, WrapUpPrompt
     from tests.test_tui import type_text, until
 
     h = await harness(make, [
         Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")]),
         Step(text="Fine."), Step(text="ok")])
-    app = KaydenApp(h.runtime)
+    app = KadenceApp(h.runtime)
     async with app.run_test(size=(100, 40)) as pilot:
         await until(pilot, lambda: app.conversation is not None)
         await type_text(pilot, "commit it")
@@ -245,9 +245,9 @@ def test_cards_come_from_wrap_up_and_ask_for_help():
 
 
 async def test_a_background_result_or_notice_leaves_the_card_up(make):
-    from kayden.api import OperationResult
-    from kayden.api import Text as TextBlock
-    from kayden.frontends.desktop.viewmodel import ConversationModel
+    from kadence.api import OperationResult
+    from kadence.api import Text as TextBlock
+    from kadence.frontends.desktop.viewmodel import ConversationModel
 
     model = ConversationModel()
     wrap = ToolCall("w", "wrap_up", WRAP)
@@ -262,7 +262,7 @@ async def test_a_background_result_or_notice_leaves_the_card_up(make):
 
 
 def test_a_closed_card_stays_closed_when_the_history_is_reloaded():
-    from kayden.frontends.desktop.viewmodel import ConversationModel
+    from kadence.frontends.desktop.viewmodel import ConversationModel
 
     model = ConversationModel()
     wrap = ToolCall("w", "wrap_up", WRAP)
@@ -276,8 +276,8 @@ def test_a_closed_card_stays_closed_when_the_history_is_reloaded():
 async def test_options_are_told_apart_by_position_not_label(make):
     from PySide6.QtWidgets import QPushButton
 
-    from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kayden.frontends.desktop.window import MainWindow, WrapUpCard
+    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kadence.frontends.desktop.window import MainWindow, WrapUpCard
 
     same = {**WRAP, "options": [{"label": "Yes", "call": PUSH}, {"label": "Yes"}]}
     h = await harness(make, [

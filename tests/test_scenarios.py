@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Budget,
     Completed,
@@ -41,7 +41,7 @@ from kayden.api import (
     TransientCoreError,
     Usage,
 )
-from kayden.runtime import InstanceConfig, ModuleSpec, RuntimeConfig, run_instance
+from kadence.runtime import InstanceConfig, ModuleSpec, RuntimeConfig, run_instance
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.frontend import ScriptedFrontend

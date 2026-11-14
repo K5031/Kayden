@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from kayden.api import Image, ToolCall
-from kayden.tools.shell_files import ShellFilesTools, screen
+from kadence.api import Image, ToolCall
+from kadence.tools.shell_files import ShellFilesTools, screen
 from tests.conformance.tools_suite import RecordingContext
 
 

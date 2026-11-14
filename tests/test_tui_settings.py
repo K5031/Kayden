@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from textual.widgets import Button, Input, Select, TextArea
 
-from kayden.api import Budget, PermissionPolicy, SettingsUpdate
-from kayden.frontends.tui import (
+from kadence.api import Budget, PermissionPolicy, SettingsUpdate
+from kadence.frontends.tui import (
     ConfirmScreen,
-    KaydenApp,
+    KadenceApp,
     RestartScreen,
     SettingsScreen,
     StartScreen,
@@ -18,7 +18,7 @@ from tests.fakes.settings import settings as fake_settings
 from tests.test_tui import StubRuntime, caught_up, make, type_text, until
 
 
-async def open_settings(pilot, app: KaydenApp, stub: StubRuntime, how: str = "f2") -> None:
+async def open_settings(pilot, app: KadenceApp, stub: StubRuntime, how: str = "f2") -> None:
     await caught_up(pilot, app, stub)
     if how == "f2":
         await pilot.press("f2")
@@ -29,11 +29,11 @@ async def open_settings(pilot, app: KaydenApp, stub: StubRuntime, how: str = "f2
     await pilot.pause()
 
 
-def field(app: KaydenApp, selector: str, kind: type):
+def field(app: KadenceApp, selector: str, kind: type):
     return app.screen.query_one(selector, kind)
 
 
-async def save(pilot, app: KaydenApp) -> None:
+async def save(pilot, app: KadenceApp) -> None:
     app.screen.query_one("#save", Button).press()
     await pilot.pause()
 
@@ -142,11 +142,11 @@ async def test_saving_without_a_memory_choice_keeps_the_memory():
 
 async def test_a_startup_error_opens_the_settings():
     """First run (no key yet) or a broken module: settings with the error, not a crash."""
-    from kayden.api import RuntimeStateError
+    from kadence.api import RuntimeStateError
 
     stub = StubRuntime(started=False)
     stub.current_settings = fake_settings(startup_error="ANTHROPIC_API_KEY is not set")
-    stub.fail_with["list_models"] = RuntimeStateError("Kayden could not start")
+    stub.fail_with["list_models"] = RuntimeStateError("Kadence could not start")
     app = make(stub)
     async with app.run_test(size=(100, 40)) as pilot:
         await until(pilot, lambda: isinstance(app.screen, SettingsScreen))
@@ -224,7 +224,7 @@ async def test_an_invalid_spending_limit_keeps_the_screen_open():
 
 
 async def test_a_rejected_update_is_reported():
-    from kayden.api import RuntimeStateError
+    from kadence.api import RuntimeStateError
 
     stub = StubRuntime()
     stub.fail_with["update_settings"] = RuntimeStateError("wait until the agent is idle")
@@ -250,7 +250,7 @@ async def test_settings_screen_fits_a_small_terminal():
 
 
 async def test_a_core_from_the_config_file_shows_as_custom():
-    from kayden.api import ModuleChoice
+    from kadence.api import ModuleChoice
 
     stub = StubRuntime()
     base = stub.current_settings
@@ -268,8 +268,8 @@ async def test_a_core_from_the_config_file_shows_as_custom():
 async def test_tool_servers_are_added_and_removed():
     from dataclasses import replace
 
-    from kayden.api import McpServer
-    from kayden.frontends.tui import McpScreen, ServerScreen
+    from kadence.api import McpServer
+    from kadence.frontends.tui import McpScreen, ServerScreen
 
     stub = StubRuntime()
     app = make(stub)
@@ -300,7 +300,7 @@ async def test_tool_servers_are_added_and_removed():
 
 
 async def test_duty_commands_turn_a_duty_on_and_off():
-    from kayden.api import Duty, DutyKind
+    from kadence.api import Duty, DutyKind
 
     stub = StubRuntime()
     app = make(stub)
@@ -316,8 +316,8 @@ async def test_duty_commands_turn_a_duty_on_and_off():
 
 
 async def test_the_duty_screen_saves_the_duty_and_plan():
-    from kayden.api import Duty, DutyKind, PlanItem, PlanStatus
-    from kayden.frontends.tui import DutyScreen
+    from kadence.api import Duty, DutyKind, PlanItem, PlanStatus
+    from kadence.frontends.tui import DutyScreen
 
     stub = StubRuntime()
     app = make(stub)
@@ -337,7 +337,7 @@ async def test_the_duty_screen_saves_the_duty_and_plan():
 
 
 async def test_an_unreadable_plan_is_shown_and_nothing_is_saved():
-    from kayden.frontends.tui import DutyScreen
+    from kadence.frontends.tui import DutyScreen
 
     stub = StubRuntime()
     app = make(stub)
@@ -353,8 +353,8 @@ async def test_an_unreadable_plan_is_shown_and_nothing_is_saved():
 
 
 async def test_a_question_for_help_is_shown():
-    from kayden.api import HelpNeeded
-    from kayden.frontends.tui import SystemEntry
+    from kadence.api import HelpNeeded
+    from kadence.frontends.tui import SystemEntry
     from tests.test_tui import entries, plain
 
     stub = StubRuntime()
@@ -368,7 +368,7 @@ async def test_a_question_for_help_is_shown():
 
 
 async def test_a_child_opens_in_place_to_approve_and_talk_to(make, tmp_path, child_env):
-    from kayden.frontends.tui import KaydenApp, PermissionPrompt, SessionsScreen
+    from kadence.frontends.tui import KadenceApp, PermissionPrompt, SessionsScreen
     from tests.fakes.core import Step, call
     from tests.test_sub_sessions import finish, parent
 
@@ -381,7 +381,7 @@ async def test_a_child_opens_in_place_to_approve_and_talk_to(make, tmp_path, chi
         child_runtime={"runtime": {"permissions": "ask"}})
     await h.turn("Go")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].approvals, timeout=30)
-    app = KaydenApp(h.runtime, sessions=sessions)
+    app = KadenceApp(h.runtime, sessions=sessions)
     async with app.run_test(size=(100, 50)) as pilot:
         await until(pilot, lambda: app.conversation is not None, timeout=10)
         await type_text(pilot, "/sessions")
@@ -408,8 +408,8 @@ async def test_a_child_opens_in_place_to_approve_and_talk_to(make, tmp_path, chi
 
 
 async def test_the_sessions_screen_sets_limits(tmp_path):
-    from kayden.frontends.sessions import SubSession, SubSessions
-    from kayden.frontends.tui import ConfirmScreen, SessionsScreen, TextPromptScreen
+    from kadence.frontends.sessions import SubSession, SubSessions
+    from kadence.frontends.tui import ConfirmScreen, SessionsScreen, TextPromptScreen
     from tests.test_tui import CONVERSATION
 
     stub = StubRuntime()

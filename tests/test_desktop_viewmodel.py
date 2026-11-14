@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     PROFILE,
     AgentState,
     Budget,
@@ -45,7 +45,7 @@ from kayden.api import (
     Usage,
     UsageSnapshot,
 )
-from kayden.frontends.desktop.viewmodel import (
+from kadence.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     BUSY_MESSAGE,
     LABEL_CHARS,
@@ -421,7 +421,7 @@ def _plan(call_id: str, *steps: tuple[str, str]) -> ToolCall:
 
 
 def test_the_checklist_follows_the_newest_message_and_leaves_when_the_agent_stops():
-    from kayden.frontends.desktop.viewmodel import ChecklistItem
+    from kadence.frontends.desktop.viewmodel import ChecklistItem
 
     def said(i: str, role: Role, *blocks: object) -> MessageCommitted:
         return MessageCommitted(Message(i, role, tuple(blocks), 0.0))
@@ -447,7 +447,7 @@ def test_the_checklist_follows_the_newest_message_and_leaves_when_the_agent_stop
 def test_a_reopened_conversation_shows_no_checklist_unless_the_agent_is_working():
     from dataclasses import replace
 
-    from kayden.frontends.desktop.viewmodel import ChecklistItem
+    from kadence.frontends.desktop.viewmodel import ChecklistItem
 
     history = [
         Message("u1", Role.USER, (Text("fix the bug"),), 0.0),
@@ -465,7 +465,7 @@ def test_a_reopened_conversation_shows_no_checklist_unless_the_agent_is_working(
 def test_thinking_before_and_after_a_plan_update_is_one_line():
     """A plan update is not shown as a step, so the thinking on both sides of it would be
     two Thinking lines one under the other."""
-    from kayden.api import Reasoning
+    from kadence.api import Reasoning
 
     model = ConversationModel()
     model.load(_snapshot(), ())
@@ -546,7 +546,7 @@ def test_failure_banner_until_the_next_cycle():
 
 
 def test_a_notice_meant_for_the_model_alone_is_not_shown():
-    from kayden.api import HIDDEN_NOTICE_PREFIX
+    from kadence.api import HIDDEN_NOTICE_PREFIX
 
     model = ConversationModel()
     model.load(_snapshot(), ())
@@ -556,7 +556,7 @@ def test_a_notice_meant_for_the_model_alone_is_not_shown():
 
 
 def test_a_compaction_shows_a_line_that_says_how_it_ended():
-    from kayden.api import CompactionFinished, CompactionStarted
+    from kadence.api import CompactionFinished, CompactionStarted
 
     model = ConversationModel()
     model.load(_snapshot(), ())
@@ -623,7 +623,7 @@ async def test_seq_gap_triggers_recovery():
 
 # ── settings form ─────────────────────────────────────────────────────────
 
-SETTINGS = fake_settings(work_folder="/home/u/Kayden", permissions=PermissionPolicy.ASK)
+SETTINGS = fake_settings(work_folder="/home/u/Kadence", permissions=PermissionPolicy.ASK)
 
 
 def test_an_untouched_form_changes_nothing():
@@ -703,8 +703,8 @@ def test_welcome_conversation_labels_and_refusals():
     assert len(conversation_label(replace(previewed, preview="x" * 200))) == LABEL_CHARS
     assert user_message(RuntimeStateError("cannot start while thinking")) == BUSY_MESSAGE
     assert user_message(RuntimeStateError("budget exhausted: max_cost_usd")) == BUDGET_MESSAGE
-    assert user_message(InstanceLockedError("Kayden is already open in another window (x)")
-                        ) == "Kayden is already open in another window (x)."
+    assert user_message(InstanceLockedError("Kadence is already open in another window (x)")
+                        ) == "Kadence is already open in another window (x)."
     assert user_message(ValueError("unknown model x")) == "unknown model x"
 
 
@@ -733,7 +733,7 @@ def test_a_tool_call_with_a_description_shows_it_as_its_title():
 
 
 async def test_a_tool_the_provider_ran_is_a_finished_step(make):
-    from kayden.api import ServerToolUse
+    from kadence.api import ServerToolUse
 
     use = ServerToolUse("srv_1", "web_search", {"query": "worlds"},
                         "Searched the web for “worlds”", "Worlds 2026\nhttps://w.example")
@@ -749,7 +749,7 @@ async def test_a_tool_the_provider_ran_is_a_finished_step(make):
 
 
 async def test_a_question_for_help_is_shown_and_named_in_the_status(make):
-    from kayden.api import Budget, Duty
+    from kadence.api import Budget, Duty
 
     h: Harness = await make(budget=Budget(max_cost_usd=5))
     h.core.add(Step(calls=[call("ask_for_help", {"question": "Which account?"})]),
@@ -765,8 +765,8 @@ async def test_a_question_for_help_is_shown_and_named_in_the_status(make):
 
 
 async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make):
-    from kayden.api import Budget, Duty
-    from kayden.frontends.desktop.viewmodel import conversation_label
+    from kadence.api import Budget, Duty
+    from kadence.frontends.desktop.viewmodel import conversation_label
 
     h: Harness = await make(budget=Budget(max_cost_usd=5))
     h.core.add(Step(text="On it."))
@@ -783,7 +783,7 @@ async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make
 
 
 def test_passing_80_percent_of_the_limit_gives_one_warning():
-    from kayden.api import Usage, UsageSnapshot, UsageUpdated
+    from kadence.api import Usage, UsageSnapshot, UsageUpdated
 
     model = ConversationModel()
     model.usage = UsageSnapshot(Usage(0, 0, cost_usd=7.0), 0, 0.0, {"max_cost_usd": 3.0})

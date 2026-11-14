@@ -1,4 +1,4 @@
-"""Findings of the review of K5031/Kayden#1, each a test that failed before its fix."""
+"""Findings of the review of K5031/Kadence#1, each a test that failed before its fix."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import InstanceLockedError
+from kadence.api import InstanceLockedError
 from tests.conftest import Harness
 from tests.fakes.memory import MemoryStore
 

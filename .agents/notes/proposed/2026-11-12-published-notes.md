@@ -6,14 +6,14 @@ Sits on [Memory like Claude Code](../implemented/2026-11-11-memory-like-claude-c
 
 ## Problem
 
-A Kayden's long-term memory is its own: a folder of notes only it reads and writes. There
-is no way for one Kayden to know what another has learned, except by being told in a
+A Kadence's long-term memory is its own: a folder of notes only it reads and writes. There
+is no way for one Kadence to know what another has learned, except by being told in a
 message.
 
 The case that asks for it is a fleet (KFM, the "Shared team memory" note there): a
 supervising agent reads a project and works something out, and every agent it starts
 finds the same thing out again from nothing. The same holds outside a fleet for anyone
-who runs several Kaydens on one body of work.
+who runs several Kadences on one body of work.
 
 Letting every agent read and write one folder is the obvious answer and the wrong one:
 
@@ -28,7 +28,7 @@ Letting every agent read and write one folder is the obvious answer and the wron
 
 Notes flow one way: an agent publishes, others read.
 
-- **A module of its own, `kayden.memory.published`**, built on `kayden.memory.files` the
+- **A module of its own, `kadence.memory.published`**, built on `kadence.memory.files` the
   way that one is built on `SqliteArchive`. The agent's own memory is that module's,
   unchanged: its folder, its rules, its `memory` tool.
 - **Two options**, both folders of notes in the same format (an index and one file per
@@ -40,22 +40,22 @@ Notes flow one way: an agent publishes, others read.
   - `publishes`: one folder this agent writes for others, with the commands and guards
     its own memory has. The rules say what belongs there: what the readers need to know
     to do their work, never what is about them or not for them.
-- **Nothing about fleets in Kayden.** Who publishes to whom is configuration. KFM's
-  Kayden harness writes it per unit: a unit reads what the units above it publish, and a
+- **Nothing about fleets in Kadence.** Who publishes to whom is configuration. KFM's
+  Kadence harness writes it per unit: a unit reads what the units above it publish, and a
   unit that can have agents publishes for them.
 - What an agent learns still goes up in its report; whoever reads the report decides
   whether it becomes a published note.
 
 ## Alternatives considered
 
-- **One memory folder for all** (`kayden.memory.files` with every instance's `projects`
+- **One memory folder for all** (`kadence.memory.files` with every instance's `projects`
   pointing at one place). A settings change and nothing to build; it fails on both counts
   above.
-- **Two options on `kayden.memory.files` itself.** Less code than a module. But that
+- **Two options on `kadence.memory.files` itself.** Less code than a module. But that
   module is Claude Code's memory, kept the same on purpose, and every user of it would
   carry rules and a tool path for something only some setups have.
 - **Notes as fleet tools in KFM** (publish and read through its tool server). Works for
-  any agent program, not only Kayden, and KFM decides who may write. But the notes would
+  any agent program, not only Kadence, and KFM decides who may write. But the notes would
   not be in view when a conversation starts: an agent would have to think to look, and
   KFM would rebuild what Memory already has (the index, its limits, read before write).
 - **Everything in messages**, as now. Nothing is known that the sender did not think to
@@ -67,7 +67,7 @@ Notes flow one way: an agent publishes, others read.
   folder, starts its next conversation with.
 - The reading instance cannot create, change, rename or delete a published note, and its
   own notes are not visible to the publisher.
-- An instance without the two options behaves as `kayden.memory.files` does.
+- An instance without the two options behaves as `kadence.memory.files` does.
 - A fleet's job costs less with published notes than without, measured.
 
 ## Risks

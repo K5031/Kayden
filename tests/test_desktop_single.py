@@ -1,4 +1,4 @@
-"""A second desktop Kayden on the same data folder brings the open window forward and exits,
+"""A second desktop Kadence on the same data folder brings the open window forward and exits,
 instead of opening a window of its own with the "already open" error."""
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ from typing import Any
 import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from kayden.frontends import desktop
-from kayden.frontends.desktop import single
-from kayden.runtime.config import RuntimeConfig
-from kayden.runtime.setup import SetupRuntime
+from kadence.frontends import desktop
+from kadence.frontends.desktop import single
+from kadence.runtime.config import RuntimeConfig
+from kadence.runtime.setup import SetupRuntime
 from tests.conftest import eventually
 
 
@@ -48,13 +48,13 @@ async def test_nobody_answers_when_no_window_listens(tmp_path):
 
 def already_open(tmp_path: Any) -> SetupRuntime:
     return SetupRuntime(RuntimeConfig(data_dir=tmp_path), "window",
-                        "Kayden is already open in another window (in use)", already_open=True)
+                        "Kadence is already open in another window (in use)", already_open=True)
 
 
 async def test_the_second_desktop_app_hands_over_and_opens_nothing(tmp_path, qapp, monkeypatch):
     shown = []
     server = await single.listen(tmp_path, lambda: shown.append(True))
-    monkeypatch.setattr("kayden.frontends.desktop.window.MainWindow",
+    monkeypatch.setattr("kadence.frontends.desktop.window.MainWindow",
                         lambda *a, **k: pytest.fail("no window of its own"))
     try:
         await asyncio.wait_for(desktop.DesktopFrontend(data_dir=tmp_path).run(

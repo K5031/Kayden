@@ -4,7 +4,7 @@ Status: implemented — the built-in Tools search the web and read pages, with e
 
 ## Problem
 
-Kayden could not look anything up. Every question about something recent, a library's
+Kadence could not look anything up. Every question about something recent, a library's
 current API, a price or a news item got an answer from the model's training data, or a
 shell command (`curl`) whose raw HTML the agent had to wade through. A general assistant
 needs to search the web and read what it finds, and the user should see where an answer
@@ -13,7 +13,7 @@ came from.
 ## Decision
 
 Two tools in the built-in Tools module (`shell-files`, shown as "Shell, files and web"),
-in `kayden/tools/shell_files/web.py`:
+in `kadence/tools/shell_files/web.py`:
 
 | Tool | Does | Returns |
 |---|---|---|

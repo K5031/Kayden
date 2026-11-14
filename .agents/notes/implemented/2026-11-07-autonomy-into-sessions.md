@@ -4,7 +4,7 @@ Status: implemented — Continuous Mode is retired; every conversation wakes whe
 
 ## Problem
 
-Kayden had two operating modes. Session Mode was an ordinary chat with many
+Kadence had two operating modes. Session Mode was an ordinary chat with many
 conversations. Continuous Mode was one conversation per instance that never ended: the
 agent could `idle()`, keep background work running, and wake itself when that work
 finished (Agent-Controlled activation).
@@ -110,7 +110,7 @@ control what the agent sees; deletion controls what the disk keeps.
 
 - `delete_conversation(id)` erases the conversation's messages, summaries, search index
   entries and metadata. Long-term entries that came from it stay, their source set to
-  None: a fact the user asked Kayden to remember outlives the chat it was said in, as
+  None: a fact the user asked Kadence to remember outlives the chat it was said in, as
   saved memories do in other assistants, and the Memory screen is where facts are
   removed. The delete confirmation says so.
   It is refused for the open conversation, which is also the only one that can have
@@ -135,7 +135,7 @@ control what the agent sees; deletion controls what the disk keeps.
 ### Stored data
 
 `SqliteMemory` refuses a store of another version. Lock, usage and
-event log are one each per data folder. Kayden carries no code for data folders or
+event log are one each per data folder. Kadence carries no code for data folders or
 command-line flags of the per-mode versions.
 
 ### Frontends
@@ -200,12 +200,12 @@ command-line flags of the per-mode versions.
 - **Editing long-term memory rows in place.** Simpler, but an edit would silently replace
   what the agent had learned. Revisions keep each change visible and allow an undo later.
 - **Erasing what a conversation taught long-term memory with it.** Built first: deleting would leave
-  nothing of the chat behind. In use it erased the user's name, which they had asked Kayden
+  nothing of the chat behind. In use it erased the user's name, which they had asked Kadence
   to remember, and that surprised the user; a saved fact is a standing instruction, not
   part of the chat. Erasing both stays two visible steps (delete, then forget).
 - **Archive and forget only, no deletion.** Keeps the archive strictly append-only, so
   nothing is ever lost by accident. But anything sensitive pasted into a chat would stay on
-  disk forever, and the user would control what the agent sees but not what Kayden keeps.
+  disk forever, and the user would control what the agent sees but not what Kadence keeps.
   Deletion is explicit and confirmed, so accidental loss stays unlikely.
 - **Deleting single messages.** Finer control, but a hole in a transcript breaks the
   pairing of tool calls and results, and summaries already include the message. Deleting

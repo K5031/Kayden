@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     BUILTIN_TOOLS,
     AgentState,
     Decision,
@@ -22,7 +22,7 @@ from kayden.api import (
     ToolSpec,
     ToolStatus,
 )
-from kayden.memory.tools import RECALL
+from kadence.memory.tools import RECALL
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -192,7 +192,7 @@ async def test_op_status_unknown(make: Any) -> None:
 
 
 async def test_op_status_wait_clamped(make: Any, monkeypatch: Any) -> None:
-    from kayden.runtime import orchestrator
+    from kadence.runtime import orchestrator
 
     monkeypatch.setattr(orchestrator, "_OP_STATUS_MAX_WAIT_S", 0.2)
     tools = FakeTools()

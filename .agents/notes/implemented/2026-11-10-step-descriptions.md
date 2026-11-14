@@ -23,7 +23,7 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
 - Frontends show the description as the step's title and a permission prompt's headline,
   with the exact input below it or in a tooltip (`frontends.common.call_parts`). Once a
   step succeeds its first word is put in the past tense ("Searched the web for …",
-  `frontends.common.past_tense`) when it is a verb in Kayden's list; other sentences, and
+  `frontends.common.past_tense`) when it is a verb in Kadence's list; other sentences, and
   failed or refused steps, stay as the model wrote them. Without
   one they show the tool name and its input. No frontend knows any tool by name.
 - Steps fold into groups. A run of steps, with the thinking before and between them, shows

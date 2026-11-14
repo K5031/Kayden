@@ -15,7 +15,7 @@ from typing import Any
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication
 
-from kayden.frontends.desktop.loop import QtEventLoop
+from kadence.frontends.desktop.loop import QtEventLoop
 from tests.conftest import eventually
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     InferenceRequest,
     Message,
     Role,
@@ -77,7 +77,7 @@ async def test_web_search_is_offered_as_anthropics_own(driver):
     await collect(driver.core, request())
     tools = driver.stub.bodies[-1]["tools"]
     assert tools[0] == {"type": "web_search_20260209", "name": "web_search", "max_uses": 5}
-    assert tools[1]["name"] == WEATHER_TOOL.name  # Kayden's own tools stay as they are
+    assert tools[1]["name"] == WEATHER_TOOL.name  # Kadence's own tools stay as they are
     driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
     await collect(driver.core, request("claude-haiku-5-5"))
     assert driver.stub.bodies[-1]["tools"][0]["type"] == "web_search_20250305"
@@ -143,7 +143,7 @@ async def test_a_failed_search_is_an_error_step(driver):
     assert use.is_error and "too_many_requests" in use.content
 
 
-async def test_switched_off_search_falls_back_to_kaydens(driver):
+async def test_switched_off_search_falls_back_to_kadences(driver):
     driver.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
         "type": "invalid_request_error",
         "message": "Web search is not enabled for your organization."}}))

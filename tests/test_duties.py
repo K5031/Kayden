@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Budget,
     ConversationUpdated,
@@ -28,7 +28,7 @@ from kayden.api import (
     ToolResult,
     ToolStatus,
 )
-from kayden.runtime import duty as duties
+from kadence.runtime import duty as duties
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -530,7 +530,7 @@ async def test_the_task_stays_in_view_after_the_goal_is_finished(make):
 
 
 async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
-    from kayden.frontends.tui import KaydenApp, PlanPanel
+    from kadence.frontends.tui import KadenceApp, PlanPanel
     from tests.test_tui import type_text, until
 
     h = await duty_harness(make, [
@@ -539,7 +539,7 @@ async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
             {"text": "Fix the bug", "status": "doing"},
             {"text": "Run the tests"}]})]),
         Step(text="Working on it.", hang=True)])  # still working: the checklist shows
-    app = KaydenApp(h.runtime)
+    app = KadenceApp(h.runtime)
     async with app.run_test(size=(100, 40)) as pilot:
         await until(pilot, lambda: app.conversation is not None)
         await type_text(pilot, "fix the bug")
@@ -554,7 +554,7 @@ async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
 def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action():
     """The rule is in the tool's description, which reaches the model whatever system
     prompt the user has written."""
-    from kayden.api import DUTY_TOOLS
+    from kadence.api import DUTY_TOOLS
 
     told = DUTY_TOOLS["update_plan"].description
     assert "Every task that edits files, runs more than one command or has several steps" in told
@@ -593,7 +593,7 @@ async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
 
 def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
     """Else it is sent back after the goal, for one more request, to tick the steps off."""
-    from kayden.api import DUTY_TOOLS
+    from kadence.api import DUTY_TOOLS
 
     told = DUTY_TOOLS["finish_goal"].description
     assert "update_plan" in told and "in the same message" in told

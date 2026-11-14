@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Budget,
     BudgetExhausted,

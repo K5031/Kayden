@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     PERMISSION_CEILING_ENV,
     AgentState,
     ContextOverflowError,
@@ -354,7 +354,7 @@ async def test_select_model(make: Any) -> None:
 async def test_model_without_context_window_is_refused(make: Any) -> None:
     """A window the provider does not report is configured on the Core (its `models`
     option), not in the runtime."""
-    from kayden.api import ModelInfo
+    from kadence.api import ModelInfo
 
     models = [ModelInfo("mystery", "Mystery", context_window=None)]
     h: Harness = await make(core=ScriptedCore(models=models))
@@ -363,7 +363,7 @@ async def test_model_without_context_window_is_refused(make: Any) -> None:
 
 
 async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) -> None:
-    from kayden.api import Reasoning
+    from kadence.api import Reasoning
 
     core = ScriptedCore([Step(reasoning="hmm", text="ok", delay=0.05), Step(text="plain")])
     h: Harness = await make(core=core)
@@ -380,8 +380,8 @@ async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) 
 
 async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: Any) -> None:
     """In a runtime notice after the message, so the system prompt stays as it is."""
-    from kayden.api import HIDDEN_NOTICE_PREFIX
-    from kayden.runtime.config import VOICE_OFF_NOTICE, VOICE_ON_NOTICE
+    from kadence.api import HIDDEN_NOTICE_PREFIX
+    from kadence.runtime.config import VOICE_OFF_NOTICE, VOICE_ON_NOTICE
 
     def texts(transcript: Any) -> list[str]:
         return [b.text for m in transcript if m.role == Role.USER
@@ -452,7 +452,7 @@ async def test_a_message_queued_after_the_last_turn_is_still_answered(make: Any)
     """A message that arrives while Memory saves what the exchange taught it, after the
     cycle's last look at its inbox, starts the next turn instead of waiting for whatever
     wakes the agent next."""
-    from kayden.api import Completion
+    from kadence.api import Completion
 
     core = ScriptedCore([Step(text="first answer"), Step(text="second answer")])
     h: Harness = await make(core=core)
@@ -643,7 +643,7 @@ async def test_crash_loses_only_the_queued_message(make: Any) -> None:
 
 
 async def test_maintenance_model(make: Any) -> None:
-    from kayden.api import Completion, Message
+    from kadence.api import Completion, Message
 
     bad: Harness = await make(maintenance_model="nonexistent")
     with pytest.raises(ValueError):
@@ -664,7 +664,7 @@ async def test_maintenance_model(make: Any) -> None:
     # maintain runs before the answer and once after it
     assert windows == [50_000, 50_000]
     assert [r.model for r in h.core.requests] == ["fake-2", "fake-1", "fake-2"]
-    from kayden.api import MaintenanceFinished, MaintenanceStarted
+    from kadence.api import MaintenanceFinished, MaintenanceStarted
 
     assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 2
 
@@ -672,7 +672,7 @@ async def test_maintenance_model(make: Any) -> None:
 @pytest.mark.parametrize("summary", ["SUMMARY: short", ""])
 async def test_compaction_is_announced(make: Any, summary: str) -> None:
     """Frontends show a compaction while it runs; other maintenance stays quiet."""
-    from kayden.api import CompactionFinished, CompactionStarted, Completion, Message
+    from kadence.api import CompactionFinished, CompactionStarted, Completion, Message
 
     def step(request: Any) -> Step:
         return Step(text=summary if request.maintenance else "ok")
@@ -698,7 +698,7 @@ async def test_compaction_is_announced(make: Any, summary: str) -> None:
 
 
 async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
-    from kayden.api import Completion, Message
+    from kadence.api import Completion, Message
 
     h: Harness = await make(maintenance_model="fake-2")  # max_output_tokens 1000
 
@@ -718,7 +718,7 @@ async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
 async def test_only_completion_requests_are_maintenance(make: Any) -> None:
     """Requests made through Memory's Completion are marked maintenance; turns, retries and
     overflow recovery are not, whatever tools they carry."""
-    from kayden.api import Completion, Message
+    from kadence.api import Completion, Message
 
     core = ScriptedCore([Step(error=ContextOverflowError("too long")),
                          Step(calls=[call("recall", {"query": "x"})]),
@@ -769,7 +769,7 @@ async def test_activate_empty_conversation(make: Any) -> None:
 
 
 async def test_activate_after_user_message_adds_no_notice(make: Any) -> None:
-    from kayden.api import CoreError
+    from kadence.api import CoreError
 
     core = ScriptedCore([Step(error=CoreError("boom")), Step(text="ok")])
     h: Harness = await make(core=core)
@@ -782,7 +782,7 @@ async def test_activate_after_user_message_adds_no_notice(make: Any) -> None:
 
 
 async def test_activate_after_tool_message_adds_no_notice(make: Any) -> None:
-    from kayden.api import CoreError
+    from kadence.api import CoreError
 
     tools = FakeTools()
     tools.instant("t")
@@ -812,7 +812,7 @@ async def test_message_committed_carries_stop_reason(make: Any) -> None:
 
 
 async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> None:
-    from kayden.api import Completion, MemoriesChanged
+    from kadence.api import Completion, MemoriesChanged
 
     h: Harness = await make()
     seen: list[str] = []
@@ -830,7 +830,7 @@ async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> 
 
 
 async def test_the_notes_saved_after_an_answer_are_named(make: Any) -> None:
-    from kayden.api import Completion, MemoriesChanged
+    from kadence.api import Completion, MemoriesChanged
 
     h: Harness = await make()
 

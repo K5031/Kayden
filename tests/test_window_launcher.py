@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-import kayden.__main__ as launcher
-from kayden import window
-from kayden.api import SettingsUpdate, StartOptions
-from kayden.runtime import ModuleSpec
+import kadence.__main__ as launcher
+from kadence import window
+from kadence.api import SettingsUpdate, StartOptions
+from kadence.runtime import ModuleSpec
 from tests.fakes import frontend as fake_frontend
 from tests.fakes.frontend import ScriptedFrontend
 from tests.test_modules import FAKE_MODULES, settings_file
@@ -49,14 +49,14 @@ def window_frontends(monkeypatch: pytest.MonkeyPatch, *scripts: Any, event_loop:
 
 
 def test_a_frontend_without_a_loop_of_its_own_runs_on_asyncio():
-    assert launcher.frontend_loop(ModuleSpec("kayden.frontends.tui:factory")) is asyncio.run
+    assert launcher.frontend_loop(ModuleSpec("kadence.frontends.tui:factory")) is asyncio.run
 
 
 def test_the_desktop_app_names_the_qt_loop():
-    from kayden.frontends.desktop import factory
-    from kayden.frontends.desktop.loop import run_on_qt
+    from kadence.frontends.desktop import factory
+    from kadence.frontends.desktop.loop import run_on_qt
 
-    assert launcher.frontend_loop(ModuleSpec("kayden.frontends.desktop:factory")) is run_on_qt
+    assert launcher.frontend_loop(ModuleSpec("kadence.frontends.desktop:factory")) is run_on_qt
     assert factory.event_loop is run_on_qt
 
 
@@ -104,7 +104,7 @@ def test_a_bad_config_is_shown_by_the_launchers_own_frontend(tmp_path, monkeypat
             shown.append(str(e.code))
             raise
 
-    from kayden.frontends import desktop
+    from kadence.frontends import desktop
 
     monkeypatch.setattr(desktop.factory, "event_loop", run)
     with pytest.raises(SystemExit):

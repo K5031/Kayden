@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     AssembledContext,
     BudgetExhausted,
     ContextRequest,

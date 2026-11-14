@@ -1,21 +1,21 @@
-# Contributing to Kayden
+# Contributing to Kadence
 
-Thanks for wanting to help. Kayden is young: the module contracts may still change,
+Thanks for wanting to help. Kadence is young: the module contracts may still change,
 so small, focused changes are the easiest to land.
 
 ## Getting set up
 
 Clone the repository, install [uv](https://docs.astral.sh/uv/), and follow
-[Development](docs/development.md): it covers running Kayden from your checkout, the
+[Development](docs/development.md): it covers running Kadence from your checkout, the
 architecture and the tests.
 
 ## Proposing something
 
-- **Bugs and ideas:** open an issue. Steps to reproduce, or what you would like Kayden to
+- **Bugs and ideas:** open an issue. Steps to reproduce, or what you would like Kadence to
   do and why, help most.
 - **Small fixes:** open a pull request directly.
 - **Anything bigger** (a new feature, a change to a module contract in
-  `src/kayden/api.py`, a new dependency): open an issue first, so we can agree on the
+  `src/kadence/api.py`, a new dependency): open an issue first, so we can agree on the
   direction before you spend time on it.
 
 ## What a pull request needs
@@ -41,7 +41,7 @@ request you open.
 
 ## License
 
-Kayden is MIT licensed. By contributing, you agree that your contribution is released under
+Kadence is MIT licensed. By contributing, you agree that your contribution is released under
 the same license.
 
 ## Be kind

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from kayden.api import BUILTIN_TOOLS, PROFILE, MemoriesChanged, PermissionPolicy, ToolStatus
-from kayden.memory.tools import SAVE_NOTE
+from kadence.api import BUILTIN_TOOLS, PROFILE, MemoriesChanged, PermissionPolicy, ToolStatus
+from kadence.memory.tools import SAVE_NOTE
 from tests.conformance.memory_suite import text_message
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step, call
@@ -82,7 +82,7 @@ async def test_a_memory_without_tools_gets_none(make: Any) -> None:
 async def test_read_around_shows_a_hit_with_the_messages_before_and_after(make: Any) -> None:
     h: Harness = await make(core=ScriptedCore([]), permissions=PermissionPolicy.DENY)
     first = await h.chat()
-    for text in ("We need a name.", "How about Kayden?", "Yes, do that.", "Done."):
+    for text in ("We need a name.", "How about Kadence?", "Yes, do that.", "Done."):
         await h.memory.append(first.id, [text_message(text)])
     messages = await h.memory.history(first.id)
     hit = messages[2]  # "Yes, do that.": meaningless without what came before
@@ -94,7 +94,7 @@ async def test_read_around_shows_a_hit_with_the_messages_before_and_after(make: 
     await h.turn("what did we call it?")
     results = await h.results()
     around = results["a"].content
-    assert around.index("How about Kayden?") < around.index("Yes, do that.") < around.index(
+    assert around.index("How about Kadence?") < around.index("Yes, do that.") < around.index(
         "Done.")
     assert "We need a name." not in around  # one before, one after
     assert around.count("→") == 1 and "→ [" in around.split("Yes, do that.")[0].splitlines()[-1]

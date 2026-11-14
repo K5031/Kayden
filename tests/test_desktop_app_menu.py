@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from kayden.frontends.desktop import app_menu
+from kadence.frontends.desktop import app_menu
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def entry(data_home: Path) -> configparser.SectionProxy:
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str  # type: ignore[assignment]
-    parser.read(data_home / "applications" / "io.github.k5031.kayden.desktop")
+    parser.read(data_home / "applications" / "io.github.k5031.kadence.desktop")
     return parser["Desktop Entry"]
 
 
@@ -30,11 +30,11 @@ def test_install_adds_a_launcher_that_starts_the_desktop_app(data_home: Path) ->
     assert app_menu.supported() and not app_menu.is_current()
     app_menu.install()
     e = entry(data_home)
-    assert (e["Type"], e["Name"], e["Terminal"]) == ("Application", "Kayden", "false")
-    # The window launcher, not `kayden`: a menu has no terminal for the terminal app.
-    assert e["Exec"] == f"{sys.executable} -m kayden.window"
-    assert e["StartupWMClass"] == "io.github.k5031.kayden"
-    assert e["Icon"] == app_menu.ICON_NAME and e["Icon"].startswith("io.github.k5031.kayden-")
+    assert (e["Type"], e["Name"], e["Terminal"]) == ("Application", "Kadence", "false")
+    # The window launcher, not `kadence`: a menu has no terminal for the terminal app.
+    assert e["Exec"] == f"{sys.executable} -m kadence.window"
+    assert e["StartupWMClass"] == "io.github.k5031.kadence"
+    assert e["Icon"] == app_menu.ICON_NAME and e["Icon"].startswith("io.github.k5031.kadence-")
     icon = data_home / f"icons/hicolor/scalable/apps/{app_menu.ICON_NAME}.svg"
     assert icon.read_text() == app_menu.ICON.read_text() and "<svg" in icon.read_text()
     assert app_menu.is_current()
@@ -43,11 +43,11 @@ def test_install_adds_a_launcher_that_starts_the_desktop_app(data_home: Path) ->
 def test_an_entry_for_another_install_is_not_current(data_home: Path,
                                                     monkeypatch: pytest.MonkeyPatch) -> None:
     app_menu.install()
-    monkeypatch.setattr(sys, "executable", "/opt/my tools/kayden/bin/python")
+    monkeypatch.setattr(sys, "executable", "/opt/my tools/kadence/bin/python")
     assert not app_menu.is_current()
     app_menu.install()
     assert entry(data_home)["Exec"] == (
-        '"/opt/my tools/kayden/bin/python" -m kayden.window')
+        '"/opt/my tools/kadence/bin/python" -m kadence.window')
     assert app_menu.is_current()
 
 
@@ -60,11 +60,11 @@ def test_a_new_icon_gets_a_new_name_and_replaces_the_old_one(data_home: Path) ->
     """Desktops cache icons by name, so a changed icon must not keep its name."""
     apps = data_home / "icons/hicolor/scalable/apps"
     apps.mkdir(parents=True)
-    (apps / "io.github.k5031.kayden.svg").write_text("<svg>old</svg>")
-    (apps / "io.github.k5031.kayden-0ld0ld00.svg").write_text("<svg>older</svg>")
+    (apps / "io.github.k5031.kadence.svg").write_text("<svg>old</svg>")
+    (apps / "io.github.k5031.kadence-0ld0ld00.svg").write_text("<svg>older</svg>")
     (data_home / "applications").mkdir()
-    (data_home / "applications/io.github.k5031.kayden.desktop").write_text(
-        "[Desktop Entry]\nIcon=io.github.k5031.kayden\n")
+    (data_home / "applications/io.github.k5031.kadence.desktop").write_text(
+        "[Desktop Entry]\nIcon=io.github.k5031.kadence\n")
     (apps / "other-app.svg").write_text("<svg/>")
     assert not app_menu.is_current()  # Add to App Menu shows again, to update it
     app_menu.install()

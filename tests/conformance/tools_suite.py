@@ -28,7 +28,7 @@ import jsonschema
 import psutil
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     PERMISSION_CEILING_ENV,
     RESERVED_TOOL_NAMES,
     ToolCall,

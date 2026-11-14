@@ -12,7 +12,7 @@ prompt. It had three problems:
 - **It learned rarely.** New facts were extracted only when a long conversation was
   compacted, and most conversations never got that long; otherwise only what the model
   happened to `remember` was kept.
-- **A fact was one line.** "The Kayden project: what it is, what was decided, what is
+- **A fact was one line.** "The Kadence project: what it is, what was decided, what is
   next" did not fit.
 
 Agents that remember well keep topic files with a small index always in view and open a
@@ -39,7 +39,7 @@ texts are not loaded.
 
 ### Tools
 
-Memory's tools (`kayden.memory.tools`): `recall` (the archive, as before), `read_around`
+Memory's tools (`kadence.memory.tools`): `recall` (the archive, as before), `read_around`
 (a recall hit with the messages before and after it), `read_note`,
 `save_note` (creates, or replaces the note with that title, case ignored; the model reads
 a note before changing it) and `forget_note`.
@@ -81,13 +81,13 @@ as a folder of files per project instead and can be chosen in its place.
   wait for it, but the runtime would need a second kind of Memory work outside cycles, and
   Stop, the budget and the per-conversation serialization would need rules for it.
 - **Notes shown to the save pass as Markdown headings.** Tried first: Haiku copied a
-  heading ("## Kayden: …") as the title of a new note. They are shown in the same tag form
+  heading ("## Kadence: …") as the title of a new note. They are shown in the same tag form
   the pass writes.
 
 ## Consequences
 
 - Memory stays small in every request as it grows, and holds more than one-liners.
-- Kayden learns from ordinary conversations without being asked: in a check with Claude
+- Kadence learns from ordinary conversations without being asked: in a check with Claude
   Haiku 5.5, a self-introduction made a profile and a project note, small talk saved
   nothing, and a later plan was appended to the project note, for about one cent over three
   turns.

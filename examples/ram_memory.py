@@ -1,8 +1,8 @@
-"""A minimal Memory: everything in RAM, no summaries, gone when Kayden quits.
+"""A minimal Memory: everything in RAM, no summaries, gone when Kadence quits.
 
 It shows the eight methods a Memory must have. A real one also keeps the archive on disk
 and summarizes a long conversation in maintain(); the easiest way there is to build on
-kayden.memory.sqlite.SqliteArchive, as kayden.memory.files does.
+kadence.memory.sqlite.SqliteArchive, as kadence.memory.files does.
 
 Use it with `[memory] factory = "examples.ram_memory:factory"` in config.toml.
 """
@@ -15,7 +15,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import replace
 from typing import Any
 
-from kayden.api import (
+from kadence.api import (
     ArchiveHit,
     AssembledContext,
     Completion,

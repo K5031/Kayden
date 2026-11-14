@@ -1,7 +1,7 @@
 # Writing a module
 
-Kayden is a runtime and four kinds of swappable modules. This page is for writing one. The
-contract itself is `src/kayden/api.py`; it is long, so start here and open it for the
+Kadence is a runtime and four kinds of swappable modules. This page is for writing one. The
+contract itself is `src/kadence/api.py`; it is long, so start here and open it for the
 details of the part you need.
 
 | Kind | It provides | You must write | Example to copy | Effort |
@@ -15,7 +15,7 @@ The examples are complete and tested (`tests/test_examples.py`). To see all four
 together, from a checkout:
 
 ```toml
-# /tmp/kayden-examples/config.toml
+# /tmp/kadence-examples/config.toml
 [core]
 factory = "examples.echo_core:factory"
 [memory]
@@ -27,7 +27,7 @@ factory = "examples.line_frontend:factory"
 ```
 
 ```bash
-PYTHONPATH=. uv run kayden --data-dir /tmp/kayden-examples
+PYTHONPATH=. uv run kadence --data-dir /tmp/kadence-examples
 ```
 
 Type a line and the echo "model" repeats it, with the time the runtime stamps on every
@@ -42,8 +42,8 @@ message; `/quit` leaves.
   the settings; see [Registering it](#registering-it).
 - **Async methods that never block.** Everything runs on one event loop. Put file reads,
   subprocesses and anything slow in `asyncio.to_thread` or use async libraries.
-- **No knowledge of other modules.** A module imports `kayden.api` and nothing else from
-  Kayden. The runtime carries everything between modules.
+- **No knowledge of other modules.** A module imports `kadence.api` and nothing else from
+  Kadence. The runtime carries everything between modules.
 - **Errors are safe.** The runtime wraps every call into a module: an exception becomes a
   failure the user sees, never a crash. Stop cancels the running call with ordinary
   asyncio cancellation; clean up and let it propagate.
@@ -69,7 +69,7 @@ Optional, each a method you may leave out:
 | `use_folder(folder)` | Work in the folder of the open conversation |
 | `confined(call)` | Say that a call cannot touch anything outside that folder, so it runs without asking |
 | `attach(path)` | Read a file the user dropped into a message |
-| `aclose()` | Release what you hold when Kayden quits |
+| `aclose()` | Release what you hold when Kadence quits |
 
 ## Core
 
@@ -95,7 +95,7 @@ Optional: `list_tools` (tools your provider runs itself, such as its web search)
 
 ## Frontend
 
-`run(runtime)` is your whole program; when it returns, Kayden quits. You get a
+`run(runtime)` is your whole program; when it returns, Kadence quits. You get a
 `RuntimeAPI`:
 
 - **Commands**: `start` a conversation, `send` a message, `stop`, `resolve_permission`,
@@ -108,7 +108,7 @@ Optional: `list_tools` (tools your provider runs itself, such as its web search)
 - **Catching up**: `runtime.snapshot()` plus `runtime.history(...)` rebuild the screen;
   a gap in the sequence numbers means you missed events and should do that.
 
-`src/kayden/frontends/common.py` has what the built-in apps share: how a tool step reads,
+`src/kadence/frontends/common.py` has what the built-in apps share: how a tool step reads,
 permission texts, the plan checklist. Reuse it rather than rewording.
 
 Set `factory.kind = "window"` for a graphical frontend, and `factory.event_loop` when your
@@ -130,8 +130,8 @@ Memory stores every message and decides what the model sees of a conversation.
 The example keeps everything in RAM and never summarizes, which is enough to see the
 shape. A real one must survive a restart, keep `assemble` inside its token budget and
 never cut a tool call from its result. **The practical way is to build on
-`kayden.memory.sqlite.SqliteArchive`**, which does all of that, and add your own
-long-term memory through its three hooks; `kayden.memory.files` is under 400 lines on top
+`kadence.memory.sqlite.SqliteArchive`**, which does all of that, and add your own
+long-term memory through its three hooks; `kadence.memory.files` is under 400 lines on top
 of it.
 
 Optional: tools of your own (`list_tools`, `execute`), notes the user can edit (`notes`,
@@ -140,11 +140,11 @@ Optional: tools of your own (`list_tools`, `execute`), notes the user can edit (
 ## Registering it
 
 Declare the factory as an entry point in your package's `pyproject.toml`, in the group for
-its kind. The name is the module's id; once the package is installed in Kayden's
+its kind. The name is the module's id; once the package is installed in Kadence's
 environment, the module is listed in the settings:
 
 ```toml
-[project.entry-points."kayden.tools"]   # or kayden.cores, kayden.memories, kayden.frontends
+[project.entry-points."kadence.tools"]   # or kadence.cores, kadence.memories, kadence.frontends
 dice = "my_package.dice:factory"
 ```
 
@@ -154,8 +154,8 @@ the user's permissions, so say plainly what yours does.
 ## Checking it
 
 The conformance suites in `tests/conformance/` check a module against the contract:
-`tools_suite.py`, `core_suite.py` and `memory_suite.py`. They are part of Kayden's tests,
-so run them from a Kayden checkout with your package installed in it. Each is a class to
+`tools_suite.py`, `core_suite.py` and `memory_suite.py`. They are part of Kadence's tests,
+so run them from a Kadence checkout with your package installed in it. Each is a class to
 subclass with a fixture that builds your module; the top of each file shows how:
 
 ```python
@@ -171,8 +171,8 @@ The built-in modules pass them, and so should a module meant for others to use.
 
 ## Good to know
 
-- **The contract is a draft.** `api.py` still changes as Kayden grows, and there is no
-  version check for modules yet: pin the Kayden version you built against.
+- **The contract is a draft.** `api.py` still changes as Kadence grows, and there is no
+  version check for modules yet: pin the Kadence version you built against.
 - **The top of `api.py`** lists what the runtime guarantees a module: the order things
   are stored in, what happens after a crash, when `maintain` is called.
 - **Skills are not modules.** For instructions the agent should follow for one kind of

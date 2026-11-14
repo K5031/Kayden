@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-import kayden.__main__ as launcher
-from kayden.api import McpServer, SettingsUpdate
-from kayden.runtime import ModuleState
+import kadence.__main__ as launcher
+from kadence.api import McpServer, SettingsUpdate
+from kadence.runtime import ModuleState
 from tests.conftest import Harness
 
 RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
@@ -41,7 +41,7 @@ async def test_servers_are_saved_with_their_variables_in_the_keychain(make, keyc
     assert saved(h)["mcp_servers"] == [
         {"name": "github", "command": GITHUB.command, "env": ["GITHUB_TOKEN"]},
         {"name": "docs", "url": DOCS.url}]
-    assert keychain.store[("kayden", "mcp/github/GITHUB_TOKEN")] == "ghp-secret"
+    assert keychain.store[("kadence", "mcp/github/GITHUB_TOKEN")] == "ghp-secret"
     assert "ghp-secret" not in (h.data_dir / "settings.toml").read_text()
     assert "ghp-secret" not in (h.data_dir / "events.jsonl").read_text()
     assert [srv.name for srv in s.mcp_servers] == ["github", "docs"]
@@ -54,9 +54,9 @@ async def test_an_empty_value_keeps_the_saved_one_and_removal_erases_it(make, ke
     await h.runtime.update_settings(SettingsUpdate(mcp_servers=[GITHUB]))
     kept = McpServer("github", command=GITHUB.command, env={"GITHUB_TOKEN": ""})
     await h.runtime.update_settings(SettingsUpdate(mcp_servers=[kept]))
-    assert keychain.store[("kayden", "mcp/github/GITHUB_TOKEN")] == "ghp-secret"
+    assert keychain.store[("kadence", "mcp/github/GITHUB_TOKEN")] == "ghp-secret"
     await h.runtime.update_settings(SettingsUpdate(mcp_servers=[]))
-    assert ("kayden", "mcp/github/GITHUB_TOKEN") not in keychain.store
+    assert ("kadence", "mcp/github/GITHUB_TOKEN") not in keychain.store
     assert saved(h)["mcp_servers"] == []
 
 
@@ -89,10 +89,10 @@ def test_saved_servers_become_an_mcp_tools_module(tmp_path, keychain):
     (data / "settings.toml").write_text(
         '[[mcp_servers]]\nname = "github"\ncommand = "npx server-github"\n'
         'env = ["GITHUB_TOKEN"]\n\n[[mcp_servers]]\nname = "docs"\nurl = "https://d/mcp"\n')
-    keychain.store[("kayden", "mcp/github/GITHUB_TOKEN")] = "ghp-secret"
+    keychain.store[("kadence", "mcp/github/GITHUB_TOKEN")] = "ghp-secret"
     config = launcher.load_config(launcher.parse_args(["--data-dir", str(data)]))
     [mcp] = config.extra_tools
-    assert mcp.factory == "kayden.tools.mcp:factory"
+    assert mcp.factory == "kadence.tools.mcp:factory"
     assert mcp.options["servers"] == [
         {"name": "github", "command": "npx server-github", "env": {"GITHUB_TOKEN": "ghp-secret"}},
         {"name": "docs", "url": "https://d/mcp", "env": {}}]

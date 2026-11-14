@@ -1,6 +1,6 @@
 # Contract issues
 
-Places where `SPEC.md` or `src/kayden/api.py` is contradictory, ambiguous, or silent, found
+Places where `SPEC.md` or `src/kadence/api.py` is contradictory, ambiguous, or silent, found
 while building the runtime from them alone. Each entry gives the location, the problem,
 what the implementation assumes, and a proposed fix. Neither file was modified.
 
@@ -331,7 +331,7 @@ in section 9.
 - **Assumed:** Read-only auto-allow → ALLOW_ONCE; covered by a grant → ALLOW_CONVERSATION;
   DENY policy or non-interactive refusal → DENY. Each with a fresh request id.
 
-### 5.2 (S) Invalid KAYDEN_PERMISSION_CEILING value
+### 5.2 (S) Invalid KADENCE_PERMISSION_CEILING value
 - **Status:** **Resolved** (`inherited_ceiling()` returns DENY for an invalid value). Runtime changed. The runtime now relies on it.
 - **Where:** `PermissionPolicy.inherited_ceiling` raises ValueError.
 - **Assumed:** Fail closed: treated as DENY.
@@ -350,7 +350,7 @@ in section 9.
   reads or changes stored data), released at shutdown. `fcntl.flock` (POSIX only); the
   holder is named by the pid written into `instance.lock`. A review of #1 found that reads
   and writes before start() ran unlocked: a second process could delete a conversation
-  the first had open, and migrate the store under an older Kayden.
+  the first had open, and migrate the store under an older Kadence.
 
 ### 5.5 (S) When the ceiling is exported
 - **Status:** **Resolved** (2026-11-07). Stated in `PermissionPolicy.inherited_ceiling`.
@@ -467,7 +467,7 @@ in section 9.
 ### 8.3 (S) Where runtime settings live
 - **Status:** **Resolved** (implementation): `RuntimeConfig`, with model, maintenance
   model, permissions and budget read from `[runtime]` in the instance config file
-  (decisions.md, "Running Kayden").
+  (decisions.md, "Running Kadence").
 - **Problem:** Retries, timeouts, maintenance model, context-window overrides, budgets and
   the policy are "instance configuration" but have no defined type.
 - **Assumed:** `RuntimeConfig` (see decisions.md).
@@ -693,8 +693,8 @@ Against contract Draft 2.4. The stated assumption is what the module does.
   loaded, so a frontend cannot choose it. A GUI toolkit's loop must be the one that runs.
 - **Resolution:** The docstring says "Owns the UI; its launcher chooses the event loop".
   `FrontendInfo.kind` (and a frontend factory's `kind`) says which launcher runs it:
-  `"terminal"` frontends run under `kayden` on asyncio's loop, `"window"` frontends under
-  the desktop launcher on qasync's, which `kayden` hands over to.
+  `"terminal"` frontends run under `kadence` on asyncio's loop, `"window"` frontends under
+  the desktop launcher on qasync's, which `kadence` hands over to.
 
 ## 12. Found while building autonomy into sessions (contract Draft 3)
 
@@ -703,7 +703,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Where:** [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md), "Migrating
   existing data": "schema version 2, migrated in place".
 - **Problem:** Stores were already at version 2 (stable block tags); the user's
-  `~/.kayden/memory.db` is version 2, not 1.
+  `~/.kadence/memory.db` is version 2, not 1.
 - **Assumed:** The new layout is version 3.
 - **Fix:** None needed beyond the note, which now says version 3.
 
@@ -781,7 +781,7 @@ None was consulted or encountered. The only out-of-tree output seen was a system
 
 Update for the module migration: `.agents/process/MODULES.md` (added by the user after the clean-room
 build) explicitly directs importing the module implementations from
-the sibling repositories `kayden-memory`, `kayden-core` and `kayden-tools`. Their
+the sibling repositories `kadence-memory`, `kadence-core` and `kadence-tools`. Their
 `src/` and `tests/` were copied in (read-only use of those folders); their `api.py` copies
 were not, so this repository's contract stays the only one. Nothing else in those folders
 was used.
@@ -796,7 +796,7 @@ was used.
   checks stayed for those two.
 - **Resolution:** One criterion: what the runtime reads while running applies live; what is
   only passed to a factory applies at the next start. The key and work folder are saved at
-  once and apply at restart; nothing rebuilds a module while Kayden runs.
+  once and apply at restart; nothing rebuilds a module while Kadence runs.
 
 ### S2 (A) `[runtime].context_windows` duplicates the Core's `context_window`
 - **Status:** Resolved.
@@ -818,16 +818,16 @@ was used.
 
 ### D1 (C) PHILOSOPHY.md and the spec's scope for fleets
 - **Status:** Resolved (SPEC 1, 3, 4.4, 5, 10.1, 13): duties and the headless frontend.
-- **Where:** `PHILOSOPHY.md` (Kayden as the base agent of a fleet manager with ranks,
-  supervisors and duties) against SPEC 1 ("Kayden does not implement a bespoke multi-agent
+- **Where:** `PHILOSOPHY.md` (Kadence as the base agent of a fleet manager with ranks,
+  supervisors and duties) against SPEC 1 ("Kadence does not implement a bespoke multi-agent
   organization framework"), 10.2 (no centralized fleet management, no hardcoded hierarchy)
   and 13 (centralized fleet management and scheduled wake-ups out of scope).
 - **Problem:** The user's direction needs units that run by themselves, headless, and
   report upward; the spec rules out the fleet and the self-scheduling.
 - **Assumed:** Both hold if the fleet manager is a separate program: the spec stays about
-  one Kayden instance, and ranks and teams stay out of it. What a unit needs is added to
+  one Kadence instance, and ranks and teams stay out of it. What a unit needs is added to
   the spec as it is built: duties
   ([note](notes/implemented/2026-11-11-duties.md)),
   then a headless frontend ([note](notes/implemented/2026-11-11-headless-units.md)).
-- **Fix:** SPEC 1 and 13 point to PHILOSOPHY.md for the fleet and name what Kayden
+- **Fix:** SPEC 1 and 13 point to PHILOSOPHY.md for the fleet and name what Kadence
   provides toward it.

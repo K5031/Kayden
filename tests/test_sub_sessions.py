@@ -1,4 +1,4 @@
-"""Sub-sessions: the frontend hosts children, headless Kayden processes the agent starts
+"""Sub-sessions: the frontend hosts children, headless Kadence processes the agent starts
 for self-contained tasks; each reports back and can be watched while it works."""
 
 from __future__ import annotations
@@ -10,9 +10,9 @@ from typing import Any
 import pytest
 import tomli_w
 
-from kayden.api import AgentState, OperationResult, PermissionPolicy, ToolResult, ToolStatus
-from kayden.frontends.sessions import SubSessions
-from kayden.runtime import InstanceConfig, ModuleSpec, RuntimeConfig, run_instance
+from kadence.api import AgentState, OperationResult, PermissionPolicy, ToolResult, ToolStatus
+from kadence.frontends.sessions import SubSessions
+from kadence.runtime import InstanceConfig, ModuleSpec, RuntimeConfig, run_instance
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 
@@ -101,7 +101,7 @@ async def test_cancelling_the_call_stops_the_child(make, tmp_path, child_env):
 
 
 async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, child_env):
-    from kayden.api import Decision
+    from kadence.api import Decision
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("start_session", {"task": "Look it up"}, id="s")]),
@@ -257,7 +257,7 @@ async def test_a_stopped_child_resumes_its_goal(make, tmp_path, child_env):
 
 
 async def test_children_are_renamed_archived_and_deleted(tmp_path):
-    from kayden.frontends.sessions import SubSession
+    from kadence.frontends.sessions import SubSession
 
     sessions = SubSessions(tmp_path)
     folder = tmp_path / "sessions" / "conv-1"
@@ -280,7 +280,7 @@ async def test_cancelling_while_a_child_starts_stops_it(tmp_path):
     import asyncio
     import sys
 
-    from kayden.api import ToolCall
+    from kadence.api import ToolCall
 
     class Ctx:
         conversation_id = "conv"

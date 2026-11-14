@@ -10,7 +10,7 @@ import sys
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Decision,
     Failure,
@@ -44,7 +44,7 @@ class LineFrontend(Frontend):
         return FrontendInfo("lines")
 
     async def run(self, runtime: RuntimeAPI) -> None:
-        """Returning from here quits Kayden."""
+        """Returning from here quits Kadence."""
         await runtime.start(StartOptions())  # a new conversation
         idle = asyncio.Event()
         idle.set()
@@ -85,4 +85,4 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> LineFrontend:
 
 
 factory.display_name = "Plain lines"  # type: ignore[attr-defined]
-factory.kind = "terminal"  # type: ignore[attr-defined]  # started by `kayden`
+factory.kind = "terminal"  # type: ignore[attr-defined]  # started by `kadence`

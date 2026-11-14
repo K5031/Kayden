@@ -4,8 +4,8 @@ from typing import Any
 import httpx2
 import pytest
 
-from kayden.api import ToolCall
-from kayden.tools.shell_files import ShellFilesTools, web
+from kadence.api import ToolCall
+from kadence.tools.shell_files import ShellFilesTools, web
 from tests.conformance.tools_suite import RecordingContext
 
 ARTICLE = """<html><head><title>Asyncio notes</title></head><body>
@@ -119,7 +119,7 @@ async def test_search_defaults_and_failures(tools, tmp_path):
 
 async def test_an_empty_or_failed_search_is_tried_again(tmp_path):
     """Search engines refuse some requests for a while: the same query may work a moment
-    later, so an empty or failed search is retried before Kayden reports it."""
+    later, so an empty or failed search is retried before Kadence reports it."""
     answers: list[Any] = [[], web.WebError("Web search is unavailable right now: busy"),
                           [{"title": "Found", "href": "https://example.com/", "body": "it"}]]
     calls = []
@@ -220,4 +220,4 @@ async def test_a_missing_library_says_to_reinstall(tmp_path):
     tools = ShellFilesTools(tmp_path, web_tools=web.Web(search=missing))
     out = await run(tools, tmp_path, "web_search", query="x")
     assert out.is_error and "'ddgs' is not installed" in out.content
-    assert "reinstall Kayden" in out.content
+    assert "reinstall Kadence" in out.content

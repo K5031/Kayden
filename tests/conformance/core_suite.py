@@ -20,7 +20,7 @@ from itertools import pairwise
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     Completed,
     ContextOverflowError,
     Core,

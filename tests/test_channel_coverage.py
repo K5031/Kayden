@@ -1,14 +1,14 @@
 """The headless channel carries the whole RuntimeAPI: every command is a request the
 headless frontend answers and the remote runtime sends. A command added to RuntimeAPI and
-forgotten in either breaks sub-sessions and programs that drive Kayden."""
+forgotten in either breaks sub-sessions and programs that drive Kadence."""
 
 from __future__ import annotations
 
 import inspect
 
-from kayden.api import RuntimeAPI
-from kayden.frontends.headless import REQUESTS
-from kayden.frontends.remote import RemoteRuntime
+from kadence.api import RuntimeAPI
+from kadence.frontends.headless import REQUESTS
+from kadence.frontends.remote import RemoteRuntime
 
 NOT_REQUESTS = {"events", "restart"}  # events are notifications; restart is the parent's
 

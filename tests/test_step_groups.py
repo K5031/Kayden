@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 
-from kayden.api import ToolStatus
-from kayden.frontends.common import group_title, step_problems, steps_title
-from kayden.frontends.desktop.viewmodel import (
+from kadence.api import ToolStatus
+from kadence.frontends.common import group_title, step_problems, steps_title
+from kadence.frontends.desktop.viewmodel import (
     AssistantItem,
     NoticeItem,
     Phase,

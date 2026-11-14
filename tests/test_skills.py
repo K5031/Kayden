@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from kayden.api import Skill, ToolStatus
-from kayden.runtime import skills
+from kadence.api import Skill, ToolStatus
+from kadence.runtime import skills
 from tests.fakes.core import ScriptedCore, Step, call
 
 
@@ -75,7 +75,7 @@ def test_a_broken_skill_is_skipped_and_reported(tmp_path: Path):
     assert len(problems) == 3 and all(str(tmp_path) in p for p in problems)
 
 
-def test_kayden_comes_with_a_memory_cleanup_skill():
+def test_kadence_comes_with_a_memory_cleanup_skill():
     found, problems = skills.load([skills.BUILTIN])
     assert problems == []
     assert "consolidate-memory" in found

@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from kayden.api import (
+from kadence.api import (
     PROFILE,
     ArchiveHit,
     AssembledContext,
@@ -38,7 +38,7 @@ from kayden.api import (
     ToolResult,
     ToolSpec,
 )
-from kayden.memory.tools import memory_tools, run_memory_tool
+from kadence.memory.tools import memory_tools, run_memory_tool
 
 
 @dataclass

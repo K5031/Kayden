@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from kayden.api import SettingsUpdate, StartOptions
-from kayden.runtime.config import ModuleState
+from kadence.api import SettingsUpdate, StartOptions
+from kadence.runtime.config import ModuleState
 from tests.conftest import Harness
 from tests.fakes.tools import FakeTools
 

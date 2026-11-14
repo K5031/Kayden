@@ -5,14 +5,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from kayden.api import (
+from kadence.api import (
     PermissionPolicy,
     ServerToolUse,
     ToolSpec,
     ToolStarted,
     Usage,
 )
-from kayden.memory.sqlite import codec
+from kadence.memory.sqlite import codec
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step
 from tests.fakes.tools import FakeTools
@@ -29,7 +29,7 @@ async def harness(make: Any, *steps: Step, **config: Any) -> Harness:
     core = ScriptedCore([*steps, Step(text="done")])
     core.tools = [SEARCH]
     tools = FakeTools()
-    tools.instant("web_search", "Kayden's own search")
+    tools.instant("web_search", "Kadence's own search")
     tools.instant("web_fetch", "a page")
     return await make(core=core, tools=tools, **config)
 

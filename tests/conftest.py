@@ -11,8 +11,8 @@ import keyring
 import keyring.backend
 import pytest
 
-import kayden.frontends.desktop  # noqa: F401 - before any Qt import: see its lazy-import note
-from kayden.api import (
+import kadence.frontends.desktop  # noqa: F401 - before any Qt import: see its lazy-import note
+from kadence.api import (
     PERMISSION_CEILING_ENV,
     AgentState,
     ConversationInfo,
@@ -25,7 +25,7 @@ from kayden.api import (
     StartOptions,
     ToolResult,
 )
-from kayden.runtime import Runtime, RuntimeConfig
+from kadence.runtime import Runtime, RuntimeConfig
 from tests.fakes.core import ScriptedCore
 from tests.fakes.frontend import Recorder, ScriptedFrontend
 from tests.fakes.memory import InMemoryMemory, MemoryStore
@@ -40,13 +40,13 @@ FAST: dict[str, Any] = {
 }
 
 
-if os.environ.get("KAYDEN_TEST_LOOP") == "qasync":
+if os.environ.get("KADENCE_TEST_LOOP") == "qasync":
     def pytest_asyncio_loop_factories(config: pytest.Config, item: pytest.Item) -> Any:
-        """KAYDEN_TEST_LOOP=qasync runs every async test on the desktop app's loop,
+        """KADENCE_TEST_LOOP=qasync runs every async test on the desktop app's loop,
         loop.QtEventLoop (qasync)."""
         from PySide6.QtWidgets import QApplication
 
-        from kayden.frontends.desktop.loop import QtEventLoop
+        from kadence.frontends.desktop.loop import QtEventLoop
 
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         app = QApplication.instance() or QApplication([])
@@ -168,19 +168,19 @@ def keychain() -> Any:
 
 # Entry points of a package that provides modules, the way a user-made one would.
 INSTALLED_MODULES = """\
-[kayden.cores]
+[kadence.cores]
 first = tests.fakes.core:first_factory
 second = tests.fakes.core:second_factory
 keyless = tests.fakes.core:factory
 broken = tests.fakes.nowhere:factory
 
-[kayden.memories]
+[kadence.memories]
 fake-memory = tests.fakes.memory:factory
 
-[kayden.tools]
+[kadence.tools]
 fake-tools = tests.fakes.tools:factory
 
-[kayden.frontends]
+[kadence.frontends]
 scripted = tests.fakes.frontend:factory
 scripted-window = tests.fakes.frontend:window_factory
 scripted-window-2 = tests.fakes.frontend:other_window_factory
@@ -191,10 +191,10 @@ scripted-window-2 = tests.fakes.frontend:other_window_factory
 def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Installs a package declaring INSTALLED_MODULES: its dist-info on sys.path."""
     site = tmp_path / "site"
-    dist = site / "kayden_test_modules-1.0.dist-info"
+    dist = site / "kadence_test_modules-1.0.dist-info"
     dist.mkdir(parents=True)
     (dist / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: kayden-test-modules\nVersion: 1.0\n")
+        "Metadata-Version: 2.1\nName: kadence-test-modules\nVersion: 1.0\n")
     (dist / "entry_points.txt").write_text(INSTALLED_MODULES)
     monkeypatch.syspath_prepend(str(site))
     return site
@@ -202,7 +202,7 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def child_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Child Kayden processes (sub-sessions) import the test fakes their config names."""
+    """Child Kadence processes (sub-sessions) import the test fakes their config names."""
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
 
 

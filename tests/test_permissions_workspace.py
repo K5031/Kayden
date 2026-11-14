@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kayden.api import AgentState, Decision, PermissionPolicy, ToolCall, Tools, ToolStatus
+from kadence.api import AgentState, Decision, PermissionPolicy, ToolCall, Tools, ToolStatus
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools

@@ -13,7 +13,7 @@ from rich.text import Text as RichText
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, Label, OptionList, Select, Static, Switch, TextArea
 
-from kayden.api import (
+from kadence.api import (
     PROFILE,
     AgentConfig,
     AgentState,
@@ -67,11 +67,11 @@ from kayden.api import (
     UsageSnapshot,
     UsageUpdated,
 )
-from kayden.frontends.tui import (
+from kadence.frontends.tui import (
     AssistantEntry,
     ConfirmScreen,
     ConversationsScreen,
-    KaydenApp,
+    KadenceApp,
     MemoryScreen,
     ModelScreen,
     NoteScreen,
@@ -328,7 +328,7 @@ async def until(pilot: Pilot, predicate: Callable[[], bool], timeout: float = 3.
         await pilot.pause(0.01)
 
 
-async def caught_up(pilot: Pilot, app: KaydenApp, stub: StubRuntime) -> None:
+async def caught_up(pilot: Pilot, app: KadenceApp, stub: StubRuntime) -> None:
     await until(pilot, lambda: app.idle_and_caught_up(stub.seq))
     await pilot.pause()
 
@@ -338,11 +338,11 @@ def plain(widget: Static) -> str:
     return content.plain if isinstance(content, RichText) else str(content)
 
 
-def entries[T](app: KaydenApp, cls: type[T]) -> list[T]:
+def entries[T](app: KadenceApp, cls: type[T]) -> list[T]:
     return list(app.query_one("#transcript").query(cls))
 
 
-def status(app: KaydenApp) -> str:
+def status(app: KadenceApp) -> str:
     return plain(app.query_one("#status", Static))
 
 
@@ -351,18 +351,18 @@ async def type_text(pilot: Pilot, text: str) -> None:
         await pilot.press("space" if char == " " else char)
 
 
-async def submit(pilot: Pilot, app: KaydenApp, text: str) -> None:
+async def submit(pilot: Pilot, app: KadenceApp, text: str) -> None:
     app.query_one("#prompt", Input).value = text
     app.query_one("#prompt", Input).focus()
     await pilot.press("enter")
 
 
-def notices(app: KaydenApp) -> str:
+def notices(app: KadenceApp) -> str:
     return "\n".join(n.message for n in app._notifications)
 
 
-def make(stub: StubRuntime, **kwargs) -> KaydenApp:
-    return KaydenApp(stub, **kwargs)  # type: ignore[arg-type]
+def make(stub: StubRuntime, **kwargs) -> KadenceApp:
+    return KadenceApp(stub, **kwargs)  # type: ignore[arg-type]
 
 
 def test_frontend_info():
@@ -519,7 +519,7 @@ async def test_send_while_running_is_queued_then_committed():
 
 
 async def test_a_compaction_shows_a_line_that_says_how_it_ended():
-    from kayden.api import CompactionFinished, CompactionStarted
+    from kadence.api import CompactionFinished, CompactionStarted
 
     stub = StubRuntime()
     app = make(stub)
@@ -702,7 +702,7 @@ async def test_folder_command_starts_a_chat_there_and_deletes_nothing():
     async with app.run_test(size=(120, 50), notifications=True) as pilot:
         await until(pilot, lambda: entries(app, UserEntry))
         await submit(pilot, app, "/folder")
-        await until(pilot, lambda: "Kayden works in" in notices(app))
+        await until(pilot, lambda: "Kadence works in" in notices(app))
         await submit(pilot, app, "/folder /projects/site")
         await until(pilot, lambda: ("start", StartOptions(folder="/projects/site"))
                     in stub.calls)
@@ -896,7 +896,7 @@ async def test_cancel_operation_dialog_and_command():
 
 
 async def test_history_is_paginated():
-    from kayden.frontends.tui import HISTORY_PAGE
+    from kadence.frontends.tui import HISTORY_PAGE
 
     stub = StubRuntime(history=[msg(f"u{i}", Role.USER, Text(f"m{i}"))
                                 for i in range(2 * HISTORY_PAGE + 10)])
@@ -917,8 +917,8 @@ async def test_history_is_paginated():
 
 
 async def test_factory_builds_start_options(tmp_path):
-    from kayden.api import InstancePaths
-    from kayden.frontends.tui import factory
+    from kadence.api import InstancePaths
+    from kadence.frontends.tui import factory
 
     paths = InstancePaths(tmp_path)
     assert factory({}, paths).start_options is None
@@ -944,7 +944,7 @@ async def test_conversation_events_for_other_conversations_and_memories():
 # ── conversation list ────────────────────────────────────────────────────
 
 
-async def open_conversations(pilot: Pilot, app: KaydenApp, stub: StubRuntime,
+async def open_conversations(pilot: Pilot, app: KadenceApp, stub: StubRuntime,
                              how: str = "f3") -> ConversationsScreen:
     await caught_up(pilot, app, stub)
     if how == "f3":
@@ -1049,7 +1049,7 @@ async def test_delete_a_conversation_after_confirmation():
         await until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
         message = plain(app.screen.query_one("#confirm-message"))
         assert message == ('Delete "What is the weather"? This permanently deletes the '
-                           "conversation. What Kayden remembered from it stays in Memory.")
+                           "conversation. What Kadence remembered from it stays in Memory.")
         await pilot.press("escape")
         await until(pilot, lambda: app.screen is screen)
         assert not any(c[0] == "delete_conversation" for c in stub.calls)
@@ -1097,7 +1097,7 @@ async def test_delete_is_disabled_when_memory_cannot_delete():
 # ── long-term memory ─────────────────────────────────────────────────────
 
 
-async def open_memory(pilot: Pilot, app: KaydenApp, stub: StubRuntime) -> MemoryScreen:
+async def open_memory(pilot: Pilot, app: KadenceApp, stub: StubRuntime) -> MemoryScreen:
     await caught_up(pilot, app, stub)
     await pilot.press("f4")
     await until(pilot, lambda: isinstance(app.screen, MemoryScreen))
@@ -1183,7 +1183,7 @@ async def test_a_command_shows_its_description_with_the_command_behind_it():
         shown = plain(entry)
         assert shown.startswith("⚙ Remove the old build\n  rm -rf build")
         prompt = str(app.query_one(PermissionPrompt).query_one(Label).render())
-        assert "Kayden wants to: Remove the old build" in prompt and "rm -rf build" in prompt
+        assert "Kadence wants to: Remove the old build" in prompt and "rm -rf build" in prompt
 
 
 async def test_a_reply_with_nothing_to_show_takes_no_space():
@@ -1250,7 +1250,7 @@ async def test_a_lone_step_shows_its_sentence_and_text_starts_a_new_group():
 
 
 async def test_a_tool_the_provider_ran_is_a_finished_step():
-    from kayden.api import ServerToolUse
+    from kadence.api import ServerToolUse
 
     stub = StubRuntime()
     app = make(stub)
@@ -1265,12 +1265,12 @@ async def test_a_tool_the_provider_ran_is_a_finished_step():
         assert "w.example" in plain(step)
 
 
-async def test_a_second_kayden_says_it_is_already_open_and_quits():
+async def test_a_second_kadence_says_it_is_already_open_and_quits():
     from dataclasses import replace
 
     stub = StubRuntime(started=False)
     stub.current_settings = replace(stub.current_settings, already_open=True,
-                                    startup_error="Kayden is already open in another window")
+                                    startup_error="Kadence is already open in another window")
     app = make(stub)
     async with app.run_test() as pilot:
         await until(pilot, lambda: app.return_code is not None)
@@ -1290,7 +1290,7 @@ async def test_a_memory_update_after_an_answer_is_mentioned():
 
 
 async def test_a_notice_meant_for_the_model_alone_is_not_shown():
-    from kayden.api import HIDDEN_NOTICE_PREFIX
+    from kadence.api import HIDDEN_NOTICE_PREFIX
 
     stub = StubRuntime()
     app = make(stub)
@@ -1304,7 +1304,7 @@ async def test_a_notice_meant_for_the_model_alone_is_not_shown():
 
 
 async def test_a_runtime_notice_is_a_system_line():
-    from kayden.api import NOTICE_PREFIX
+    from kadence.api import NOTICE_PREFIX
 
     stub = StubRuntime()
     app = make(stub)
@@ -1319,7 +1319,7 @@ async def test_a_runtime_notice_is_a_system_line():
 async def test_a_long_notice_is_folded():
     from textual.widgets import Collapsible
 
-    from kayden.api import NOTICE_PREFIX
+    from kadence.api import NOTICE_PREFIX
 
     stub = StubRuntime()
     app = make(stub)

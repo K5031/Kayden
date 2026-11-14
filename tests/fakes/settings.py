@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kayden.api import Budget, ModuleChoice, ModuleInfo, PermissionPolicy, Settings
+from kadence.api import Budget, ModuleChoice, ModuleInfo, PermissionPolicy, Settings
 
 MODULES = {
     "core": ModuleChoice("claude", "claude", [

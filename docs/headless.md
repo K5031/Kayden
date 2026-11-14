@@ -1,11 +1,11 @@
-# Driving Kayden from a program
+# Driving Kadence from a program
 
-`kayden --headless` runs Kayden without a screen, for another program to drive: a fleet
-manager, a script, a test. The program starts Kayden as a child process and talks to it
-over Kayden's stdin and stdout.
+`kadence --headless` runs Kadence without a screen, for another program to drive: a fleet
+manager, a script, a test. The program starts Kadence as a child process and talks to it
+over Kadence's stdin and stdout.
 
 ```bash
-kayden --headless --data-dir ~/units/writer --goal "Draft the launch post"
+kadence --headless --data-dir ~/units/writer --goal "Draft the launch post"
 ```
 
 | Option | Does |
@@ -21,12 +21,12 @@ spending limit, if it should have one; see [config.toml](settings.md#configtoml)
 ## The channel
 
 [JSON-RPC 2.0](https://www.jsonrpc.org/specification), one message per line, UTF-8.
-Kayden writes nothing else to stdout: anything else the process prints goes to stderr, and
-so do Kayden's own errors, such as a duty that cannot start. Closing Kayden's stdin quits it
+Kadence writes nothing else to stdout: anything else the process prints goes to stderr, and
+so do Kadence's own errors, such as a duty that cannot start. Closing Kadence's stdin quits it
 the way closing the window does.
 
 **Requests** have the names and parameters of the runtime's commands, every one but
-`restart`. Objects may be sent with their `"type"`, as Kayden sends them; the desktop app
+`restart`. Objects may be sent with their `"type"`, as Kadence sends them; the desktop app
 and the terminal app drive their sub-sessions this way:
 
 | Method | Params |

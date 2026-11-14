@@ -1,15 +1,15 @@
 # Clean-room runtime plan
 
-Behaviors extracted from `SPEC.md` and `src/kayden/api.py`, each mapped to the test that
+Behaviors extracted from `SPEC.md` and `src/kadence/api.py`, each mapped to the test that
 covers it. Test files live in `tests/`; fakes in `tests/fakes/`.
 
 ## Runtime surface (implementation choices, see `decisions.md`)
 
-- `kayden.runtime.Runtime(core, memory, tools, frontend: FrontendInfo, config: RuntimeConfig)`
+- `kadence.runtime.Runtime(core, memory, tools, frontend: FrontendInfo, config: RuntimeConfig)`
   implements `RuntimeAPI`; `await runtime.aclose()` shuts down.
-- `kayden.runtime.run_instance(InstanceConfig)` loads the four modules from
+- `kadence.runtime.run_instance(InstanceConfig)` loads the four modules from
   `"package.module:factory"` import paths, runs `frontend.run(runtime)`, then shuts down.
-- `kayden.api.InstanceLockedError` when the (data dir, mode) lock is held.
+- `kadence.api.InstanceLockedError` when the (data dir, mode) lock is held.
 
 ## Acceptance scenarios (SPEC 12) — `tests/test_scenarios.py`
 
@@ -118,7 +118,7 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Keys go to the keychain only, for the chosen Core; a failed save restores it | `test_api_key_*`, `test_a_failed_save_restores_the_keychain` |
 | Only changed settings are saved; changes are logged without secrets, loosening flagged | `test_only_changed_settings_are_saved`, `test_settings_changes_are_logged_without_values_that_are_secret`, `test_raising_a_limit_and_loosening_permissions_are_flagged` |
 
-## Launcher (`kayden`) — `tests/test_e2e.py`
+## Launcher (`kadence`) — `tests/test_e2e.py`
 
 | Behavior | Test |
 |----------|------|
@@ -127,7 +127,7 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Module ids of the configured modules | `test_module_ids_of_the_configured_modules` |
 | Saved settings override the config file; invalid ones refused | `test_saved_settings_override_the_config_file`, `test_invalid_saved_settings_are_refused` |
 | `--show-config` prints the effective config, which loads back unchanged | `test_show_config_prints_the_effective_config_without_building_modules`, `test_shown_config_loads_back_to_the_same_instance` |
-| The `kayden` command runs main | `test_kayden_command_runs_main` |
+| The `kadence` command runs main | `test_kadence_command_runs_main` |
 
 ## Swappable modules — `tests/test_modules.py`
 
@@ -136,7 +136,7 @@ commands (`test_command_state_cell`). Footnotes: `test_start_refused_with_outsta
 | Installed entry points that load are listed, in every frontend's settings | `test_installed_modules_are_the_entry_points_that_load`, `test_an_installed_package_appears_in_settings` |
 | Saved ids pick factories; config options stay with their module; import paths have no id | `test_saved_module_ids_pick_their_factories`, `test_config_options_stay_with_their_module`, `test_import_paths_in_config_have_no_id` |
 | Each launcher runs the saved frontend of its kind, else its own | `test_each_launcher_runs_the_saved_frontend_of_its_kind` |
-| `kayden` opens a saved window frontend at launch, or says why it runs the TUI | `test_kayden_opens_the_saved_window_frontend`, `test_kayden_says_why_it_opens_in_the_terminal` |
+| `kadence` opens a saved window frontend at launch, or says why it runs the TUI | `test_kadence_opens_the_saved_window_frontend`, `test_kadence_says_why_it_opens_in_the_terminal` |
 | restart() shuts down, names the conversation (none after a Memory change) and the frontend it can bring up | `test_restart_shuts_down_and_names_the_open_conversation`, `test_a_memory_change_restarts_without_the_conversation`, `test_restart_brings_up_the_chosen_frontend_where_it_can` |
 | Startup failures open the frontend on the setup runtime with a one-line error; first-run key before the Core | `test_a_missing_key_opens_the_frontend_and_is_entered_before_the_core_is_built`, `test_the_setup_runtime_saves_what_needs_no_core`, `test_bad_module_options_open_the_frontend_with_the_error`, `test_a_frontend_that_cannot_be_built_falls_back_to_the_launchers` |
 | Restart now reopens the conversation with the new modules; the terminal hands over to the desktop app | `test_restart_reopens_the_conversation_with_the_new_modules`, `test_the_terminal_hands_over_to_the_desktop_app`, `test_the_handed_over_command_runs`, `test_the_desktop_launcher_opens_the_conversation_it_is_given` |

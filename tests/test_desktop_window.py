@@ -18,7 +18,7 @@ from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     Budget,
     ConversationInfo,
@@ -26,10 +26,10 @@ from kayden.api import (
     Role,
     SettingsUpdate,
 )
-from kayden.frontends.desktop import app_menu, theme
-from kayden.frontends.desktop import window as window_module
-from kayden.frontends.desktop.viewmodel import AssistantItem, Controller, ConversationModel
-from kayden.frontends.desktop.window import (
+from kadence.frontends.desktop import app_menu, theme
+from kadence.frontends.desktop import window as window_module
+from kadence.frontends.desktop.viewmodel import AssistantItem, Controller, ConversationModel
+from kadence.frontends.desktop.window import (
     DATE_ROLE,
     PREVIEW_ROLE,
     AssistantBubble,
@@ -41,9 +41,9 @@ from kayden.frontends.desktop.window import (
     UserBubble,
     WelcomeDialog,
 )
-from kayden.runtime import ModuleState
-from kayden.runtime.config import RuntimeConfig
-from kayden.runtime.setup import SetupRuntime
+from kadence.runtime import ModuleState
+from kadence.runtime.config import RuntimeConfig
+from kadence.runtime.setup import SetupRuntime
 from tests.conftest import Harness, eventually
 from tests.fakes.core import Step, call
 from tests.fakes.tools import FakeTools
@@ -205,7 +205,7 @@ async def test_welcome_saves_the_key_folder_and_limit_then_restarts(installed, q
     dialog.key.setText("sk-good")
     dialog.key_continue.click()
     await eventually(lambda: dialog.pages.currentIndex() == 2)
-    assert keychain.store[("kayden", "SECOND_API_KEY")] == "sk-good"
+    assert keychain.store[("kadence", "SECOND_API_KEY")] == "sk-good"
     dialog.folder.setText(str(tmp_path / "work"))
     dialog.limit.setText("3")
     dialog.finish_button.click()
@@ -239,7 +239,7 @@ async def test_settings_offer_no_memory_or_interface_choice(make, installed, qap
     assert not {"memory", "frontend"} & set(dialog.form().modules)
 
 
-async def test_kayden_can_be_added_to_the_app_menu(make, qapp, tmp_path, monkeypatch):
+async def test_kadence_can_be_added_to_the_app_menu(make, qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.setattr(app_menu, "_reload_icons", lambda: None)  # not the real session
@@ -250,7 +250,7 @@ async def test_kayden_can_be_added_to_the_app_menu(make, qapp, tmp_path, monkeyp
     assert add.text() == "&Add to App Menu" and add.isVisible()
     add.trigger()
     await eventually(lambda: not add.isVisible())
-    assert (tmp_path / "applications/io.github.k5031.kayden.desktop").exists()
+    assert (tmp_path / "applications/io.github.k5031.kadence.desktop").exists()
     assert "app menu" in controller.model.items[-1].text
     other, _controller, _ = await open_window(h)
     assert not other.app_menu_action.isVisible()  # already there
@@ -381,7 +381,7 @@ async def test_delete_asks_with_cancel_as_the_default(make, qapp):
     box = visible(window, QMessageBox)
     assert box.text() == "Delete “Old notes”?"
     assert box.informativeText() == (
-        "This permanently deletes the conversation. What Kayden remembered from it stays in Memory.")
+        "This permanently deletes the conversation. What Kadence remembered from it stays in Memory.")
     assert box.icon() == QMessageBox.Icon.NoIcon
     assert [b.text() for b in box.buttons()] == ["Cancel", "Delete"]
     assert box.defaultButton().text() == "Cancel"
@@ -402,8 +402,8 @@ async def test_continue_in_a_new_conversation(make, qapp):
 
 
 async def test_memory_dialog_add_edit_delete_notes(make, qapp):
-    from kayden.api import PROFILE
-    from kayden.frontends.desktop.window import NoteDialog
+    from kadence.api import PROFILE
+    from kadence.frontends.desktop.window import NoteDialog
 
     h: Harness = await make()
     await h.start()
@@ -506,7 +506,7 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     await eventually(lambda: window.prompts.count() == 1)
     card = window.prompts.itemAt(0).widget()
     texts = [label.text() for label in card.findChildren(QLabel)]
-    assert "Kayden wants to: Remove the old build" in texts
+    assert "Kadence wants to: Remove the old build" in texts
     assert "rm -rf build" in texts  # what actually runs, on its own line
     [tool] = widgets(window, ToolCard)
     assert tool.title.text() == "Remove the old build"
@@ -638,7 +638,7 @@ def colours_of(bubble: AssistantBubble) -> dict[str, str]:
 
 
 def test_code_in_a_named_language_is_coloured(qapp):
-    from kayden.frontends.desktop import syntax
+    from kadence.frontends.desktop import syntax
 
     code = 'def area(r):\n    return 3.14 * r  # a circle\n\nname = "disc"'
     bubble = AssistantBubble(AssistantItem(text=f"```python\n{code}\n```", final=True))
@@ -826,7 +826,7 @@ async def test_a_burst_of_changes_is_laid_out_once(make, qapp, monkeypatch):
 
 
 async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
-    from kayden.frontends.desktop.window import McpDialog, ServerDialog
+    from kadence.frontends.desktop.window import McpDialog, ServerDialog
 
     h: Harness = await make(modules=ModuleState(running=RUNNING, work_folder="/start"))
     await h.start()
@@ -844,7 +844,7 @@ async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
     server.variables.setPlainText("GITHUB_TOKEN=ghp-1")
     server.save_button.click()
     await eventually(lambda: dialog.servers.count() == 1)
-    assert keychain.store[("kayden", "mcp/github/GITHUB_TOKEN")] == "ghp-1"
+    assert keychain.store[("kadence", "mcp/github/GITHUB_TOKEN")] == "ghp-1"
     assert dialog.restart_button.isVisible()  # servers start with the next start
     dialog.servers.setCurrentRow(0)
     dialog.edit_button.click()
@@ -860,12 +860,12 @@ async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
     [remove] = [b for b in message_box(dialog).buttons() if b.text() == "Remove"]
     remove.click()
     await eventually(lambda: dialog.servers.count() == 0)
-    assert ("kayden", "mcp/github/GITHUB_TOKEN") not in keychain.store
+    assert ("kadence", "mcp/github/GITHUB_TOKEN") not in keychain.store
 
 
 async def test_a_server_list_read_before_a_save_does_not_replace_it(make, qapp, keychain):
-    from kayden.api import McpServer
-    from kayden.frontends.desktop.window import McpDialog
+    from kadence.api import McpServer
+    from kadence.frontends.desktop.window import McpDialog
 
     h: Harness = await make(modules=ModuleState(running=RUNNING, work_folder="/start"))
     await h.start()
@@ -890,8 +890,8 @@ async def test_a_server_list_read_before_a_save_does_not_replace_it(make, qapp, 
 
 
 async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
-    from kayden.api import Completion
-    from kayden.frontends.desktop.window import NoticeLine
+    from kadence.api import Completion
+    from kadence.frontends.desktop.window import NoticeLine
 
     h: Harness = await make()
 
@@ -918,8 +918,8 @@ async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
 
 
 async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
-    from kayden.api import Duty, DutyKind, PlanStatus
-    from kayden.frontends.desktop.window import DutyDialog
+    from kadence.api import Duty, DutyKind, PlanStatus
+    from kadence.frontends.desktop.window import DutyDialog
 
     h: Harness = await make(budget=Budget(max_cost_usd=5))
     h.core.add(Step(text="on it"))
@@ -949,7 +949,7 @@ async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
 
 
 async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
-    from kayden.frontends.desktop.window import DutyDialog
+    from kadence.frontends.desktop.window import DutyDialog
 
     h: Harness = await make()
     await h.start()
@@ -971,7 +971,7 @@ async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
 
 async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
         make, qapp, tmp_path, child_env):
-    from kayden.frontends.desktop.window import KIND_ROLE
+    from kadence.frontends.desktop.window import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
@@ -1015,7 +1015,7 @@ async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
 
 
 async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
-    from kayden.frontends.desktop.window import KIND_ROLE
+    from kadence.frontends.desktop.window import KIND_ROLE
 
     h: Harness = await make()
     await h.start()
@@ -1037,7 +1037,7 @@ async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
 
 
 async def test_child_rows_have_a_menu(make, qapp, tmp_path, child_env):
-    from kayden.frontends.desktop.window import KIND_ROLE
+    from kadence.frontends.desktop.window import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
@@ -1063,7 +1063,7 @@ async def test_child_rows_have_a_menu(make, qapp, tmp_path, child_env):
 
 
 async def test_a_notice_from_a_child_wakes_the_open_conversation(make, qapp, tmp_path):
-    from kayden.frontends.sessions import SubSessions
+    from kadence.frontends.sessions import SubSessions
 
     h: Harness = await make()
     h.core.add(Step(text="Noted."))
@@ -1083,7 +1083,7 @@ async def test_a_notice_from_a_child_wakes_the_open_conversation(make, qapp, tmp
 
 
 def test_long_call_details_are_clipped_until_shown(qapp):
-    from kayden.frontends.desktop.window import Detail
+    from kadence.frontends.desktop.window import Detail
 
     brief = "\n".join(f"Line {n} of a long sub-session brief." for n in range(12))
     detail = Detail(brief)
@@ -1098,7 +1098,7 @@ def test_long_call_details_are_clipped_until_shown(qapp):
 
 
 async def test_settings_set_the_limit_per_sub_session(make, qapp, tmp_path):
-    from kayden.frontends.sessions import SubSessions
+    from kadence.frontends.sessions import SubSessions
 
     h: Harness = await make()
     await h.start()
@@ -1127,8 +1127,8 @@ async def test_settings_set_the_limit_per_sub_session(make, qapp, tmp_path):
 
 
 async def test_a_long_notice_is_folded(make, qapp):
-    from kayden.frontends.desktop.viewmodel import NoticeItem
-    from kayden.frontends.desktop.window import Detail, NoticeLine
+    from kadence.frontends.desktop.viewmodel import NoticeItem
+    from kadence.frontends.desktop.window import Detail, NoticeLine
 
     h: Harness = await make()
     await h.start()
@@ -1187,7 +1187,7 @@ async def test_the_window_has_rounded_corners_unless_maximized(make, qapp):
 async def test_the_window_draws_its_own_title_bar(make, qapp):
     from PySide6.QtCore import QPoint
 
-    from kayden.frontends.desktop.window import DragArea
+    from kadence.frontends.desktop.window import DragArea
 
     h: Harness = await make()
     await h.start()
@@ -1410,7 +1410,7 @@ async def test_leaving_a_sub_session_for_its_parent_never_shows_the_old_chat(
     """Open chat A, a sub-session of chat B, then B: A must not light up on the way."""
     from PySide6.QtWidgets import QListWidgetItem
 
-    from kayden.frontends.desktop.window import KIND_ROLE
+    from kadence.frontends.desktop.window import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
@@ -1580,13 +1580,13 @@ async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
     window, _controller, _ = await open_window(h)
     [mascot] = [w for w in window.empty_state.findChildren(QLabel)
                 if w.objectName() == "mascot"]
-    assert not mascot.pixmap().isNull() and mascot.accessibleName() == "Kayden"
+    assert not mascot.pixmap().isNull() and mascot.accessibleName() == "Kadence"
 
 
 async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     """It sits under the newest message while the agent works and is gone when it stops."""
-    from kayden.frontends.desktop.viewmodel import ChecklistItem, Phase, ToolItem
-    from kayden.frontends.desktop.window import PlanCard
+    from kadence.frontends.desktop.viewmodel import ChecklistItem, Phase, ToolItem
+    from kadence.frontends.desktop.window import PlanCard
 
     h: Harness = await make()
     plan = [{"text": "Read the code", "status": "doing"}, {"text": "Fix the bug"}]
@@ -1617,8 +1617,8 @@ async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(
     from PySide6.QtCore import QMimeData, QUrl
     from PySide6.QtGui import QColor, QImage
 
-    from kayden.api import File, Image
-    from kayden.frontends.desktop.viewmodel import UserItem
+    from kadence.api import File, Image
+    from kadence.frontends.desktop.viewmodel import UserItem
 
     picture = tmp_path / "shot.png"
     image = QImage(40, 30, QImage.Format.Format_RGB32)
@@ -1659,8 +1659,8 @@ async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(
 
 
 def test_a_sent_pdf_shows_by_its_name(qapp):
-    from kayden.api import Document
-    from kayden.frontends.desktop.viewmodel import UserItem
+    from kadence.api import Document
+    from kadence.frontends.desktop.viewmodel import UserItem
 
     bubble = UserBubble(UserItem("summarize", "m1", attachments=(
         Document("/home/me/report.pdf", "JVBERi0=", "Sales rose", 2),)))
@@ -1687,7 +1687,7 @@ def test_a_reply_shows_copy_and_its_age_on_hover(qapp):
 
 
 def test_relative_age_reads_like_a_person_would_say_it():
-    from kayden.frontends.desktop.viewmodel import relative_age
+    from kadence.frontends.desktop.viewmodel import relative_age
 
     now = 1_000_000.0
     assert relative_age(now - 20, now) == "just now"
@@ -1696,7 +1696,7 @@ def test_relative_age_reads_like_a_person_would_say_it():
 
 
 async def test_sidebar_tooltips_show_only_the_full_title(make, qapp, tmp_path):
-    from kayden.frontends.sessions import SubSession
+    from kadence.frontends.sessions import SubSession
 
     h: Harness = await make()
     talked = await h.start()
@@ -1720,7 +1720,7 @@ async def test_sidebar_tooltips_show_only_the_full_title(make, qapp, tmp_path):
 
 
 def test_a_long_message_wraps_inside_its_bubble(qapp):
-    from kayden.frontends.desktop.viewmodel import UserItem
+    from kadence.frontends.desktop.viewmodel import UserItem
 
     text = ("ayo i jus added a planning tool like u can make a roadmap while working on "
             "some task and it shows as a checklist")
@@ -1735,8 +1735,8 @@ def test_a_long_message_wraps_inside_its_bubble(qapp):
     bubble.close()
 
 
-async def test_a_line_says_kayden_is_thinking_before_anything_streams(make, qapp):
-    from kayden.api import ReasoningDelta, StateChanged
+async def test_a_line_says_kadence_is_thinking_before_anything_streams(make, qapp):
+    from kadence.api import ReasoningDelta, StateChanged
 
     h = await make()
     await h.start()

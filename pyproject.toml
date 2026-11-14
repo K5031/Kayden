@@ -1,5 +1,5 @@
 [project]
-name = "kayden"
+name = "kadence"
 version = "0.0.0"
 description = "A modular AI agent application: a runtime and four swappable modules (Core, Memory, Tools, Frontend)."
 readme = "README.md"
@@ -26,27 +26,27 @@ dependencies = [
 ]
 
 [project.scripts]
-kayden = "kayden.__main__:main"
-kd = "kayden.__main__:main"  # the same, shorter
-kayden-desktop = "kayden.window:main"  # the desktop app (needs the desktop extra)
+kadence = "kadence.__main__:main"
+kd = "kadence.__main__:main"  # the same, shorter
+kadence-desktop = "kadence.window:main"  # the desktop app (needs the desktop extra)
 
 # Installed modules, listed in every frontend's settings. A user-made module registers the
 # same way in its own package (docs/development.md).
-[project.entry-points."kayden.cores"]
-anthropic = "kayden.core.anthropic:factory"
-deepseek = "kayden.core.openai_compat:deepseek_factory"
-openai = "kayden.core.openai_compat:openai_factory"
+[project.entry-points."kadence.cores"]
+anthropic = "kadence.core.anthropic:factory"
+deepseek = "kadence.core.openai_compat:deepseek_factory"
+openai = "kadence.core.openai_compat:openai_factory"
 
-[project.entry-points."kayden.memories"]
-sqlite = "kayden.memory.sqlite:factory"
-files = "kayden.memory.files:factory"
+[project.entry-points."kadence.memories"]
+sqlite = "kadence.memory.sqlite:factory"
+files = "kadence.memory.files:factory"
 
-[project.entry-points."kayden.tools"]
-shell-files = "kayden.tools.shell_files:factory"
+[project.entry-points."kadence.tools"]
+shell-files = "kadence.tools.shell_files:factory"
 
-[project.entry-points."kayden.frontends"]
-tui = "kayden.frontends.tui:factory"
-desktop = "kayden.frontends.desktop:factory"
+[project.entry-points."kadence.frontends"]
+tui = "kadence.frontends.tui:factory"
+desktop = "kadence.frontends.desktop:factory"
 
 [project.optional-dependencies]
 desktop = [
@@ -61,7 +61,7 @@ desktop = [
 
 [dependency-groups]
 dev = [
-    "kayden[desktop]",
+    "kadence[desktop]",
     "psutil>=7.2.2",
     "pytest",
     "pytest-asyncio",
@@ -74,7 +74,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/kayden"]
+packages = ["src/kadence"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -87,18 +87,18 @@ line-length = 100
 
 # Desktop bundles (`briefcase build`); see docs/development.md.
 [tool.briefcase]
-project_name = "Kayden"
+project_name = "Kadence"
 bundle = "io.github.k5031"
 version = "0.0.0"
-url = "https://github.com/K5031/Kayden"
+url = "https://github.com/K5031/Kadence"
 author = "K5031"
 
-[tool.briefcase.app.kayden-desktop]
-formal_name = "Kayden"
+[tool.briefcase.app.kadence-desktop]
+formal_name = "Kadence"
 description = "An AI agent that works for you on your computer."
-sources = ["src/kayden_desktop"]
-# Kayden itself, installed with its metadata: its modules are found through entry points.
+sources = ["src/kadence_desktop"]
+# Kadence itself, installed with its metadata: its modules are found through entry points.
 requires = [".[desktop]"]
 
-[tool.briefcase.app.kayden-desktop.linux.flatpak]
+[tool.briefcase.app.kadence-desktop.linux.flatpak]
 finish_arg."talk-name=org.freedesktop.secrets" = true

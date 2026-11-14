@@ -1,10 +1,10 @@
 # Agent Note: The provider's own web search
 
-Status: implemented — a Core may offer tools its provider runs; with Claude, Anthropic's web search replaces Kayden's free search
+Status: implemented — a Core may offer tools its provider runs; with Claude, Anthropic's web search replaces Kadence's free search
 
 ## Problem
 
-Kayden's own `web_search` goes through `ddgs`, which reads search engines' public pages
+Kadence's own `web_search` goes through `ddgs`, which reads search engines' public pages
 without an API. The engines turn some of those requests away, and `ddgs` then reports "No
 results found": common queries failed about one time in three (2026-11-10). Retrying lowers
 the misses but cannot remove them, and engines may block more over time. Anthropic runs web
@@ -17,7 +17,7 @@ about $10 per 1 000 searches.
 
 - `Core.list_tools()`, optional (default none): tools the provider runs during the
   request itself. The runtime offers them after its built-ins and Memory's and before the
-  Tools modules', so Kayden's own `web_search` (a Tools module's) is dropped while the
+  Tools modules', so Kadence's own `web_search` (a Tools module's) is dropped while the
   provider's is offered, and comes back when it is not. The runtime never runs, gates or
   counts them: they touch nothing on the user's computer. The Core turns each into the
   provider's own tool by name.
@@ -46,7 +46,7 @@ about $10 per 1 000 searches.
 - Falls back on a 400: web search switched off for the account turns it off for the
   instance; server blocks the API will not take back are sent again as text.
 
-Choices are listed in `.agents/decisions.md` (The provider's web search). Kayden's own
+Choices are listed in `.agents/decisions.md` (The provider's web search). Kadence's own
 search stays for other providers: [web search](2026-11-10-web-search.md).
 
 ## Alternatives considered

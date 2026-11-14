@@ -1,7 +1,7 @@
 # Import and migrate the module implementations
 
 Three module implementations exist outside this repo, written against older drafts of the contract:
-the sibling repositories `kayden-memory`, `kayden-core`, `kayden-tools` (Memory on SQLite; Anthropic and OpenAI-compatible Cores; shell/file Tools and a Textual TUI). Treat those folders as read-only.
+the sibling repositories `kadence-memory`, `kadence-core`, `kadence-tools` (Memory on SQLite; Anthropic and OpenAI-compatible Cores; shell/file Tools and a Textual TUI). Treat those folders as read-only.
 
 ## Steps
 1. Copy `src/` and `tests/` from each into this repo, never overwriting existing files (`rsync -a --ignore-existing --exclude __pycache__`). Merge their dependencies into `pyproject.toml`. Make sure `.gitignore` excludes `__pycache__`, `.pytest_cache`, `.venv`, `.ruff_cache`. Commit as "Import module streams (pre-migration)".
@@ -33,4 +33,4 @@ the sibling repositories `kayden-memory`, `kayden-core`, `kayden-tools` (Memory 
 - Remove the "always allow" choice. Add a per-operation cancel control (`cancel_operation`), show `queued_messages` from the snapshot, end `run()` when `events()` ends. Use paginated `history`.
 
 ## End-to-end check (last step)
-Add a small `kayden` entry point (`python -m kayden`) that builds an instance from an `InstanceConfig`: SqliteMemory, Anthropic Core, ShellFilesTools rooted at the current directory, and the TUI. Do not run live API tests unless `ANTHROPIC_API_KEY` is set. Describe in `.agents/decisions.md` how to start it. Without a key, run it against the scripted fakes to prove the wiring.
+Add a small `kadence` entry point (`python -m kadence`) that builds an instance from an `InstanceConfig`: SqliteMemory, Anthropic Core, ShellFilesTools rooted at the current directory, and the TUI. Do not run live API tests unless `ANTHROPIC_API_KEY` is set. Describe in `.agents/decisions.md` how to start it. Without a key, run it against the scripted fakes to prove the wiring.

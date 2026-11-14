@@ -33,7 +33,7 @@ and none says which messages it covers on its own.
 - **Return neighbours with every recall hit.** No new storage, but it spends tokens on
   context for hits the agent does not need; `read_around` opens it on demand instead.
 - **Embeddings for semantic search.** Finds meaning without a summary per stretch, but
-  needs an embedding model or service, a dependency Kayden does not have.
+  needs an embedding model or service, a dependency Kadence does not have.
 
 ## Acceptance criteria
 

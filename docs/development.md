@@ -4,7 +4,7 @@
 
 A **runtime** owns everything about how the agent runs: conversations, waking up after background work, permissions,
 budgets, background tasks, settings and the event log. It drives four swappable
-**modules** through the contracts in `src/kayden/api.py`:
+**modules** through the contracts in `src/kadence/api.py`:
 
 | Module | Provides | Built in |
 |---|---|---|
@@ -21,8 +21,8 @@ to the runtime; `config.toml` can also name one by its import path,
 Runtime settings (model, budget, permissions, instructions, the folder for new chats) are
 read by the runtime and apply live; the runtime hands each conversation's folder to the
 Tools (`Tools.use_folder`) when it opens it. Module settings (which module, the API key,
-module options) are passed to factories, so they apply when Kayden restarts: `RuntimeAPI.restart()`
-shuts the instance down and the launcher (`kayden`, or the window launcher) builds it again in
+module options) are passed to factories, so they apply when Kadence restarts: `RuntimeAPI.restart()`
+shuts the instance down and the launcher (`kadence`, or the window launcher) builds it again in
 the same process. When Core, Memory or Tools cannot be built, the frontend runs on a setup
 runtime (`runtime/setup.py`) that only shows and saves settings.
 
@@ -34,8 +34,8 @@ the conformance suites.
 
 Optional attributes on the factory: `display_name` (shown instead of the id), `key_name`
 for a Core (the environment variable and keychain entry of its API key, which the settings
-ask for), and for a frontend `kind`: `"terminal"` (started by `kayden`, the default) or
-`"window"` (run by the window launcher, `kayden-desktop`), and `event_loop`: a
+ask for), and for a frontend `kind`: `"terminal"` (started by `kadence`, the default) or
+`"window"` (run by the window launcher, `kadence-desktop`), and `event_loop`: a
 callable that runs a coroutine on the loop the frontend needs, like `asyncio.run` (the
 default). The desktop app names Qt's; a GTK or web frontend names its own. An entry point whose
 package does not import is not listed. Launchers may pass a frontend the options `start`,
@@ -44,33 +44,33 @@ package does not import is not listed. Launchers may pass a frontend the options
 ## Layout
 
 Each module is a folder named after it (its Python name), in the folder for its kind:
-`src/kayden/<kind>/<module>/`, whose `__init__.py` exports `factory`. A module's own
+`src/kadence/<kind>/<module>/`, whose `__init__.py` exports `factory`. A module's own
 helpers and assets live in its folder. Code that several modules of a kind share sits in
 the kind folder beside them, not in a module.
 
 ```
-src/kayden/api.py                     module contracts (normative)
-src/kayden/runtime/                   orchestration, duties, budgets, operations, settings, event log, lock
-src/kayden/core/                      Cores; _common.py is what the providers share
+src/kadence/api.py                     module contracts (normative)
+src/kadence/runtime/                   orchestration, duties, budgets, operations, settings, event log, lock
+src/kadence/core/                      Cores; _common.py is what the providers share
   anthropic/                          Anthropic
   openai_compat/                      OpenAI-compatible providers (openai, deepseek)
-src/kayden/memory/                    Memories; tools.py is the recall and note tools they share
+src/kadence/memory/                    Memories; tools.py is the recall and note tools they share
   sqlite/                             notes in SQLite (the default); SqliteArchive, the archive both build on
   files/                              Claude Code-style memory folders per project
-src/kayden/tools/                     Tools
+src/kadence/tools/                     Tools
   shell_files/                        shell commands, files, web search and fetch (web.py), a look at
                                       the screen (screen.py); reads attached files (attachments.py,
                                       office.py)
   mcp/                                tools of MCP servers
-src/kayden/frontends/                 Frontends; common.py is what every frontend shows the same way,
+src/kadence/frontends/                 Frontends; common.py is what every frontend shows the same way,
                                       headless.py, remote.py and wire.py the headless channel,
                                       sessions.py the sub-sessions a frontend hosts
   tui/                                terminal app (Textual)
   desktop/                            desktop app: viewmodel.py (no Qt), window.py, voice/ (speech), assets
-src/kayden/skills/                    the skills Kayden comes with (runtime/skills.py loads them)
-src/kayden/window.py                  the window launcher
-src/kayden_desktop/                   the module a Briefcase bundle runs
-src/kayden/__main__.py                the `kayden` command: config, saved settings, restarts
+src/kadence/skills/                    the skills Kadence comes with (runtime/skills.py loads them)
+src/kadence/window.py                  the window launcher
+src/kadence_desktop/                   the module a Briefcase bundle runs
+src/kadence/__main__.py                the `kadence` command: config, saved settings, restarts
 examples/                             a minimal module of each kind, to copy from
 tests/                                tests; fakes/ and conformance/ hold shared test modules
 SPEC.md                               product spec
@@ -80,10 +80,10 @@ SPEC.md                               product spec
 ## Working on the code
 
 `uv tool install --editable` runs your checkout as it is, so code changes take effect the
-next time you start `kayden`. With `"Kayden[desktop]"` and `--python 3.13`, the same
+next time you start `kadence`. With `"Kadence[desktop]"` and `--python 3.13`, the same
 install also has the desktop app (see [Desktop app](desktop-app.md#install)). After a
 change to dependencies or entry points in `pyproject.toml`, reinstall:
-`uv tool install --editable --reinstall .`. Without installing, `uv run kayden` works from
+`uv tool install --editable --reinstall .`. Without installing, `uv run kadence` works from
 the checkout.
 
 ## Tests
@@ -95,9 +95,9 @@ uv run ruff check
 
 The suite runs in parallel (pytest-xdist) and takes about 10 seconds; add `-n 0` to run it in
 one process, for example under a debugger. It runs offline against fakes. Tests against real providers are skipped unless
-`KAYDEN_LIVE_TESTS=1` is set together with `ANTHROPIC_API_KEY` (Anthropic),
-`DEEPSEEK_API_KEY` (DeepSeek; `KAYDEN_DEEPSEEK_MODEL` defaults to `deepseek-flash`) or
-`KAYDEN_OPENAI_MODEL` (OpenAI-compatible; `OPENAI_API_KEY` and `KAYDEN_OPENAI_BASE_URL` as
+`KADENCE_LIVE_TESTS=1` is set together with `ANTHROPIC_API_KEY` (Anthropic),
+`DEEPSEEK_API_KEY` (DeepSeek; `KADENCE_DEEPSEEK_MODEL` defaults to `deepseek-flash`) or
+`KADENCE_OPENAI_MODEL` (OpenAI-compatible; `OPENAI_API_KEY` and `KADENCE_OPENAI_BASE_URL` as
 the server needs).
 
 ### The desktop app's event loop
@@ -106,7 +106,7 @@ The desktop app runs the runtime on qasync's Qt event loop. To run async tests o
 loop, one file at a time (a whole run creates hundreds of Qt loops and crashes):
 
 ```bash
-KAYDEN_TEST_LOOP=qasync uv run pytest tests/test_runtime.py
+KADENCE_TEST_LOOP=qasync uv run pytest tests/test_runtime.py
 ```
 
 On Python 3.15, `tests/test_commands.py` hangs and `tests/core/test_openai_compat.py`
@@ -115,12 +115,12 @@ crashes on this loop; on 3.13 every file passes.
 ## Desktop bundles
 
 [Briefcase](https://briefcase.beeware.org/) builds them from `[tool.briefcase]` in
-`pyproject.toml`. The bundle installs Kayden itself (`requires = [".[desktop]"]`), so its
+`pyproject.toml`. The bundle installs Kadence itself (`requires = [".[desktop]"]`), so its
 dependencies come from `[project]` and its modules are found through their entry points.
 
 A package for the Linux you build on (here an Arch `.pkg.tar.zst`) uses the system Python,
 which must also run Briefcase and have its headers (`Python.h`) installed. The script runs
-Briefcase and adds `kayden` and `kd` to the package as links to its program, which then
+Briefcase and adds `kadence` and `kd` to the package as links to its program, which then
 starts the terminal app (Briefcase itself makes one program per app):
 
 ```bash
@@ -143,7 +143,7 @@ template looks for exactly that name).
 
 ## Design records
 
-`.agents/` holds working records written while building Kayden, for contributors and
+`.agents/` holds working records written while building Kadence, for contributors and
 coding agents rather than users:
 
 | Path | Holds |

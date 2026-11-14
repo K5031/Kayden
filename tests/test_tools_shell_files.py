@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from kayden.api import InstancePaths, ToolCall
-from kayden.tools.shell_files import MAX_OUTPUT_CHARS, ShellFilesTools, factory
+from kadence.api import InstancePaths, ToolCall
+from kadence.tools.shell_files import MAX_OUTPUT_CHARS, ShellFilesTools, factory
 from tests.conformance.tools_suite import RecordingContext, ToolCases, ToolsConformance
 
 # Two background children plus a ticking loop: cancellation must reach all of them.
@@ -39,7 +39,7 @@ class TestShellFilesConformance(ToolsConformance):
                 ToolCall("ls", "list_files", {}),
                 ToolCall("sh", "shell", {"command": "echo hi"}),
             ),
-            env_probe=ToolCall("e", "shell", {"command": "printenv KAYDEN_PERMISSION_CEILING"}),
+            env_probe=ToolCall("e", "shell", {"command": "printenv KADENCE_PERMISSION_CEILING"}),
         )
 
 
@@ -394,24 +394,24 @@ async def test_use_folder_fails_for_a_path_that_cannot_be_a_folder(tools, worksp
 
 
 def test_secret_variables_are_left_out_of_the_sandbox():
-    from kayden.tools.shell_files import sandbox_environment
+    from kadence.tools.shell_files import sandbox_environment
 
     env = sandbox_environment({
         "ANTHROPIC_API_KEY": "k", "DEEPSEEK_API_KEY": "k", "GITHUB_TOKEN": "t",
         "AWS_SECRET_ACCESS_KEY": "s", "DB_PASSWORD": "p", "MY_CREDENTIALS": "c",
         "PATH": "/usr/bin", "HOME": "/home/u", "LANG": "C.UTF-8",
-        "KAYDEN_PERMISSION_CEILING": "auto", "ANTHROPIC_BASE_URL": "https://x",
+        "KADENCE_PERMISSION_CEILING": "auto", "ANTHROPIC_BASE_URL": "https://x",
     })
     assert env == {"PATH": "/usr/bin", "HOME": "/home/u", "LANG": "C.UTF-8",
-                   "KAYDEN_PERMISSION_CEILING": "auto", "ANTHROPIC_BASE_URL": "https://x"}
+                   "KADENCE_PERMISSION_CEILING": "auto", "ANTHROPIC_BASE_URL": "https://x"}
 
 
 @BWRAP
 async def test_a_sandboxed_command_cannot_read_keys_from_the_environment(
         tools, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
-    monkeypatch.setenv("KAYDEN_PERMISSION_CEILING", "auto")
-    probe = 'echo "key=${ANTHROPIC_API_KEY:-none} ceiling=$KAYDEN_PERMISSION_CEILING"'
+    monkeypatch.setenv("KADENCE_PERMISSION_CEILING", "auto")
+    probe = 'echo "key=${ANTHROPIC_API_KEY:-none} ceiling=$KADENCE_PERMISSION_CEILING"'
     out = await run(tools, tmp_path, "shell", command=probe)
     assert "key=none ceiling=auto" in out.content
     out = await run(tools, tmp_path, "shell", command=probe, unsandboxed=True)
@@ -420,7 +420,7 @@ async def test_a_sandboxed_command_cannot_read_keys_from_the_environment(
 
 async def test_no_tool_declares_its_own_description(tools):
     """The runtime adds the description to every tool (api.DESCRIPTION_ARG)."""
-    from kayden.api import DESCRIPTION_ARG
+    from kadence.api import DESCRIPTION_ARG
 
     for spec in await tools.list_tools():
         assert DESCRIPTION_ARG not in spec.parameters["properties"], spec.name

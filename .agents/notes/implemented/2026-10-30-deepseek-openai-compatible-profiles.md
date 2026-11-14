@@ -4,7 +4,7 @@ Status: implemented — the OpenAI-compatible Core reads provider differences fr
 
 ## Problem
 
-DeepSeek speaks the chat completions API, so `kayden.core.openai_compat` almost works
+DeepSeek speaks the chat completions API, so `kadence.core.openai_compat` almost works
 against it, but not reliably:
 
 - Thinking mode requires the reasoning of earlier assistant turns to be sent back in a
@@ -56,7 +56,7 @@ Live results: `.agents/decisions.md`, "OpenAI-compatible profiles".
 - **Omitting the field when no reasoning is known.** Live, an omitted field is rejected
   whenever the server no longer has the call's reasoning; `""` was accepted everywhere tried.
 - **Changing `_common.py` so configured prices survive.** Left alone on request; merging
-  happens inside `kayden.core.openai_compat`.
+  happens inside `kadence.core.openai_compat`.
 
 ## Consequences
 

@@ -1,4 +1,4 @@
-"""Claude Code-style memory (kayden.memory.files): the shared Memory conformance suite, and
+"""Claude Code-style memory (kadence.memory.files): the shared Memory conformance suite, and
 what is its own: a folder of files per project that the agent writes with the memory tool."""
 
 from __future__ import annotations
@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from kayden.api import InstancePaths, ToolStatus
-from kayden.memory.files import FilesMemory, factory
-from kayden.memory.files.folder import RULES
-from kayden.memory.sqlite import SqliteMemory
+from kadence.api import InstancePaths, ToolStatus
+from kadence.memory.files import FilesMemory, factory
+from kadence.memory.files.folder import RULES
+from kadence.memory.sqlite import SqliteMemory
 from tests.conformance.memory_suite import (
     FakeCompletion,
     MemoryConformance,
@@ -115,7 +115,7 @@ async def test_a_note_is_a_file_with_claude_codes_frontmatter(tmp_path: Path):
 
 
 async def test_the_memory_tool_works_on_the_conversations_project(tmp_path: Path):
-    from kayden.api import ToolCall
+    from kadence.api import ToolCall
 
     memory = FilesMemory(tmp_path / "m.db", CONFIG, projects=tmp_path / "p")
     project = str(tmp_path / "project")
@@ -145,7 +145,7 @@ async def test_the_memory_tool_works_on_the_conversations_project(tmp_path: Path
 
 async def _tool(tmp_path: Path):
     """A files memory, a conversation in a project, and its memory tool as a function."""
-    from kayden.api import ToolCall
+    from kadence.api import ToolCall
 
     memory = FilesMemory(tmp_path / "m.db", CONFIG, projects=tmp_path / "p")
     project = str(tmp_path / "project")
@@ -202,7 +202,7 @@ async def test_the_index_in_the_prompt_counts_as_read_while_it_is_current(tmp_pa
     await memory.append(other.id, [text_message("tok0002")])
     await memory.assemble(context(other.id, 200_000))
     await memory.save_note("MEMORY.md", "", "- [Dog](dog.md) — has a dog\n", folder=project)
-    from kayden.api import ToolCall
+    from kadence.api import ToolCall
     late = await memory.execute(ToolCall("c", "memory", {
         "command": "insert", "path": "MEMORY.md", "insert_line": 0, "insert_text": "- x"}),
         Context(other.id))
@@ -214,7 +214,7 @@ async def test_an_index_past_what_is_loaded_is_saved_and_reported(tmp_path: Path
     """As in Claude Code: a conversation gets the first 200 lines or 25 kB of the index.
     A write past that stands, as an error telling the agent to rewrite it; near it, the
     write comes with a reminder."""
-    from kayden.memory.files.folder import INDEX_MAX_BYTES, INDEX_MAX_LINES
+    from kadence.memory.files.folder import INDEX_MAX_BYTES, INDEX_MAX_LINES
 
     memory, project, _conv, run = await _tool(tmp_path)
 
@@ -252,7 +252,7 @@ def test_a_git_repository_has_one_memory_for_all_its_folders_and_worktrees(tmp_p
     folder outside any repository is its own project."""
     import subprocess
 
-    from kayden.memory.files.folder import project_key
+    from kadence.memory.files.folder import project_key
 
     def git(*args: str, cwd: Path) -> None:
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd,
@@ -279,7 +279,7 @@ def test_a_git_repository_has_one_memory_for_all_its_folders_and_worktrees(tmp_p
 def test_a_memory_file_records_when_it_was_written():
     from datetime import UTC, datetime
 
-    from kayden.memory.files.folder import stamped
+    from kadence.memory.files.folder import stamped
 
     now = datetime(2026, 11, 12, 10, 20, 30, 123000, tzinfo=UTC)
     typed = "---\nname: tea\ndescription: Tea\nmetadata:\n  type: user\n---\n\nGreen tea.\n"
@@ -328,7 +328,7 @@ async def test_the_built_in_memorys_store_is_not_this_ones(tmp_path: Path):
 async def test_the_runtime_runs_on_it_unchanged(make, tmp_path: Path):
     """The modularity check: the same runtime, another Memory. The agent saves with the
     memory tool, the apps hear of it, and the next request sees the index."""
-    from kayden.api import MemoriesChanged, PermissionPolicy
+    from kadence.api import MemoriesChanged, PermissionPolicy
     from tests.fakes.core import ScriptedCore, Step, call
     from tests.fakes.tools import FakeTools
 

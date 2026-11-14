@@ -1,13 +1,13 @@
-# Clean-room build: the Kayden runtime from the spec alone
+# Clean-room build: the Kadence runtime from the spec alone
 
 This is a spec test. You get only the written spec and contract, and build the runtime from them. Where they are ambiguous, the result will show it.
 
 ## Inputs
-Allowed: `AGENTS.md`, `SPEC.md`, `src/kayden/api.py`, and what you create.
-Not allowed: any other directory on this machine (especially anything named `kayden-*` or `Kayden`), other repositories' git history, or web searches for existing Kayden code. If you find such material, ignore it and say so in your report.
+Allowed: `AGENTS.md`, `SPEC.md`, `src/kadence/api.py`, and what you create.
+Not allowed: any other directory on this machine (especially anything named `kadence-*` or `Kadence`), other repositories' git history, or web searches for existing Kadence code. If you find such material, ignore it and say so in your report.
 
 ## Build
-1. `src/kayden/runtime.py` (a package if it grows): the complete runtime. Implement everything `SPEC.md` assigns to the runtime and everything in the `api.py` module docstring and `RuntimeAPI`: both modes, activation policies, `idle()` and its wake set, background operations (placeholder plus `OperationResult`), Stop and abandon, `cancel_operation`, retries and backoff, `ContextOverflowError` recovery, budgets with persistence, permission policies, the ceiling environment variable, resume repair, the instance lock, the event stream and snapshot, the JSONL event log, the built-in tools, and tool-call validation.
+1. `src/kadence/runtime.py` (a package if it grows): the complete runtime. Implement everything `SPEC.md` assigns to the runtime and everything in the `api.py` module docstring and `RuntimeAPI`: both modes, activation policies, `idle()` and its wake set, background operations (placeholder plus `OperationResult`), Stop and abandon, `cancel_operation`, retries and backoff, `ContextOverflowError` recovery, budgets with persistence, permission policies, the ceiling environment variable, resume repair, the instance lock, the event stream and snapshot, the JSONL event log, the built-in tools, and tool-call validation.
 2. Fakes in `tests/fakes/`: a scripted Core (text, tool calls, reasoning, usage, transient and permanent errors, slow or hanging streams), Tools (instant, slow with progress, hanging with and without honoring cancellation, failing, thread-using), an in-memory Memory that outlives instances and implements the full contract (trivial compaction through `Completion`), and a scripted Frontend that records every event envelope.
 3. Tests, written first:
    - one acceptance test per scenario A to L in `SPEC.md` section 12;

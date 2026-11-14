@@ -2,7 +2,7 @@
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     Budget,
     ModelInfo,
     ModuleChoice,
@@ -10,7 +10,7 @@ from kayden.api import (
     Settings,
     SettingsUpdate,
 )
-from kayden.frontends.common import (
+from kadence.frontends.common import (
     dollars,
     loosening,
     model_label,
@@ -80,22 +80,22 @@ def test_restart_notices_say_where_the_chosen_frontend_will_be_used():
                                    restart_frontend="desktop")) == (
         "Your changes take effect after a restart. Restart now to switch to Desktop app.")
     assert restart_notice(settings(modules=to_desktop, restart_needed=True)) == (
-        "Desktop app will be used the next time you start Kayden on a computer with a display. "
+        "Desktop app will be used the next time you start Kadence on a computer with a display. "
         "Your changes take effect after a restart.")
     window = {**base.modules, "frontend": ModuleChoice(
         "desktop", "tui", base.modules["frontend"].installed)}
     assert restart_notice(settings(modules=window, restart_needed=True,
                                    restart_frontend="desktop")).startswith(
-        "Terminal (TUI) will be used the next time you run kayden in a terminal.")
+        "Terminal (TUI) will be used the next time you run kadence in a terminal.")
     assert restart_notice(settings(startup_error="no key")) == (
         "Fix the settings above, then press Restart now.")
     assert restart_notice(settings(startup_error="open elsewhere", already_open=True)) == (
-        "Close the other Kayden window, then press Restart now.")
+        "Close the other Kadence window, then press Restart now.")
 
 
 def test_a_prompt_says_what_the_call_does_and_where():
-    from kayden.api import PermissionRequest, ToolCall
-    from kayden.frontends.common import PERMISSION_LABELS, request_note
+    from kadence.api import PermissionRequest, ToolCall
+    from kadence.frontends.common import PERMISSION_LABELS, request_note
 
     call = ToolCall("c", "shell", {})
     notes = {(read_only, confined): request_note(PermissionRequest("p", call, read_only, confined))
@@ -109,7 +109,7 @@ def test_a_prompt_says_what_the_call_does_and_where():
 
 
 def test_a_call_shows_its_description_and_then_its_command():
-    from kayden.frontends.common import call_parts
+    from kadence.frontends.common import call_parts
 
     assert call_parts({"command": "ls -la", "step_summary": "List the files"}) == (
         "List the files", "ls -la")
@@ -125,7 +125,7 @@ def test_a_call_shows_its_description_and_then_its_command():
 
 
 def test_a_call_with_one_text_argument_shows_just_that_text():
-    from kayden.frontends.common import call_parts
+    from kadence.frontends.common import call_parts
 
     assert call_parts({"text": "Studies CS at UCL"}) == (None, "Studies CS at UCL")
     assert call_parts({"query": "python 3.14"}) == (None, "python 3.14")
@@ -133,12 +133,12 @@ def test_a_call_with_one_text_argument_shows_just_that_text():
 
 
 def test_a_finished_step_reads_in_the_past_tense():
-    from kayden.frontends.common import past_tense
+    from kadence.frontends.common import past_tense
 
     cases = {
         "Read BBC explainer on the Jensen Huang story": "Read BBC explainer on the Jensen Huang story",
         "Search the web for flights": "Searched the web for flights",
-        "Check Kayden's activity log": "Checked Kayden's activity log",
+        "Check Kadence's activity log": "Checked Kadence's activity log",
         "Make a folder for your notes": "Made a folder for your notes",
         "Remove the old build": "Removed the old build",
         "Write the summary": "Wrote the summary",
@@ -156,8 +156,8 @@ def test_a_finished_step_reads_in_the_past_tense():
 
 
 def test_mcp_servers_from_the_form_and_back():
-    from kayden.api import McpServer
-    from kayden.frontends.common import mcp_server, mcp_target, mcp_variables
+    from kadence.api import McpServer
+    from kadence.frontends.common import mcp_server, mcp_target, mcp_variables
 
     server = mcp_server(" github ", " npx -y server-github ", "GITHUB_TOKEN = ghp-1\n\n")
     assert server == McpServer("github", command="npx -y server-github",
@@ -174,8 +174,8 @@ def test_plan_text_round_trips_and_reports_bad_lines():
 
     import pytest
 
-    from kayden.api import PlanItem, PlanStatus
-    from kayden.frontends.common import parse_plan_text, plan_text
+    from kadence.api import PlanItem, PlanStatus
+    from kadence.frontends.common import parse_plan_text, plan_text
 
     due = datetime(2030, 1, 7, 9, 0).timestamp()
     plan = [PlanItem("Read mail", PlanStatus.DOING, due, "VIPs first"), PlanItem("Reply")]
@@ -188,8 +188,8 @@ def test_plan_text_round_trips_and_reports_bad_lines():
 
 
 def test_a_text_only_frontend_names_what_was_attached():
-    from kayden.api import File, Image
-    from kayden.frontends.common import with_attachments
+    from kadence.api import File, Image
+    from kadence.frontends.common import with_attachments
 
     attached = [Image("image/png", "AAAA", "shot.png"), File("/w/notes.txt", "Buy oat milk.")]
     assert with_attachments("look", attached) == "look\n[image: shot.png]\n[file: notes.txt]"
@@ -198,8 +198,8 @@ def test_a_text_only_frontend_names_what_was_attached():
 
 
 def test_a_tool_result_names_what_it_returned_to_look_at():
-    from kayden.api import Document, Image, ToolResult, ToolStatus
-    from kayden.frontends.common import result_text
+    from kadence.api import Document, Image, ToolResult, ToolStatus
+    from kadence.frontends.common import result_text
 
     result = ToolResult("c", ToolStatus.OK, "[PDF, 3 pages]", (
         Document("/w/report.pdf", "JV", "Sales", 3), Image("image/png", "AAAA", "chart.png")))
@@ -210,8 +210,8 @@ def test_a_tool_result_names_what_it_returned_to_look_at():
 def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
     import time
 
-    from kayden.api import AgentState, Duty
-    from kayden.frontends.common import duty_status
+    from kadence.api import AgentState, Duty
+    from kadence.frontends.common import duty_status
 
     duty = Duty("x")
     assert duty_status(None, None, AgentState.IDLE) is None
@@ -224,7 +224,7 @@ def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
 
 
 def test_delete_details_name_the_sub_sessions():
-    from kayden.frontends.common import delete_details
+    from kadence.frontends.common import delete_details
 
     assert "sub-session" not in delete_details(False)
     assert "Its sub-session stops and is deleted too." in delete_details(False, 1)

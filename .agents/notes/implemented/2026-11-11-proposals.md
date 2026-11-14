@@ -1,6 +1,6 @@
 # Agent Note: Proposals
 
-Status: implemented — the agent proposes any tool call; the user approves or dismisses it on a card; Kayden runs exactly that call on approval and wakes the agent with the outcome
+Status: implemented — the agent proposes any tool call; the user approves or dismisses it on a card; Kadence runs exactly that call on approval and wakes the agent with the outcome
 
 ## Problem
 
@@ -25,11 +25,11 @@ waits on it.
 - `propose(call, reason)`, a runtime built-in offered in every request: `call` is
   `{name, arguments}` of a tool the agent could call now (a Tools module's, the
   frontend's), `reason` one line on why.
-  Kayden validates it like a call (known name, arguments match the schema); an invalid one
+  Kadence validates it like a call (known name, arguments match the schema); an invalid one
   is an error result at once.
 - The call returns at once with a placeholder, like a backgrounded call: the proposal is an
   operation with the `propose` call's id. The agent carries on or ends its turn.
-- On **Approve**, Kayden runs exactly the proposed call: the user's click is its
+- On **Approve**, Kadence runs exactly the proposed call: the user's click is its
   permission, so it is not gated again; budgets apply. Its result becomes the operation's
   outcome. On **Dismiss**, the outcome is "dismissed". Either wakes the agent.
 - A pending proposal does not hold back other wake-ups: it is left out of the wake set,
@@ -48,7 +48,7 @@ waits on it.
 
 ### Frontends
 
-- A card where permission cards are: "Kayden proposes: <the call's step sentence>", the
+- A card where permission cards are: "Kadence proposes: <the call's step sentence>", the
   reason, **Approve** and **Dismiss**. The TUI: a prompt line, `/approve` and `/dismiss`.
 
 ### The wrap-up card

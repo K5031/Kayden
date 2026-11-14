@@ -4,7 +4,7 @@ Choices the spec leaves to the implementer. Contract gaps are in `contract-issue
 
 ## Layout
 
-`kayden.runtime` is a package:
+`kadence.runtime` is a package:
 
 | Module | Contents |
 |--------|----------|
@@ -163,9 +163,9 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 `pyproject.toml`: `anthropic`, `openai`, `httpx2` (the HTTP client both SDKs depend on),
 `textual`; `psutil` for tests.
 
-### Memory (`kayden.memory.sqlite`)
+### Memory (`kadence.memory.sqlite`)
 
-- Factory: `kayden.memory.sqlite:factory`. Options: `path` (default
+- Factory: `kadence.memory.sqlite:factory`. Options: `path` (default
   `<data_dir>/memory.db`) plus any
   `CompactionConfig` field; an unknown option raises TypeError.
 - `CompactionConfig` is all fractions of `ContextRequest.max_tokens`: trigger 0.9
@@ -213,9 +213,9 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   default 5 s busy timeout). Token counting in `assemble`/`maintain` runs on the event loop
   (the counter is the runtime's fast estimate).
 
-### Core (`kayden.core.anthropic`, `kayden.core.openai_compat`)
+### Core (`kadence.core.anthropic`, `kadence.core.openai_compat`)
 
-- Factories: `kayden.core.anthropic:factory`, `kayden.core.openai_compat:factory`; the
+- Factories: `kadence.core.anthropic:factory`, `kadence.core.openai_compat:factory`; the
   options are the constructor's keyword arguments (`api_key`, `base_url`, `options`,
   `models`, ...). Keys default to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, or the variable
   of the selected profile.
@@ -254,11 +254,11 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   accepted with adaptive thinking.
 - Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL.
 
-### OpenAI-compatible profiles (`profile` option of `kayden.core.openai_compat:factory`)
+### OpenAI-compatible profiles (`profile` option of `kadence.core.openai_compat:factory`)
 
 Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-profiles.md).
 
-- A `Profile` is plain data in `kayden.core.openai_compat`; generic code reads its fields and never
+- A `Profile` is plain data in `kadence.core.openai_compat`; generic code reads its fields and never
   a provider name. `"openai"` (default) is stock behavior. `models` entries in the
   configuration merge over the profile's field by field.
 - A profile with its own `base_url` takes nothing from the OpenAI environment: no
@@ -294,14 +294,14 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
 - `tool_choice` set to `required` or a function fails with 400 in thinking mode, per the
   docs (not tried live). It is configuration, so it surfaces as a permanent error.
 
-### Tools (`kayden.tools.shell_files`)
+### Tools (`kadence.tools.shell_files`)
 
-- Factory: `kayden.tools.shell_files:factory`. Options: `root` (default: the process's
+- Factory: `kadence.tools.shell_files:factory`. Options: `root` (default: the process's
   current directory), `shell_timeout` (default None = the runtime's default; `math.inf`
   for none), `shell_stall_timeout` (default 600 s without output). File tools keep the
   runtime defaults (no stall detection, default hard timeout).
 - Subprocesses get the process environment unchanged (`env` is never passed), so
-  `KAYDEN_PERMISSION_CEILING` reaches nested Kayden instances; covered by the
+  `KADENCE_PERMISSION_CEILING` reaches nested Kadence instances; covered by the
   conformance suite's `env_probe` case.
 - `list_files`/`search_files` walk the tree in a worker thread and send a silent heartbeat
   (`progress("")`) from it at most every 0.5 s. The shell never sends heartbeats: its stall
@@ -309,9 +309,9 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
 - The conformance suite's `RecordingContext` is thread-safe like the runtime's context and
   counts heartbeats separately from visible progress.
 
-### TUI (`kayden.frontends.tui`)
+### TUI (`kadence.frontends.tui`)
 
-- Factory: `kayden.frontends.tui:factory`. Options `start`, `conversation_id`,
+- Factory: `kadence.frontends.tui:factory`. Options `start`, `conversation_id`,
   `model`: with `start` true the agent starts at once, otherwise the start
   screen asks. `run()` returns when the user quits or `events()` ends.
 - History is loaded `HISTORY_PAGE` (100) messages at a time; a "Load earlier messages"
@@ -329,7 +329,7 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
   OperationResult. Refusals get a red "declined" line. The model shown follows
   `ModelSelected`.
 
-## Running Kayden
+## Running Kadence
 
 Design of the config file: [Agent Note](notes/implemented/2026-11-02-instance-config-file.md).
 User settings changed from a frontend (`update_settings`), saved to `settings.toml` and
@@ -338,19 +338,19 @@ applied over the config file: [Agent Note](notes/implemented/2026-11-07-settings
 ```
 export ANTHROPIC_API_KEY=...
 cd <project to work in>          # shell/file tools are rooted here
-kayden [--config FILE] [--conversation ID]
+kadence [--config FILE] [--conversation ID]
     [--model MODEL_ID] [--maintenance-model MODEL_ID]
     [--permissions allow_workspace|allow_read_only|ask|deny] [--data-dir DIR]
 ```
 
-The `kayden` command (`[project.scripts]`, installed with `uv tool install --editable`) and
-`python -m kayden` both run `kayden.__main__:main`. `kayden/__main__.py` builds an `InstanceConfig`. The modules come from a TOML file:
+The `kadence` command (`[project.scripts]`, installed with `uv tool install --editable`) and
+`python -m kadence` both run `kadence.__main__:main`. `kadence/__main__.py` builds an `InstanceConfig`. The modules come from a TOML file:
 `--config FILE` (must exist), else `<data dir>/config.toml` (optional). Sections `[core]`,
 `[memory]`, `[tools]`, `[frontend]`, each with `factory` and `options`; anything else is
-refused at startup. A module left out gets its default: `kayden.core.anthropic:factory`,
-`kayden.memory.sqlite:factory` (`<data dir>/memory.db`), `kayden.tools.shell_files:factory`
+refused at startup. A module left out gets its default: `kadence.core.anthropic:factory`,
+`kadence.memory.sqlite:factory` (`<data dir>/memory.db`), `kadence.tools.shell_files:factory`
 rooted at the current directory (only when no tools options are given), and
-`kayden.frontends.tui:factory`. The file is read with stdlib `tomllib`. `[runtime]` holds the
+`kadence.frontends.tui:factory`. The file is read with stdlib `tomllib`. `[runtime]` holds the
 per-instance settings: `model`, `maintenance_model`, `permissions`, `system_prompt` or
 `system_prompt_file`, and `[runtime.budget]` (the `Budget` fields, non-negative). Keeping the budget limit in the data directory, next to
 the usage it limits, is the point: a flag alone would let each launch pick or forget the
@@ -359,7 +359,7 @@ limit. `--model`, `--maintenance-model` and `--permissions` override the file. T
 until someone needs them. `--show-config` prints the effective config as TOML (`tomli-w`)
 and exits. `--conversation` starts at once: it becomes the frontend options
 `start = true` and `conversation_id`, merged over the configured ones.
-The data directory defaults to `$KAYDEN_DATA_DIR` or `~/.kayden`. Without those flags the
+The data directory defaults to `$KADENCE_DATA_DIR` or `~/.kadence`. Without those flags the
 TUI's start screen asks. The launcher checks no API keys: each Core refuses a
 missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
 `ANTHROPIC_AUTH_TOKEN`).
@@ -370,15 +370,15 @@ calling the factory (missing key, unknown option), a malformed path and a factor
 returns the wrong kind into `ModuleLoadError("<factory>: <message>")`. For Core, Memory and
 Tools that message becomes `Settings.startup_error` on the setup runtime (see Swappable
 modules below); only when even the launcher's own frontend cannot be built does
-`python -m kayden` print `kayden: <message>` to stderr and exit 1. Other exceptions keep
+`python -m kadence` print `kadence: <message>` to stderr and exit 1. Other exceptions keep
 their traceback, since they are bugs rather than configuration mistakes.
 
 `tests/test_e2e.py` is the end-to-end check. No API key was available, so it runs the real
 Memory, Tools and runtime against the scripted Core: once through `run_instance` with the
-config `python -m kayden` builds (Core and Frontend swapped for fakes), and once with the
+config `python -m kadence` builds (Core and Frontend swapped for fakes), and once with the
 real TUI driven by Textual's test pilot (send, approve the shell call, see the answer).
 Both check the SQLite transcript and the file the shell call wrote. The live Core suites
-run with `KAYDEN_LIVE_TESTS=1` and a key.
+run with `KADENCE_LIVE_TESTS=1` and a key.
 
 ## Desktop app
 
@@ -386,24 +386,24 @@ Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
 
 | Choice | Value |
 |---|---|
-| App menu | `app_menu.install()` (Linux, from **Kayden → Add to App Menu**) writes `applications/io.github.k5031.kayden.desktop` and `icons/hicolor/scalable/apps/io.github.k5031.kayden.svg` under `$XDG_DATA_HOME` (default `~/.local/share`). `Exec` is this install's Python with `-m kayden.window`, since a menu has no terminal for `kayden`; the id is the window's desktop file name, so the window gets the icon. The action shows while the entry is missing or differs. Installing also runs `kbuildsycoca6` and sends KIconLoader's `iconChanged` signal when they exist: KDE keeps the entries and icons it has read, so without them a click runs the entry's old command |
-| Entry points | No command of its own: `kayden` hands over to `python -m kayden.window`; bundles run `python -m kayden_desktop`, which calls the same `main`, or `kayden.__main__.main` when started as `kayden` or `kd` (links the package adds) |
+| App menu | `app_menu.install()` (Linux, from **Kadence → Add to App Menu**) writes `applications/io.github.k5031.kadence.desktop` and `icons/hicolor/scalable/apps/io.github.k5031.kadence.svg` under `$XDG_DATA_HOME` (default `~/.local/share`). `Exec` is this install's Python with `-m kadence.window`, since a menu has no terminal for `kadence`; the id is the window's desktop file name, so the window gets the icon. The action shows while the entry is missing or differs. Installing also runs `kbuildsycoca6` and sends KIconLoader's `iconChanged` signal when they exist: KDE keeps the entries and icons it has read, so without them a click runs the entry's old command |
+| Entry points | No command of its own: `kadence` hands over to `python -m kadence.window`; bundles run `python -m kadence_desktop`, which calls the same `main`, or `kadence.__main__.main` when started as `kadence` or `kd` (links the package adds) |
 | Dependencies | `pyside6-essentials` and `qasync`, in the `desktop` extra (also in the dev group) |
-| Default work folder | `~/Kayden`, created at launch when neither config file sets a root (`load_config(default_root=...)`) |
+| Default work folder | `~/Kadence`, created at launch when neither config file sets a root (`load_config(default_root=...)`) |
 | At launch | Opens `--conversation` (given by the TUI's hand-over), else the most recently updated conversation, or starts one when there is none |
 | Welcome | Shown on the setup runtime when the chosen provider needs a key and no provider has one; it saves the provider, key, work folder and limit, then restarts |
 | Markdown re-render | At most every 100 ms while streaming; at once on commit |
 | History page | 100 messages, then "Load earlier messages" |
 | Quit order | `setQuitOnLastWindowClosed(False)`: closing the window ends `Frontend.run`, the runtime shuts down, then `asyncio.run` returns |
 | "Get a key" pages | `platform.claude.com`, `platform.deepseek.com/api_keys`, `platform.openai.com/api-keys` |
-| Shared with the TUI | `kayden.frontends.common`: permission labels, money formatting, `loosening()` |
+| Shared with the TUI | `kadence.frontends.common`: permission labels, money formatting, `loosening()` |
 | Look | Fusion style plus a palette and style sheet from `theme.py`; light or dark from `QStyleHints.colorScheme()`, followed live |
 | Accent | Indigo `#5B5BD6` (light), `#8C8CF5` (dark); the rest neutral gray |
 | Text sizes | Relative to the system font: small 0.85×, title 1.15×, heading 1.45× |
 | Sidebar row | Title (the title, else the first message, else "New chat"), date (time today, "Yesterday", weekday within a week, else "3 Nov", plus the year when not this year), and the first message as a second line when the title is not it |
 | Your messages | At most 75 % of the transcript's width |
 | Message box | Grows with its text to 6 lines |
-| Event loop | `loop.QtEventLoop`, qasync's `QEventLoop` with three fixes (below); `KAYDEN_TEST_LOOP=qasync` runs the tests on it |
+| Event loop | `loop.QtEventLoop`, qasync's `QEventLoop` with three fixes (below); `KADENCE_TEST_LOOP=qasync` runs the tests on it |
 | Garbage collection | Automatic collection is off while a `QtEventLoop` is open; every 100 ms (`GC_CHECK_S`) the loop collects the oldest generation whose count passed its threshold |
 
 **qasync fixes (`QtEventLoop`).** Python's cyclic garbage collector runs in whichever thread
@@ -422,16 +422,16 @@ failed; `QtEventLoop` takes it and runs the callback in that context.
 **PySide6 on Python 3.15.** With PySide6 6.12 loaded, reading a lazily imported module
 attribute (PEP 810) from another module returns the `lazy_import` object instead of
 resolving it. `asyncio.to_thread` reads `concurrent.futures.ThreadPoolExecutor`, so every
-`to_thread` failed. `kayden.frontends.desktop` resolves that name when imported, before any
+`to_thread` failed. `kadence.frontends.desktop` resolves that name when imported, before any
 Qt import; `tests/conftest.py` imports it first for the same reason. Other lazily imported
 stdlib names stay exposed on 3.15.
 
 **qasync results (2026-11-11, qasync 0.28.0, PySide6 6.12.0).** With
-`KAYDEN_TEST_LOOP=qasync`, the whole suite passes on Python 3.15.1, repeatedly and in one
+`KADENCE_TEST_LOOP=qasync`, the whole suite passes on Python 3.15.1, repeatedly and in one
 run, on `QtEventLoop`. Bundles carry Python 3.13.
 
-**Briefcase (0.4.7).** The bundle installs Kayden as a package (`requires =
-[".[desktop]"]`), not its sources: Kayden finds its modules through entry points, which
+**Briefcase (0.4.7).** The bundle installs Kadence as a package (`requires =
+[".[desktop]"]`), not its sources: Kadence finds its modules through entry points, which
 only package metadata carries (a bundle of sources opened the terminal frontend and listed
 no modules). The Linux system package for Arch builds and starts the desktop app
 (2026-11-10, system Python 3.14.9): 114 MB as `.pkg.tar.zst`, 398 MB installed, of which
@@ -476,7 +476,7 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
 
 ### SqliteMemory schema
 
-- Version 6 (`PRAGMA user_version`). A store of any other version is refused; Kayden
+- Version 6 (`PRAGMA user_version`). A store of any other version is refused; Kadence
   carries no migration code. Erasing a row from `messages_fts` repeats the text it was
   indexed with, so `codec.searchable_text` must not change without a new schema version.
 - `conversations`: `archived`, `seed_from`, `folder` columns.
@@ -521,19 +521,19 @@ Design: [Agent Note](notes/implemented/2026-11-08-swappable-modules-in-app.md).
 | Built-in ids | `anthropic`, `deepseek`, `openai`; `sqlite`; `shell-files`; `tui`, `desktop` |
 | Display names | Claude, DeepSeek, OpenAI; Built-in memory (SQLite); Shell and files; Terminal (TUI), Desktop app |
 | Discovery | `importlib.metadata.entry_points` per group; ids read from metadata alone at launch, factories imported only for `settings()`. A failing import is logged at INFO and the entry left out |
-| Desktop entry point | `kayden.frontends.desktop` imports `qasync` and `PySide6.QtWidgets` at the top, so it loads only with the `desktop` extra |
-| `kayden.core.openai_compat:factory` | Not registered: the profiles are `deepseek_factory` and `openai_factory`. A config naming the generic factory has no id ("Custom (from config.toml)") |
+| Desktop entry point | `kadence.frontends.desktop` imports `qasync` and `PySide6.QtWidgets` at the top, so it loads only with the `desktop` extra |
+| `kadence.core.openai_compat:factory` | Not registered: the profiles are `deepseek_factory` and `openai_factory`. A config naming the generic factory has no id ("Custom (from config.toml)") |
 | Saved choices | `[modules]` in `settings.toml`, only the kinds changed. |
 | Options on a switch | A chosen module keeps `config.toml`'s options only when it is the module `config.toml` names; otherwise it gets none |
 | Core change | Saves `model = ""` and `maintenance_model = ""` (the new Core's first, the main model), overriding `config.toml`. Models chosen while another Core waits apply live and are not saved |
 | Restart | `RuntimeAPI.restart()` records a `Restart(frontend, frontend_kind, conversation_id)`, logs a `restart` decision and shuts down as on quit. `launch()` reloads the config and runs the next instance in the same process; the frontend gets `start = true` and the conversation unless the Memory changed |
-| Terminal to window | After the instance has shut down (the lock is released), `kayden` runs `python -m kayden.window --data-dir D [--config C] [--conversation ID]` with `start_new_session`, standard streams to `/dev/null`, and prints that Kayden continues in the desktop app |
+| Terminal to window | After the instance has shut down (the lock is released), `kadence` runs `python -m kadence.window --data-dir D [--config C] [--conversation ID]` with `start_new_session`, standard streams to `/dev/null`, and prints that Kadence continues in the desktop app |
 | Display check | macOS and Windows always; elsewhere `DISPLAY` or `WAYLAND_DISPLAY` set |
-| Frontend per launcher | The saved frontend when installed and of the launcher's kind, else `tui` (`kayden`) or `desktop` (the window launcher). A saved window frontend makes `kayden` hand over at launch ("Kayden opens in the desktop app.") when a display is available; without one, or when it is not installed, `kayden` prints why and runs the TUI. An uninstalled saved frontend is not a startup error: settings show the saved id as not installed |
+| Frontend per launcher | The saved frontend when installed and of the launcher's kind, else `tui` (`kadence`) or `desktop` (the window launcher). A saved window frontend makes `kadence` hand over at launch ("Kadence opens in the desktop app.") when a display is available; without one, or when it is not installed, `kadence` prints why and runs the TUI. An uninstalled saved frontend is not a startup error: settings show the saved id as not installed |
 | Startup errors | An uninstalled Core, Memory or Tools id, or a `ModuleLoadError` from building them, runs the frontend on `SetupRuntime`. A frontend that fails to build is replaced by the launcher's own, which shows the error |
 | Setup runtime | Saves module settings, budget, permissions and system prompt; refuses model choices (`ValueError`) and every other command (`RuntimeStateError` naming the error). It takes no lock and writes no event log: nothing runs, and another instance may hold the directory |
 | Work folder | The Tools `root` option, settable when the configured Tools has one (the built-in shell-files Tools always does) |
-| Frontend texts | `kayden.frontends.common`: `restart_notice`, `module_options`, `needs_restart`, `MODULE_LABELS` (the modules settings offer: no Memory) |
+| Frontend texts | `kadence.frontends.common`: `restart_notice`, `module_options`, `needs_restart`, `MODULE_LABELS` (the modules settings offer: no Memory) |
 
 ## Web tools
 
@@ -543,7 +543,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-web-search.md).
 |---|---|
 | Search | `ddgs` `DDGS(timeout=10).text(query, max_results)`, in a thread; default 8 results, at most 20; "no results" is an empty list, other ddgs errors an error result |
 | Search retries | ddgs picks engines at random and reports "No results found" when those refuse, so the same query can fail and then work: an empty or failed search is tried 3 times in all, 1 s apart; after that, "Nothing found … after 3 tries", saying the engines may be refusing searches for a while (checked 2026-11-10: two common queries each failed about one time in three) |
-| HTTP 403 | Said to be a site that refuses programs reading it, with a hint to use another source. Kayden does not disguise itself as a browser to get past such blocks |
+| HTTP 403 | Said to be a site that refuses programs reading it, with a hint to use another source. Kadence does not disguise itself as a browser to get past such blocks |
 | Download | `httpx2`, 30 s per request, at most 5 MB, at most 5 redirects followed by hand |
 | Public addresses | Every hop's host is resolved; any address that is not `is_global` is refused. Names that do not resolve are an error result |
 | Extraction | HTML: `trafilatura.extract(output_format="markdown", include_links, include_tables, with_metadata)` in a thread; text types and JSON (pretty-printed) as they are; anything else is an error |
@@ -575,13 +575,13 @@ Design: [Agent Note](notes/implemented/2026-11-10-auto-permissions.md).
 | What it sees | Text of USER messages among the newest 200 (activation notices left out), newest first up to 16 000 characters; the work folder; tool name, description and arguments (cut at 4 000 characters) |
 | Answer | First line `ALLOW` or `ASK` (case and `*`, `` ` ``, `.` ignored), second line the reason (300 characters); anything else asks |
 | Always ask | `review.always_ask` on the JSON of the arguments: the data folder (absolute, `~/`, `$HOME/` forms), then credential paths and tools (`CREDENTIALS`); logged as `permission_review` with `by: "rule"` |
-| Failures | Exhausted budget (checked first), any exception from the request: ask, with a reason saying Kayden could not check. No transient retries |
+| Failures | Exhausted budget (checked first), any exception from the request: ask, with a reason saying Kadence could not check. No transient retries |
 | Stop | The review is raced against Stop with the grace period; the call is then not started |
 | Log | `permission_review` with call id and `allow`; the permission record says `by: "review"`. The reason is not logged |
 
 ## Memory notes
 
-Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offered by the Memory module through `kayden.memory.tools` (with recall), not by the runtime.
+Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offered by the Memory module through `kadence.memory.tools` (with recall), not by the runtime.
 
 | Choice | Value |
 |---|---|
@@ -652,7 +652,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 | Cost | $0.01 per search (`usage.server_tool_use.web_search_requests`) as `Usage.extra_cost_usd`; the results are read as input tokens on top |
 | Steps | One `ServerToolUse` per web search or web fetch, placed where its result came; the code dynamic filtering runs is not shown (unless a turn has nothing else) |
 | Replay | A turn's server blocks, all of them in the order they came (they refer to each other), ride on its first shown use and are sent back unchanged, to the same model, while web search is on, and only after the user's latest message; earlier turns' searches go as text (summary and found pages). Checked against Opus 5.5 (2026-11-10): a second turn replaying the whole set cost about three times the first |
-| Fallbacks | A 400 saying web search is not enabled switches it off for the instance (Kayden's own search is offered again); a 400 while replaying server blocks resends them as text |
+| Fallbacks | A 400 saying web search is not enabled switches it off for the instance (Kadence's own search is offered again); a 400 while replaying server blocks resends them as text |
 | Paused turns | `pause_turn` is continued in the same request, up to 5 times, the turn's blocks sent back as the assistant's |
 | Sources | The cited pages, deduplicated in citing order, as a final "Sources:" line of links |
 
@@ -661,8 +661,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 | Choice | Value |
 |---|---|
 | Asking | A desktop app that finds the data folder in use (`Settings.already_open`) connects to the open app's Unix socket and sends `show`; the open app brings its window forward (show normal, raise, activate) and the second exits without a window. Asyncio sockets, so it works on any loop |
-| Socket | `$XDG_RUNTIME_DIR` (else the temp folder) `/kayden-<first 16 hex of SHA-256 of the data folder's path>.sock`, short enough for a socket name; a stale one is replaced when the next app listens, and it is removed on close |
-| No answer | The terminal app has the folder (or a crash left it locked): one message, "Kayden is already open, probably in a terminal…", then the app closes |
+| Socket | `$XDG_RUNTIME_DIR` (else the temp folder) `/kadence-<first 16 hex of SHA-256 of the data folder's path>.sock`, short enough for a socket name; a stale one is replaced when the next app listens, and it is removed on close |
+| No answer | The terminal app has the folder (or a crash left it locked): one message, "Kadence is already open, probably in a terminal…", then the app closes |
 | Terminal app | With `already_open` it exits at once (return code 1) with the error and what to do, instead of opening Settings |
 | Raising | Desktops may refuse to give a background program's window focus (KDE's focus-stealing prevention); the window then asks for attention in the task bar instead |
 
@@ -683,7 +683,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 | Asking for help | `ask_for_help(question)`, offered with a duty: the question is held in memory (`HelpNeeded`, `RuntimeSnapshot.help_needed`), not stored; while it is open the schedule is off (`duty_paused` "waiting for help") and finished operations still wake the agent; `send`, `activate`, `set_duty` and `start` clear it. Frontends show it as a warning line and "Duty waiting for your answer" in the status; the event log keeps its length only |
 | Store | SQLite schema 8: `conversations.duty` (JSON or NULL) and `conversations.plan` (JSON list, default `[]`) |
 | Plan text | The TUI and desktop edit the plan as lines: `[status] step \| due YYYY-MM-DD HH:MM \| note` (`frontends.common.plan_text`, `parse_plan_text`) |
-| Commands | TUI: `/duty <instruction>`, `/goal <instruction>`, `/duty off`, `/duty` or `/plan` or F5 for the screen. Desktop: **Kayden → Duty…** |
+| Commands | TUI: `/duty <instruction>`, `/goal <instruction>`, `/duty off`, `/duty` or `/plan` or F5 for the screen. Desktop: **Kadence → Duty…** |
 
 ## Message times
 
@@ -698,12 +698,12 @@ Design: [Agent Note](notes/implemented/2026-11-11-headless-units.md).
 
 | Choice | Value |
 |---|---|
-| Launch | `kayden --headless` replaces the frontend for that run with `kayden.frontends.headless:factory`, whatever is saved, and never hands over to the window; it is not an installed frontend, so Settings never offers it. `--duty` / `--goal` (one of them, with `--headless`, not with `--conversation`) become the frontend options `start`, `duty`, `goal` |
+| Launch | `kadence --headless` replaces the frontend for that run with `kadence.frontends.headless:factory`, whatever is saved, and never hands over to the window; it is not an installed frontend, so Settings never offers it. `--duty` / `--goal` (one of them, with `--headless`, not with `--conversation`) become the frontend options `start`, `duty`, `goal` |
 | Channel | JSON-RPC 2.0, one message per line, lines up to 16 MiB. At start the frontend keeps duplicates of fds 0 and 1 for the channel, points fd 0 at /dev/null and fd 1 at stderr, and sets `sys.stdout` to stderr |
-| Requests | Every RuntimeAPI command but `events` and `restart`, read from the protocol itself (`kayden.frontends.wire.COMMANDS`); parameters are decoded by the command's type hints (`command_args`), `start` also takes its options as the request's params. Each handled in its own task, so a slow one blocks nothing; a request without an id gets no reply. Errors: -32700 bad JSON, -32600 not a request, -32601 unknown method, -32602 missing or unexpected parameters, -32000 refused by the runtime (`data.type` the exception's class) |
+| Requests | Every RuntimeAPI command but `events` and `restart`, read from the protocol itself (`kadence.frontends.wire.COMMANDS`); parameters are decoded by the command's type hints (`command_args`), `start` also takes its options as the request's params. Each handled in its own task, so a slow one blocks nothing; a request without an id gets no reply. Errors: -32700 bad JSON, -32600 not a request, -32601 unknown method, -32602 missing or unexpected parameters, -32000 refused by the runtime (`data.type` the exception's class) |
 | Encoding | Dataclasses as objects with `"type": <class name>` and their fields; enums as values; tuples as lists. Requests take plain JSON (a duty and plan items as objects without `type`) |
 | Events | Every envelope, deltas included, as an `event` notification with `seq` |
-| Start-up | With `start` the frontend starts (a new conversation with a duty); a failure is written to stderr as `kayden: <message>` and the unit quits |
+| Start-up | With `start` the frontend starts (a new conversation with a duty); a failure is written to stderr as `kadence: <message>` and the unit quits |
 | Prompts | `interactive_permissions=True`: prompts wait for `resolve_permission` like a person's |
 | Quit | stdin closing: requests already read are answered, then `run()` returns |
 
@@ -714,13 +714,13 @@ Design: [Agent Note](notes/implemented/2026-11-11-sub-sessions.md).
 | Choice | Value |
 |---|---|
 | Tools | `start_session(task, budget_usd=None)`, `message_session(session, text)` (both with no timeout), `stop_session(session)`. Not confined: reviewed under AUTO, asked under stricter policies |
-| Child | `<sys.executable> -m kayden --headless --data-dir <data>/sessions/<first 8 of conversation id>-<n>`, cwd the work folder; config.toml copied, settings.toml copied with `budget = {max_cost_usd = budget_usd}` and `work_folder`; then `start` and `set_duty` (goal, check-ins every 5 s to 2 minutes). Reopening: the same with `--conversation <its conversation>` |
+| Child | `<sys.executable> -m kadence --headless --data-dir <data>/sessions/<first 8 of conversation id>-<n>`, cwd the work folder; config.toml copied, settings.toml copied with `budget = {max_cost_usd = budget_usd}` and `work_folder`; then `start` and `set_duty` (goal, check-ins every 5 s to 2 minutes). Reopening: the same with `--conversation <its conversation>` |
 | Ids | "1", "2", … per data folder, continuing after the highest recorded |
 | Record | `session.json` in the child's folder: id, task, parent conversation, state, report, question, failure, spent, child conversation; written off the loop when it changes. At start a record whose state was running becomes "stopped" |
 | States | starting, working (also between a goal's check-ins), waiting (its question, after `HelpNeeded` and idle), idle (reopened with nothing to do), done (goal ended and idle; the report is `finish_goal`'s), failed, stopped; "Needs your approval" while a prompt is open |
 | Prompts | Wait for the user, who answers them where the child is open; the parent's call keeps waiting |
 | Process | Closed (stdin, then killed after 10 s) when it is done or stopped and no view has it open; cancelling the call, `stop_session`, Stop and closing the manager stop it |
-| Proxy | `kayden.frontends.remote.RemoteRuntime` over `Channel` (JSON-RPC client): every RuntimeAPI command but `restart`, each method made from the protocol (same signature, a request of that name, the reply decoded by its return type); `snapshot()` is read once and kept current from the events (state, conversation, model, usage, duty wake, help, operations, prompts, queue). A reply to a cancelled request is ignored. `kayden.frontends.wire` encodes and decodes the values |
+| Proxy | `kadence.frontends.remote.RemoteRuntime` over `Channel` (JSON-RPC client): every RuntimeAPI command but `restart`, each method made from the protocol (same signature, a request of that name, the reply decoded by its return type); `snapshot()` is read once and kept current from the events (state, conversation, model, usage, duty wake, help, operations, prompts, queue). A reply to a cancelled request is ignored. `kadence.frontends.wire` encodes and decodes the values |
 | Desktop | The sidebar groups conversations by folder (a heading with the folder's name, folded by a click; "Other" for none) and lists each conversation's children under it (indented, a tree line, a dot while working, the summary as second line). Clicking a child shows it in the conversation area through its own Controller and model; clicking a conversation returns. Memory, tool servers and settings stay the window's own |
 | Initiation | The agent starts a child when the user asked for the work, and proposes `start_session` (Proposals) when it is its own idea |
 | Notices | When a child's agent goes from working to not working, its state is not "working" (a goal between check-ins is), and no parent call waits on it: `[Runtime notice] Sub-session <id> (<name>) ended a turn: <state>.` with its question, report, or last reply (first 400 characters). Kept per parent conversation; the frontend sends them with `send` to its own runtime when that conversation is open (on each change, and after opening a conversation) |
@@ -742,13 +742,13 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Wake-up | Pending proposals are left out of the wake set; a finished proposal operation sets a flag that wakes an idle agent, cleared when the next request is built |
 | Withdrawn | `op_cancel` on its id, Stop, and `start()` (switching conversations) cancel pending proposals: `ProposalResolved(id, None)`. Pending proposals are not in `RuntimeSnapshot.operations` nor counted in `StateChanged.pending_ops` |
 | Results | Approved: the call's own output. Dismissed: "The user dismissed the proposal; it did not run." (OK status) |
-| Cards | Desktop: `ProposalCard` with the permission cards ("Kayden proposes: <step sentence>", the reason, other arguments; a `start_session` shows its task), Approve and Dismiss. TUI: `ProposalPrompt`, `/approve` and `/dismiss` answer the first open one |
+| Cards | Desktop: `ProposalCard` with the permission cards ("Kadence proposes: <step sentence>", the reason, other arguments; a `start_session` shows its task), Approve and Dismiss. TUI: `ProposalPrompt`, `/approve` and `/dismiss` answer the first open one |
 
 ## Runtime notices
 
 | Choice | Value |
 |---|---|
-| Marker | `api.NOTICE_PREFIX` ("[Runtime notice] ") starts every USER message Kayden writes for the model: the activation notice, a duty's wake-up, a sub-session's report to its parent |
+| Marker | `api.NOTICE_PREFIX` ("[Runtime notice] ") starts every USER message Kadence writes for the model: the activation notice, a duty's wake-up, a sub-session's report to its parent |
 | Shown | Frontends show such a message as a notice line without the prefix (desktop `NoticeItem`, TUI `SystemEntry`), never as the user's bubble; a long one (several lines or over 160 characters, such as a new goal's brief) is folded to its first line, with Show all on the desktop and a collapsed entry in the TUI; a queued one is shown once it is committed. A conversation whose first message is a notice is labelled "New chat" until it gets a title |
 | Not shown | A notice that only tells the model how to behave (the voice notices) starts with `api.HIDDEN_NOTICE_PREFIX`, the marker followed by "(The user does not see this notice.) ". Frontends show nothing for it; it is in the archive and in every request like any other message |
 
@@ -774,7 +774,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Reply footer | Under each finished reply, shown while the pointer is on it and keeping its space when hidden: a copy button (the reply's Markdown; a tick for 1.5 s) and its age (`relative_age`: just now, N minutes or hours ago, then the date) |
 | Sidebar tooltips | Only the full title: a conversation's title or whole first message, a sub-session's title or its brief's first line |
 | Project headings | The name, then a drawn chevron: down when open, right when folded |
-| Turn gap | Your message has 6 px more above it and 18 px more below it than the 12 px between items, so a new turn reads as one and Kayden's reply starts clearly apart from it (about 38 px, as in Claude) |
+| Turn gap | Your message has 6 px more above it and 18 px more below it than the 12 px between items, so a new turn reads as one and Kadence's reply starts clearly apart from it (about 38 px, as in Claude) |
 | Reply text | Lines at 118% of the font's line spacing (about 1.6 em; 145% made them nearly double-spaced); inline code at 0.88 of the text size on the selection colour; a fenced code block at that size in one box of the selection colour with 10 px padding and corners of 8 px radius (a `QTextFrame` around its lines, which Qt makes paragraphs of; the view paints the box itself, since a frame's own background is square), its lines at normal height without space between them, long lines wrapped. A 22 px header in the box names the block's language at the left and has a copy button at the right, a child of the view placed over the frame, which shows a tick for 1.5 s. Code blocks that follow each other get an HTML comment between them before Qt reads the Markdown (`_code_blocks_apart`), since Qt makes one run of lines of them |
 | Syntax colours | Pygments (`desktop/syntax.py`), for a code block whose fence names a language Pygments knows; no guessing for the others. Six colours per theme: keyword, string, comment, number, name (functions, classes, decorators, attributes) and builtin; everything else keeps the text colour |
 | Sidebar look | Rows and New chat at 0.92 of the system font (the header title at 1.0, semi-bold), so the list reads lighter at any system size; the menu and New chat use drawn line icons like the window controls; sub-sessions hang on one thin guide line instead of a corner each; a working sub-session's dot has its own room, clear of the title |
@@ -883,7 +883,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 
 | Choice | Decision |
 |---|---|
-| Shared archive | `SqliteArchive` (`kayden.memory.sqlite`): messages, summaries, search, conversation metadata, erasure. Hooks `_long_term(info) -> LongTerm(head, lines, render)`, `_after_answer`, `_erase`. `SqliteMemory` adds notes (schema 8, `memory.db`); `FilesMemory` adds the memory folders (schema 1, `memory-files.db`) |
+| Shared archive | `SqliteArchive` (`kadence.memory.sqlite`): messages, summaries, search, conversation metadata, erasure. Hooks `_long_term(info) -> LongTerm(head, lines, render)`, `_after_answer`, `_erase`. `SqliteMemory` adds notes (schema 8, `memory.db`); `FilesMemory` adds the memory folders (schema 1, `memory-files.db`) |
 | Budget | The head (rules or profile) whenever it fits the room, then lines from the top within the long-term fraction |
 | Files as notes | Id and title = path, description = frontmatter `description`, text = body. Saving writes Claude Code frontmatter (not for `MEMORY.md`); a new title renames the file. No revisions |
 | Folder | The runtime passes the open conversation's work folder to `notes`, `save_note`, `delete_note`; `SqliteMemory` ignores it |
@@ -899,7 +899,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 |---|---|
 | Name | `[a-z0-9][a-z0-9-]{0,63}`; frontmatter `name`, else the folder's name |
 | Description | Frontmatter `description`, else the instructions' first paragraph; one line, 500 characters at most in the listing |
-| Order | Listed by name; Kayden's, then `<data dir>/skills`, then `<work folder>/.claude/skills`, the later replacing the earlier |
+| Order | Listed by name; Kadence's, then `<data dir>/skills`, then `<work folder>/.claude/skills`, the later replacing the earlier |
 | Reread | With every request and every `RuntimeAPI.skills()` call, in a thread |
 | Tool | `skill`, read-only, never gated or counted; a leading `/` in the name is dropped; an unknown name answers ERROR with the names |
 | Prompt | The section follows the user's instructions and precedes Memory's addendum and the duty, so the stable part of the prompt comes first |
@@ -918,8 +918,8 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 
 | Choice | Decision |
 |---|---|
-| Offered | AI provider and Tools (`common.MODULE_LABELS`). The interface is not a setting for now (the user, 2026-11-12): `kayden` starts the terminal app, `kayden-desktop` (entry point of `kayden.window:main`) and the app menu the desktop app |
-| Still honoured | A frontend saved under `[modules]` in settings.toml or named in config.toml: the launchers and `restart()` work as before, so `kayden` opens the desktop app where one was chosen earlier |
+| Offered | AI provider and Tools (`common.MODULE_LABELS`). The interface is not a setting for now (the user, 2026-11-12): `kadence` starts the terminal app, `kadence-desktop` (entry point of `kadence.window:main`) and the app menu the desktop app |
+| Still honoured | A frontend saved under `[modules]` in settings.toml or named in config.toml: the launchers and `restart()` work as before, so `kadence` opens the desktop app where one was chosen earlier |
 
 ## Seeing the screen
 
@@ -928,7 +928,7 @@ Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md).
 | Choice | Decision |
 |---|---|
 | Program | `spectacle`, looked up on `PATH` when the module is made; without it the tool is not listed |
-| Capture | `-b -n -f -o <folder>/screenshot.png` in a `kayden-screen-` temporary folder, removed after the read; 20 s (`screen.CAPTURE_TIMEOUT`), then the program is killed, as on Stop |
+| Capture | `-b -n -f -o <folder>/screenshot.png` in a `kadence-screen-` temporary folder, removed after the read; 20 s (`screen.CAPTURE_TIMEOUT`), then the program is killed, as on Stop |
 | Result | `[Screenshot of the user's desktop, W x H pixels]` (the size from the PNG header) with the picture as `Image("image/png", …, "screenshot.png")`; over 5 MB is an error |
 | Tool | No arguments, not read-only, never confined, timeout 60 s |
 

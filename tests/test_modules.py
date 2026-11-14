@@ -11,18 +11,18 @@ from typing import Any
 
 import pytest
 
-import kayden.__main__ as launcher
-from kayden import window as window_launcher
-from kayden.api import (
+import kadence.__main__ as launcher
+from kadence import window as window_launcher
+from kadence.api import (
     RuntimeStateError,
     SettingsChanged,
     SettingsUpdate,
     ShuttingDown,
     StartOptions,
 )
-from kayden.runtime import ModuleSpec, ModuleState, Restart, run_instance
-from kayden.runtime.instance import InstanceLock
-from kayden.runtime.modules import TERMINAL, WINDOW, installed
+from kadence.runtime import ModuleSpec, ModuleState, Restart, run_instance
+from kadence.runtime.instance import InstanceLock
+from kadence.runtime.modules import TERMINAL, WINDOW, installed
 from tests.fakes import frontend as fake_frontend
 from tests.fakes.frontend import Recorder, ScriptedFrontend
 from tests.fakes.memory import InMemoryMemory
@@ -96,7 +96,7 @@ def test_saved_module_ids_pick_their_factories(tmp_path):
     assert config.core.factory == "tests.fakes.core:first_factory"
     assert config.memory.factory == "tests.fakes.memory:factory"
     assert config.tools == ModuleSpec("tests.fakes.tools:factory")  # no root option
-    assert config.frontend.factory == "kayden.frontends.tui:factory"
+    assert config.frontend.factory == "kadence.frontends.tui:factory"
     assert dict(config.runtime.modules.running) == {**RUNNING, "frontend": "tui"}
     assert config.startup_error is None
 
@@ -113,10 +113,10 @@ def test_config_options_stay_with_their_module(tmp_path):
 
 def test_import_paths_in_config_have_no_id(tmp_path):
     (tmp_path / "config.toml").write_text(
-        '[core]\nfactory = "kayden.core.openai_compat:factory"\n'
+        '[core]\nfactory = "kadence.core.openai_compat:factory"\n'
         '[frontend]\nfactory = "tests.fakes.core:x"\n')
     config = launcher.load_config(args(tmp_path))
-    assert config.core.factory == "kayden.core.openai_compat:factory"
+    assert config.core.factory == "kadence.core.openai_compat:factory"
     assert config.frontend.factory == "tests.fakes.core:x"
     state = config.runtime.modules
     assert state.running["core"] is None and state.chosen["core"] is None
@@ -132,11 +132,11 @@ def test_an_uninstalled_saved_module_is_a_startup_error(tmp_path):
 
 
 @pytest.mark.parametrize(("saved", "kind", "frontend"), [
-    ("scripted-window", TERMINAL, "kayden.frontends.tui:factory"),
+    ("scripted-window", TERMINAL, "kadence.frontends.tui:factory"),
     ("scripted-window", WINDOW, "tests.fakes.frontend:window_factory"),
     ("scripted", TERMINAL, "tests.fakes.frontend:factory"),
-    ("scripted", WINDOW, "kayden.frontends.desktop:factory"),
-    ("gone", TERMINAL, "kayden.frontends.tui:factory"),
+    ("scripted", WINDOW, "kadence.frontends.desktop:factory"),
+    ("gone", TERMINAL, "kadence.frontends.tui:factory"),
 ])
 def test_each_launcher_runs_the_saved_frontend_of_its_kind(tmp_path, saved, kind, frontend):
     settings_file(tmp_path, f'[modules]\nfrontend = "{saved}"\n')
@@ -173,7 +173,7 @@ def test_the_window_launcher_opens_the_conversation_it_is_given(tmp_path):
     desktop_args = window_launcher.parse_args(["--data-dir", str(tmp_path),
                                                 "--conversation", "c1"])
     config = launcher.load_config(desktop_args, launcher=WINDOW)
-    assert config.frontend == ModuleSpec("kayden.frontends.desktop:factory",
+    assert config.frontend == ModuleSpec("kadence.frontends.desktop:factory",
                                          {"start": True, "conversation_id": "c1"})
 
 
@@ -241,7 +241,7 @@ async def test_a_missing_key_opens_the_frontend_and_is_entered_before_the_core_i
     scripted(monkeypatch, first_run, second_run)
     assert await asyncio.wait_for(launcher.launch(args(tmp_path), TERMINAL), 10) is None
     assert seen["error"] == "tests.fakes.core:first_factory: FIRST_API_KEY is not set"
-    assert keychain.store[("kayden", "FIRST_API_KEY")] == "sk-1"
+    assert keychain.store[("kadence", "FIRST_API_KEY")] == "sk-1"
     assert seen["key"] == "sk-1" and seen["started"].id
 
 
@@ -251,7 +251,7 @@ async def test_the_setup_runtime_saves_what_needs_no_core(tmp_path, monkeypatch)
     async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
         events = runtime.events()
         assert runtime.snapshot().conversation is None
-        with pytest.raises(ValueError, match="once Kayden has started"):
+        with pytest.raises(ValueError, match="once Kadence has started"):
             await runtime.update_settings(SettingsUpdate(model="fake-1"))
         for call in (runtime.list_conversations(), runtime.list_models(), runtime.notes(),
                      runtime.send("hi")):
@@ -270,15 +270,15 @@ async def test_the_setup_runtime_saves_what_needs_no_core(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize(("config", "message"), [
-    ("", "kayden.core.anthropic:factory: ANTHROPIC_API_KEY is not set"),
-    ("[core]\nfactory = 'kayden.core.openai_compat:factory'\noptions = {profile = 'deepseek'}\n",
-     "kayden.core.openai_compat:factory: set DEEPSEEK_API_KEY or the api_key option"),
-    ("[core]\nfactory = 'kayden.core.anthropic:nothing'\n",
-     "kayden.core.anthropic:nothing: module 'kayden.core.anthropic' has no attribute 'nothing'"),
+    ("", "kadence.core.anthropic:factory: ANTHROPIC_API_KEY is not set"),
+    ("[core]\nfactory = 'kadence.core.openai_compat:factory'\noptions = {profile = 'deepseek'}\n",
+     "kadence.core.openai_compat:factory: set DEEPSEEK_API_KEY or the api_key option"),
+    ("[core]\nfactory = 'kadence.core.anthropic:nothing'\n",
+     "kadence.core.anthropic:nothing: module 'kadence.core.anthropic' has no attribute 'nothing'"),
     ("[core]\noptions = {api_key = 'x', colour = 'red'}\n",
-     "kayden.core.anthropic:factory: AnthropicCore.__init__() got an unexpected keyword"),
-    ("[core]\nfactory = 'kayden.core.nowhere:factory'\n",
-     "kayden.core.nowhere:factory: No module named 'kayden.core.nowhere'"),
+     "kadence.core.anthropic:factory: AnthropicCore.__init__() got an unexpected keyword"),
+    ("[core]\nfactory = 'kadence.core.nowhere:factory'\n",
+     "kadence.core.nowhere:factory: No module named 'kadence.core.nowhere'"),
     ("[core]\nfactory = 'tests.fakes.core:factory'\n[memory]\nfactory = 'tests.fakes.core:factory'\n",
      "tests.fakes.core:factory returned ScriptedCore, not Memory"),
 ])
@@ -414,14 +414,14 @@ def test_the_terminal_hands_over_to_the_desktop_app(tmp_path, monkeypatch, capsy
     scripted(monkeypatch, script)
     launcher.main(["--data-dir", str(tmp_path)])
     [(command, kw)] = spawned
-    assert command == [sys.executable, "-m", "kayden.window",
+    assert command == [sys.executable, "-m", "kadence.window",
                        "--data-dir", str(tmp_path), "--conversation", seen["conversation"]]
     assert kw["start_new_session"] and kw["stdin"] == subprocess.DEVNULL
     assert "continues in the desktop app" in capsys.readouterr().out
     # The window launcher then runs the desktop app on that conversation.
     desktop_args = window_launcher.parse_args(command[3:])
     config = launcher.load_config(desktop_args, launcher=WINDOW)
-    assert config.frontend == ModuleSpec("kayden.frontends.desktop:factory",
+    assert config.frontend == ModuleSpec("kadence.frontends.desktop:factory",
                                          {"start": True, "conversation_id": seen["conversation"]})
     assert config.runtime.data_dir == tmp_path
 
@@ -431,13 +431,13 @@ def test_the_handed_over_command_runs(tmp_path):
     command = launcher.window_command(args(tmp_path), Restart("desktop", WINDOW, None))
     out = subprocess.run([*command[:3], "--help"], capture_output=True, text=True, check=True,
                          timeout=60)
-    assert out.stdout.startswith("usage: kayden-desktop ")
+    assert out.stdout.startswith("usage: kadence-desktop ")
 
 
 async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, monkeypatch):
-    """A second Kayden on the same data folder shows why it cannot start, and touches no
+    """A second Kadence on the same data folder shows why it cannot start, and touches no
     stored data."""
-    from kayden.runtime.instance import InstanceLock
+    from kadence.runtime.instance import InstanceLock
 
     monkeypatch.setenv("FIRST_API_KEY", "k")
     settings_file(tmp_path, FAKE_MODULES + 'frontend = "scripted"\n')
@@ -456,14 +456,14 @@ async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, 
     finally:
         held.release()
     error, already_open = seen[0]
-    assert error.startswith("Kayden is already open in another window") and already_open
+    assert error.startswith("Kadence is already open in another window") and already_open
 
 
-# ── Launching kayden with a window frontend saved ──
+# ── Launching kadence with a window frontend saved ──
 
 
-def test_kayden_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
-    """Choosing the desktop app means `kayden` opens it, without starting the TUI."""
+def test_kadence_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
+    """Choosing the desktop app means `kadence` opens it, without starting the TUI."""
     with_display(monkeypatch, True)
     settings_file(tmp_path, FAKE_MODULES + 'frontend = "desktop"\n')
     spawned = []
@@ -479,18 +479,18 @@ def test_kayden_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
     scripted(monkeypatch, script)
     launcher.main(["--data-dir", str(tmp_path), "--conversation", "c1"])
     assert not ran
-    assert spawned == [[sys.executable, "-m", "kayden.window",
+    assert spawned == [[sys.executable, "-m", "kadence.window",
                         "--data-dir", str(tmp_path), "--conversation", "c1"]]
-    assert capsys.readouterr().out == "Kayden opens in the desktop app.\n"
+    assert capsys.readouterr().out == "Kadence opens in the desktop app.\n"
 
 
 @pytest.mark.parametrize(("saved", "display", "notice"), [
-    ("desktop", False, ("No display here, so Kayden opens in the terminal. Desktop app "
-                       "opens when you start Kayden on a computer with a display.")),
-    ("gone", True, ("The interface 'gone' is not installed, so Kayden opens in the "
+    ("desktop", False, ("No display here, so Kadence opens in the terminal. Desktop app "
+                       "opens when you start Kadence on a computer with a display.")),
+    ("gone", True, ("The interface 'gone' is not installed, so Kadence opens in the "
                    "terminal.")),
 ])
-def test_kayden_says_why_it_opens_in_the_terminal(tmp_path, monkeypatch, capsys, saved,
+def test_kadence_says_why_it_opens_in_the_terminal(tmp_path, monkeypatch, capsys, saved,
                                                   display, notice):
     with_display(monkeypatch, display)
     monkeypatch.setenv("FIRST_API_KEY", "k")

@@ -12,7 +12,7 @@ Only two places offered tools: the one Tools module, and the runtime's built-ins
   how `forget` finds a fact by its text. A different Memory module could change none of it,
   and the runtime had to know long-term facts exist at all.
 - **Tools could not be added without code.** Adding and removing tools through MCP servers
-  is common practice in agent apps (Claude, ChatGPT, Cursor, VS Code). Kayden ran exactly
+  is common practice in agent apps (Claude, ChatGPT, Cursor, VS Code). Kadence ran exactly
   one Tools module, so an MCP module would have replaced shell, files and web instead of
   adding to them.
 - **Other modules had tools to give but no way to offer them.** A Core could expose the
@@ -25,7 +25,7 @@ Only two places offered tools: the one Tools module, and the runtime's built-ins
 - **The runtime** offers only `op_status` and `op_cancel` (`api.BUILTIN_TOOLS`), which are
   about its own operations. Their names are reserved.
 - **Memory** may offer tools: optional `Memory.list_tools()` and `Memory.execute(call,
-  ctx)`. `kayden.memory.tools` has `recall`, `read_around` and the note tools (`read_note`, `save_note`,
+  ctx)`. `kadence.memory.tools` has `recall`, `read_around` and the note tools (`read_note`, `save_note`,
   `forget_note`, see [memory as notes](2026-11-10-memory-notes.md)), built only on the
   Memory contract, with their wording and title matching; the SQLite Memory offers them. A module that cannot edit long-term memory offers `recall` and `read_around` only, and one
   that offers nothing gets no memory tools.
@@ -42,7 +42,7 @@ A Frontend offers whole Tools modules with `Frontend.tools()`, after every other
   later module and logged (`duplicate_tool_dropped`). Each call goes to the module that
   offered its name.
 - Memory tools run like the runtime's own: never gated, outside the tool-call budget, and
-  cancelled by Stop. They read and change only Kayden's memory, which the user manages in
+  cancelled by Stop. They read and change only Kadence's memory, which the user manages in
   the Memory window. After one that is not read-only the runtime emits `MemoriesChanged`.
 - A Tools module's call is judged (`confined`) and run by the module that offered it.
   Every Tools module that takes folders gets the conversation's folder; all are closed at
@@ -52,16 +52,16 @@ A Frontend offers whole Tools modules with `Frontend.tools()`, after every other
 
 ### MCP
 
-- `kayden.tools.mcp` is a Tools module over the official `mcp` SDK. Each server is a
-  command Kayden starts or a URL, held open by a task of its own (the SDK must open and close
+- `kadence.tools.mcp` is a Tools module over the official `mcp` SDK. Each server is a
+  command Kadence starts or a URL, held open by a task of its own (the SDK must open and close
   a connection in the same task). Tools are named `mcp__<server>__<tool>`. No call is
   confined: under AUTO each is reviewed, under stricter levels the user is asked
   ([automatic permissions](2026-11-10-auto-permissions.md)). A command gets the SDK's safe
-  environment, its own variables and the permission ceiling, never Kayden's other variables.
+  environment, its own variables and the permission ceiling, never Kadence's other variables.
 - Servers are settings (`api.McpServer`, `Settings.mcp_servers`): saved in settings.toml,
   their variable values in the keychain, applied at the next start like modules. The
   launcher builds the saved servers into one extra Tools module
-  (`InstanceConfig.extra_tools`). The desktop app (**Kayden → Tool servers (MCP)…**) and
+  (`InstanceConfig.extra_tools`). The desktop app (**Kadence → Tool servers (MCP)…**) and
   the TUI (`/mcp`) add, edit and remove them, and warn that a server is someone else's
   program.
 
@@ -78,7 +78,7 @@ Choices and limits are listed in `.agents/decisions.md` (MCP servers).
   it is possible, but the runtime would need MCP-specific code to start and stop servers;
   as module settings they need none, and other apps (Claude Desktop) restart for them too.
 - **Variables in settings.toml.** Simpler, but tokens would sit in a plain file; every
-  other key Kayden keeps is in the keychain.
+  other key Kadence keeps is in the keychain.
 - **Core and Frontend tools now.** Nothing uses them yet; building them would be a
   speculative abstraction.
 

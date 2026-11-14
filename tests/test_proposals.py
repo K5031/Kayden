@@ -1,4 +1,4 @@
-"""Proposals: the agent proposes a tool call; the user approves or dismisses it; Kayden
+"""Proposals: the agent proposes a tool call; the user approves or dismisses it; Kadence
 runs exactly that call on approval and wakes the agent with the outcome."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from kayden.api import (
+from kadence.api import (
     AgentState,
     OperationResult,
     PermissionPolicy,
@@ -134,8 +134,8 @@ async def test_withdrawing_and_stop_remove_the_card(make):
 async def test_the_desktop_shows_a_card_that_approves(make):
     from PySide6.QtWidgets import QLabel, QPushButton
 
-    from kayden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kayden.frontends.desktop.window import MainWindow, ProposalCard
+    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kadence.frontends.desktop.window import MainWindow, ProposalCard
 
     h = await harness(make, [
         Step(calls=[call("propose", {"call": WRITE, "reason": "They are messy"}, id="p")]),
@@ -148,7 +148,7 @@ async def test_the_desktop_shows_a_card_that_approves(make):
     window.show()
     [card] = await eventually(lambda: window.findChildren(ProposalCard))
     texts = " ".join(label.text() for label in card.findChildren(QLabel))
-    assert "Kayden proposes: Tidy notes.md" in texts and "They are messy" in texts
+    assert "Kadence proposes: Tidy notes.md" in texts and "They are messy" in texts
     [approve] = [b for b in card.findChildren(QPushButton) if b.text() == "Approve"]
     approve.click()
     await eventually(lambda: outcomes(h).get("p"))
@@ -156,13 +156,13 @@ async def test_the_desktop_shows_a_card_that_approves(make):
 
 
 async def test_the_terminal_app_approves_with_a_command(make):
-    from kayden.frontends.tui import KaydenApp, ProposalPrompt
+    from kadence.frontends.tui import KadenceApp, ProposalPrompt
     from tests.test_tui import type_text, until
 
     h = await harness(make, [
         Step(calls=[call("propose", {"call": WRITE, "reason": "They are messy"}, id="p")]),
         Step(text="Proposed."), Step(text="Tidied.")])
-    app = KaydenApp(h.runtime)
+    app = KadenceApp(h.runtime)
     async with app.run_test(size=(100, 40)) as pilot:
         await until(pilot, lambda: app.conversation is not None)
         await type_text(pilot, "hi")
