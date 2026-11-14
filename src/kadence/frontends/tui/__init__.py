@@ -942,7 +942,8 @@ class ConversationsScreen(ListScreen):
             if yes:
                 self._run(self._erase(selected.id), unsupported="#delete")
 
-        sessions = getattr(self.app, "sessions", None)
+        assert isinstance(self.app, KadenceApp)
+        sessions = self.app.sessions
         children = len(sessions.of(selected.id, include_archived=True)) if sessions else 0
         self.app.push_screen(ConfirmScreen(
             f'Delete "{conversation_label(selected)}"? '
@@ -951,13 +952,13 @@ class ConversationsScreen(ListScreen):
 
     async def _erase(self, conversation_id: ConversationId) -> None:
         """The open conversation is first replaced by a new chat."""
+        assert isinstance(self.app, KadenceApp)
         if conversation_id == self.open_id:
-            assert isinstance(self.app, KadenceApp)
             await self.app.start_conversation(StartOptions())
             self.open_id = self.app.conversation.id
         await self.runtime.delete_conversation(conversation_id)
-        if (sessions := getattr(self.app, "sessions", None)) is not None:
-            await sessions.delete_of(conversation_id)
+        if self.app.sessions is not None:
+            await self.app.sessions.delete_of(conversation_id)
 
 
 class MemoryScreen(ListScreen):
@@ -1534,6 +1535,19 @@ def _next(container: Widget, child: Widget) -> Widget | None:
     return children[index] if index < len(children) else None
 
 
+def card_after(message: Message, card: Card | None) -> Card | None:
+    """The wrap-up card once `message` is the newest: the one its last such call shows;
+    none once the user answered (results and notices leave it up)."""
+    if message.role is Role.USER:
+        text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
+        answered = notice_of(message) is None and with_attachments(text, message.blocks)
+        return None if answered else card
+    for block in message.blocks:
+        if isinstance(block, ToolCall):
+            card = card_of(block) or card
+    return card
+
+
 class LoadEarlier(Button):
     def __init__(self) -> None:
         super().__init__("Load earlier messages", id="load-earlier", variant="default")
@@ -1743,6 +1757,7 @@ class KadenceApp(App[None]):
         self._proposals.clear()
         self._card = None
         self._plan = None
+        self._compaction = None
         self._card_proposals.clear()
         self.last_seq = snap.seq
         self.state = snap.state
@@ -1757,8 +1772,11 @@ class KadenceApp(App[None]):
         self._oldest_id = history[0].id if history else None
         if len(history) == HISTORY_PAGE:
             await self._mount(LoadEarlier())
+        card = None
         for message in history:
             await self._render_message(message)
+            card = card_after(message, card)
+        await self._set_card(card)
         for op in snap.operations:
             entry = self._tool_entries.get(op.call.id) or await self._mount_tool(op.call)
             entry.set_phase("background" if op.backgrounded else "running")
@@ -1823,7 +1841,6 @@ class KadenceApp(App[None]):
             case MessageQueued(message_id=message_id, text=text, attachments=attached):
                 if notice_of(event) is None:
                     await self._set_card(None)
-                if message_id not in self._queued and notice_of(event) is None:
                     entry = UserEntry(with_attachments(text, attached), queued=True,
                                       message_id=message_id)
                     self._queued[message_id] = await self._mount(entry)
@@ -1883,7 +1900,7 @@ class KadenceApp(App[None]):
                 self._compaction = SystemEntry(COMPACTING)
                 await self._mount(self._compaction)
             case CompactionFinished(compacted=compacted):
-                if (line := self._compaction) is not None and line.is_mounted:
+                if (line := self._compaction) is not None:
                     if compacted:
                         line.update(Text(COMPACTED))
                     else:
@@ -1991,7 +2008,7 @@ class KadenceApp(App[None]):
 
     async def _commit(self, message: Message, stop: StopReason | None = None) -> None:
         if message.id in self._rendered_ids:
-            return
+            return  # saved between a resync's snapshot and its history: in both
         if (queued := self._queued.pop(message.id, None)) is not None:
             queued.mark_committed()
             self._rendered_ids.add(message.id)
@@ -1999,6 +2016,7 @@ class KadenceApp(App[None]):
         if message.role is Role.ASSISTANT:
             await self._discard_stream()  # replaced by the authoritative message
         last = await self._render_message(message)
+        await self._set_card(card_after(message, self._card.card if self._card else None))
         await self._prune_groups()
         if stop is StopReason.REFUSAL:
             if last is None:
@@ -2012,8 +2030,6 @@ class KadenceApp(App[None]):
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             if notice_of(message) is None:
                 text = with_attachments(text, message.blocks)
-            if text and notice_of(message) is None and self._insert_before is None:
-                await self._set_card(None)  # answered: results and notices leave it up
             if (notice := notice_of(message)) is not None:
                 if not notice:
                     pass
@@ -2044,8 +2060,6 @@ class KadenceApp(App[None]):
                     current.refresh_content()
                 case ToolCall() as call:
                     await self._mount_tool(call)
-                    if (card := card_of(call)) and self._insert_before is None:
-                        await self._set_card(card)
                     current = None
                 case ToolResult() as result:
                     await self._finish_tool(result, None)
@@ -2068,8 +2082,6 @@ class KadenceApp(App[None]):
     async def _add_proposal(self, proposal: Proposal) -> None:
         if proposal.card:
             self._card_proposals.add(proposal.id)
-            return
-        if proposal.id in self._proposals:
             return
         prompt = ProposalPrompt(proposal)
         self._proposals[proposal.id] = prompt
@@ -2120,8 +2132,6 @@ class KadenceApp(App[None]):
         self._call(self.runtime.resolve_proposal(proposal_id, accept))
 
     async def _add_prompt(self, request: PermissionRequest) -> None:
-        if request.id in self._prompts:
-            return
         prompt = PermissionPrompt(request)
         self._prompts[request.id] = prompt
         await self.query_one("#permissions", Vertical).mount(prompt)
@@ -2440,11 +2450,10 @@ class KadenceApp(App[None]):
 def factory(options: dict[str, Any], paths: InstancePaths) -> TuiFrontend:
     """Options: start, conversation_id, model. With start true the agent starts right away
     with the others; otherwise the start screen asks."""
-    data_dir = paths.data_dir if paths is not None else None
     if not options.get("start"):
-        return TuiFrontend(data_dir=data_dir)
+        return TuiFrontend(data_dir=paths.data_dir)
     return TuiFrontend(StartOptions(conversation_id=options.get("conversation_id"),
-                                    model=options.get("model")), data_dir)
+                                    model=options.get("model")), paths.data_dir)
 
 
 factory.display_name = "Terminal (TUI)"  # type: ignore[attr-defined]

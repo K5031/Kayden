@@ -864,3 +864,27 @@ was used.
   fragments of their English text ("cannot start while", "outstanding", "idle").
 - **Fix:** `RuntimeStateError(message, reason)` with `api.Refusal`. The headless channel
   sends the reason in the error's `data.reason`; the remote runtime raises it again.
+
+### P4 (S) A frontend cannot read the history as of its snapshot
+- **Status:** Open.
+- **Where:** `RuntimeAPI.snapshot`, `RuntimeAPI.history`.
+- **Problem:** To catch up, a frontend takes `snapshot()` (which names the last event,
+  `seq`) and then awaits `history()`. A message saved while it waits is in that history
+  and also arrives as a `MessageCommitted` after the snapshot's `seq`, so it would be
+  shown twice. Reading the history first loses a message instead. Nothing ties a
+  history to an event number.
+- **Assumed:** The terminal frontend remembers the ids of the messages it has drawn and
+  ignores a `MessageCommitted` for one of them (`KadenceApp._rendered_ids`).
+- **Proposed fix:** Let `history()` take the snapshot's `seq` and return the transcript
+  as of that event (or let `MessageCommitted` be the only way a message after the
+  snapshot arrives). The frontends' own lists of drawn ids then go.
+
+### P5 (S) `set_duty(None)` without a duty is not a no-op
+- **Status:** Open.
+- **Where:** `RuntimeAPI.set_duty`; `orchestrator.set_duty`.
+- **Problem:** Turning off a duty that is not on saves the conversation, withdraws the
+  agent's open question and cancels the timer, which without a duty is the reminder for
+  a plan's next due step, just scheduled by `set_plan`.
+- **Assumed:** The terminal frontend's duty dialog calls `set_duty` only when a duty is
+  given or one is on.
+- **Proposed fix:** `set_duty(None)` with no duty does nothing; the frontend's test goes.

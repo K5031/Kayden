@@ -1413,3 +1413,56 @@ async def test_the_apps_own_screens_open_over_a_viewed_sub_session(tmp_path):
         assert sessions.released == [child]
         assert ("start", StartOptions(conversation_id="conv-2")) in stub.calls
         assert not any(c[0] == "start" for c in child.calls)
+
+
+WRAP_UP = {"recap": "Committed.", "question": "Push it?",
+           "options": [{"label": "Yes, push"}, {"label": "Not now"}]}
+
+
+def test_the_card_follows_the_newest_message():
+    from kadence.frontends.common import card_of
+    from kadence.frontends.tui import card_after
+
+    wrap = ToolCall("w", "wrap_up", WRAP_UP)
+    card = card_of(wrap)
+    assert card_after(msg("a", Role.ASSISTANT, Text("Done."), wrap), None) == card
+    assert card_after(msg("t", Role.TOOL, ToolResult("w", ToolStatus.OK, "")), card) == card
+    assert card_after(msg("o", Role.USER, OperationResult("op", ToolStatus.OK, "built")),
+                      card) == card  # a background outcome is not an answer
+    assert card_after(replace(msg("n", Role.USER, Text("Woken.")), author=Author.KADENCE),
+                      card) == card
+    assert card_after(msg("u", Role.USER, Text("Not now")), card) is None
+    assert card_after(msg("b", Role.ASSISTANT, Text("Fine.")), None) is None
+
+
+async def test_the_card_is_the_end_of_the_history_whatever_page_is_loaded():
+    from kadence.frontends.tui import HISTORY_PAGE, WrapUpPrompt
+
+    asked = [msg(f"a{i}", Role.ASSISTANT, ToolCall(f"w{i}", "wrap_up", WRAP_UP))
+             for i in range(2)]
+    stub = StubRuntime(history=[asked[0], *(msg(f"u{i}", Role.USER, Text(f"m{i}"))
+                                            for i in range(HISTORY_PAGE - 1)), asked[1]])
+    app = make(stub)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await caught_up(pilot, app, stub)
+        assert app.query_one(WrapUpPrompt).card.call_id == "w1"
+        app.query_one("#load-earlier", Button).press()  # the page with the answered card
+        await until(pilot, lambda: not app.query("#load-earlier"))
+        assert app.query_one(WrapUpPrompt).card.call_id == "w1"
+        stub.emit(MessageCommitted(msg("u", Role.USER, Text("Not now"))))
+        await caught_up(pilot, app, stub)
+        assert not app.query(WrapUpPrompt)
+
+
+async def test_catching_up_during_a_compaction_forgets_its_line():
+    from kadence.api import CompactionFinished, CompactionStarted
+
+    stub = StubRuntime()
+    app = make(stub)
+    async with app.run_test() as pilot:
+        stub.emit(CompactionStarted(CONVERSATION.id))
+        await caught_up(pilot, app, stub)
+        stub.skip(3)  # lagged: the transcript is drawn again from the history
+        stub.emit(CompactionFinished(CONVERSATION.id, True))
+        await caught_up(pilot, app, stub)
+        assert app._compaction is None and not entries(app, SystemEntry)
