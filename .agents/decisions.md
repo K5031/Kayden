@@ -451,7 +451,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-free-in-the-work-folder.md).
 | Choice | Value |
 |---|---|
 | Default policy | `auto` ([automatic permissions](#automatic-permissions)); saved or configured levels are kept |
-| `Tools.confined` | Called for every gated call before grants and policy; an exception is logged and counts as False |
+| `Tools.confined` | Called for every module call before grants and policy; an exception is logged and counts as False. The answer goes to `execute` as `ToolContext.confined`, so a module holds the run to it without remembering calls |
 | Grants | Tool name -> whether calls that reach outside are covered; a grant from a confined prompt covers confined calls only |
 | File containment | `Path.resolve()` of the argument (default `.`) `is_relative_to` the resolved root, in a thread; a non-string path is not confined |
 | Boundary | None when the root is the home directory or one of its parents (so also `/`) |

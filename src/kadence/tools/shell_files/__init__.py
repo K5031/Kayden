@@ -69,8 +69,8 @@ class ToolError(Exception):
     """Expected failure reported to the model as an is_error output."""
 
 
-# Set while a call that `confined` allowed runs: its files must really be in the workspace,
-# wherever a link that appeared since the check leads.
+# Set while a call that `confined` judged inside runs (ToolContext.confined): its files must
+# really be in the workspace, wherever a link that appeared since the check leads.
 _must_stay_inside = contextvars.ContextVar("must_stay_inside", default=False)
 
 
@@ -259,7 +259,6 @@ class ShellFilesTools(Tools):
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
         self._screen = screen_tools or screen.Screen.found()
-        self._confined_calls: set[str] = set()  # file calls `confined` allowed, by call id
         self._set_root(self._default)
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
             "shell": self._shell,
@@ -292,7 +291,6 @@ class ShellFilesTools(Tools):
         root = self._default if folder is None else Path(folder).expanduser().resolve()
         await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
         self._set_root(root)
-        self._confined_calls.clear()  # judged for the folder before; some never ran
 
     async def confined(self, call: ToolCall) -> bool:
         if call.name in web.NAMES:
@@ -302,10 +300,7 @@ class ShellFilesTools(Tools):
         if call.name == "shell":
             return self._sandbox is not None and call.arguments.get("unsandboxed") is not True
         path = call.arguments.get("path", ".")
-        inside = isinstance(path, str) and await asyncio.to_thread(self._inside, path)
-        if inside:
-            self._confined_calls.add(call.id)
-        return inside
+        return isinstance(path, str) and await asyncio.to_thread(self._inside, path)
 
     def _inside(self, raw: str) -> bool:
         """Whether the path, with symlinks followed, is in the workspace."""
@@ -324,8 +319,7 @@ class ShellFilesTools(Tools):
             jsonschema.validate(call.arguments, spec.parameters)
         except jsonschema.ValidationError as e:
             return ToolOutput(f"Invalid arguments: {e.message}", is_error=True)
-        token = _must_stay_inside.set(call.id in self._confined_calls)
-        self._confined_calls.discard(call.id)
+        token = _must_stay_inside.set(ctx.confined)
         try:
             result = await self._handlers[call.name](call.arguments, ctx)
             return result if isinstance(result, ToolOutput) else ToolOutput(result)

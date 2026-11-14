@@ -980,6 +980,7 @@ DESCRIPTION_ARG = "step_summary"
 class ToolContext(Protocol):
     call_id: CallId
     conversation_id: ConversationId  # the open conversation
+    confined: bool  # what Tools.confined answered for this call; False where it was not asked
 
     def progress(self, text: str) -> None:
         """Report progress. Also counts as liveness for stall detection. Safe to call
@@ -1050,9 +1051,9 @@ class Tools(abc.ABC):
         default) makes the runtime ask under ALLOW_WORKSPACE and review the call under AUTO.
         Called before the permission decision; an exception counts as False.
 
-        If the call then runs, execute() gets the same call (same id), so a module can
-        hold execution to what it judged here. The call may also never run (denied,
-        stopped, over budget)."""
+        If the call then runs, execute() is told the answer (ToolContext.confined), so a
+        module can hold execution to what it judged here without remembering the call,
+        which may also never run (denied, stopped, over budget)."""
         return False
 
     async def aclose(self) -> None:

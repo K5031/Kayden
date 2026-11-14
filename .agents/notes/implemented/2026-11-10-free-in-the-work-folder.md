@@ -54,8 +54,8 @@ A file call is confined when its path, with symlinks followed, is inside the wor
 after the user allows it.
 
 A sandboxed command, which runs unasked, can create links in the work folder that point
-anywhere, and the file tools run outside the sandbox. So a call allowed as confined checks
-the file it actually opened (`ShellFilesTools._open`, by `/proc/self/fd`), not only the path
+anywhere, and the file tools run outside the sandbox. So a call judged confined, which
+`execute` is told (`ToolContext.confined`), checks the file it actually opened (`ShellFilesTools._open`, by `/proc/self/fd`), not only the path
 it was given: a link swapped in after the check is refused. `search_files` reads regular
 files only and skips links, as ripgrep does by default.
 

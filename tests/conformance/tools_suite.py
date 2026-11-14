@@ -61,6 +61,7 @@ class RecordingContext:
 
     call_id: str
     conversation_id: str = "conversation"
+    confined: bool = False
     reports: list[tuple[float, str]] = field(default_factory=list)  # visible progress
     heartbeats: int = 0
     foreign_thread_calls: int = 0

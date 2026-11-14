@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from kadence.api import AgentState, Decision, PermissionPolicy, ToolCall, Tools, ToolStatus
+from kadence.api import (
+    AgentState,
+    Decision,
+    PermissionPolicy,
+    ToolCall,
+    ToolOutput,
+    Tools,
+    ToolStatus,
+)
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -40,6 +48,24 @@ async def test_confined_calls_run_and_the_rest_ask(make: Any) -> None:
     await h.runtime.resolve_permission(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
     assert {r.status for r in (await h.results()).values()} == {ToolStatus.OK}
+
+
+async def test_a_call_runs_with_the_verdict_it_was_judged_by(make: Any) -> None:
+    """Tools.execute is told what Tools.confined answered for the call, so a module can
+    hold the run to it without remembering calls."""
+    tools = two_tools()
+    verdicts: dict[str, bool] = {}
+    for name in ("inside", "outside"):
+        async def run(call: ToolCall, ctx: Any, name: str = name) -> ToolOutput:
+            verdicts[name] = ctx.confined
+            return ToolOutput("ok")
+
+        tools.fns[name] = run
+    h: Harness = await make(core=core(), tools=tools, permissions=PermissionPolicy.ASK)
+    h.auto_approve()
+    await h.start()
+    await h.turn("go")
+    assert verdicts == {"inside": True, "outside": False}
 
 
 async def test_a_prompt_says_whether_the_call_is_confined(make: Any) -> None:

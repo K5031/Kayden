@@ -43,8 +43,8 @@ class TestShellFilesConformance(ToolsConformance):
         )
 
 
-def ctx(tmp_path: Path, call_id: str = "c") -> RecordingContext:
-    return RecordingContext(call_id)
+def ctx(tmp_path: Path, call_id: str = "c", confined: bool = False) -> RecordingContext:
+    return RecordingContext(call_id, confined=confined)
 
 
 async def run(tools: ShellFilesTools, tmp_path: Path, name: str, **args):
@@ -191,10 +191,11 @@ async def test_a_path_swapped_for_a_link_after_the_check_is_refused(tools, works
     secret = outside_secret(tmp_path)
     call = ToolCall("c", name, {"path": "notes.txt", **args})
     (workspace / "notes.txt").write_text("PRIVATE notes\n")
-    assert await tools.confined(call)
+    judged = await tools.confined(call)
+    assert judged
     (workspace / "notes.txt").unlink()
     (workspace / "notes.txt").symlink_to(secret)  # swapped between the check and the run
-    out = await tools.execute(call, ctx(tmp_path))
+    out = await tools.execute(call, ctx(tmp_path, confined=judged))  # as the runtime does
     assert out.is_error and "outside the work folder" in out.content
     assert secret.read_text() == "PRIVATE KEY\n" and "PRIVATE KEY" not in out.content
 
@@ -426,8 +427,9 @@ async def test_no_tool_declares_its_own_description(tools):
         assert DESCRIPTION_ARG not in spec.parameters["properties"], spec.name
 
 
-async def test_a_new_folder_forgets_calls_judged_for_the_old_one(tools, workspace, tmp_path):
-    call = ToolCall("c", "read_file", {"path": "notes.txt"})
-    assert await tools.confined(call)  # judged, then never run (say, denied)
-    await tools.use_folder(tmp_path / "other")
-    assert not tools._confined_calls
+async def test_judging_a_call_leaves_nothing_behind(tools, workspace):
+    """The verdict travels with the call (ToolContext.confined): one that never runs (say,
+    denied) is not remembered anywhere."""
+    before = dict(vars(tools))
+    assert await tools.confined(ToolCall("c", "read_file", {"path": "notes.txt"}))
+    assert vars(tools) == before

@@ -67,7 +67,7 @@ Optional, each a method you may leave out:
 | Method | Implement it to |
 |---|---|
 | `use_folder(folder)` | Work in the folder of the open conversation |
-| `confined(call)` | Say that a call cannot touch anything outside that folder, so it runs without asking |
+| `confined(call)` | Say that a call cannot touch anything outside that folder, so it runs without asking. `execute` gets your answer as `ctx.confined` |
 | `attach(path)` | Read a file the user dropped into a message |
 | `aclose()` | Release what you hold when Kadence quits |
 

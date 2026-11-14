@@ -191,6 +191,8 @@ def _effective_policy(configured: PermissionPolicy,
 class _MemoryContext:
     """ToolContext for a Memory tool: quick, so progress is not shown."""
 
+    confined = False
+
     def __init__(self, call_id: CallId, conversation_id: ConversationId) -> None:
         self.call_id = call_id
         self.conversation_id = conversation_id
@@ -1737,7 +1739,13 @@ class Runtime:
                                  "Not started: the agent was stopped.")
         if self._stopping:
             return not_started, 0.0
-        if refusal := await self._gate(call, spec):
+        try:
+            owner = self._tool_owner.get(call.name)
+            confined = owner is not None and await owner.confined(self._bare(call))
+        except Exception:  # module calls are wrapped; not knowing means asking
+            logger.exception("Tools.confined failed for %s", call.name)
+            confined = False
+        if refusal := await self._gate(call, spec, confined):
             return ToolResult(call.id, ToolStatus.REFUSED, refusal), 0.0
         if self._stopping:
             return not_started, 0.0
@@ -1747,7 +1755,7 @@ class Runtime:
         if reason:
             return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}."), 0.0
         self._emit(UsageUpdated(self._budget.snapshot()))
-        op = self._launch(call, spec)
+        op = self._launch(call, spec, confined=confined)
         assert op.supervisor is not None
         await asyncio.wait({op.supervisor}, timeout=self._config.initial_wait_s)
         if not op.supervisor.done() and (self._stopping or op.cancel_requested):
@@ -1766,8 +1774,9 @@ class Runtime:
             "op_cancel to cancel it; its outcome is delivered when it finishes.",
         ), op.duration
 
-    async def _gate(self, call: ToolCall, spec: ToolSpec) -> str | None:
-        """Apply the permission policy. Returns a refusal message, or None to run."""
+    async def _gate(self, call: ToolCall, spec: ToolSpec, confined: bool) -> str | None:
+        """Apply the permission policy to a call its Tools module judged `confined` or
+        not. Returns a refusal message, or None to run."""
         policy = self._permissions
 
         def auto(decision: Decision, why: str) -> None:
@@ -1777,12 +1786,6 @@ class Runtime:
         if policy == PermissionPolicy.DENY:
             auto(Decision.DENY, "policy")
             return "Refused: the permission policy denies tool calls."
-        try:
-            owner = self._tool_owner.get(call.name)
-            confined = owner is not None and await owner.confined(self._bare(call))
-        except Exception:  # module calls are wrapped; not knowing means asking
-            logger.exception("Tools.confined failed for %s", call.name)
-            confined = False
         if call.name in self._grants and (confined or self._grants[call.name]):
             auto(Decision.ALLOW_CONVERSATION, "grant")
             return None
@@ -1960,7 +1963,8 @@ class Runtime:
             await asyncio.wait(self._flush_tasks)
 
     def _launch(self, call: ToolCall, spec: ToolSpec,
-                execute: Callable[[Context], Awaitable[ToolOutput]] | None = None) -> Operation:
+                execute: Callable[[Context], Awaitable[ToolOutput]] | None = None, *,
+                confined: bool = False) -> Operation:
         op = Operation(call, spec, default_timeout=self._config.default_tool_timeout_s,
                        grace=self._config.cancel_grace_s, on_progress=self._on_progress,
                        on_late=self._on_late)
@@ -1970,7 +1974,7 @@ class Runtime:
             self._budget.begin_activity()
         self._watch_duration()
         assert self._conversation is not None
-        ctx = Context(op, self._conversation.id)
+        ctx = Context(op, self._conversation.id, confined)
         self._emit(ToolStarted(call))
         op.supervisor = asyncio.create_task(self._supervise(op, ctx, execute))
         self._update_state()
