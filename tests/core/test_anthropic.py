@@ -30,7 +30,6 @@ from tests.conformance.core_suite import (
     CoreSuite,
     Expect,
     Sent,
-    check_expect,
     check_stream,
     collect,
     user,
@@ -301,19 +300,23 @@ async def test_reasoning_is_replayed_only_while_everything_before_it_is_unchange
     assert await sent(messages=[*request.messages, unbound, user("And now?")]) == []
 
 
-async def test_rejected_reasoning_is_left_out_on_a_second_try(anthropic: AnthropicDriver) -> None:
+async def test_rejected_reasoning_is_an_error_not_a_second_request(
+        anthropic: AnthropicDriver) -> None:
+    """The fingerprint kept with each thinking block (Prefix) is what keeps a block from
+    being replayed where the API would reject it; there is no retry behind it."""
+    from kadence.api import CoreError
+
     request, _ = anthropic.reasoning_turn()
     answer = check_stream(await collect(anthropic.core, request)).message
     anthropic.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
         "type": "invalid_request_error",
         "message": "messages.1.content.0: Invalid `signature` in `thinking` block. The block "
                    "is bound to a different conversation. Remove the block."}}))
-    expect = anthropic.queue_text()
-    done = check_stream(await collect(
-        anthropic.core, anthropic.request([*request.messages, answer, user("And now?")])))
-    check_expect(done, expect)
-    assert thinking_sent(anthropic) == []
-    assert [b["type"] for b in anthropic.stub.bodies[-1]["messages"][1]["content"]] == ["text"]
+    sent = len(anthropic.stub.bodies)
+    with pytest.raises(CoreError, match="bound to a different conversation"):
+        await collect(
+            anthropic.core, anthropic.request([*request.messages, answer, user("And now?")]))
+    assert len(anthropic.stub.bodies) == sent + 1
 
 
 async def test_truncated_stream_is_transient(anthropic: AnthropicDriver) -> None:

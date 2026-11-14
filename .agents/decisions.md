@@ -247,8 +247,8 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   compaction). The Anthropic Core stores a fingerprint of those (`Prefix`: SHA-256 of the
   system prompt, the sorted tool definitions and every earlier turn without its thinking)
   in each block's `state["prefix"]` and replays a block only while it matches; a block
-  without one is not replayed. Should the API still reject a request for that reason, the
-  Core sends it once more without any thinking and logs a warning. The API's own
+  without one is not replayed. Nothing retries behind it: a request the API still rejects
+  for that reason fails with the API's message. The API's own
   `prefix_mismatch_behavior: "drop_block"` (beta `thinking-binding-controls-2026-08-01`) was
   not used: it drops every block after the first mismatch on each request unless the
   failing blocks are removed from the history, which the Core cannot do, and it is only
@@ -653,7 +653,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 | Cost | $0.01 per search (`usage.server_tool_use.web_search_requests`) as `Usage.extra_cost_usd`; the results are read as input tokens on top |
 | Steps | One `ServerToolUse` per web search or web fetch, placed where its result came; the code dynamic filtering runs is not shown (unless a turn has nothing else) |
 | Replay | A turn's server blocks, all of them in the order they came (they refer to each other), ride on its first shown use and are sent back unchanged, to the same model, while web search is on, and only after the user's latest message; earlier turns' searches go as text (summary and found pages). Checked against Opus 5.5 (2026-11-10): a second turn replaying the whole set cost about three times the first |
-| Fallbacks | A 400 saying web search is not enabled switches it off for the instance (Kadence's own search is offered again); a 400 while replaying server blocks resends them as text |
+| Fallbacks | A 400 saying web search is not enabled switches it off for the instance (Kadence's own search is offered again); a 400 that names a server tool block (its `srvtoolu_` id or its block type, `anthropic._SERVER_BLOCK_ERROR`), in a request that replays some, resends them as text. Any other 400 is reported from the request that got it |
 | Paused turns | `pause_turn` is continued in the same request, up to 5 times, the turn's blocks sent back as the assistant's |
 | Sources | The cited pages, deduplicated in citing order, as a final "Sources:" line of links |
 

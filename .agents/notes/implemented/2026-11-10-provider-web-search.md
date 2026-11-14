@@ -44,7 +44,8 @@ about $10 per 1 000 searches.
 - Continues a turn the API paused (`pause_turn`) within the same request, up to 5 times.
 - Lists the sources cited in the answer as a final "Sources:" line of links.
 - Falls back on a 400: web search switched off for the account turns it off for the
-  instance; server blocks the API will not take back are sent again as text.
+  instance; server blocks the API will not take back (a 400 that names one) are sent
+  again as text.
 
 Choices are listed in `.agents/decisions.md` (The provider's web search). Kadence's own
 search stays for other providers: [web search](2026-11-10-web-search.md).

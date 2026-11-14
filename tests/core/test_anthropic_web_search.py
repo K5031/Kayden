@@ -199,3 +199,18 @@ async def test_searches_the_api_will_not_take_back_go_back_as_text(driver):
     assert events[-1].message.blocks[0].text == "ok"
     retried = driver.stub.bodies[-1]["messages"][1]["content"]
     assert retried[0]["type"] == "text" and "Searched the web for" in retried[0]["text"]
+
+
+async def test_another_rejection_while_replaying_searches_is_reported_as_it_is(driver):
+    """Only a 400 about the replayed blocks is answered by sending them as text: any
+    other one is the request's own error, reported from the request that got it."""
+    from kadence.api import CoreError
+
+    driver.stub.queue(Reply(events=[message_start(), *filtered_search(), *searched()]))
+    answer = (await collect(driver.core, request()))[-1].message
+    driver.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
+        "type": "invalid_request_error", "message": "max_tokens: must be at least 1"}}))
+    sent = len(driver.stub.bodies)
+    with pytest.raises(CoreError, match="max_tokens"):
+        await collect(driver.core, request(OPUS, [user("q"), answer, tool_results()]))
+    assert len(driver.stub.bodies) == sent + 1

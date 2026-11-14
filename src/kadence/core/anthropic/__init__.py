@@ -70,8 +70,6 @@ _THINKING = ("thinking", "redacted_thinking")
 # whole thought, then the answer arrives at once. Kadence asks for a summary of both.
 _ALWAYS_THINKS = re.compile(r"claude-(?:(?:opus|sonnet|haiku)-5|fable|mythos)\b")
 SHOWN_THINKING = {"type": "adaptive", "display": "summarized"}
-# The 400 for a thinking block replayed after something before it changed.
-_BINDING_ERROR = "bound to a different conversation"
 _INVALID_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")  # ids from other providers may break the API
 _TRANSIENT_ERROR_TYPES = {"rate_limit_error", "overloaded_error", "api_error", "timeout_error"}
 _STOP_REASONS = {
@@ -103,6 +101,9 @@ MAX_CONTINUATIONS = 5  # of a turn the API paused (pause_turn)
 _DYNAMIC_FILTERING = ("claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7",
                       "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6")
 _SEARCH_OFF = ("web search is not enabled", "web search is disabled")
+# What a 400 about a server tool block sent back names: such a block's id, or its type.
+_SERVER_BLOCK_ERROR = ("srvtoolu_", "server_tool_use", "web_search_tool_result",
+                       "web_fetch_tool_result", "code_execution_tool_result")
 _SHOWN = ("web_search", "web_fetch")  # server tools shown as steps; the filtering code is not
 
 
@@ -269,22 +270,22 @@ class AnthropicCore(Core):
         return config.input_usd_per_mtok * share / 1_000_000
 
     async def _open(self, params: dict[str, Any], request: InferenceRequest) -> Any:
-        """Start the stream; on a 400 the request can do without, again without it."""
+        """Start the stream; on a 400 that says what the request can do without (web search
+        the account has switched off, server tool blocks the API will not take back), once
+        more without it. Any other 400 is the request's own."""
         try:
             return await self._client.messages.create(**params, stream=True)
         except anthropic.BadRequestError as e:
             text = str(e)
+            as_text = False
             if self._search and any(m in text.lower() for m in _SEARCH_OFF):
                 logger.warning("web search is switched off for this account; using Kadence's")
                 self._search = False
-            elif _BINDING_ERROR in text:
-                # The API saw a change that Prefix did not: answer without earlier reasoning.
-                logger.warning("thinking blocks rejected, sending the request without them: "
-                               "%s", e)
-            elif _replays_server_blocks(params["messages"]):
-                # Earlier searches the API will not take back: send them as text instead.
+            elif _replays_server_blocks(params["messages"]) and any(
+                    m in text for m in _SERVER_BLOCK_ERROR):
                 logger.warning("earlier server tool blocks rejected, replaying them as text: "
                                "%s", e)
+                as_text = True
             else:
                 raise
             tools = self._tools(request.tools, request.model)
@@ -292,8 +293,7 @@ class AnthropicCore(Core):
                 params["tools"] = tools
             params["messages"], _ = to_messages(
                 request.messages, request.model, request.system, tools,
-                replay=_BINDING_ERROR not in text,
-                search=self._search and not _replays_server_blocks(params["messages"]))
+                search=self._search and not as_text)
             return await self._client.messages.create(**params, stream=True)
 
     async def aclose(self) -> None:
@@ -514,12 +514,12 @@ class Prefix:
 
 
 def to_messages(messages: Sequence[Message], model: str, system: str = "",
-                tools: Sequence[JSON] = (), *, replay: bool = True, search: bool = True
+                tools: Sequence[JSON] = (), *, search: bool = True
                 ) -> tuple[list[JSON], str]:
     """Kadence messages to Anthropic turns, and the Prefix the answer's reasoning is bound
     to. Tool results ride in user turns, and adjacent same-role turns are merged with tool
     results first, as the API requires. Reasoning is replayed only to the model that
-    produced it and while its Prefix is unchanged; never with `replay` off. A tool Anthropic
+    produced it and while its Prefix is unchanged. A tool Anthropic
     ran is replayed as it came, to the model that ran it while `search` is on, only after
     the user's latest message: its results hold the pages' text, which every later request
     would pay for again. Earlier ones, and the rest, go as text. `tools` are the request's
@@ -530,7 +530,7 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
                   and any(isinstance(b, Text) for b in m.blocks)), default=-1)
     for i, message in enumerate(messages):
         role = "assistant" if message.role is Role.ASSISTANT else "user"
-        bound = prefix.of(out) if replay and role == "assistant" else None
+        bound = prefix.of(out) if role == "assistant" else None
         content = [c for b in message.blocks
                    for c in _to_content(b, model, bound, search and i > latest)]
         if not content:
