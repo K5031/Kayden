@@ -13,12 +13,14 @@ from kadence.api import (
     ConversationId,
     ConversationInfo,
     Decision,
+    Duty,
     EventEnvelope,
     MemoryNote,
     MemoryView,
     Message,
     ModelInfo,
     PermissionPolicy,
+    PlanItem,
     Refusal,
     RuntimeSnapshot,
     RuntimeStateError,
@@ -143,7 +145,8 @@ class SetupRuntime:
     async def select_model(self, model_id: str) -> None:
         self._refuse()
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, files: Sequence[str] = (), *,
+                   spoken: bool = False) -> None:
         self._refuse()
 
     async def notify(self, text: str) -> None:
@@ -173,6 +176,15 @@ class SetupRuntime:
         self._refuse()
 
     async def delete_note(self, note_id: str) -> None:
+        self._refuse()
+
+    async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
+        self._refuse()
+
+    async def set_duty(self, duty: Duty | None) -> None:
+        self._refuse()
+
+    async def set_plan(self, plan: Sequence[PlanItem]) -> None:
         self._refuse()
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:
