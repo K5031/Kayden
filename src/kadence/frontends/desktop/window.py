@@ -2088,7 +2088,6 @@ class MainWindow(QMainWindow):
         stop, view, model); the profile menu at the bottom holds the app (settings, memory,
         tool servers, help, quit). Every action is also the window's, so its shortcut works
         with the menus closed."""
-        self.menuBar().hide()
         settings = QAction("&Settings…", self)
         settings.setShortcuts([QKeySequence("Ctrl+,")])  # Preferences is unbound on Linux
         settings.triggered.connect(lambda: self.open_settings())
@@ -2396,8 +2395,7 @@ class MainWindow(QMainWindow):
         folder = conversation.folder if conversation is not None else None
         self.title_label.setToolTip(f"Kadence works in {folder_path(folder)}"
                                     if folder is not None else "")
-        if hasattr(self, "folder_action"):  # built after the first status
-            self.folder_action.setVisible(folder is not None)
+        self.folder_action.setVisible(folder is not None)
         new_chat = (self._viewing is None and folder is not None and not model.items
                     and not model.has_earlier)
         self.folder_button.setVisible(new_chat)

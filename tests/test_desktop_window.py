@@ -16,7 +16,15 @@ import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QInputDialog,
+    QLabel,
+    QMenu,
+    QMenuBar,
+    QMessageBox,
+    QPushButton,
+)
 
 from kadence.api import (
     AgentState,
@@ -1169,7 +1177,7 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     h: Harness = await make()
     await h.start()
     window, _controller, _ = await open_window(h)
-    assert window.menuBar().isHidden()
+    assert not window.findChildren(QMenuBar)
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
     assert texts == ["&New chat", "New chat in another &folder…", "&Duty…", "S&top", "&View",
                      "&Model"]

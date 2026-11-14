@@ -209,8 +209,6 @@ QToolButton#folderPicker:hover {{ background: {c.select}; }}
 QToolButton#folderPicker::menu-indicator {{ image: none; width: 0; }}
 QMenu#folderMenu {{ min-width: 260px; padding: 6px; }}
 QMenu#folderMenu::item {{ padding: 8px 28px 8px 12px; border-radius: 6px; }}
-QToolButton#folder {{ padding: 0 4px; }}
-QToolButton#folder:hover {{ background: {c.line}; color: {c.text}; }}
 
 QLineEdit, QComboBox, QPlainTextEdit, QTextEdit {{ background: {c.field}; color: {c.text};
     border: 1px solid {c.line}; border-radius: 8px; padding: 5px 8px;
@@ -229,9 +227,6 @@ QListWidget#choices::item {{ border: 1px solid {c.line}; border-radius: 8px;
 QListWidget#choices::item:selected {{ border-color: {c.accent}; background: {c.accent_soft};
     color: {c.accent_text}; }}
 
-QMenuBar {{ background: {c.bg}; }}
-QMenuBar::item {{ padding: 4px 10px; border-radius: 6px; }}
-QMenuBar::item:selected {{ background: {c.card}; }}
 QMenu {{ background: {c.bg}; border: 1px solid {c.line}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 6px; }}
 QMenu::item:selected {{ background: {c.accent_soft}; color: {c.accent_text}; }}
@@ -273,7 +268,6 @@ QToolButton#titleClose:hover {{ background: {c.error}; }}
 QToolButton#profile:hover, QToolButton#gear:hover {{ background: {c.select}; }}
 QToolButton#profile::menu-indicator {{ image: none; width: 0; }}
 QToolButton#menu::menu-indicator {{ image: none; width: 0; }}
-QFrame#headerGroup {{ background: {c.card}; border-radius: 8px; }}
 QFrame#banner {{ background: {c.error_bg}; border-radius: 8px; }}
 QFrame#banner QLabel {{ color: {c.error_text}; }}
 QFrame#composer {{ background: {c.composer}; border: 1px solid {c.line}; border-radius: 14px; }}
