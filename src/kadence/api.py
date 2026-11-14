@@ -59,7 +59,9 @@ Runtime guarantees to modules:
   background operations that terminated (OperationResult, in one USER message);
   queued user messages (one USER message each, in send order). A turn without tool
   calls ends the cycle, unless queued user messages are delivered at that boundary: they
-  authorize the next turn and the cycle continues. The wake set (every operation
+  authorize the next turn and the cycle continues. A message queued after a cycle's last
+  boundary starts the next cycle when that one ends, however it ended, unless Stop ended
+  it, an append failed or a budget is exhausted. The wake set (every operation
   outstanding then) is computed at that boundary: when all of them have terminated (with
   a duty, the first of them), the runtime starts the next cycle by itself, so the agent can
   report on work it started. A duty also wakes it on its schedule (see Duty).
@@ -1699,7 +1701,7 @@ class RuntimeAPI(Protocol):
                    spoken: bool = False) -> None:
         """Submit a user message and authorize a cycle. While a cycle runs or the agent
         is stopping, the message is queued (MessageQueued) and delivered at the next
-        turn boundary; a turn that ended without tool calls starts the next cycle.
+        turn boundary, or at the start of the cycle that follows this one.
 
         `files` are paths of files the user attached. A Tools module reads each into a
         block of the message (Tools.attach): with the built-in one, an image (PNG, JPEG,

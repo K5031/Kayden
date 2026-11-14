@@ -946,3 +946,11 @@ Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md).
 | Shown | Both apps add `[image: name]` / `[file: name]` lines to a step's result (`common.result_text`) |
 | As text | `[File attached: path (PDF, N pages)]` and its text, or that none could be read; `[Image attached: name]`; `[File attached: path]` and the content; or that the content is not included (`api.attachment_text`) |
 | Desktop | Dropped files and pasted file lists are attached, not typed in as paths (`MessageBox.insertFromMimeData`); a pasted picture is saved as `pasted-N.png` in a temporary folder removed when the window closes; the same path is not attached twice |
+
+## Queued messages
+
+| Choice | Decision |
+|---|---|
+| Read | At a cycle's start and at each turn boundary (`Runtime._deliver_inbox`). One rule where every cycle ends (`Runtime._cycle`): a message still queued starts the next cycle, so no pause inside a turn can leave one behind |
+| Not started | After Stop (kept, starts nothing), after a failed append (the agent is FAILED until one succeeds) and on an exhausted budget, where `send` is refused too |
+| Stop and shutdown | Deliver through the same `_deliver_inbox`: files and the voice notice go with a message queued before Stop |

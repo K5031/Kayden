@@ -1170,15 +1170,18 @@ class Runtime:
         self._unseen = True
         await self._append(message, [finished for _, finished in pending])
 
-    async def _deliver_inbox(self) -> bool:
-        if not self._inbox:
+    async def _deliver_inbox(self, count: int | None = None) -> bool:
+        """Append the queued messages, the first `count` of them (all by default); whether
+        there were any."""
+        waiting = len(self._inbox[:count])
+        if not waiting:
             return False
         if any(p.card for p, _ in self._proposals.values()):
             # The user wrote instead of clicking: its outcome goes before their message.
             await self._withdraw_proposals(cards_only=True)
             if self._cycle_active:
                 await self._flush_results()
-        while self._inbox:
+        for _ in range(waiting):
             q = self._inbox.pop(0)
             await self._append(Message(q.message_id, Role.USER,
                                        (Text(q.text), *q.attachments), time.time()))
@@ -1244,10 +1247,12 @@ class Runtime:
 
     async def _cycle(self) -> None:
         self._log.decision("cycle_start")
+        unsaved = False  # an append failed: nothing starts until one succeeds
         try:
             await self._cycle_body()
         except _AppendFailed:
             self._base = AgentState.FAILED
+            unsaved = True
         except Exception as e:
             logger.exception("cycle failed")
             self._fail(FailureKind.INTERNAL, f"Runtime error: {type(e).__name__}: {e}")
@@ -1257,6 +1262,12 @@ class Runtime:
             self._log.decision("cycle_end", state=self._base)
             if not self._stopping:
                 await self._flush_outside_cycle()
+            # Wherever the turn ended, a message queued during it starts the next one,
+            # unless it could not be sent now either (send): Stop keeps it, and nothing
+            # starts while an append fails or the budget is exhausted.
+            if self._inbox and not unsaved and not (
+                    self._base == AgentState.FAILED and self._budget.exhausted()):
+                self._request_cycle("queued message")
             if self._waiting():
                 self._schedule_duty()
             self._update_state()
@@ -1325,8 +1336,6 @@ class Runtime:
                 self._emit(MemoriesChanged(saved))
             if self._stopping:
                 return
-            if await self._deliver_inbox():  # sent while Memory was saving: the next turn
-                continue
             self._enter_idle()
             return
 
@@ -2131,13 +2140,9 @@ class Runtime:
             await asyncio.wait(self._flush_tasks)
         # Messages sent before Stop are kept but start nothing; those sent while
         # stopping start a cycle once stopped.
-        early, self._inbox = self._inbox[: self._inbox_before_stop], self._inbox[
-            self._inbox_before_stop :]
         try:
             await self._flush_results()
-            for q in early:
-                await self._append(
-                    Message(q.message_id, Role.USER, (Text(q.text),), time.time()))
+            await self._deliver_inbox(self._inbox_before_stop)
         except _AppendFailed:
             pass
         if self._stop_abandoned:

@@ -14,7 +14,10 @@ from kadence.api import (
     PERMISSION_CEILING_ENV,
     AgentState,
     ContextOverflowError,
+    CoreError,
     Decision,
+    Failure,
+    File,
     InstanceLockedError,
     MessageCommitted,
     MessageQueued,
@@ -36,6 +39,7 @@ from kadence.api import (
     ToolStatus,
     TransientCoreError,
 )
+from kadence.runtime.config import VOICE_ON_NOTICE
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -474,6 +478,44 @@ async def test_a_message_queued_after_the_last_turn_is_still_answered(make: Any)
     said = [e.message for e in h.rec.of(MessageCommitted)]
     assert [m.blocks for m in said if m.id == queued.message_id] == [(Text("one more thing"),)]
     assert said[-1].blocks == (Text("second answer"),)
+
+
+async def test_a_message_queued_while_a_turn_fails_is_still_answered(make: Any) -> None:
+    """A turn that ends in a model failure does not leave a queued message waiting: it
+    starts the next turn, as a message sent after the failure would."""
+    core = ScriptedCore([Step(text="partial", delay=0.2, error=CoreError("gave up")),
+                         Step(text="answer")])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: core.requests)
+    await h.runtime.send("and this")
+    queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
+    await eventually(lambda: len(core.requests) == 2)
+    await h.rec.wait_state(AgentState.IDLE)
+    assert h.rec.of(Failure)
+    assert (await h.transcript())[-2].id == queued.message_id
+    assert (await h.transcript())[-1].blocks == (Text("answer"),)
+
+
+async def test_a_message_queued_before_stop_is_saved_as_any_other(make: Any, tmp_path) -> None:
+    """Its files and the voice notice go with it, though it starts nothing."""
+    attached = tmp_path / "list.txt"
+    attached.write_text("oat milk")
+    core = ScriptedCore([Step(text="thinking", hang=True)])
+    h: Harness = await make(core=core)
+    await h.start()
+    await h.runtime.send("first")
+    await eventually(lambda: core.requests)
+    await h.runtime.send("and this", files=[str(attached)], spoken=True)
+    queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED)
+    saved = await h.transcript()
+    message = next(m for m in saved if m.id == queued.message_id)
+    assert message.blocks == (Text("and this"), File(str(attached), "oat milk"))
+    assert saved[-1].blocks == (Text(VOICE_ON_NOTICE),)
+    assert len(core.requests) == 1
 
 
 async def test_stop_in_idle_with_background_ops(make: Any) -> None:
