@@ -293,10 +293,7 @@ def _mascot(width: int) -> QLabel:
 
 def _discard(widget: QWidget) -> None:
     """Hidden at once: deleteLater runs only when the event loop next turns, and until then
-    a widget taken out of its layout would still be drawn where it was. Its timers stop, so a
-    pending redraw cannot show it again."""
-    for timer in widget.findChildren(QTimer):
-        timer.stop()
+    a widget taken out of its layout would still be drawn where it was."""
     widget.hide()
     widget.deleteLater()
 
@@ -928,8 +925,6 @@ class AssistantBubble(QWidget):
                   else "Interrupted before it finished." if item.interrupted else "")
         self.marker.setText(marker)
         self.marker.setVisible(bool(marker))
-        # A turn can carry thinking with no readable text and only call tools.
-        self.setVisible(bool(item.text or item.reasoning or marker) and not item.hidden)
 
 
 class ToolCard(QFrame):
@@ -1034,6 +1029,7 @@ class StepGroup(QFrame):
         layout.addWidget(self.body)
 
     def set_members(self, widgets: Sequence[QWidget]) -> None:
+        """Its steps in order; the window says which of them show (MainWindow._arrange)."""
         for index, widget in enumerate(widgets):
             _place(self.steps, index, widget)
         self.refresh()
@@ -1059,14 +1055,11 @@ class StepGroup(QFrame):
 
 
 def _place(layout: QVBoxLayout, index: int, widget: QWidget) -> None:
-    """Put `widget` at `index` of `layout`, taking it out of wherever it was."""
-    if layout.indexOf(widget) == index:
-        return
-    hidden = widget.isHidden() and widget.testAttribute(
-        Qt.WidgetAttribute.WA_WState_ExplicitShowHide)
-    _detach(widget)
-    layout.insertWidget(index, widget)
-    widget.setHidden(hidden)  # a new parent hides it, and Qt would show it only later
+    """Put `widget` at `index` of `layout`, taking it out of wherever it was. A new parent
+    hides it: the caller says whether it shows."""
+    if layout.indexOf(widget) != index:
+        _detach(widget)
+        layout.insertWidget(index, widget)
 
 
 def _detach(widget: QWidget) -> None:
@@ -2286,6 +2279,8 @@ class MainWindow(QMainWindow):
             case Updated(item=item):
                 widget = self._widgets[id(item)]
                 widget.refresh()  # type: ignore[attr-defined]
+                if isinstance(item, AssistantItem) and item.shown == widget.isHidden():
+                    self._arrange_soon()
                 if isinstance(group := self._group_of(widget), StepGroup):
                     if isinstance(item, AssistantItem) and (item.text or item.refused):
                         self._arrange_soon()  # a reply now: out of the group
@@ -2343,7 +2338,9 @@ class MainWindow(QMainWindow):
 
     def _arrange(self) -> None:
         """Lay the item widgets out as step_segments groups them, keeping each group (and
-        whether it is open) for as long as its first step stays first."""
+        whether it is open) for as long as its first step stays first, and show each item
+        that has something to draw: the one place that decides what of the conversation
+        is visible."""
         self._arrange_pending = False
         groups: dict[int, StepGroup] = {}
         for index, segment in enumerate(step_segments(self.model.items)):
@@ -2353,8 +2350,12 @@ class MainWindow(QMainWindow):
                 groups[key] = group
                 group.set_members([self._widgets[id(item)] for item in segment])
                 _place(self.items_layout, index, group)
+                group.show()
             else:
                 _place(self.items_layout, index, self._widgets[id(segment)])
+        for item in self.model.items:
+            self._widgets[id(item)].setVisible(
+                not isinstance(item, AssistantItem) or item.shown)
         for key, group in self._groups.items():
             if key not in groups:
                 _detach(group)

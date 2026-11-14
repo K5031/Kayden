@@ -58,6 +58,7 @@ from kadence.frontends.desktop.viewmodel import (
     Controller,
     ConversationListChanged,
     ConversationModel,
+    Inserted,
     MemoryListChanged,
     NoticeItem,
     Phase,
@@ -878,3 +879,21 @@ def test_an_earlier_page_adds_its_items_and_leaves_the_turn_under_way_alone():
 
     assert texts(model) == texts(whole)
     assert of(model, AssistantItem)[0].reasoning == "I plan.\n\nI answer."
+
+
+def test_a_streamed_reply_is_an_item_from_its_first_text_on():
+    """Never an empty item that is filled later: what is inserted can be drawn."""
+    model = ConversationModel()
+    model.load(_snapshot(), ())
+    inserted: list[tuple[str, str, bool]] = []
+    model.on_change = lambda c: isinstance(c, Inserted) and inserted.append(
+        (c.item.reasoning, c.item.text, c.item.shown))
+    model.apply(StateChanged(AgentState.THINKING))
+    model.apply(ReasoningDelta("Looking"))
+    model.apply(TextDelta("Hel"))
+    model.apply(TextDelta("lo"))
+    assert inserted == [("Looking", "", True)]
+    [reply] = of(model, AssistantItem)
+    assert (reply.reasoning, reply.text) == ("Looking", "Hello")
+    assert not AssistantItem().shown and not AssistantItem(text="x", hidden=True).shown
+    assert AssistantItem(interrupted=True).shown and AssistantItem(refused=True).shown

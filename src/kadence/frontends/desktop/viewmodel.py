@@ -152,6 +152,13 @@ class AssistantItem:
     # the committed message is joined to it (ConversationModel._thinking).
     hidden: bool = False
 
+    @property
+    def shown(self) -> bool:
+        """Whether there is anything of it to draw: a turn can carry thinking with no
+        readable text and only call tools."""
+        return not self.hidden and bool(
+            self.text or self.reasoning or self.refused or self.interrupted)
+
 
 @dataclass(eq=False)
 class ToolItem:
@@ -663,8 +670,9 @@ class ConversationModel:
             if not self._stream and (before := self._thinking()) is not None:
                 before.hidden = True
                 self.on_change(Updated(before))
-            tail = self._add(AssistantItem())
-            self._stream.append(tail)
+            self._stream.append(self._add(
+                AssistantItem(reasoning=text) if reasoning else AssistantItem(text)))
+            return
         if reasoning:
             tail.reasoning += text
         else:

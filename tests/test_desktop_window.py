@@ -514,19 +514,29 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     assert tool.name.isHidden()  # the sentence says what the tool is
 
 
-def test_a_reply_with_nothing_to_show_is_not_drawn(qapp):
-    """Claude's thinking can arrive with no readable text, in a turn that only calls a tool."""
-    empty = AssistantBubble(AssistantItem(reasoning="", final=True))
-    assert empty.isHidden()
-    for item in (AssistantItem(text="Hi", final=True),
-                 AssistantItem(reasoning="Let me think", final=True),
-                 AssistantItem(interrupted=True, final=True)):
-        assert not AssistantBubble(item).isHidden()
-    filling = AssistantItem()
-    bubble = AssistantBubble(filling)
-    filling.text, filling.final = "Hello", True
-    bubble.refresh()
-    assert not bubble.isHidden()
+async def test_a_reply_with_nothing_to_show_is_not_drawn(make, qapp):
+    """Claude's thinking can arrive with no readable text, in a turn that only calls a tool.
+    The window decides what shows when it arranges the conversation; a reply never hides
+    or shows itself."""
+    from kadence.api import Message, MessageCommitted, Reasoning, Text
+
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    model = controller.model
+    model.apply(MessageCommitted(Message("a", Role.ASSISTANT, (Reasoning(""),), 0.0)))
+    model.apply(MessageCommitted(Message("b", Role.ASSISTANT, (Text("Hi"),), 0.0)))
+    await asyncio.sleep(0)
+    empty, reply = widgets(window, AssistantBubble)
+    assert empty.isHidden() and not reply.isHidden()
+    empty.item.reasoning = "Let me think"
+    model.on_change(window_module.Updated(empty.item))
+    await asyncio.sleep(0)
+    assert not empty.isHidden()
+    lone = AssistantBubble(AssistantItem())
+    lone.show()
+    lone.refresh()
+    assert lone.isVisible()  # drawing it is not what hides it
 
 
 async def test_a_finished_step_is_in_the_past_tense_without_a_permission_line(make, qapp):
