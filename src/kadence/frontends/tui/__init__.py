@@ -465,10 +465,12 @@ class ProposalPrompt(Vertical):
 
 
 class PlanPanel(Static):
-    """The agent's plan as a checklist: ✓ done, ◐ under way, ○ open, – dropped."""
+    """The agent's plan as a checklist: ✓ done, ◐ under way, ○ open, … waiting for the
+    user, – dropped."""
 
     MARKS: ClassVar = {PlanStatus.DONE: ("✓", "dim"), PlanStatus.DOING: ("◐", "bold"),
-                       PlanStatus.TODO: ("○", ""), PlanStatus.DROPPED: ("–", "dim strike")}
+                       PlanStatus.TODO: ("○", ""), PlanStatus.DROPPED: ("–", "dim strike"),
+                       PlanStatus.WAITING: ("…", "")}
 
     def __init__(self, plan: Sequence[PlanItem]) -> None:
         self.plan = tuple(plan)

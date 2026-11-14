@@ -494,6 +494,7 @@ class PlanStatus(StrEnum):
     DOING = "doing"
     DONE = "done"
     DROPPED = "dropped"
+    WAITING = "waiting"  # for the user: nothing the agent can do until they answer
 
 
 @dataclass(frozen=True, slots=True)
@@ -893,7 +894,8 @@ _PLAN_ITEM = {
     "type": "object",
     "properties": {
         "text": {"type": "string", "minLength": 1},
-        "status": {"type": "string", "enum": [s.value for s in PlanStatus], "default": "todo"},
+        "status": {"type": "string", "enum": [s.value for s in PlanStatus], "default": "todo",
+                   "description": "waiting: the step waits for the user."},
         "due": {"type": "string", "description":
                 "When it falls due, ISO 8601 (e.g. 2026-11-12T09:00), local time unless an "
                 "offset is given. You are woken at that time."},

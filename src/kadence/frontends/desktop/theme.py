@@ -299,7 +299,7 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
     """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", "menu" (three
-    lines), "plus", "voice" (a sound wave), "copy", "check", "folded" and "unfolded" (chevrons), a plan step's "done", "todo" or "dropped", or a
+    lines), "plus", "voice" (a sound wave), "copy", "check", "folded" and "unfolded" (chevrons), a plan step's "done", "todo", "dropped" or "waiting" (a circle with two bars), or a
     window control:
     "minimize", "maximize", "restore", "close"."""
     scale = 2
@@ -402,6 +402,12 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
         case "todo" | "dropped":  # a dashed circle
             painter.setPen(QPen(QColor(color), size / 12, Qt.PenStyle.DashLine))
             painter.drawEllipse(QPointF(s / 2, s / 2), s * 0.42, s * 0.42)
+        case "waiting":  # a circle holding two upright bars
+            painter.setPen(QPen(QColor(color), size / 12, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap))
+            painter.drawEllipse(QPointF(s / 2, s / 2), s * 0.42, s * 0.42)
+            for x in (0.41, 0.59):
+                painter.drawLine(QPointF(s * x, s * 0.36), QPointF(s * x, s * 0.64))
         case "minimize":
             painter.drawLine(QPointF(s * 0.25, s * 0.5), QPointF(s * 0.75, s * 0.5))
         case "maximize":

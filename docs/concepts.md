@@ -43,7 +43,7 @@ or turn it off; the conversation keeps everything said so far.
 
 - **Keep doing it** runs until you turn it off. **Until it is done** also ends when the
   agent says the goal is reached, with a short report.
-- **The plan** is a list of steps, each to do, doing, done or dropped, with an optional
+- **The plan** is a list of steps, each to do, doing, waiting for you, done or dropped, with an optional
   due time and note. The agent always has it in view, and you can edit it. Any
   conversation can have one (see [The plan](using-kadence.md#the-plan)), and a step that
   falls due wakes the agent, with or without a duty (see

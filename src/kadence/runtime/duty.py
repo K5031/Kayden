@@ -18,8 +18,8 @@ OPEN = (PlanStatus.TODO, PlanStatus.DOING)
 CLOSE_PLAN = (
     "Steps are still open. Before you end your turn, bring the plan up to date with "
     "update_plan: mark what you finished done and what you gave up dropped, and finish "
-    "what you can. Leave a step open only when it waits for the user or for background "
-    "work.")
+    "what you can. A step that waits for the user is marked waiting; leave a step open "
+    "only when it waits for background work.")
 
 
 def local(t: float) -> str:
@@ -131,7 +131,8 @@ def finish(plan: Sequence[PlanItem]) -> str:
     steps = "; ".join(i.text for i in unfinished(plan))
     return (f"Your plan still has open steps: {steps}. Do them now. If one is "
             "finished or no longer needed, mark it done or dropped with update_plan. If one "
-            "waits for the user, say what you need from them and end your turn.")
+            "waits for the user, mark it waiting, say what you need from them and end your "
+            "turn.")
 
 
 def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:

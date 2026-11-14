@@ -183,6 +183,8 @@ def test_plan_text_round_trips_and_reports_bad_lines():
                                "[todo] Reply")
     assert parse_plan_text(plan_text(plan) + "\n\n") == plan
     assert parse_plan_text("Call Sam") == [PlanItem("Call Sam")]
+    assert parse_plan_text("[waiting] Pick a colour") == [
+        PlanItem("Pick a colour", PlanStatus.WAITING)]
     with pytest.raises(ValueError, match="Line 2"):
         parse_plan_text("ok\n[todo] x | due tomorrow")
 
