@@ -1012,6 +1012,19 @@ class Runtime:
         await self._notice(duties.finish(conversation.plan))
         return True
 
+    async def _close_plan(self) -> None:
+        """The turn ends: the steps _send_back would name are ticked off, so that a plan
+        is never left open behind a finished turn."""
+        conversation = self._conversation
+        if (conversation is None or conversation.duty is not None or self._ops
+                or not duties.unfinished(conversation.plan)):
+            return
+        plan = [replace(item, status=PlanStatus.DONE)
+                if item.status in duties.OPEN and item.due is None else item
+                for item in conversation.plan]
+        await self._save_duty(None, plan)
+        self._log.decision("plan", items=len(plan), by="runtime")
+
     # ── Tools offered to the model ───────────────────────────────────────
 
     async def _offered_tools(self) -> dict[str, ToolSpec]:
@@ -1331,6 +1344,7 @@ class Runtime:
                 continue
             if not calls and await self._send_back():
                 continue
+            await self._close_plan()
             # After the answer: Memory saves what the exchange taught it.
             self._set_phase(AgentState.FINISHING)
             before = await self._note_versions()

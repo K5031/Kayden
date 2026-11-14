@@ -115,8 +115,8 @@ async def test_an_ordinary_conversation_keeps_a_plan_but_has_no_duty_tools(make)
     assert names.isdisjoint({"finish_goal", "ask_for_help"})
     plan = h.runtime.snapshot().conversation.plan
     assert [(i.text, i.status) for i in plan] == [
-        ("Read the code", PlanStatus.DONE), ("Fix the bug", PlanStatus.DOING),
-        ("Run the tests", PlanStatus.TODO)]
+        ("Read the code", PlanStatus.DONE), ("Fix the bug", PlanStatus.DONE),
+        ("Run the tests", PlanStatus.DONE)]  # ticked off as the turn ended
     assert h.runtime.snapshot().conversation.duty is None
     # The agent's own call shows the plan from here on: the prompt does not repeat it,
     # so a plan update leaves the start of every later request as it was.
@@ -257,15 +257,16 @@ async def test_a_turn_does_not_end_with_steps_open(make):
         PlanStatus.DONE, PlanStatus.DONE]
 
 
-async def test_it_is_sent_back_once_and_may_then_leave_steps_open(make):
-    """What waits for the user cannot be finished: the agent says so and the turn ends."""
+async def test_a_turn_that_ends_closes_the_list(make):
+    """Sent back once, the agent still leaves a step open: the runtime ticks it off, as
+    Claude's app checks off the task list when a turn ends."""
     h = await duty_harness(make, [
         plan_call(("Ask which colour", "doing")), Step(text="Which colour?"),
         Step(text="I need your answer on the colour first.")])
     await h.turn("paint it")
     assert len(h.core.requests) == 3
     assert h.runtime.snapshot().state == AgentState.IDLE
-    assert h.runtime.snapshot().conversation.plan[0].status == PlanStatus.DOING
+    assert h.runtime.snapshot().conversation.plan[0].status == PlanStatus.DONE
 
 
 async def test_steps_that_wait_are_not_sent_back_for(make):
@@ -276,11 +277,13 @@ async def test_steps_that_wait_are_not_sent_back_for(make):
         Step(text="I will.")])
     await h.turn("remind me")
     assert len(h.core.requests) == 2
+    assert h.runtime.snapshot().conversation.plan[0].status == PlanStatus.TODO
     duty = await duty_harness(make, [plan_call(("Read mail", "doing")), Step(text="On it.")])
     await duty.runtime.set_duty(QUIET)
     await idle(duty, 2)
     await asyncio.sleep(0.2)
     assert len(duty.core.requests) == 2
+    assert duty.runtime.snapshot().conversation.plan[0].status == PlanStatus.DOING
 
 
 def test_what_update_plan_says_about_due_steps():
@@ -588,7 +591,7 @@ async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
     await idle(h, 3)
     assert "still has open steps: Tell the press" in notices(h.core.requests[2])[-1]
     assert [i.status for i in h.runtime.snapshot().conversation.plan] == [
-        PlanStatus.DONE, PlanStatus.DONE, PlanStatus.TODO]
+        PlanStatus.DONE, PlanStatus.DONE, PlanStatus.DONE]
 
 
 def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
