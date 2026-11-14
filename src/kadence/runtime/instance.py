@@ -119,6 +119,7 @@ async def run_instance(config: InstanceConfig, *, fallback: str | None = None
                 lock.release()
     runtime: Runtime | SetupRuntime
     if error is None:
+        assert lock is not None
         core, memory, *tools = built
         tools.extend(frontend.tools())
         runtime = Runtime(core=core, memory=memory, tools=tools, frontend=frontend.info,

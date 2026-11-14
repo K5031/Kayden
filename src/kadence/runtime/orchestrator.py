@@ -312,8 +312,10 @@ class Runtime:
     """Implements RuntimeAPI. One agent per process."""
 
     def __init__(self, *, core: Core, memory: Memory, tools: Sequence[Tools],
-                 frontend: FrontendInfo, config: RuntimeConfig,
-                 lock: InstanceLock | None = None):
+                 frontend: FrontendInfo, config: RuntimeConfig, lock: InstanceLock):
+        """`lock`: the data directory, held (InstanceLock.acquire) before any module was
+        built, so nothing stored is read or written by two processes; released on
+        shutdown."""
         self._core = core
         self._memory = memory
         self._tools = list(tools)  # every Tools module, in the order their tools are offered
@@ -329,7 +331,7 @@ class Runtime:
         self._budget = BudgetTracker(config.budget)
 
         self._started = False
-        self._lock = lock  # taken before the first Memory call (_hold_lock)
+        self._lock = lock
         self._agent_config: AgentConfig | None = None
         self._conversation: ConversationInfo | None = None
         self._draft = False  # the open conversation is new and not stored yet
@@ -425,12 +427,10 @@ class Runtime:
 
     async def list_conversations(self, *, include_archived: bool = False
                                  ) -> Sequence[ConversationInfo]:
-        self._hold_lock()
         return await self._memory.list_conversations(include_archived=include_archived)
 
     async def history(self, conversation_id: ConversationId, *, before: str | None = None,
                       limit: int | None = None) -> Sequence[Message]:
-        self._hold_lock()
         if self._is_draft(conversation_id):
             return []
         return await self._memory.history(conversation_id, before=before, limit=limit)
@@ -438,20 +438,17 @@ class Runtime:
     async def search_archive(self, query: str, *,
                              conversation_id: ConversationId | None = None,
                              limit: int = 10) -> Sequence[ArchiveHit]:
-        self._hold_lock()
         if conversation_id is not None and self._is_draft(conversation_id):
             return []
         scope = None if conversation_id is None else [conversation_id]
         return await self._memory.search(query, conversation_ids=scope, limit=limit)
 
     async def inspect_memory(self, conversation_id: ConversationId) -> MemoryView | None:
-        self._hold_lock()
         if self._is_draft(conversation_id):
             return None
         return await self._memory.inspect(conversation_id)
 
     async def notes(self) -> Sequence[MemoryNote]:
-        self._hold_lock()
         try:
             return await self._memory.notes(folder=self._project())
         except NotImplementedError:
@@ -473,7 +470,6 @@ class Runtime:
             raise ValueError("seed_from and folder apply to a new conversation only")
         if options.folder is not None and not Path(options.folder).expanduser().is_dir():
             raise ValueError(f"{options.folder} is not a folder")
-        self._hold_lock()
         if not self._models:
             await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
@@ -623,7 +619,6 @@ class Runtime:
     # ── Conversations and long-term memory ───────────────────────────────
 
     async def rename_conversation(self, conversation_id: ConversationId, title: str) -> None:
-        self._hold_lock()
         if self._is_draft(conversation_id):
             await self._save_draft()
         info = await self._memory.update_conversation(conversation_id, title=title)
@@ -633,7 +628,6 @@ class Runtime:
 
     async def archive_conversation(self, conversation_id: ConversationId,
                                    archived: bool) -> None:
-        self._hold_lock()
         if self._is_draft(conversation_id):
             await self._save_draft()
         info = await self._memory.update_conversation(conversation_id, archived=archived)
@@ -642,7 +636,6 @@ class Runtime:
         self._conversation_updated(info)
 
     async def delete_conversation(self, conversation_id: ConversationId) -> None:
-        self._hold_lock()
         if self._conversation is not None and conversation_id == self._conversation.id:
             raise RuntimeStateError("this conversation is open; open another one first")
         try:
@@ -654,7 +647,6 @@ class Runtime:
 
     async def save_note(self, title: str, description: str, text: str, *,
                         note_id: str | None = None) -> MemoryNote:
-        self._hold_lock()
         note = await self._edit_memories(
             self._memory.save_note(title, description, text, note_id=note_id,
                                    folder=self._project()))
@@ -663,7 +655,6 @@ class Runtime:
         return note
 
     async def delete_note(self, note_id: str) -> None:
-        self._hold_lock()
         await self._edit_memories(self._memory.delete_note(note_id, folder=self._project()))
         self._log.decision("note_deleted", note=note_id, by="user")
         self._emit(MemoriesChanged())
@@ -809,18 +800,10 @@ class Runtime:
         if self._started:
             self._budget.save()
             await self._budget.flush()
-        if self._lock is not None:
-            self._lock.release()
+        self._lock.release()
         self._log.close()
 
     # ── State ────────────────────────────────────────────────────────────
-
-    def _hold_lock(self) -> None:
-        """Nothing reads or writes stored data before this process holds the data
-        directory (InstanceLockedError otherwise): another process may have a conversation
-        open."""
-        if self._lock is None:
-            self._lock = InstanceLock.acquire(self._config.data_dir)
 
     def _state(self) -> AgentState:
         if self._stopping:

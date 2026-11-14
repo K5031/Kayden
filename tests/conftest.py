@@ -26,6 +26,7 @@ from kadence.api import (
     ToolResult,
 )
 from kadence.runtime import Runtime, RuntimeConfig
+from kadence.runtime.instance import InstanceLock
 from tests.fakes.core import ScriptedCore
 from tests.fakes.frontend import Recorder, ScriptedFrontend
 from tests.fakes.memory import InMemoryMemory, MemoryStore
@@ -247,6 +248,7 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
             tools=[tools, *more_tools],
             frontend=frontend.info,
             config=RuntimeConfig(data_dir=data_dir, **{**FAST, **config}),
+            lock=InstanceLock.acquire(data_dir),
         )
         fake.seq_source = lambda: runtime.snapshot().seq
         h = Harness(runtime, core, tools, memory, store, frontend.attach(runtime), data_dir,

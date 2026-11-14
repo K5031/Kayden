@@ -43,6 +43,7 @@ from kadence.frontends.tui import AssistantEntry, KadenceApp, PermissionPrompt, 
 from kadence.memory.sqlite import SqliteMemory
 from kadence.runtime import InstanceConfig, ModuleSpec, Runtime, load_module, run_instance
 from kadence.runtime.config import DEFAULT_SYSTEM_PROMPT
+from kadence.runtime.instance import InstanceLock
 from kadence.tools.shell_files import ShellFilesTools
 from tests.fakes.core import ScriptedCore, Step, call
 
@@ -386,7 +387,8 @@ async def test_tui_drives_the_real_runtime(workspace, tmp_path):
     runtime = Runtime(core=ScriptedCore(steps(), maintenance=Step(text="Make a file")),
                       memory=load_module(config.memory, Memory, paths),
                       tools=[load_module(config.tools, Tools, paths)],
-                      frontend=TuiFrontend().info, config=config.runtime)
+                      frontend=TuiFrontend().info, config=config.runtime,
+                      lock=InstanceLock.acquire(data_dir))
     app = KadenceApp(runtime, StartOptions())
     try:
         async with app.run_test(size=(120, 40)) as pilot:

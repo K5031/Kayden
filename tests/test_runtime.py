@@ -205,13 +205,13 @@ async def test_subprocess_tools_see_ceiling(make: Any) -> None:
 
 
 async def test_instance_lock(make: Any) -> None:
+    """A runtime is built holding its data folder: a second one cannot exist."""
     h: Harness = await make()
-    await h.start()
-    other: Harness = await make(data_dir=h.data_dir)
     with pytest.raises(InstanceLockedError, match=f"already open.*{os.getpid()}"):
-        await other.start()
+        await make(data_dir=h.data_dir)
     await h.close()
-    await other.start()  # released on shutdown
+    other: Harness = await make(data_dir=h.data_dir)  # released on shutdown
+    await other.start()
 
 
 # ── Event stream and snapshot ──

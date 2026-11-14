@@ -1611,10 +1611,10 @@ class RuntimeAPI(Protocol):
     module does not support them; frontends then hide those controls.
 
     start() leaves the agent IDLE. A resumed conversation has no pending
-    wake-up, so it never runs before the user sends a message or activates it. The first
-    command that reads or changes stored data (start(), list_conversations(), history(),
-    deleting, ...) takes the data dir lock, held until shutdown; InstanceLockedError when
-    another process holds it. send() in IDLE authorizes a
+    wake-up, so it never runs before the user sends a message or activates it. The
+    runtime is built holding the data dir lock, taken before any module is built and held
+    until shutdown; where another process holds it (InstanceLockedError), the frontend
+    runs on a runtime that only shows why. send() in IDLE authorizes a
     cycle and returns at once (the state is THINKING on return, so a second send
     queues); the message is appended at the start of that cycle, so it never lands
     between an assistant message and its TOOL message. Background results that arrive

@@ -312,10 +312,8 @@ async def test_usage_lock_and_log_are_per_data_folder(make: Any, tmp_path: Path)
     await h.start()
     assert (data / "instance.lock").exists() and (data / "usage.json").exists()
 
-    other: Harness = await make(data_dir=data)
     with pytest.raises(RuntimeError, match="in use"):
-        await other.start()
-
+        await make(data_dir=data)
 
 
 

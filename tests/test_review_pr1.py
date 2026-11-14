@@ -18,13 +18,10 @@ async def test_second_process_cannot_delete_the_open_conversation(make: Any, tmp
     store = MemoryStore()
     data_dir = tmp_path / "shared"
     a: Harness = await make(store=store, data_dir=data_dir)
-    b: Harness = await make(store=store, data_dir=data_dir)
     conv = await a.start()
     await a.turn("hello")
-    with pytest.raises(InstanceLockedError):
-        await b.start()
-    with pytest.raises(Exception):  # noqa: B017 - any refusal will do
-        await b.runtime.delete_conversation(conv.id)
+    with pytest.raises(InstanceLockedError):  # no second runtime to delete with
+        await make(store=store, data_dir=data_dir)
     assert conv.id in store.conversations
 
 

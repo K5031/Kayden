@@ -44,7 +44,7 @@ exact/estimate, clamped to [0.25, 4].
 
 | File | Format |
 |------|--------|
-| `instance.lock` | `fcntl.flock` lock, taken at the first `start()`; contents: holder pid. |
+| `instance.lock` | `fcntl.flock` lock, taken by `run_instance` before any module is built and handed to `Runtime`, which cannot be built without it; contents: holder pid. |
 | `usage.json` | `{"schema_version": 1, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, elapsed_s}`; written with temp file + `os.replace` in a thread, one write at a time with the latest totals, after the first start (awaited), each charge, each tool-call reservation and whenever activity drops to zero, and at shutdown (awaited). |
 | `events.jsonl` | one JSON object per line, written off the event loop by a `logging.handlers.QueueListener` thread. |
 
