@@ -96,8 +96,8 @@ sandbox all leave the shell unsandboxed. Stop, cancellation and timeouts act on 
 ### A work folder that cannot be a boundary
 
 When the work folder is `/`, the user's home folder, or contains it, nothing is confined
-and every call prompts. The desktop app's default folder, `~/Kadence`, qualifies; a terminal
-start in `~` does not.
+and every call prompts. A terminal start in `~` is such a folder; the desktop app has the
+user choose each chat's folder.
 
 ## Alternatives considered
 
@@ -151,5 +151,4 @@ start in `~` does not.
 - **Linux only.** Without bubblewrap (macOS, some Linux setups, a Kadence that itself runs
   in a sandbox) shell commands ask; file calls in the work folder still run freely.
 - **A looser default.** New users get an agent that changes files in its folder unasked.
-  The folder is theirs to choose, the desktop app defaults to `~/Kadence`, and the welcome
-  says what the agent may do.
+  The folder is theirs to choose, and the welcome says what the agent may do.

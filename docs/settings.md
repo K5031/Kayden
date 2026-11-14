@@ -15,7 +15,7 @@ changed is saved.
 | Spending limit | In US dollars; empty means no limit. | At once |
 | What the agent may do | See [Permissions](#permissions). | At the next step |
 | Instructions | The system prompt: who the agent is and how it should behave. | At the next step |
-| Folder for new chats | The folder a new conversation works in. Each conversation keeps its own; see [Folders](using-kadence.md#folders). | At the next new chat |
+| Folder for new chats | Terminal app only: the folder a new conversation works in. Each conversation keeps its own; see [Folders](using-kadence.md#folders). The desktop app asks for each chat's folder instead. | At the next new chat |
 | Tools | What the agent can do on your computer. | At restart |
 
 Raising or removing the spending limit, or letting the agent do more, asks you to confirm

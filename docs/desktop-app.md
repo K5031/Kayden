@@ -52,9 +52,7 @@ When no API key is saved, a welcome window asks for three things:
 2. **Your API key.** Kadence keeps it in your computer's keychain. If your computer has no
    keychain, set the environment variable named in the message instead
    (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`).
-3. **A work folder and a spending limit.** The work folder is where Kadence runs commands
-   and reads and writes files; it is `~/Kadence` unless you choose another. The spending
-   limit is optional.
+3. **A spending limit.** Optional.
 
 Kadence then restarts with your provider. If the provider refuses the key, the message says
 so; enter another one in Settings and choose **Restart now**. If Kadence cannot start for
@@ -80,7 +78,7 @@ another reason, the Settings window opens with the message.
 | Copy a reply | Point at it: a copy button and how long ago it came appear under it. |
 | Copy code from a reply | Click the copy button at the top right of the code block. |
 | Start over | **New chat** (**Ctrl+N**). Nothing is added to the list until you send your first message. |
-| Work in another folder | In a new chat, the folder button in the middle: pick a recent one or **Choose folder…**. Any time: **☰ → New chat in another folder…**. A new chat starts in it. See [Folders](using-kadence.md#folders). |
+| Choose a chat's folder | A new chat needs a folder before its first message: click **Choose folder** in the middle and pick a recent one or **Choose folder…**. Sending without one opens the same menu. Any time: **☰ → New chat in another folder…**. See [Folders](using-kadence.md#folders). |
 | Go back to a conversation | Click it in the list. |
 | Rename, archive or delete one | Right-click it (or select it and press the Menu key): **Rename…** (**F2**), **Archive**, **Delete…** (**Delete**). Turn on **☰ → View → Show archived conversations** to see hidden ones. |
 | Pick up where one left off | Right-click it: **Continue in a new conversation**. |

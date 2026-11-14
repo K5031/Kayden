@@ -306,10 +306,10 @@ def choose_frontend(chosen: str | None, configured: ModuleSpec, launcher: str
                      else ModuleSpec(info.factory))
 
 
-def load_config(args: Launch, *, default_root: Path | None = None,
-                launcher: str = TERMINAL, restart: Restart | None = None) -> InstanceConfig:
+def load_config(args: Launch, *, launcher: str = TERMINAL,
+                restart: Restart | None = None) -> InstanceConfig:
     """config.toml, then the saved settings, then command-line flags, each overriding.
-    The Tools root defaults to `default_root`, else the current directory. After a
+    The Tools root defaults to the current directory. After a
     `restart` its frontend and conversation replace the command-line start options."""
     data_dir = args.data_dir.expanduser()
     path = config_path(args)
@@ -339,7 +339,7 @@ def load_config(args: Launch, *, default_root: Path | None = None,
 
     tools = modules["tools"]
     if running["tools"] == "shell-files" and "root" not in tools.options:
-        tools = ModuleSpec(tools.factory, {**tools.options, "root": str(default_root or Path.cwd())})
+        tools = ModuleSpec(tools.factory, {**tools.options, "root": str(Path.cwd())})
     if "work_folder" in saved and "root" in tools.options:
         tools = ModuleSpec(tools.factory, {**tools.options, "root": saved["work_folder"]})
     saved.pop("work_folder", None)
@@ -391,15 +391,13 @@ def frontend_loop(spec: ModuleSpec) -> EventLoop:
     return getattr(factory, "event_loop", asyncio.run)
 
 
-async def launch(args: Launch, launcher: str, *, default_root: Path | None = None,
-                 restart: Restart | None = None,
+async def launch(args: Launch, launcher: str, *, restart: Restart | None = None,
                  runs_here: Callable[[InstanceConfig], bool] = lambda config: True,
                  ) -> Restart | None:
     """Run instances until the user quits. A Restart is returned for the caller when it is
     to a frontend of another kind, or to one that `runs_here` says needs another loop."""
     while True:
-        config = load_config(args, default_root=default_root, launcher=launcher,
-                             restart=restart)
+        config = load_config(args, launcher=launcher, restart=restart)
         if not runs_here(config):
             return restart
         restart = await run_instance(config, fallback=LAUNCHER_FRONTENDS[launcher])
@@ -411,26 +409,21 @@ async def _fail(error: SystemExit) -> None:
     raise error
 
 
-def run_frontends(args: Launch, launcher: str, *,
-                  default_root: Path | None = None) -> Restart | None:
+def run_frontends(args: Launch, launcher: str) -> Restart | None:
     """Run instances, each frontend on the event loop it names, until the user quits or
-    a Restart asks for a frontend of the other kind (returned). A `default_root` the Tools
-    work in is made first."""
+    a Restart asks for a frontend of the other kind (returned)."""
     restart: Restart | None = None
     while True:
         try:
-            config = load_config(args, default_root=default_root, launcher=launcher,
-                                 restart=restart)
+            config = load_config(args, launcher=launcher, restart=restart)
         except SystemExit as e:
             # A bad config file, before any frontend is chosen: the launcher's own
             # frontend says so on its loop (a window's stderr is unseen).
             own = ModuleSpec(targets("frontend")[LAUNCHER_FRONTENDS[launcher]])
             frontend_loop(own)(_fail(e))
             raise
-        if default_root is not None and config.tools.options.get("root") == str(default_root):
-            default_root.mkdir(parents=True, exist_ok=True)
         run = frontend_loop(config.frontend)
-        restart = run(launch(args, launcher, default_root=default_root, restart=restart,
+        restart = run(launch(args, launcher, restart=restart,
                              runs_here=lambda c, run=run: frontend_loop(c.frontend) is run))
         if restart is None or restart.frontend_kind != launcher:
             return restart

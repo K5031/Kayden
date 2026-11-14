@@ -199,6 +199,9 @@ written there. A new conversation gets the folder from Settings (**Folder for ne
 or the one you type in the start screen; it keeps that folder when you come back to it,
 even after you change the setting. The status line shows it.
 
+The desktop app has no such default: a new chat there asks you for its folder (see
+[Using it](desktop-app.md#using-it)).
+
 `/folder PATH` starts a chat in another folder. **Continue from** keeps the earlier
 conversation's folder.
 

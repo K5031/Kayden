@@ -123,9 +123,11 @@ def test_the_window_launcher_has_only_its_own_flags(tmp_path):
         window.parse_args(["--model", "m"])
 
 
-def test_the_default_work_folder_is_made_when_the_tools_work_there(tmp_path, monkeypatch):
-    home = tmp_path / "home" / "Kadence"
-    monkeypatch.setattr(window, "DEFAULT_WORK_FOLDER", home)
+def test_the_window_makes_no_folder_of_its_own(tmp_path, monkeypatch):
+    """Its tools start where it is started, as the terminal app's do; each chat is then
+    given a folder."""
+    monkeypatch.chdir(tmp_path)
+    assert not hasattr(window, "DEFAULT_WORK_FOLDER")
     settings_file(tmp_path, '[modules]\ncore = "first"\nmemory = "fake-memory"\n'
                   'frontend = "scripted-window"\n')
     roots: list[tuple[str, bool]] = []
@@ -140,5 +142,5 @@ def test_the_default_work_folder_is_made_when_the_tools_work_there(tmp_path, mon
 
     window_frontends(monkeypatch, script)
     window.main(["--data-dir", str(tmp_path)])
-    assert roots == [(str(home), True)]
+    assert roots == [(str(tmp_path), True)]
     assert len(loads) == 2  # to choose the loop, then to run on it: never by the launcher itself

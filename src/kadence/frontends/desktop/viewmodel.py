@@ -889,7 +889,6 @@ class SettingsForm:
     spending_limit: str  # dollars as typed; empty = no limit
     permissions: PermissionPolicy
     instructions: str
-    work_folder: str | None  # None when the folder is not settable
 
 
 def form_from(settings: Settings) -> SettingsForm:
@@ -897,7 +896,7 @@ def form_from(settings: Settings) -> SettingsForm:
     modules = {kind: choice.chosen for kind, choice in settings.modules.items()}
     return SettingsForm(modules, "", settings.model, settings.maintenance_model,
                         "" if limit is None else f"{limit:g}", settings.permissions,
-                        settings.system_prompt, settings.work_folder)
+                        settings.system_prompt)
 
 
 def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
@@ -931,12 +930,6 @@ def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
         if not form.instructions.strip():
             raise ValueError("The instructions can't be empty.")
         changes["system_prompt"] = form.instructions
-    if form.work_folder is not None and current.work_folder is not None:
-        folder = form.work_folder.strip()
-        if folder != current.work_folder:
-            if not folder:
-                raise ValueError("Choose a work folder.")
-            changes["work_folder"] = folder
     return SettingsUpdate(**changes)
 
 
@@ -975,6 +968,7 @@ class Controller:
             asyncio.Queue())
         self._tasks: set[asyncio.Task[Any]] = set()
         self._switching = asyncio.Lock()  # conversation switches, one after another
+        self.folder_picked = False  # the open chat is in a folder the user chose for it
         self.can_delete = True  # False once Memory said it cannot delete conversations
         self.sessions: SubSessions | None = None  # deleted with their conversation
         # Called with each event after the model took it (voice mode reads replies aloud).
@@ -1101,6 +1095,7 @@ class Controller:
         async def start() -> None:
             async with self._switching:
                 await self.runtime.start(options)
+                self.folder_picked = options != StartOptions()
                 await self._shown()
 
         return self.command(start())
@@ -1150,6 +1145,7 @@ class Controller:
         async def erase() -> None:
             if self.is_open(conversation_id):
                 await self.runtime.start(StartOptions())
+                self.folder_picked = False
                 await self._shown()
             await self.runtime.delete_conversation(conversation_id)
             if self.sessions is not None:

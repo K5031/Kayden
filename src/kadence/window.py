@@ -17,8 +17,6 @@ from pathlib import Path
 from kadence.__main__ import DEFAULT_DATA_DIR, Launch, run_frontends
 from kadence.runtime.modules import WINDOW
 
-DEFAULT_WORK_FOLDER = Path("~/Kadence")
-
 
 def parse_args(argv: Sequence[str] | None = None) -> Launch:
     parser = argparse.ArgumentParser(prog="kadence-desktop", description=__doc__)
@@ -31,7 +29,7 @@ def parse_args(argv: Sequence[str] | None = None) -> Launch:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    run_frontends(parse_args(argv), WINDOW, default_root=DEFAULT_WORK_FOLDER.expanduser())
+    run_frontends(parse_args(argv), WINDOW)
 
 
 if __name__ == "__main__":

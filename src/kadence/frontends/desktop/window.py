@@ -198,7 +198,6 @@ LIST_ITEM_SPACING = 4  # px below a list item
 VOICE_DIR = "voice"  # the speech models, in the data folder
 HEADING_SPACING = 6  # px above a heading, on top of the paragraph below the previous block
 RENDER_INTERVAL_MS = 100  # Markdown of a streaming reply is re-rendered at most this often
-DEFAULT_WORK_FOLDER = Path("~/Kadence")
 KEY_PAGES = {
     "anthropic": "https://platform.claude.com/",
     "deepseek": "https://platform.deepseek.com/api_keys",
@@ -1704,6 +1703,7 @@ class MainWindow(QMainWindow):
         self.runtime = runtime
         self.home = controller  # this window's own conversation
         self._viewing: Viewing | None = None  # the sub-session on screen instead of it
+        self._needs_folder = False  # a new chat the user has not given a folder
         self._target = Target()
         # Talking with Kadence; its speech models are kept beside the zoom's file, which
         # the frontend reads before the window opens and writes when it has closed.
@@ -2045,11 +2045,18 @@ class MainWindow(QMainWindow):
         folder = self.model.conversation.folder if self.model.conversation else None
         choose_folder(self, folder or str(Path.home()), self.folder_chosen)
 
+    def _offer_folders(self) -> None:
+        """A new chat needs a folder before it is used: open the folder menu."""
+        button = self.folder_button
+        button.menu().popup(button.mapToGlobal(QPoint(0, button.height())))
+
     def _fill_folder_menu(self) -> None:
-        """The open chat's folder, then those of recent conversations, newest first."""
+        """The folder chosen for the open chat, then those of recent conversations, newest
+        first."""
         menu = self.folder_button.menu()
         menu.clear()
-        own = self.model.conversation.folder if self.model.conversation else None
+        own = (self.model.conversation.folder
+               if self.model.conversation and self.controller.folder_picked else None)
         recent = [info.folder for info in sorted(self._conversations.values(),
                                                  key=lambda i: i.updated_at, reverse=True)
                   if info.folder is not None]
@@ -2067,7 +2074,7 @@ class MainWindow(QMainWindow):
 
     def folder_chosen(self, folder: str) -> None:
         """Start a chat in `folder`; an open chat with no messages moves there."""
-        if not folder or (self.model.conversation is not None
+        if not folder or (self.model.conversation is not None and self.controller.folder_picked
                           and folder == self.model.conversation.folder):
             return
         task = self.home.new_in_folder(folder)
@@ -2398,13 +2405,18 @@ class MainWindow(QMainWindow):
             self.title_label.setText(conversation_label(
                 self._conversations.get(conversation.id, conversation)))
         folder = conversation.folder if conversation is not None else None
-        self.title_label.setToolTip(f"Kadence works in {folder_path(folder)}"
-                                    if folder is not None else "")
         self.folder_action.setVisible(folder is not None)
         new_chat = (self._viewing is None and folder is not None and not model.items
                     and not model.has_earlier)
+        # A new chat works nowhere until the user gives it a folder.
+        self._needs_folder = new_chat and not self.controller.folder_picked
+        self.title_label.setToolTip(f"Kadence works in {folder_path(folder)}"
+                                    if folder is not None and not self._needs_folder else "")
         self.folder_button.setVisible(new_chat)
-        if folder is not None:
+        if self._needs_folder:
+            self.folder_button.setText("  Choose folder  ⌄")
+            self.folder_button.setToolTip("")
+        elif folder is not None:
             self.folder_button.setText(f"  {Path(folder).name or folder}  ⌄")
             self.folder_button.setToolTip(f"Kadence works in {folder_path(folder)}")
         self.send_button.setText("Stop" if model.busy else "Send")
@@ -2706,6 +2718,9 @@ class MainWindow(QMainWindow):
         if self.model.conversation is None:
             self.model.notify("Open a conversation first.")
             return
+        if self._needs_folder:
+            self._offer_folders()
+            return
         DutyDialog(self, self.controller, self.model.conversation).open()
 
     def open_tool_servers(self) -> None:
@@ -2715,6 +2730,9 @@ class MainWindow(QMainWindow):
 
     def _send(self) -> None:
         text, files = self.input.toPlainText().strip(), self.attachments.paths()
+        if (text or files) and self._needs_folder:
+            self._offer_folders()
+            return
         if text or files:
             self.input.clear()
             self.attachments.clear()
@@ -3273,15 +3291,6 @@ class SettingsDialog(QDialog):
         self.permissions.setCurrentIndex(self.permissions.findData(settings.permissions))
         self.instructions = QPlainTextEdit(settings.system_prompt)
         self.instructions.setMinimumHeight(120)
-        folder_row = QHBoxLayout()
-        self.folder = QLineEdit(settings.work_folder or "")
-        browse = QPushButton("Choose…")
-        browse.clicked.connect(lambda: choose_folder(self, self.folder.text(),
-                                                     self.folder.setText))
-        folder_row.addWidget(self.folder, 1)
-        folder_row.addWidget(browse)
-        for widget in (self.folder, browse):
-            widget.setEnabled(settings.work_folder is not None)
         self.notice = _label(restart_notice(settings) or "", selectable=False, tone="warning")
         self.notice.setVisible(restart_notice(settings) is not None)
         self.error = _label()
@@ -3321,9 +3330,7 @@ class SettingsDialog(QDialog):
                             self.child_limit),) if sessions is not None else ())),
             "Permissions": _page(
                 "Permissions", _setting("What the agent may do", "When it asks you before acting.",
-                         self.permissions),
-                _setting("Folder for new chats", "Where new conversations work.",
-                         folder_row)),
+                         self.permissions)),
             "Instructions": _page(
                 "Instructions", _setting("Instructions", "What Kadence is told at the start of every "
                          "conversation.", self.instructions, below=True)),
@@ -3405,7 +3412,6 @@ class SettingsDialog(QDialog):
             spending_limit=self.limit.text(),
             permissions=PermissionPolicy(self.permissions.currentData()),
             instructions=self.instructions.toPlainText(),
-            work_folder=self.folder.text() if self.folder.isEnabled() else None,
         )
 
     def _save(self, *, restart: bool = False) -> None:
@@ -3553,27 +3559,16 @@ class WelcomeDialog(QDialog):
         self.pages.addWidget(page)
         self.pages.currentChanged.connect(self._page_shown)
 
-        # 3. folder and limit
+        # 3. limit
         page = QWidget()
         column = QVBoxLayout(page)
         column.setContentsMargins(0, 8, 0, 0)
-        column.addWidget(_label("Kadence runs commands and works with files in this folder."))
-        folder_row = QHBoxLayout()
-        self.folder = QLineEdit(settings.work_folder or str(DEFAULT_WORK_FOLDER.expanduser()))
-        self.folder.setEnabled(settings.work_folder is not None)
-        browse = QPushButton("Choose…")
-        browse.setEnabled(settings.work_folder is not None)
-        browse.clicked.connect(lambda: choose_folder(self, self.folder.text(),
-                                                     self.folder.setText))
-        folder_row.addWidget(self.folder, 1)
-        folder_row.addWidget(browse)
-        column.addLayout(folder_row)
         column.addWidget(_label("Spending limit in US dollars (optional)."))
         self.limit = QLineEdit()
         self.limit.setPlaceholderText("No limit")
         column.addWidget(self.limit)
-        column.addWidget(_label("Kadence works freely in this folder and asks before "
-                                "anything outside it."))
+        column.addWidget(_label("Each chat works in a folder you choose for it. Kadence works "
+                                "freely there and asks before anything outside it."))
         self.finish_error = _label()
         theme.mark(self.finish_error, "tone", "error")
         self.finish_error.hide()
@@ -3625,10 +3620,6 @@ class WelcomeDialog(QDialog):
 
     def _finish(self) -> None:
         changes: dict[str, Any] = {}
-        folder = self.folder.text().strip()
-        if self.folder.isEnabled() and folder and folder != self.settings.work_folder:
-            Path(folder).expanduser().mkdir(parents=True, exist_ok=True)
-            changes["work_folder"] = str(Path(folder).expanduser())
         try:
             budget = limit_update(self.settings, self.limit.text())
         except ValueError as e:

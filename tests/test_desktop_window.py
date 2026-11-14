@@ -191,7 +191,7 @@ def setup_runtime(tmp_path: Any, error: str = "tests.fakes.core:first_factory: "
                         error)
 
 
-async def test_welcome_saves_the_key_folder_and_limit_then_restarts(installed, qapp, keychain,
+async def test_welcome_saves_the_key_and_limit_then_restarts(installed, qapp, keychain,
                                                                     tmp_path, monkeypatch):
     monkeypatch.delenv("FIRST_API_KEY", raising=False)
     runtime = setup_runtime(tmp_path)
@@ -214,13 +214,12 @@ async def test_welcome_saves_the_key_folder_and_limit_then_restarts(installed, q
     dialog.key_continue.click()
     await eventually(lambda: dialog.pages.currentIndex() == 2)
     assert keychain.store[("kadence", "SECOND_API_KEY")] == "sk-good"
-    dialog.folder.setText(str(tmp_path / "work"))
+    assert not hasattr(dialog, "folder")  # each chat is given its folder
     dialog.limit.setText("3")
     dialog.finish_button.click()
     await eventually(lambda: runtime.restart_request is not None)
     after = await runtime.settings()
     assert after.modules["core"].chosen == "second"
-    assert after.work_folder == str(tmp_path / "work") and (tmp_path / "work").is_dir()
     assert after.budget.max_cost_usd == 3.0
 
 
@@ -477,7 +476,6 @@ async def test_the_folder_is_shown_and_choosing_another_starts_a_chat_there(make
     h.core.add(Step(text="hi"))
     empty = await h.start()
     window, controller, _ = await open_window(h)
-    await eventually(lambda: str(default) in window.title_label.toolTip())
     assert window.folder_action.isVisible()
 
     window.folder_chosen(str(project))  # a new chat there; the unused one leaves nothing
@@ -1628,24 +1626,55 @@ async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path
     h.core.add(Step(text="hi"))
     await h.chat("In project", folder=str(project))
     await h.chat("In other", folder=str(other))
-    await h.start()  # a new chat, in the default folder
+    await h.start()  # a new chat: no folder is chosen for it yet
     window, controller, _ = await open_window(h)
     await window.fill_sidebar()
     window._refresh_status()
     button = window.folder_button
-    assert not button.isHidden() and button.text().split()[0] == "default"
-    assert button.toolTip().endswith(str(default))
+    assert not button.isHidden() and button.text().strip(" ⌄") == "Choose folder"
+    assert button.toolTip() == "" and window.title_label.toolTip() == ""
     menu = button.menu()
     menu.aboutToShow.emit()
     labels = [a.text() for a in menu.actions() if a.text()]
-    assert labels == ["default", "other", "project", "Choose folder…"]
-    assert [a.text() for a in menu.actions() if a.isChecked()] == ["default"]
+    assert labels == ["other", "project", "Choose folder…"]
+    assert [a.text() for a in menu.actions() if a.isChecked()] == []
+    window.input.setPlainText("hello there")
+    window._send()  # no folder yet: the message stays and the folders are offered
+    assert menu.isVisible() and window.input.toPlainText() == "hello there"
+    assert not h.core.requests and controller.model.items == []
+    menu.hide()
+    window.open_duty()  # nor a duty before the chat has its folder
+    assert menu.isVisible()
+    menu.hide()
     next(a for a in menu.actions() if a.text() == "project").trigger()
     await eventually(lambda: controller.model.conversation.folder == str(project))
     await eventually(lambda: button.text().split()[0] == "project")
+    assert button.toolTip().endswith(str(project))
+    assert window.input.toPlainText() == "hello there"
+    menu.aboutToShow.emit()
+    assert [a.text() for a in menu.actions() if a.isChecked()] == ["project"]
     controller.send("hello")
     await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
     assert button.isHidden()  # chosen with the first message; the header shows it after
+    task = controller.open_conversation(None)  # the next new chat asks again
+    await task
+    await eventually(lambda: not button.isHidden())
+    assert button.text().strip(" ⌄") == "Choose folder"
+
+
+async def test_the_folder_a_new_chat_starts_with_can_be_chosen_as_it_is(make, qapp, tmp_path):
+    """Choosing the folder the chat already has counts as choosing."""
+    tools = FakeTools()
+    tools.folders = []
+    h: Harness = await make(tools=tools, modules=ModuleState(work_folder=str(tmp_path)))
+    h.core.add(Step(text="hi"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    window.folder_chosen(str(tmp_path))
+    await eventually(lambda: window.folder_button.text().split()[0] == tmp_path.name)
+    window.input.setPlainText("hello")
+    window._send()
+    await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
 
 
 async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):

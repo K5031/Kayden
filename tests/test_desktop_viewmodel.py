@@ -634,10 +634,10 @@ def test_only_changed_fields_are_sent():
 
     form = replace(form_from(SETTINGS), model="m2", maintenance_model="m3",
                    spending_limit="$2.50", permissions=PermissionPolicy.DENY,
-                   instructions="Be brief.", work_folder="/tmp/w", api_key=" k ")
+                   instructions="Be brief.", api_key=" k ")
     assert settings_update(SETTINGS, form) == SettingsUpdate(
         api_key="k", model="m2", maintenance_model="m3", budget=Budget(max_cost_usd=2.5),
-        permissions=PermissionPolicy.DENY, system_prompt="Be brief.", work_folder="/tmp/w")
+        permissions=PermissionPolicy.DENY, system_prompt="Be brief.")
     cleared = replace(form_from(replace(SETTINGS, maintenance_model="m3")),
                       maintenance_model=None, spending_limit="")
     assert settings_update(replace(SETTINGS, maintenance_model="m3"), cleared) == SettingsUpdate(
@@ -665,7 +665,6 @@ def test_only_changed_modules_are_sent():
     ("spending_limit", "ten", "amount in dollars"),
     ("spending_limit", "-1", "amount in dollars"),
     ("instructions", "  ", "can't be empty"),
-    ("work_folder", " ", "work folder"),
 ])
 def test_invalid_values_are_explained(field, value, message):
     from dataclasses import replace

@@ -24,7 +24,7 @@ The user settings, in the terms a settings screen shows (`api.Settings`):
 | Spending limit | "$10 in total", with spending so far (`snapshot().usage`) | `Budget` |
 | Permissions | "Decide automatically, ask me only when unsure" and the stricter levels | `PermissionPolicy` |
 | Instructions | A text box, prefilled with the built-in prompt | `system_prompt` |
-| Folder for new chats | A folder picker | `work_folder`, handed to the Tools per conversation ([folders per conversation](2026-11-10-folder-per-conversation.md)) |
+| Folder for new chats (terminal app) | A text field | `work_folder`, handed to the Tools per conversation ([folders per conversation](2026-11-10-folder-per-conversation.md)); the desktop app asks per chat instead |
 | Memory, Tools, Interface | A list of the installed modules | The Memory, Tools and Frontend modules |
 
 Model, maintenance model, spending limit, permissions, instructions and the folder for new

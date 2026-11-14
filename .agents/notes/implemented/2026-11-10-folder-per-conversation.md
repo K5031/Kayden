@@ -40,15 +40,16 @@ project's folder, and starting work somewhere else should be one click, not a re
 
 `Settings.work_folder` is the folder new conversations get. The runtime hands the folder
 over at every `start()`, so changing it needs no restart: it applies to the next new
-conversation and does not set `restart_needed`. Settings screens call it "Folder for new
-chats".
+conversation and does not set `restart_needed`. The terminal app's settings call it
+"Folder for new chats".
 
 ### Frontends
 
-- **Desktop app.** The header shows the folder's name as a button, with the full path in
-  its tooltip. Clicking it opens a folder picker, and a new chat starts there
-  (`Controller.new_in_folder`); an unused chat left behind was never stored
-  (`.agents/decisions.md`, New chats).
+- **Desktop app.** A new chat shows a folder button: recent folders and a folder picker,
+  and a chat starts in the one chosen (`Controller.new_in_folder`); an unused chat left
+  behind was never stored (`.agents/decisions.md`, New chats). The chat is not used before
+  a folder is chosen for it
+  ([a desktop chat is given its folder](2026-11-14-a-desktop-chat-is-given-its-folder.md)).
 - **TUI.** The start screen has a folder field (empty: the default); `/folder` shows the
   folder and `/folder PATH` behaves like the desktop button; the status line shows the
   folder.
@@ -62,8 +63,9 @@ chats".
 - **Changing the folder of a running conversation.** Earlier tool results, paths and the
   agent's plan refer to the old folder; a new conversation in the other folder, or
   "Continue from" with a folder, is clearer.
-- **Asking for a folder on every New chat.** One extra dialog for the common case of
-  staying put; the default plus a button covers both.
+- **Asking for a folder on every New chat, in every frontend.** The terminal app is
+  started in a folder, which is the answer there. The desktop app does ask
+  ([a desktop chat is given its folder](2026-11-14-a-desktop-chat-is-given-its-folder.md)).
 - **Keeping the default folder a module setting with a restart.** Consistent with the
   other Tools options, but a restart for something the runtime can apply at the next
   `start()` is the friction this note removes.
