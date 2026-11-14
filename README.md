@@ -36,10 +36,6 @@ your home folder is too broad to count.
 The [documentation](docs/README.md) covers getting started, using Kadence, settings, the
 concepts behind it and development.
 
-## Status
-
-Early MVP, version 0.0.0. No release has been made and the API may still change.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
