@@ -841,3 +841,40 @@ def test_a_tool_shown_as_a_card_is_never_an_item():
     assert not of(model, ToolItem) and len(of(model, ChecklistItem)) == 1
     shown = {id(item) for item in model.items}
     assert all(id(c.item) in shown for c in changes if isinstance(c, Updated))
+
+
+def test_an_earlier_page_adds_its_items_and_leaves_the_turn_under_way_alone():
+    from dataclasses import replace
+
+    from kadence.api import Reasoning
+
+    def wrap(call_id: str, label: str) -> ToolCall:
+        return ToolCall(call_id, "wrap_up", {"recap": "Done.", "options": [{"label": label}]})
+
+    earlier = [
+        Message("u0", Role.USER, (Text("first"),), 0.0),
+        Message("a0", Role.ASSISTANT, (Reasoning("I plan."), _plan("p0", ("Old", "doing"))), 0.0),
+        Message("t0", Role.TOOL, (ToolResult("p0", ToolStatus.OK, "Plan saved."),), 0.0),
+        Message("a1", Role.ASSISTANT, (Reasoning("I answer."), Text("Old answer."),
+                                       wrap("w0", "Old option")), 0.0)]
+    newest = [
+        Message("u1", Role.USER, (Text("second"),), 0.0),
+        Message("a2", Role.ASSISTANT, (_plan("p1", ("New", "doing")), wrap("w1", "Go on")), 0.0)]
+    model = ConversationModel()
+    model.load(replace(_snapshot(), state=AgentState.THINKING), newest)
+    [plan] = of(model, ChecklistItem)
+    card = model.card
+    assert card is not None and card.options == ("Go on",)
+    model.prepend(earlier)
+    assert model.card is card and of(model, ChecklistItem) == [plan]
+    assert model.items[-1] is plan and plan.steps[0].text == "New"
+    # The page reads as it would as the newest one: thinking joined across the plan update.
+    whole = ConversationModel()
+    whole.load(_snapshot(), earlier + newest)
+
+    def texts(m: ConversationModel) -> list[tuple[str, str]]:
+        return [(type(i).__name__, getattr(i, "reasoning", "") + "|" + getattr(i, "text", ""))
+                for i in m.items if not isinstance(i, ChecklistItem)]
+
+    assert texts(model) == texts(whole)
+    assert of(model, AssistantItem)[0].reasoning == "I plan.\n\nI answer."

@@ -339,9 +339,8 @@ class ConversationModel:
         self._queued: dict[str, UserItem] = {}
         self._seen: set[str] = set()  # message ids rendered
         self._oldest_id: str | None = None
-        self._insert_at: int | None = None  # set while prepending an earlier page
-        # The checklist of the turn being shown, and of the turn being prepended.
-        self._plan: ChecklistItem | None = None
+        self._insert_at: int | None = None  # where the next item goes; None: at the end
+        self._plan: ChecklistItem | None = None  # the checklist, the last item while shown
         self._compaction: NoticeItem | None = None  # the line of a running compaction
         self._closed_card: str | None = None  # the card the user put away
 
@@ -408,6 +407,7 @@ class ConversationModel:
         self._oldest_id = history[0].id if history else None
         for message in history:
             self._render(message)
+            self._follow(message)
         if not self.busy:
             self._drop_plan()
         for op in snapshot.operations:
@@ -570,27 +570,41 @@ class ConversationModel:
     # ── internals ─────────────────────────────────────────────────────────
 
     def _add[I: Item](self, item: I) -> I:
+        index = self._next
         if self._insert_at is not None:
-            index = self._insert_at
             self._insert_at += 1
-        else:
-            index = len(self.items)
         self.items.insert(index, item)
         self.on_change(Inserted(index, item))
-        plan = self._plan
-        if (self._insert_at is None and plan is not None and item is not plan
-                and self.items[-1] is not plan):
-            # The checklist stays under the newest message.
-            self._remove(plan)
-            self.items.append(plan)
-            self.on_change(Inserted(len(self.items) - 1, plan))
         return item
+
+    @property
+    def _next(self) -> int:
+        """Where the next item goes: in the page being prepended, else at the end, above
+        the checklist, which stays under the newest message."""
+        if self._insert_at is not None:
+            return self._insert_at
+        return len(self.items) - (self._plan is not None)
+
+    def _follow(self, message: Message) -> None:
+        """The card and the checklist as `message`, now the conversation's last, leaves
+        them: both belong to the turn under way."""
+        if message.role is Role.USER:
+            if any(isinstance(b, (Image, File, Document)) or (isinstance(b, TextBlock) and b.text)
+                   for b in message.blocks):
+                self._drop_plan()  # a new turn
+                if message.from_user:
+                    self._set_card(None)  # answered: results and notices leave it up
+            return
+        for block in message.blocks:
+            if isinstance(block, ToolCall):
+                if card := card_of(block):
+                    self._set_card(card)
+                if block.name == "update_plan":
+                    self._show_plan(plan_steps(block.arguments))
 
     def _show_plan(self, steps: tuple[PlanItem, ...]) -> None:
         """The checklist of the work under way, as the agent's newest update_plan call
-        leaves it. Earlier pages show none: their work is over."""
-        if self._insert_at is not None:
-            return
+        leaves it."""
         if self._plan is None or not steps:
             self._drop_plan()
             if steps:
@@ -601,7 +615,7 @@ class ConversationModel:
 
     def _drop_plan(self) -> None:
         """The agent stopped, or a new turn begins: the checklist leaves the conversation."""
-        if self._insert_at is None and self._plan is not None:
+        if self._plan is not None:
             self._remove(self._plan)
             self._plan = None
 
@@ -658,14 +672,12 @@ class ConversationModel:
         self.on_change(Updated(tail))
 
     def _thinking(self) -> AssistantItem | None:
-        """The committed thinking, without a reply, that the conversation ends on (the
-        checklist aside): what the agent says next belongs with it. Only something not
-        shown as a step (a plan update) can lie between the two, so on screen they would
-        be two Thinking lines one under the other."""
-        if self._insert_at is not None:
-            return None
-        for item in reversed(self.items):
-            if isinstance(item, ChecklistItem) or item in self._stream:
+        """The committed thinking, without a reply, that the next item would follow: what
+        the agent says next belongs with it. Only something not shown as a step (a plan
+        update) can lie between the two, so on screen they would be two Thinking lines one
+        under the other."""
+        for item in reversed(self.items[: self._next]):
+            if item in self._stream:
                 continue
             if (isinstance(item, AssistantItem) and item.final and item.reasoning
                     and not item.text and not item.refused and not item.interrupted):
@@ -701,9 +713,9 @@ class ConversationModel:
     def _commit(self, message: Message, stop: StopReason | None) -> None:
         if message.id in self._seen:
             return
+        self._follow(message)
         if (queued := self._queued.pop(message.id, None)) is not None:
             self._seen.add(message.id)
-            self._drop_plan()
             queued.queued = False
             self.on_change(Updated(queued))
             return
@@ -722,15 +734,10 @@ class ConversationModel:
             text = "".join(b.text for b in message.blocks if isinstance(b, TextBlock))
             attached = tuple(b for b in message.blocks
                              if isinstance(b, (Image, File, Document)))
-            said = bool(text or attached)
-            if said and notice_of(message) is None and self._insert_at is None:
-                self._set_card(None)  # answered: results and notices leave it up
-            if said:
-                self._drop_plan()
             if (notice := notice_of(message)) is not None:
                 if notice:
                     self._add(NoticeItem(notice, "info"))
-            elif said:
+            elif text or attached:
                 self._add(UserItem(text, message.id, attachments=attached))
             for block in message.blocks:
                 if isinstance(block, OperationResult):
@@ -761,10 +768,6 @@ class ConversationModel:
                 case ToolCall() as call:
                     if self._shows(call) and call.id not in self._tools:
                         self._add_tool(call)
-                    if (card := card_of(call)) and self._insert_at is None:
-                        self._set_card(card)
-                    if call.name == "update_plan":
-                        self._show_plan(plan_steps(call.arguments))
                     current = None
                 case ToolResult() as result:
                     self._finish(result, None)
