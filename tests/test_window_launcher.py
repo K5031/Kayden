@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -110,3 +111,34 @@ def test_a_bad_config_is_shown_by_the_launchers_own_frontend(tmp_path, monkeypat
     with pytest.raises(SystemExit):
         window.main(["--data-dir", str(tmp_path)])
     assert shown and "invalid TOML" in shown[0]
+
+
+def test_the_window_launcher_has_only_its_own_flags(tmp_path):
+    """What the terminal launcher's flags set is left at its default, not copied here."""
+    assert window.parse_args(["--data-dir", str(tmp_path), "--conversation", "c1"]) == (
+        launcher.Launch(tmp_path, conversation="c1"))
+    assert launcher.parse_args(["--data-dir", str(tmp_path), "--model", "m"]) == (
+        launcher.Launch(tmp_path, model="m"))
+    with pytest.raises(SystemExit):
+        window.parse_args(["--model", "m"])
+
+
+def test_the_default_work_folder_is_made_when_the_tools_work_there(tmp_path, monkeypatch):
+    home = tmp_path / "home" / "Kadence"
+    monkeypatch.setattr(window, "DEFAULT_WORK_FOLDER", home)
+    settings_file(tmp_path, '[modules]\ncore = "first"\nmemory = "fake-memory"\n'
+                  'frontend = "scripted-window"\n')
+    roots: list[tuple[str, bool]] = []
+    loads: list[Path] = []
+    load = launcher.load_config
+    monkeypatch.setattr(launcher, "load_config",
+                        lambda args, **kw: (loads.append(args.data_dir), load(args, **kw))[1])
+
+    async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
+        root = (await runtime.settings()).work_folder
+        roots.append((root, Path(root).is_dir()))
+
+    window_frontends(monkeypatch, script)
+    window.main(["--data-dir", str(tmp_path)])
+    assert roots == [(str(home), True)]
+    assert len(loads) == 2  # to choose the loop, then to run on it: never by the launcher itself

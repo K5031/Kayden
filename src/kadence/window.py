@@ -14,52 +14,24 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from kadence.__main__ import (
-    DEFAULT_DATA_DIR,
-    LAUNCHER_FRONTENDS,
-    frontend_loop,
-    load_config,
-    run_frontends,
-)
-from kadence.runtime import ModuleSpec
-from kadence.runtime.modules import WINDOW, targets
+from kadence.__main__ import DEFAULT_DATA_DIR, Launch, run_frontends
+from kadence.runtime.modules import WINDOW
 
 DEFAULT_WORK_FOLDER = Path("~/Kadence")
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> Launch:
     parser = argparse.ArgumentParser(prog="kadence-desktop", description=__doc__)
     parser.add_argument("--data-dir", type=Path,
                         default=Path(os.environ.get("KADENCE_DATA_DIR", DEFAULT_DATA_DIR)),
                         help="instance data directory (default: $KADENCE_DATA_DIR or ~/.kadence)")
     parser.add_argument("--config", type=Path, help="config file (default: <data dir>/config.toml)")
     parser.add_argument("--conversation", help="open this conversation first")
-    args = parser.parse_args(argv)
-    # load_config also reads the terminal launcher's flags; the window launcher has none.
-    for name in ("model", "maintenance_model", "permissions", "duty", "goal"):
-        setattr(args, name, None)
-    args.headless = False
-    return args
-
-
-async def _fail(error: SystemExit) -> None:
-    raise error
+    return Launch(**vars(parser.parse_args(argv)))
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = parse_args(argv)
-    root = DEFAULT_WORK_FOLDER.expanduser()
-    try:
-        config = load_config(args, default_root=root, launcher=WINDOW)
-    except SystemExit as e:
-        # A bad config file, before any frontend is chosen: the message would go to an
-        # unseen stderr, so the launcher's own frontend shows it on its loop.
-        own = ModuleSpec(targets("frontend")[LAUNCHER_FRONTENDS[WINDOW]])
-        frontend_loop(own)(_fail(e))
-        raise
-    if config.tools.options.get("root") == str(root):
-        root.mkdir(parents=True, exist_ok=True)
-    run_frontends(args, WINDOW, default_root=root)
+    run_frontends(parse_args(argv), WINDOW, default_root=DEFAULT_WORK_FOLDER.expanduser())
 
 
 if __name__ == "__main__":

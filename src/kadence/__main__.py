@@ -24,7 +24,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -197,7 +197,23 @@ def show_config(config: InstanceConfig, path: Path) -> str:
     return "\n".join(header) + "\n\n" + tomli_w.dumps(data, multiline_strings=True)
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+@dataclass(frozen=True, slots=True)
+class Launch:
+    """What a launcher was started with: each sets the fields it has flags for."""
+
+    data_dir: Path
+    config: Path | None = None
+    conversation: str | None = None
+    model: str | None = None
+    maintenance_model: str | None = None
+    permissions: str | None = None
+    headless: bool = False
+    duty: str | None = None
+    goal: str | None = None
+    show_config: bool = False
+
+
+def parse_args(argv: Sequence[str] | None = None) -> Launch:
     parser = argparse.ArgumentParser(prog="kadence", description=__doc__)
     parser.add_argument("--data-dir", type=Path,
                         default=Path(os.environ.get("KADENCE_DATA_DIR", DEFAULT_DATA_DIR)),
@@ -217,10 +233,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     duty.add_argument("--goal", help="with --headless: start a new conversation on this goal")
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
-    return parser.parse_args(argv)
+    return Launch(**vars(parser.parse_args(argv)))
 
 
-def start_options(args: argparse.Namespace) -> dict[str, Any] | None:
+def start_options(args: Launch) -> dict[str, Any] | None:
     """Frontend options that start right away, or None to let the frontend ask."""
     if args.duty is not None or args.goal is not None:
         if not args.headless:
@@ -233,7 +249,7 @@ def start_options(args: argparse.Namespace) -> dict[str, Any] | None:
     return {"start": True, "conversation_id": args.conversation}
 
 
-def config_path(args: argparse.Namespace) -> Path:
+def config_path(args: Launch) -> Path:
     if args.config:
         return args.config.expanduser()
     return args.data_dir.expanduser() / CONFIG_FILE
@@ -290,7 +306,7 @@ def choose_frontend(chosen: str | None, configured: ModuleSpec, launcher: str
                      else ModuleSpec(info.factory))
 
 
-def load_config(args: argparse.Namespace, *, default_root: Path | None = None,
+def load_config(args: Launch, *, default_root: Path | None = None,
                 launcher: str = TERMINAL, restart: Restart | None = None) -> InstanceConfig:
     """config.toml, then the saved settings, then command-line flags, each overriding.
     The Tools root defaults to `default_root`, else the current directory. After a
@@ -375,7 +391,7 @@ def frontend_loop(spec: ModuleSpec) -> EventLoop:
     return getattr(factory, "event_loop", asyncio.run)
 
 
-async def launch(args: argparse.Namespace, launcher: str, *, default_root: Path | None = None,
+async def launch(args: Launch, launcher: str, *, default_root: Path | None = None,
                  restart: Restart | None = None,
                  runs_here: Callable[[InstanceConfig], bool] = lambda config: True,
                  ) -> Restart | None:
@@ -391,14 +407,28 @@ async def launch(args: argparse.Namespace, launcher: str, *, default_root: Path 
             return restart
 
 
-def run_frontends(args: argparse.Namespace, launcher: str, *,
+async def _fail(error: SystemExit) -> None:
+    raise error
+
+
+def run_frontends(args: Launch, launcher: str, *,
                   default_root: Path | None = None) -> Restart | None:
     """Run instances, each frontend on the event loop it names, until the user quits or
-    a Restart asks for a frontend of the other kind (returned)."""
+    a Restart asks for a frontend of the other kind (returned). A `default_root` the Tools
+    work in is made first."""
     restart: Restart | None = None
     while True:
-        config = load_config(args, default_root=default_root, launcher=launcher,
-                             restart=restart)
+        try:
+            config = load_config(args, default_root=default_root, launcher=launcher,
+                                 restart=restart)
+        except SystemExit as e:
+            # A bad config file, before any frontend is chosen: the launcher's own
+            # frontend says so on its loop (a window's stderr is unseen).
+            own = ModuleSpec(targets("frontend")[LAUNCHER_FRONTENDS[launcher]])
+            frontend_loop(own)(_fail(e))
+            raise
+        if default_root is not None and config.tools.options.get("root") == str(default_root):
+            default_root.mkdir(parents=True, exist_ok=True)
         run = frontend_loop(config.frontend)
         restart = run(launch(args, launcher, default_root=default_root, restart=restart,
                              runs_here=lambda c, run=run: frontend_loop(c.frontend) is run))
@@ -406,7 +436,7 @@ def run_frontends(args: argparse.Namespace, launcher: str, *,
             return restart
 
 
-def window_command(args: argparse.Namespace, restart: Restart) -> list[str]:
+def window_command(args: Launch, restart: Restart) -> list[str]:
     """The window launcher on the same data directory, config file and conversation."""
     command = [sys.executable, "-m", "kadence.window",
                "--data-dir", str(args.data_dir.expanduser())]
@@ -417,7 +447,7 @@ def window_command(args: argparse.Namespace, restart: Restart) -> list[str]:
     return command
 
 
-def hand_over(args: argparse.Namespace, restart: Restart, *,
+def hand_over(args: Launch, restart: Restart, *,
               message: str = "Kadence continues in the desktop app.") -> None:
     """Start the desktop app detached from this terminal."""
     subprocess.Popen(window_command(args, restart), start_new_session=True,
