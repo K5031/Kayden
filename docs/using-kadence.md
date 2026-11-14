@@ -111,8 +111,7 @@ agent or switch conversations are withdrawn.
 ### The plan
 
 For a task with several steps, the agent writes a plan first and ticks the steps off as it
-works: ✓ done, ◐ under way, ○ still to do, … waiting for you (two bars in the desktop app), and struck through for
-steps it dropped. A quick
+works: ✓ done, ◐ under way, ○ still to do, and struck through for steps it dropped. A quick
 question gets no plan.
 
 - **In the desktop app** the checklist is part of the conversation. It sits under the

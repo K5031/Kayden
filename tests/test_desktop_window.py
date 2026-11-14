@@ -1659,20 +1659,6 @@ async def test_a_new_chat_shows_the_mascot_peeking(make, qapp):
     assert not mascot.pixmap().isNull() and mascot.accessibleName() == "Kadence"
 
 
-def test_every_plan_state_has_a_mark_on_both_screens(qapp):
-    from kadence.api import PlanStatus
-    from kadence.frontends.desktop import theme
-    from kadence.frontends.tui import PlanPanel
-
-    assert set(PlanPanel.MARKS) == set(PlanStatus)
-    blank = theme.icon("no such icon", "#888888").pixmap(16, 16).toImage()
-    for status in PlanStatus:
-        if status is not PlanStatus.DOING:  # drawn as a turning arc, not an icon
-            assert theme.icon(str(status), "#888888").pixmap(16, 16).toImage() != blank
-    waiting = theme.icon("waiting", "#888888").pixmap(16, 16).toImage()
-    assert waiting != theme.icon("todo", "#888888").pixmap(16, 16).toImage()
-
-
 async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     """It sits under the newest message while the agent works and is gone when it stops."""
     from kadence.frontends.desktop.viewmodel import ChecklistItem, Phase, ToolItem

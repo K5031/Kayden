@@ -268,19 +268,6 @@ async def test_it_is_sent_back_once_and_may_then_leave_steps_open(make):
     assert h.runtime.snapshot().conversation.plan[0].status == PlanStatus.DOING
 
 
-async def test_a_step_that_waits_for_the_user_is_not_sent_back_for(make):
-    """The agent marks the step waiting: the plan says what holds it and the turn ends."""
-    h = await duty_harness(make, [
-        plan_call(("Read the code", "done"), ("Pick a colour", "waiting")),
-        Step(text="Which colour?")])
-    await h.turn("paint it")
-    assert len(h.core.requests) == 2
-    assert h.runtime.snapshot().conversation.plan[1].status == PlanStatus.WAITING
-    assert "waiting" in duties.finish([PlanItem("Fix the bug", PlanStatus.DOING)])
-    assert duties.STILL_OPEN not in duties.saved(
-        [PlanItem("Pick a colour", PlanStatus.WAITING)], None, time.time())
-
-
 async def test_steps_that_wait_are_not_sent_back_for(make):
     """A step with a due time waits for it, and a duty keeps its plan between check-ins."""
     h = await duty_harness(make, [

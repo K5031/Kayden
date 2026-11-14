@@ -1399,7 +1399,7 @@ class Spinner(QWidget):
 
 class PlanCard(QFrame):
     """The agent's plan as a checklist: done steps ticked and dimmed, the one under way with
-    an arc that turns while the agent works on it, the rest open; a step that waits for the user with two bars, dropped ones struck
+    an arc that turns while the agent works on it, the rest open; dropped ones struck
     through."""
 
     def __init__(self, item: ChecklistItem) -> None:
@@ -1427,7 +1427,7 @@ class PlanCard(QFrame):
         colors = theme.current()
         self._rows: list[tuple[str, str]] = []
         for step in self._steps:
-            mark = str(step.status)  # done, doing, todo, dropped or waiting
+            mark = str(step.status)  # done, doing, todo or dropped
             row = QHBoxLayout()
             row.setSpacing(8)
             icon: QWidget
@@ -1436,7 +1436,7 @@ class PlanCard(QFrame):
             else:
                 icon = QLabel()
                 icon.setPixmap(theme.icon(mark, colors.muted, 16).pixmap(16, 16))
-            text = _label(step.text, tone=None if mark in ("doing", "todo", "waiting") else "muted")
+            text = _label(step.text, tone=None if mark in ("doing", "todo") else "muted")
             text.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             if mark == "dropped":
                 font = text.font()

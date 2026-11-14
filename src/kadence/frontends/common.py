@@ -394,7 +394,7 @@ DUTY_KIND_LABELS = {
 }
 DUTY_HINT = ("Kadence carries this on by itself. It pauses on Stop, on a restart, and at "
              "your spending limit.")
-PLAN_HINT = ("One step per line: [todo], [doing], [waiting], [done] or [dropped], the step, then "
+PLAN_HINT = ("One step per line: [todo], [doing], [done] or [dropped], the step, then "
              "optionally | due YYYY-MM-DD HH:MM and | a note.")
 _PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")
 
@@ -503,8 +503,8 @@ def parse_plan_text(text: str) -> list[PlanItem]:
             try:
                 status = PlanStatus(match[1].lower())
             except ValueError:
-                raise ValueError(f"Line {number}: the status must be todo, doing, "
-                                 "waiting, done or dropped.") from None
+                raise ValueError(f"Line {number}: the status must be todo, doing, done or "
+                                 "dropped.") from None
             rest = match[2]
         step, *extras = (part.strip() for part in rest.split("|"))
         if not step:
