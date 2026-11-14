@@ -483,13 +483,22 @@ async def test_a_message_queued_after_the_last_turn_is_still_answered(make: Any)
 async def test_a_message_queued_while_a_turn_fails_is_still_answered(make: Any) -> None:
     """A turn that ends in a model failure does not leave a queued message waiting: it
     starts the next turn, as a message sent after the failure would."""
-    core = ScriptedCore([Step(text="partial", delay=0.2, error=CoreError("gave up")),
-                         Step(text="answer")])
+    from kadence.api import Completion
+
+    core = ScriptedCore([Step(error=CoreError("gave up")), Step(text="answer")])
     h: Harness = await make(core=core)
+    sent = False
+
+    async def maintain(complete: Completion) -> bool:
+        nonlocal sent
+        if not sent:  # before the request that fails
+            sent = True
+            await h.runtime.send("and this")
+        return False
+
+    h.memory.maintain_override = maintain
     await h.start()
     await h.runtime.send("go")
-    await eventually(lambda: core.requests)
-    await h.runtime.send("and this")
     queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
     await eventually(lambda: len(core.requests) == 2)
     await h.rec.wait_state(AgentState.IDLE)

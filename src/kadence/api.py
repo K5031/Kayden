@@ -825,7 +825,8 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
             "required": ["call", "reason"],
         },
     ),
-    # Ends the turn when it is the only call in its message (no request follows); frontends
+    # Ends the turn when it is the only call in its message (no request follows); beside
+    # other calls the card is shown and the turn goes on. Frontends
     # show it as a card from the transcript (see SUGGESTION_TOOLS). An option with a call is
     # a Proposal with card=True and the wrap_up call's id.
     "wrap_up": ToolSpec(
@@ -836,8 +837,9 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
         "push\", \"Fix the first one\", \"Not now\"); a click sends it as their message. At "
         "most one option may carry a call: clicking it runs exactly that call, and you are "
         "woken with its result. recap, optional: one or two sentences on what is done and "
-        "not done, when the decision needs it. Call wrap_up alone, last, after your other "
-        "work: your turn ends with it.",
+        "not done, when the decision needs it. Called alone, it ends your turn: no request "
+        "follows. Called beside other tools, the card is shown and your turn goes on with "
+        "their results.",
         {
             "type": "object",
             "properties": {
@@ -891,9 +893,7 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
         "write it with your very first tool call, alongside that call, before any other "
         "work, then mark each step doing and done as you go, in the same call as other "
         "work. Only a plain answer or a single action needs none. When a new task starts, "
-        "replace the old plan. Never end "
-        "your turn with the plan out of date: when the work is finished, every step is "
-        "done or dropped. Your last update stays in view. An open step "
+        "replace the old plan. Your last update stays in view. An open step "
         "that falls due wakes you: give a step a due time to do it, or to remind the "
         "user, later.",
         {"type": "object",
@@ -913,10 +913,8 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
     "finish_goal": ToolSpec(
         "finish_goal",
         "Declare your goal reached, with a short report for the user. Your duty then ends. "
-        "Bring your plan up to date first, with update_plan in the same message, before "
-        "this call: every step done or dropped, as it really is. The step you are on "
-        "counts as done with this call; a step you never began stays open and sends you "
-        "back to close it.",
+        "The step you are on counts as done with this call; a step you never began stays "
+        "open in the plan the user sees.",
         {"type": "object", "properties": {"report": {"type": "string", "minLength": 1}},
          "required": ["report"]},
     ),

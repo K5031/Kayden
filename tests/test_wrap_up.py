@@ -68,14 +68,18 @@ async def test_wrapping_up_ends_the_turn_without_another_request(make):
     assert card_of(wrap) == Card("w", RECAP, "Push it?", ("Yes, push", "Not now"), None)
 
 
-async def test_wrapping_up_with_other_calls_is_an_error(make):
+async def test_wrapping_up_beside_other_calls_shows_the_card_and_the_turn_goes_on(make):
+    """The agent gets the other calls' results, and is told the turn has not ended."""
     h = await harness(make, [
         Step(calls=[call("read", id="r"), call("wrap_up", WRAP, id="w")]),
         Step(text="Read it.")])
     await h.turn("go")
-    await eventually(lambda: len(h.core.requests) == 2)
+    assert len(h.core.requests) == 2
     assert results(h)["r"].status == ToolStatus.OK
-    assert results(h)["w"].status == ToolStatus.ERROR and "alone" in results(h)["w"].content
+    assert results(h)["w"].status == ToolStatus.OK
+    assert "has ended" not in results(h)["w"].content
+    [wrap] = [b for b in blocks(h) if getattr(b, "name", "") == "wrap_up"]
+    assert card_of(wrap) is not None
 
 
 @pytest.mark.parametrize("arguments", [

@@ -20,11 +20,12 @@ answers to pick.
 - **A built-in `wrap_up(question, options, recap?)`,** in `BUILTIN_TOOLS`, offered in every
   request, only for a turn that leaves the user a decision. `options` are one to three, each
   a `label` written as the user would say it and, for at most one of them, a `call` to run;
-  `recap` is one or two sentences when the decision needs them. The description says to
-  call it alone, last.
+  `recap` is one or two sentences when the decision needs them. The description says what
+  calling it alone and beside other tools does.
 - **It ends the turn.** When it is the only call in its message, the cycle ends as after an
-  answer that calls no tool: no further request is paid for. Called with other tools, it is
-  an error result and the cycle goes on.
+  answer that calls no tool: no further request is paid for. Called with other tools, the
+  card is shown, its result says the turn goes on, and the cycle continues with the other
+  calls' results.
 - **An option with a call is a proposal.** The runtime validates the call as `propose`
   does and starts a `Proposal` with `card=True` and the `wrap_up` call's id; the wrap-up
   result is BACKGROUNDED. Clicking the option approves it (`resolve_proposal`), so exactly

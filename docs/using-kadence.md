@@ -117,9 +117,8 @@ question gets no plan.
 - **In the desktop app** the checklist is part of the conversation. It sits under the
   newest message while the agent works and is gone when the agent stops.
 - **In the terminal app** it shows above the message box while the agent works.
-- **The agent finishes its plan before it stops.** If it ends a turn with steps open, Kadence
-  sends it back once to do them or close them. A step can stay open when it waits for
-  you, for a reminder's time, or for a duty's next check-in.
+- **A step can stay open when the agent stops:** when it waits for you, for a reminder's
+  time, or for a duty's next check-in.
 
 ### Reminders
 
