@@ -96,8 +96,30 @@ async def test_cancelling_the_call_stops_the_child(make, tmp_path, child_env):
                      timeout=30)
     child = sessions.sessions[0]
     await h.runtime.cancel_operation("s")
+    await eventually(lambda: child.state == "stopped", timeout=15)
+    assert child.live is None and child.agent_state is None  # no longer listened to
     await eventually(lambda: child.returncode is not None, timeout=15)
     assert child.state == "stopped"
+
+
+async def test_an_answer_given_where_the_child_is_open_clears_its_question(
+        make, tmp_path, child_env):
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Write a poem"}, id="s")]),
+        Step(text="Started."), Step(text="It asks."), Step(text="Noted.")],
+        [{"calls": [{"name": "ask_for_help", "arguments": {"question": "Which form?"}}]},
+         {"text": "Waiting."}, {"text": "A sonnet, then."}, finish("Wrote a sonnet."),
+         {"text": "Done."}])
+    await h.turn("Get me a poem")
+    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state
+                             == "waiting" and sessions.sessions[0], timeout=30)
+    assert child.question == "Which form?" and child.has_goal
+    remote = await sessions.open(child)
+    await remote.send("A sonnet.")  # the user answers it directly
+    await eventually(lambda: child.question is None, timeout=20)
+    await eventually(lambda: child.state == "done", timeout=30)  # it went on to its goal
+    assert child.report == "Wrote a sonnet." and not child.has_goal
+    sessions.release(child, remote)
 
 
 async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, child_env):
@@ -116,6 +138,7 @@ async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, chi
     [request] = remote.snapshot().pending_permissions
     assert request.call.name == "lookup"
     await remote.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    await eventually(lambda: not child.approvals, timeout=10)
     with pytest.raises(RuntimeStateError) as again:  # the child's refusal, with its reason
         await remote.resolve_permission(request.id, Decision.ALLOW_ONCE)
     assert again.value.reason is Refusal.NOT_PENDING
@@ -295,7 +318,8 @@ async def test_cancelling_while_a_child_starts_stops_it(tmp_path):
     sessions = SubSessions(tmp_path, command=silent)
     call_ = ToolCall("c", "start_session", {"task": "Anything"})
     running = asyncio.create_task(sessions.execute(call_, Ctx()))
-    await eventually(lambda: sessions._channels, timeout=10)  # started, not answering
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].live,
+                     timeout=10)  # started, not answering
     running.cancel()
     await asyncio.gather(running, return_exceptions=True)
     [child] = sessions.sessions
@@ -358,8 +382,8 @@ async def test_a_childs_limit_changes_while_it_runs_and_after(make, tmp_path, ch
                              == "working" and sessions.sessions[0], timeout=30)
     await eventually(lambda: child.child_conversation_id, timeout=30)
     await sessions.set_child_limit(child, 7.5)
-    settings = await sessions._channels[child.id].request("settings")
-    assert settings["budget"]["max_cost_usd"] == 7.5 and child.budget_usd == 7.5
+    settings = await child.live.settings()
+    assert settings.budget.max_cost_usd == 7.5 and child.budget_usd == 7.5
     sessions.stop(child)
     await eventually(lambda: child.returncode is not None, timeout=20)
     await sessions.set_child_limit(child, 2)
@@ -367,3 +391,31 @@ async def test_a_childs_limit_changes_while_it_runs_and_after(make, tmp_path, ch
         "max_cost_usd": 2}
     with pytest.raises(ValueError):
         await sessions.set_child_limit(child, 0)
+
+
+async def test_a_snapshot_has_the_events_read_while_it_was_awaited():
+    """The reply and the events after it can be read in one go, before attach() goes on."""
+    import asyncio
+
+    from kadence.api import EventEnvelope, RuntimeSnapshot, StateChanged, Usage, UsageSnapshot
+    from kadence.frontends.remote import RemoteRuntime
+    from kadence.frontends.wire import to_json
+
+    class Channel:
+        def __init__(self) -> None:
+            self.listeners: list = []
+            self.ended = asyncio.Event()
+
+        async def request(self, method: str, **params: Any) -> Any:
+            for seq, state in ((4, AgentState.RUNNING_TOOLS), (6, AgentState.IDLE)):
+                for listener in self.listeners:
+                    listener(EventEnvelope(seq, StateChanged(state)))
+            return to_json(RuntimeSnapshot(5, AgentState.THINKING, None, None, None,
+                                           UsageSnapshot(Usage(), 0, 0.0), (), (), ()))
+
+    heard: list[int] = []
+    remote = RemoteRuntime(Channel(), lambda envelope: heard.append(envelope.seq))
+    assert not remote.attached
+    await remote.attach()
+    assert remote.attached and heard == [4, 6]
+    assert (remote.snapshot().seq, remote.snapshot().state) == (6, AgentState.IDLE)

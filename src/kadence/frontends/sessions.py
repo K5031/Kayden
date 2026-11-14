@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import math
@@ -32,17 +33,14 @@ from kadence.api import (
     DESCRIPTION_ARG,
     AgentState,
     Budget,
-    ConversationUpdated,
     EventEnvelope,
     Failure,
-    HelpNeeded,
     Message,
     MessageCommitted,
-    PermissionRequested,
-    PermissionResolved,
     ReasoningDelta,
     Refusal,
     Role,
+    RuntimeSnapshot,
     RuntimeStateError,
     SettingsUpdate,
     StateChanged,
@@ -158,16 +156,31 @@ class SubSession:
     has_goal: bool = False  # its goal is not reached yet
     budget_usd: float | None = None  # its own spending limit; None: none
     step: str | None = field(default=None, compare=False)  # what it is doing now
-    approvals: int = field(default=0, compare=False)  # permission prompts open
     messages: list[Message] = field(default_factory=list, compare=False)
     returncode: int | None = field(default=None, compare=False)
     awaited: int = field(default=0, compare=False)  # parent calls waiting on it
-    agent_state: AgentState | None = field(default=None, compare=False)
+    # Its manager's RuntimeAPI for it while its process runs: how it is now is read there.
+    live: RemoteRuntime | None = field(default=None, compare=False, repr=False)
     _changed: asyncio.Event | None = field(default=None, compare=False, repr=False)
 
     @property
     def running(self) -> bool:
         return self.state in ("starting", "working", "waiting")
+
+    @property
+    def snapshot(self) -> RuntimeSnapshot | None:
+        """Its runtime's snapshot, kept current; None while it is not running, or has not
+        answered yet."""
+        return self.live.snapshot() if self.live is not None and self.live.attached else None
+
+    @property
+    def approvals(self) -> int:
+        """Its permission prompts open."""
+        return len(snap.pending_permissions) if (snap := self.snapshot) is not None else 0
+
+    @property
+    def agent_state(self) -> AgentState | None:
+        return snap.state if (snap := self.snapshot) is not None else None
 
     @property
     def name(self) -> str:
@@ -218,7 +231,6 @@ class SubSessions(Tools):
         self.check_in_s = check_in_s
         self.listeners: list[Callable[[], None]] = []  # told of every change
         self.sessions = self._load()
-        self._channels: dict[str, Channel] = {}
         self._viewers: dict[str, int] = {}
         self._folder: Path | None = None
         self._next = max((int(s.id) for s in self.sessions if s.id.isdigit()), default=0) + 1
@@ -246,36 +258,35 @@ class SubSessions(Tools):
         release() with it when the view closes."""
         if session.child_conversation_id is None:
             raise RuntimeStateError("this sub-session has not started", Refusal.NOT_STARTED)
-        channel = self._channels.get(session.id)
-        if channel is None:
-            channel = await self._spawn(session, resume=True)
+        reopened = session.live is None
+        live = await self._running(session)
+        if reopened:
             self._set(session, state="idle", failure=None)
         self._viewers[session.id] = self._viewers.get(session.id, 0) + 1
-        remote = RemoteRuntime(channel)
+        remote = RemoteRuntime(live.channel)
         try:
             return await remote.attach()
         except BaseException:  # cancelled too: the view never got it
             self.release(session, remote)
             raise
 
-    def release(self, session: SubSession, runtime: RemoteRuntime | None) -> None:
-        if runtime is not None:
-            runtime.detach()
-        self._viewers[session.id] = max(0, self._viewers.get(session.id, 0) - 1)
+    def release(self, session: SubSession, runtime: RemoteRuntime) -> None:
+        runtime.detach()
+        self._viewers[session.id] -= 1
         if not self._viewers[session.id] and not session.running:
-            self._close_channel(session)
+            self._close(session)
 
     def stop(self, session: SubSession) -> None:
         """Stop a child: the frontend's Stop and stop_session."""
         if session.running:
             self._set(session, state="stopped")
-        self._close_channel(session)
+        self._close(session)
 
     async def resume(self, session: SubSession) -> None:
         """Start it again on its conversation and let it carry on with its goal."""
-        channel = self._channels.get(session.id) or await self._spawn(session, resume=True)
+        live = await self._running(session)
         self._set(session, state="working", failure=None)
-        await channel.request("activate")
+        await live.activate()
 
     def rename(self, session: SubSession, title: str) -> None:
         self._set(session, title=title.strip() or None)
@@ -290,8 +301,7 @@ class SubSessions(Tools):
 
     async def delete(self, session: SubSession) -> None:
         """Stop it and erase its folder for good."""
-        channel = self._channels.pop(session.id, None)
-        if channel is not None:
+        if (channel := self._unhear(session)) is not None:
             await channel.close(STOP_GRACE_S)
         if self._write is not None:
             await asyncio.gather(self._write, return_exceptions=True)
@@ -325,10 +335,8 @@ class SubSessions(Tools):
         child stopped by its limit can then be resumed."""
         if usd is not None and not usd > 0:
             raise ValueError("the limit must be more than $0")
-        channel = self._channels.get(session.id)
-        if channel is not None:
-            await channel.request("update_settings",
-                                  update=SettingsUpdate(budget=Budget(max_cost_usd=usd)))
+        if session.live is not None:
+            await session.live.update_settings(SettingsUpdate(budget=Budget(max_cost_usd=usd)))
         else:
             await asyncio.to_thread(self._write_limit, session.data_dir, usd)
         self._set(session, budget_usd=usd)
@@ -358,36 +366,31 @@ class SubSessions(Tools):
             if budget is not None and self.limit_usd is not None:
                 budget = min(budget, self.limit_usd)
             session = await self._new(args["task"], budget, ctx.conversation_id)
-            try:
-                await self._launch(session)
-            except asyncio.CancelledError:  # stopped while it was starting
+        else:
+            session = next((s for s in self.sessions if s.id == args["session"]), None)
+            if session is None:
+                return ToolOutput(f"There is no sub-session {args['session']!r}.",
+                                  is_error=True)
+            if call.name == STOP.name:
                 self.stop(session)
-                raise
-            if session.state == "failed":
-                return ToolOutput(self._outcome(session), is_error=True)
-            return await self._wait(session, ctx)
-        session = next((s for s in self.sessions if s.id == args["session"]), None)
-        if session is None:
-            return ToolOutput(f"There is no sub-session {args['session']!r}.", is_error=True)
-        if call.name == STOP.name:
-            self.stop(session)
-            return ToolOutput(f"Sub-session {session.id} stopped.")
-        if session.child_conversation_id is None:
-            return ToolOutput(f"Sub-session {session.id} never started.", is_error=True)
+                return ToolOutput(f"Sub-session {session.id} stopped.")
+            if session.child_conversation_id is None:
+                return ToolOutput(f"Sub-session {session.id} never started.", is_error=True)
         try:
-            channel = self._channels.get(session.id) or await self._spawn(session, resume=True)
-            self._set(session, state="working", question=None, failure=None)
-            await channel.request("send", text=args["text"])
-        except asyncio.CancelledError:
+            if call.name == START.name:
+                await self._launch(session)
+            else:
+                live = await self._running(session)
+                self._set(session, state="working", failure=None)
+                await live.send(args["text"])
+            return await self._wait(session, ctx)
+        except asyncio.CancelledError:  # the call was cancelled, wherever it had got to
             self.stop(session)
             raise
-        return await self._wait(session, ctx)
 
     async def aclose(self) -> None:
         for session in self.sessions:
-            if session.running:
-                self._set(session, state="stopped")
-            self._close_channel(session)
+            self.stop(session)
         if self._closing:
             await asyncio.wait(self._closing)
         if self._write is not None:
@@ -411,18 +414,20 @@ class SubSessions(Tools):
         self._set(session, state="starting")
         try:
             await asyncio.to_thread(self._prepare, session.data_dir, session.budget_usd)
-            channel = await self._spawn(session, resume=False)
-            info = await channel.request("start")
+            live = await self._spawn(session, resume=False)
+            info = await live.channel.request("start")
             session.child_conversation_id = info["id"]
-            await channel.request("set_duty", duty={
+            await live.channel.request("set_duty", duty={
                 "instruction": session.task, "kind": "goal",
                 "min_interval_s": self.check_in_s[0], "max_interval_s": self.check_in_s[1]})
+            await live.attach()
         except (OSError, RuntimeError, ValueError) as e:
-            self._set(session, state="failed", failure=self._why(session, e))
-            self._close_channel(session)
+            channel = session.live.channel if session.live is not None else None
+            self._set(session, state="failed", failure=self._why(e, channel))
+            self._close(session)
             return
-        if session.state == "starting":
-            self._set(session, state="working")
+        self._follow(session)
+        self._set(session)
 
     def _prepare(self, folder: Path, budget: float | None) -> None:
         """The child's data folder: the parent's configuration, its limit and folder."""
@@ -438,7 +443,14 @@ class SubSessions(Tools):
             settings["work_folder"] = str(self._folder)
         (folder / "settings.toml").write_text(tomli_w.dumps(settings))
 
-    async def _spawn(self, session: SubSession, *, resume: bool) -> Channel:
+    async def _running(self, session: SubSession) -> RemoteRuntime:
+        """Its runtime, starting it again on its conversation when it is not running."""
+        live = session.live or await self._spawn(session, resume=True)
+        if not live.attached:
+            await live.attach()
+        return live
+
+    async def _spawn(self, session: SubSession, *, resume: bool) -> RemoteRuntime:
         command = [*self.command, "--headless", "--data-dir", str(session.data_dir)]
         if resume and session.child_conversation_id is not None:
             command += ["--conversation", session.child_conversation_id]
@@ -446,10 +458,8 @@ class SubSessions(Tools):
             *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, cwd=self._folder or session.data_dir,
             limit=16 * 1024 * 1024)
-        channel = Channel(process)
-        channel.listeners.append(lambda envelope: self._event(session, channel, envelope))
-        self._channels[session.id] = channel
-        return channel
+        session.live = RemoteRuntime(Channel(process), functools.partial(self._event, session))
+        return session.live
 
     async def _wait(self, session: SubSession, ctx: ToolContext) -> ToolOutput:
         """Until it reports, asks, fails or stops; its current step is the progress line."""
@@ -463,13 +473,10 @@ class SubSessions(Tools):
                     shown = step
                     ctx.progress(step)
                 await session.changed.wait()
-        except asyncio.CancelledError:
-            self.stop(session)
-            raise
         finally:
             session.awaited -= 1
         if session.state == "done" and not self._viewers.get(session.id):
-            self._close_channel(session)
+            self._close(session)
         return ToolOutput(self._outcome(session), is_error=session.state == "failed")
 
     def _outcome(self, session: SubSession) -> str:
@@ -483,14 +490,10 @@ class SubSessions(Tools):
                 return f"Sub-session {session.id} was stopped."
         return f"Sub-session {session.id} failed: {session.failure}"
 
-    def _event(self, session: SubSession, channel: Channel,
-               envelope: EventEnvelope | None) -> None:
-        if envelope is None:  # the process ended
-            if self._channels.get(session.id) is channel:
-                del self._channels[session.id]
-                task = asyncio.create_task(self._ended(session, channel))
-                self._closing.add(task)
-                task.add_done_callback(self._closing.discard)
+    def _event(self, session: SubSession, envelope: EventEnvelope | None) -> None:
+        """From its process, while this manager listens to it (until _unhear)."""
+        if envelope is None:  # the process ended by itself
+            self._close(session)
             return
         if isinstance(envelope.event, _QUIET):
             return  # streaming: nothing a list shows
@@ -504,26 +507,34 @@ class SubSessions(Tools):
                         session.step = block.arguments.get(DESCRIPTION_ARG) or block.name
                     elif isinstance(block, Text) and message.role == Role.ASSISTANT:
                         session.step = block.text.strip().splitlines()[0][:120] or None
-            case PermissionRequested():
-                session.approvals += 1
-            case PermissionResolved():
-                session.approvals = max(0, session.approvals - 1)
-            case HelpNeeded(question=question) if question is not None:
-                session.question = question
-            case ConversationUpdated(info=info) if info.id == session.child_conversation_id:
-                session.has_goal = info.duty is not None
             case UsageUpdated(snapshot=usage):
                 session.spent = usage.usage.cost_usd or 0.0
             case Failure(message=message):
                 session.failure = message
-            case StateChanged(state=state):
-                ended_turn = session.agent_state in _ACTIVE and state not in _ACTIVE
-                session.agent_state = state
-                session.state = self._state_after(session, state)
+            case StateChanged():
+                was = session.state
+                self._follow(session)
                 # Between a goal's check-ins it is still working: no notice until it stops.
-                if ended_turn and session.state != "working" and not session.awaited:
+                if was == "working" != session.state and not session.awaited:
                     self._note(session)
         self._set(session)
+
+    def _follow(self, session: SubSession) -> None:
+        """Its state, and what its record keeps of its goal and question, from how its
+        runtime is now. Nothing while it has not answered yet, or once it is closed."""
+        if (snap := session.snapshot) is None:
+            return
+        session.has_goal = snap.conversation is not None and snap.conversation.duty is not None
+        session.question = snap.help_needed
+        if snap.state in _ACTIVE:
+            session.state = "working"
+        elif snap.state == AgentState.FAILED:
+            session.state = "failed"
+        elif snap.state in (AgentState.IDLE, AgentState.STOPPED):
+            if session.has_goal:  # working between a goal's check-ins, unless it asked
+                session.state = "waiting" if session.question is not None else "working"
+            else:
+                session.state = "done" if session.report is not None else "idle"
 
     def _note(self, session: SubSession) -> None:
         """A notice for the parent: the child ended a turn while no call of the parent's
@@ -542,37 +553,29 @@ class SubSessions(Tools):
             note += f" Its last reply: {reply}"
         self.notes.setdefault(session.conversation_id, []).append(note)
 
-    def _state_after(self, session: SubSession, state: AgentState) -> str:
-        if session.state == "stopped":
-            return "stopped"
-        if state in _ACTIVE:
-            return "working"
-        if state == AgentState.FAILED:
-            return "failed"
-        if state in (AgentState.IDLE, AgentState.STOPPED):
-            if session.question is not None and session.has_goal:
-                return "waiting"
-            if session.has_goal:
-                return "working"  # between a goal's check-ins
-            return "done" if session.report is not None else "idle"
-        return session.state
-
     async def _ended(self, session: SubSession, channel: Channel) -> None:
         session.returncode = await channel.close(STOP_GRACE_S)
         if session.running:  # it ended by itself
-            self._set(session, state="failed", failure=self._why(session, None, channel))
-        session.approvals = 0
+            self._set(session, state="failed", failure=self._why(None, channel))
         self._set(session)
 
-    def _close_channel(self, session: SubSession) -> None:
-        if (channel := self._channels.pop(session.id, None)) is not None:
+    def _unhear(self, session: SubSession) -> Channel | None:
+        """Stop listening to its process, if it has one: the channel is then the caller's
+        to close, and nothing it still says reaches the session."""
+        live, session.live = session.live, None
+        if live is None:
+            return None
+        live.detach()
+        return live.channel
+
+    def _close(self, session: SubSession) -> None:
+        if (channel := self._unhear(session)) is not None:
             task = asyncio.create_task(self._ended(session, channel))
             self._closing.add(task)
             task.add_done_callback(self._closing.discard)
 
-    def _why(self, session: SubSession, error: Exception | None,
-             channel: Channel | None = None) -> str:
-        channel = channel or self._channels.get(session.id)
+    @staticmethod
+    def _why(error: Exception | None, channel: Channel | None) -> str:
         tail = [line for line in (channel.stderr if channel else ()) if line.startswith("kadence:")]
         if tail:
             return tail[-1].removeprefix("kadence:").strip()
@@ -589,7 +592,7 @@ class SubSessions(Tools):
             except (OSError, ValueError, TypeError):
                 logger.warning("unreadable sub-session record %s", record)
                 continue
-            if session.running or session.state == "starting":  # it stopped with the last run
+            if session.running:  # it stopped with the last run
                 session.state = "stopped"
             sessions.append(session)
         return sorted(sessions, key=lambda s: int(s.id) if s.id.isdigit() else 0)
@@ -598,7 +601,7 @@ class SubSessions(Tools):
         for name, value in changes.items():
             setattr(session, name, value)
         record = session.record()
-        if record != self._saved.get(session.id) and session.data_dir.exists():
+        if record != self._saved.get(session.id):
             self._saved[session.id] = record
             path = session.data_dir / RECORD
             self._write = asyncio.ensure_future(self._save(self._write, path, record))

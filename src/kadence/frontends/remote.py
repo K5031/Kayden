@@ -138,17 +138,30 @@ class RemoteRuntime:
     """RuntimeAPI for a child. attach() first: it subscribes, then reads the snapshot,
     which events keep current, since snapshot() must answer at once. restart() is refused:
     the parent's window restarts the parent. Every other command is made from RuntimeAPI
-    itself (_command): a request of the same name."""
+    itself (_command): a request of the same name. `on_event` hears each event once the
+    snapshot has it, and None when the process ended, until detach()."""
 
-    def __init__(self, channel: Channel) -> None:
+    def __init__(self, channel: Channel,
+                 on_event: Callable[[EventEnvelope | None], None] | None = None) -> None:
         self.channel = channel
+        self._on_event = on_event
         self._snapshot: RuntimeSnapshot | None = None
+        self._early: list[EventEnvelope] = []  # heard before the snapshot was read
         self._queues: list[asyncio.Queue[EventEnvelope | None]] = []
         channel.listeners.append(self._event)
 
     async def attach(self) -> RemoteRuntime:
-        self._snapshot = from_json(await self.channel.request("snapshot"), RuntimeSnapshot)
+        snapshot = from_json(await self.channel.request("snapshot"), RuntimeSnapshot)
+        for envelope in self._early:  # those after it, read before this task went on
+            if envelope.seq > snapshot.seq:
+                snapshot = _applied(snapshot, envelope)
+        self._early.clear()
+        self._snapshot = snapshot
         return self
+
+    @property
+    def attached(self) -> bool:
+        return self._snapshot is not None
 
     def detach(self) -> None:
         if self._event in self.channel.listeners:
@@ -159,8 +172,12 @@ class RemoteRuntime:
     def _event(self, envelope: EventEnvelope | None) -> None:
         if envelope is not None and self._snapshot is not None:
             self._snapshot = _applied(self._snapshot, envelope)
+        elif envelope is not None:
+            self._early.append(envelope)
         for queue in self._queues:
             queue.put_nowait(envelope)
+        if self._on_event is not None:
+            self._on_event(envelope)
 
     # ── Observation ───────────────────────────────────────────────────────
 
