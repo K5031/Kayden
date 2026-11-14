@@ -98,7 +98,6 @@ class HeadlessFrontend(Frontend):
             if await self._open(runtime):
                 await self._serve(runtime, reader)
         finally:
-            events.cancel()
             for task in (events, *self._tasks):
                 task.cancel()
             await asyncio.gather(events, *self._tasks, return_exceptions=True)

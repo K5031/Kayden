@@ -84,9 +84,12 @@ class Channel:
         assert self.process.stdin is not None
         line = json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method,
                            "params": to_json(params)})
-        self.process.stdin.write(line.encode() + b"\n")
-        await self.process.stdin.drain()
-        return await future
+        try:
+            self.process.stdin.write(line.encode() + b"\n")
+            await self.process.stdin.drain()
+            return await future
+        finally:  # answered, cancelled or failed: no longer pending
+            del self._pending[request_id]
 
     async def _read(self) -> None:
         assert self.process.stdout is not None
@@ -98,8 +101,8 @@ class Channel:
                     envelope = EventEnvelope(params["seq"], from_json(params["event"]))
                     for listener in list(self.listeners):
                         listener(envelope)
-                elif ((future := self._pending.pop(message.get("id"), None)) is not None
-                      and not future.done()):  # done: its caller was cancelled
+                elif ((future := self._pending.get(message.get("id"))) is not None
+                      and not future.done()):  # done: its caller is being cancelled right now
                     if "error" in message:
                         future.set_exception(_error(message["error"]))
                     else:

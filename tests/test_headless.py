@@ -246,3 +246,39 @@ async def test_a_real_process_keeps_stdout_for_the_channel(tmp_path):
         stderr = (await asyncio.wait_for(process.communicate(), 20))[1].decode()
     assert process.returncode == 0, stderr
     assert "stray" in stderr  # printed before the channel was claimed, still kept off it
+
+
+async def test_a_cancelled_request_is_forgotten_at_once():
+    """The other end of the channel: a request whose caller gave up leaves nothing
+    pending, and its late answer is dropped."""
+    from kadence.frontends.remote import Channel
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdout, self.stderr = asyncio.StreamReader(), asyncio.StreamReader()
+            self.sent: list[dict[str, Any]] = []
+            self.stdin = self
+
+        def write(self, data: bytes) -> None:
+            self.sent.append(json.loads(data))
+
+        async def drain(self) -> None:
+            pass
+
+    process = Process()
+    channel = Channel(process)  # type: ignore[arg-type]
+    slow = asyncio.create_task(channel.request("history", conversation_id="c"))
+    await eventually(lambda: process.sent)
+    slow.cancel()
+    await asyncio.gather(slow, return_exceptions=True)
+    assert channel._pending == {}
+    answered = asyncio.create_task(channel.request("snapshot"))
+    await eventually(lambda: len(process.sent) == 2)
+    for request, result in zip(process.sent, ("late", "now"), strict=True):
+        process.stdout.feed_data(json.dumps(
+            {"jsonrpc": "2.0", "id": request["id"], "result": result}).encode() + b"\n")
+    assert await answered == "now"
+    assert channel._pending == {}
+    process.stdout.feed_eof()
+    process.stderr.feed_eof()
+    await channel.ended.wait()
