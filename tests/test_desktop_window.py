@@ -694,28 +694,51 @@ def test_zoom_steps_stop_at_the_ends():
     assert theme.zoom_step(1.3, 1) == 1.5  # a level saved by hand moves to the next one
 
 
-async def test_ctrl_plus_minus_and_zero_zoom_and_are_remembered(make, qapp, unzoomed, tmp_path):
+@pytest.fixture
+def system_theme(qapp):
+    yield
+    theme.set_theme(qapp, "system")
+
+
+async def test_ctrl_plus_minus_and_zero_zoom(make, qapp, unzoomed):
     h: Harness = await make()
     await h.start()
-    controller = Controller(h.runtime, ConversationModel())
-    saved = tmp_path / "desktop.json"
-    window = MainWindow(h.runtime, controller, zoom_file=saved)
+    window = MainWindow(h.runtime, Controller(h.runtime, ConversationModel()))
     actions = {a.text().replace("&", ""): a for a in window.findChildren(QAction)}
     actions["Zoom In"].trigger()
     actions["Zoom In"].trigger()
     assert theme.zoom() == theme.zoom_step(theme.zoom_step(1.0, 1), 1)
-    await eventually(lambda: saved.exists() and str(theme.zoom()) in saved.read_text())
     actions["Zoom Out"].trigger()
     assert theme.zoom() == theme.zoom_step(1.0, 1)
     actions["Actual Size"].trigger()
     assert theme.zoom() == 1.0
-    actions["Zoom In"].trigger()
-    await window.save_pending_zoom()  # as when the window closes right away
-    assert '"zoom": 1.1' in saved.read_text()
-    actions["Actual Size"].trigger()
     assert "Ctrl+=" in [k.toString() for k in actions["Zoom In"].shortcuts()]
     assert actions["Actual Size"].shortcut().toString() == "Ctrl+0"
-    await eventually(lambda: '"zoom": 1.0' in saved.read_text())
+
+
+async def test_the_zoom_and_theme_are_written_once_when_the_window_closes(
+        make, qapp, unzoomed, system_theme, tmp_path):
+    from kadence.frontends import desktop
+
+    h: Harness = await make()
+    await h.start()
+    saved = tmp_path / desktop.ZOOM_FILE
+    run = asyncio.ensure_future(desktop.DesktopFrontend(data_dir=tmp_path).run(h.runtime))
+
+    def shown() -> list[MainWindow]:
+        return [w for w in qapp.topLevelWidgets() if isinstance(w, MainWindow) and w.isVisible()]
+
+    await eventually(shown)
+    [window] = shown()
+    window.zoom(1)
+    window.zoom(1)
+    window.set_theme("light")
+    await asyncio.sleep(0.05)
+    assert not saved.exists()
+    window.close()
+    await asyncio.wait_for(run, 5)
+    assert await window_module.load_look(saved) == (
+        theme.zoom_step(theme.zoom_step(1.0, 1), 1), "light")
 
 
 async def test_a_saved_zoom_and_theme_are_read_back(tmp_path):
@@ -729,27 +752,17 @@ async def test_a_saved_zoom_and_theme_are_read_back(tmp_path):
     assert await window_module.load_look(saved) == (1.0, "system")
 
 
-@pytest.fixture
-def system_theme(qapp):
-    yield
-    theme.set_theme(qapp, "system")
-
-
-async def test_the_theme_is_chosen_in_the_view_menu_and_remembered(
-        make, qapp, system_theme, tmp_path):
+async def test_the_theme_is_chosen_in_the_view_menu(make, qapp, system_theme):
     h: Harness = await make()
     await h.start()
-    saved = tmp_path / "desktop.json"
-    window = MainWindow(h.runtime, Controller(h.runtime, ConversationModel()), zoom_file=saved)
+    window = MainWindow(h.runtime, Controller(h.runtime, ConversationModel()))
     assert window.theme_actions["system"].isChecked()
     window.theme_actions["light"].trigger()
     assert theme.choice() == "light" and not theme.current().dark
-    await eventually(lambda: saved.exists() and '"theme": "light"' in saved.read_text())
     window.theme_actions["dark"].trigger()
     assert theme.current().dark and window.theme_actions["dark"].isChecked()
     theme.apply(qapp)  # as when the desktop switches: the choice stays
     assert theme.current().dark
-    await eventually(lambda: '"theme": "dark"' in saved.read_text())
 
 
 def groups(window: MainWindow) -> list[StepGroup]:

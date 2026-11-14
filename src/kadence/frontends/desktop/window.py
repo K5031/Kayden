@@ -196,7 +196,6 @@ CODE_HEADER = 22  # px above them, for the block's language and its copy button
 CODE_RADIUS = 8  # px, the corners of the box
 TURN_GAP = 18  # px more below your message, before Kadence's reply, than between its steps
 LIST_ITEM_SPACING = 4  # px below a list item
-ZOOM_SAVE_DELAY_S = 0.4
 VOICE_DIR = "voice"  # the speech models, in the data folder
 HEADING_SPACING = 6  # px above a heading, on top of the paragraph below the previous block
 RENDER_INTERVAL_MS = 100  # Markdown of a streaming reply is re-rendered at most this often
@@ -1693,7 +1692,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.runtime = runtime
         self.controller = controller
-        # Talking with Kadence; its speech models are kept beside the zoom's file.
+        # Talking with Kadence; its speech models are kept beside the zoom's file, which
+        # the frontend reads before the window opens and writes when it has closed.
         self.voice = voice or VoiceMode(
             controller, zoom_file.parent / VOICE_DIR if zoom_file is not None else None,
             self._ask)
@@ -1703,8 +1703,6 @@ class MainWindow(QMainWindow):
         controller.sessions = sessions
         self._viewing: tuple[SubSession, RemoteRuntime, asyncio.Task[None]] | None = None
         self._collapsed: set[str] = set()  # sidebar groups the user folded
-        self.zoom_file = zoom_file  # where the zoom is remembered; None: not remembered
-        self._zoom_saver: asyncio.Task[None] | None = None
         self.model: ConversationModel = controller.model
         self.model.on_change = self._changed
         self._widgets: dict[int, QWidget] = {}  # by id() of its item
@@ -2169,33 +2167,12 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         assert isinstance(app, QApplication)
         theme.set_zoom(app, theme.zoom_step(theme.zoom(), steps) if steps else 1.0)
-        self._remember_look()
-
-    def _remember_look(self) -> None:
-        if self.zoom_file is None:
-            return
-        if self._zoom_saver is not None:  # once the keys stop: one write, never a stale one
-            self._zoom_saver.cancel()
-        self._zoom_saver = _spawn(self._save_zoom(self.zoom_file))
 
     def set_theme(self, name: str) -> None:
         """Light, dark, or whatever the desktop is set to; remembered like the zoom."""
         app = QApplication.instance()
         assert isinstance(app, QApplication)
         theme.set_theme(app, name)
-        self._remember_look()
-
-    async def _save_zoom(self, path: Path) -> None:
-        await asyncio.sleep(ZOOM_SAVE_DELAY_S)
-        await save_look(path)
-
-    async def save_pending_zoom(self) -> None:
-        """Write a zoom or theme change still waiting for its delay, before the window
-        goes."""
-        if self._zoom_saver is not None and not self._zoom_saver.done():
-            self._zoom_saver.cancel()
-            assert self.zoom_file is not None
-            await save_look(self.zoom_file)
 
     # ── startup ───────────────────────────────────────────────────────────
 

@@ -62,7 +62,7 @@ class DesktopFrontend(Frontend):
 
         from kadence.frontends.desktop import theme
         from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
-        from kadence.frontends.desktop.window import MainWindow, load_look
+        from kadence.frontends.desktop.window import MainWindow, load_look, save_look
 
         app = QApplication.instance()
         if app is None:
@@ -93,7 +93,8 @@ class DesktopFrontend(Frontend):
                 server.close()
                 single.socket_path(self.data_dir).unlink(missing_ok=True)
             window.close()
-            await window.save_pending_zoom()
+            if self.zoom_file is not None:
+                await save_look(self.zoom_file)
 
     async def _hand_over(self, data_dir: Path) -> None:
         """Another Kadence has the data folder: bring its window forward, or, when none
