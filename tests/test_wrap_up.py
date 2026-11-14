@@ -248,6 +248,12 @@ def test_cards_come_from_wrap_up_and_ask_for_help():
     assert card_of(ToolCall("e", "read", WRAP)) is None
 
 
+def _committed(message: Message) -> object:
+    from kadence.api import MessageCommitted
+
+    return MessageCommitted(message)
+
+
 async def test_a_background_result_or_notice_leaves_the_card_up(make):
     from kadence.api import OperationResult
     from kadence.api import Text as TextBlock
@@ -255,13 +261,14 @@ async def test_a_background_result_or_notice_leaves_the_card_up(make):
 
     model = ConversationModel()
     wrap = ToolCall("w", "wrap_up", WRAP)
-    model._render(Message("a", Role.ASSISTANT, (wrap,), 0.0))
+    model.apply(_committed(Message("a", Role.ASSISTANT, (wrap,), 0.0)))
     assert model.card is not None
-    model._render(Message("b", Role.USER, (OperationResult("op", ToolStatus.OK, "built"),), 0.0))
-    model._render(Message("c", Role.USER, (TextBlock("Sub-session ended."),), 0.0,
-                          Author.KADENCE))
+    model.apply(_committed(Message(
+        "b", Role.USER, (OperationResult("op", ToolStatus.OK, "built"),), 0.0)))
+    model.apply(_committed(Message("c", Role.USER, (TextBlock("Sub-session ended."),), 0.0,
+                                   Author.KADENCE)))
     assert model.card is not None  # neither is the user's answer
-    model._render(Message("d", Role.USER, (TextBlock("Not now"),), 0.0))
+    model.apply(_committed(Message("d", Role.USER, (TextBlock("Not now"),), 0.0)))
     assert model.card is None
 
 
@@ -270,9 +277,9 @@ def test_a_closed_card_stays_closed_when_the_history_is_reloaded():
 
     model = ConversationModel()
     wrap = ToolCall("w", "wrap_up", WRAP)
-    model._render(Message("a", Role.ASSISTANT, (wrap,), 0.0))
+    model.apply(_committed(Message("a", Role.ASSISTANT, (wrap,), 0.0)))
     model.close_card()
-    model._render(Message("a2", Role.ASSISTANT, (wrap,), 0.0))  # as a recover renders it
+    model.apply(_committed(Message("a2", Role.ASSISTANT, (wrap,), 0.0)))  # as after a recover
     assert model.card is None
 
 
