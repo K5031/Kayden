@@ -1509,7 +1509,7 @@ async def test_the_last_click_wins_while_a_conversation_opens(make, qapp):
     window._render_sidebar()
     assert window.conversation_list.currentItem().text() == "Second"
     await eventually(lambda: controller.model.conversation.id == second.id
-                     and window._opening is None)
+                     and not window._target.opening)
     await asyncio.sleep(0.1)
     assert controller.model.conversation.id == second.id
     assert window.conversation_list.currentItem().text() == "Second"
@@ -1531,10 +1531,10 @@ async def test_a_failed_load_does_not_stop_later_switches(make, qapp):
 
     h.runtime.history = failing_once  # type: ignore[method-assign]
     window.open_conversation(first.id)
-    await eventually(lambda: window._opening is None)
+    await eventually(lambda: not window._target.opening)
     window.open_conversation(None)
     await eventually(lambda: controller.model.conversation.id != first.id
-                     and window._opening is None)
+                     and not window._target.opening)
 
 
 async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
@@ -1571,6 +1571,51 @@ async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
     await eventually(lambda: sessions._viewers.get(child.id, 0) == 0)
     assert controller.model.conversation.id == parent_id
     assert window.conversation_list.currentItem().data(Qt.ItemDataRole.UserRole) == parent_id
+
+
+async def test_the_open_chat_clicked_while_a_sub_session_opens_stays(
+        make, qapp, tmp_path, child_env):
+    """What was asked for last is what shows, also when it is already on screen."""
+    from tests.test_sub_sessions import finish, parent
+
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Research"}, id="s")]),
+        Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
+    await h.turn("Start research")
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done"
+                     and len(h.core.requests) == 3
+                     and h.runtime.snapshot().state == AgentState.IDLE, timeout=30)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, sessions=sessions)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    await window.fill_sidebar()
+    child = sessions.sessions[0]
+    opened = sessions.open
+    starts: list[Any] = []
+    start = h.runtime.start
+
+    async def slow_open(session: Any) -> Any:
+        await asyncio.sleep(0.2)
+        return await opened(session)
+
+    async def counting(options: Any) -> Any:
+        starts.append(options)
+        return await start(options)
+
+    sessions.open = slow_open  # type: ignore[method-assign]
+    h.runtime.start = counting  # type: ignore[method-assign]
+    lst = window.conversation_list
+    window.open_session(child)
+    assert lst.currentItem().text() == child.name  # highlighted while it opens
+    window.open_session(child)  # a second click on it asks for nothing new
+    window._conversation_chosen(next(
+        lst.item(i) for i in range(lst.count())
+        if lst.item(i).data(Qt.ItemDataRole.UserRole) == h.conversation.id))
+    await asyncio.sleep(0.5)
+    assert window._viewing is None and window.controller is window.home and not starts
+    await eventually(lambda: sessions._viewers.get(child.id, 0) == 0)
+    assert lst.currentItem().data(Qt.ItemDataRole.UserRole) == h.conversation.id
 
 
 async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path):

@@ -155,7 +155,6 @@ from kadence.frontends.desktop.viewmodel import (
     AssistantItem,
     Change,
     ChecklistItem,
-    Closed,
     Controller,
     ConversationListChanged,
     ConversationModel,
@@ -1503,14 +1502,26 @@ class WrapUpCard(QFrame):
         self.setAccessibleName(card.question or "Turn summary")
 
 
-@dataclass(frozen=True, slots=True)
-class Opening:
-    """What the user last asked to see, while it opens: a sub-session, else a conversation
-    (None: a new chat). The newest request wins; the sidebar highlights it meanwhile."""
+@dataclass(frozen=True, slots=True, eq=False)
+class Target:
+    """What the user last asked to see, which is what shows once it has opened; the newest
+    one wins and the sidebar highlights it. A sub-session, else the window's own
+    conversation: the one open there or, while another `opening`s, the one asked for
+    (`conversation`; None is a new chat)."""
 
-    request: int
-    conversation: str | None = None
     session: SubSession | None = None
+    opening: bool = False
+    conversation: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Viewing:
+    """A sub-session on screen: what shows it, and what is given back when it leaves."""
+
+    session: SubSession
+    remote: RemoteRuntime
+    controller: Controller
+    pump: asyncio.Task[None]
 
 
 class ConversationList(QListWidget):
@@ -1691,7 +1702,9 @@ class MainWindow(QMainWindow):
                  voice: VoiceMode | None = None) -> None:
         super().__init__()
         self.runtime = runtime
-        self.controller = controller
+        self.home = controller  # this window's own conversation
+        self._viewing: Viewing | None = None  # the sub-session on screen instead of it
+        self._target = Target()
         # Talking with Kadence; its speech models are kept beside the zoom's file, which
         # the frontend reads before the window opens and writes when it has closed.
         self.voice = voice or VoiceMode(
@@ -1699,11 +1712,8 @@ class MainWindow(QMainWindow):
             self._ask)
         self.voice.changed.connect(self._show_voice)
         self.sessions = sessions  # the sub-sessions this window hosts
-        self.home = controller  # this window's own runtime; `controller` is the one shown
         controller.sessions = sessions
-        self._viewing: tuple[SubSession, RemoteRuntime, asyncio.Task[None]] | None = None
         self._collapsed: set[str] = set()  # sidebar groups the user folded
-        self.model: ConversationModel = controller.model
         self.model.on_change = self._changed
         self._widgets: dict[int, QWidget] = {}  # by id() of its item
         self._groups: dict[int, StepGroup] = {}  # by id() of its first step
@@ -1712,8 +1722,6 @@ class MainWindow(QMainWindow):
         self.memory_dialog: MemoryDialog | None = None
         self.mcp_dialog: McpDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
-        self._opening: Opening | None = None
-        self._requests = 0
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
         self.setWindowTitle("Kadence")
         # No title bar from the desktop: the header and the sidebar's top row move the
@@ -1727,6 +1735,15 @@ class MainWindow(QMainWindow):
         self._corners = RoundedCorners(self)
         if sessions is not None:
             sessions.listeners.append(self._sessions_changed)
+
+    @property
+    def controller(self) -> Controller:
+        """Of what is on screen: a sub-session, else the window's own conversation."""
+        return self._viewing.controller if self._viewing is not None else self.home
+
+    @property
+    def model(self) -> ConversationModel:
+        return self.controller.model
 
     # ── layout ────────────────────────────────────────────────────────────
 
@@ -2200,37 +2217,28 @@ class MainWindow(QMainWindow):
 
     def open_conversation(self, conversation_id: str | None, *,
                           seed_from: str | None = None) -> None:
-        # Marked first: leaving a sub-session redraws the list, which then shows this one.
-        opening = self._open(conversation=conversation_id)
-        if self._viewing is not None:
-            self._leave_session()
-            own = self.model.conversation
-            if own is not None and conversation_id == own.id and seed_from is None:
-                self._settle(opening)
-                return
-        if reason := self.controller.can_switch():
-            self._settle(opening)
+        self._leave_session()
+        own = self.home.model.conversation
+        if own is not None and conversation_id == own.id and seed_from is None:
+            self._open()  # open here already
+        elif reason := self.home.can_switch():
+            self._open()
             self.model.notify(reason)
-            return
-        task = self.controller.open_conversation(conversation_id, seed_from=seed_from)
-        task.add_done_callback(lambda _: self._opened(opening))
+        else:
+            target = self._open(opening=True, conversation=conversation_id)
+            task = self.home.open_conversation(conversation_id, seed_from=seed_from)
+            task.add_done_callback(lambda _: self._opened(target))
 
-    def _open(self, *, conversation: str | None = None,
-              session: SubSession | None = None) -> Opening:
-        self._requests += 1
-        self._opening = Opening(self._requests, conversation, session)
-        return self._opening
-
-    def _settle(self, opening: Opening) -> bool:
-        """`opening` is done; True when it was the newest request, so what it opened shows."""
-        if self._opening is not opening:
-            return False
-        self._opening = None
+    def _open(self, *, session: SubSession | None = None, opening: bool = False,
+              conversation: str | None = None) -> Target:
+        """Say what the window shows, here and nowhere else: the sidebar follows."""
+        self._target = Target(session, opening, conversation)
         self._render_sidebar()
-        return True
+        return self._target
 
-    def _opened(self, opening: Opening) -> None:
-        if self._settle(opening):
+    def _opened(self, target: Target) -> None:
+        if self._target is target:
+            self._open()  # opened or refused: the conversation open here shows
             self.input.setFocus()
             _spawn(self.fill_sidebar())
             self._deliver_notes()
@@ -2272,9 +2280,6 @@ class MainWindow(QMainWindow):
                 self._rebuild_prompts()
             case StatusChanged():
                 self._refresh_status()
-            case Closed():
-                if self.controller is self.home:
-                    self.close()
 
     def _widget_for(self, item: Item) -> QWidget:
         match item:
@@ -2433,14 +2438,9 @@ class MainWindow(QMainWindow):
     def _render_sidebar(self) -> None:
         """Conversations grouped by project (their folder), newest first, each with its
         sub-sessions under it. A folded group shows only its heading."""
-        # What the user last asked for stays highlighted while it opens, not what was open.
-        opening, own = self._opening, self.home.model.conversation
-        if opening is not None:
-            current, shown = opening.conversation, opening.session
-        else:
-            current = own.id if own is not None else None
-            shown = self._viewing[0] if self._viewing is not None else None
-        viewing = shown.id if shown is not None else None
+        target, own = self._target, self.home.model.conversation
+        viewing = target.session.id if target.session is not None else None
+        current = target.conversation if target.opening else own.id if own is not None else None
         archived = self.show_archived.isChecked()
         groups: dict[str | None, list[ConversationInfo]] = {}
         for info in self._conversations.values():
@@ -2508,13 +2508,11 @@ class MainWindow(QMainWindow):
                 self._collapsed.symmetric_difference_update({key})
                 self._render_sidebar()
             case "session":
-                self._session_chosen(entry.data(Qt.ItemDataRole.UserRole))
+                session = self._session_of(entry.data(Qt.ItemDataRole.UserRole))
+                if session is not None:
+                    self.open_session(session)
             case _:
-                conversation_id = entry.data(Qt.ItemDataRole.UserRole)
-                own = self.home.model.conversation
-                if (self._viewing is not None or own is None
-                        or conversation_id != own.id):
-                    self.open_conversation(conversation_id)
+                self.open_conversation(entry.data(Qt.ItemDataRole.UserRole))
 
     def conversation_menu(self, info: ConversationInfo) -> QMenu:
         menu = QMenu(self)
@@ -2591,13 +2589,6 @@ class MainWindow(QMainWindow):
         return next((s for s in (self.sessions.sessions if self.sessions else ())
                      if s.id == session_id), None)
 
-    def _session_chosen(self, session_id: str) -> None:
-        session = self._session_of(session_id)
-        if session is None or (self._viewing is not None and self._viewing[0] is session) or (
-                self._opening is not None and self._opening.session is session):
-            return
-        self.open_session(session)
-
     def _row_menu(self, entry: QListWidgetItem, at: QPoint) -> None:
         if entry.data(KIND_ROLE) == "session":
             if (session := self._session_of(entry.data(Qt.ItemDataRole.UserRole))) is not None:
@@ -2663,8 +2654,9 @@ class MainWindow(QMainWindow):
         sessions = self.sessions
 
         def delete() -> None:
-            if self._viewing is not None and self._viewing[0] is session:
+            if self._target.session is session:
                 self._leave_session()
+                self._open()
             self.home.command(sessions.delete(session))
 
         confirm(self, f"Delete the sub-session “{clip(session.name, 80)}”?", delete,
@@ -2675,46 +2667,40 @@ class MainWindow(QMainWindow):
         """Show a sub-session in the conversation area, as its own conversation: its
         messages, steps and prompts, and the message box talks to it. Its row stays
         highlighted while it opens, which may mean starting it again."""
-        opening = self._open(session=session)
-        self._render_sidebar()
-        _spawn(self._open_session(opening, session))
+        if session is not self._target.session:
+            _spawn(self._open_session(self._open(session=session)))
 
-    async def _open_session(self, opening: Opening, session: SubSession) -> None:
-        assert self.sessions is not None
+    async def _open_session(self, target: Target) -> None:
+        session = target.session
+        assert self.sessions is not None and session is not None
         try:
             remote = await self.sessions.open(session)
         except Exception as e:  # noqa: BLE001 - shown, never fatal
-            self._settle(opening)
+            if self._target is target:  # what is on screen stays
+                self._open(session=self._viewing.session if self._viewing else None)
             self.model.notify(f"The sub-session could not be opened: {user_message(e)}")
             return
-        if self._opening is not opening:  # the user asked for something else meanwhile
+        if self._target is not target:  # the user asked for something else meanwhile
             self.sessions.release(session, remote)
             return
         self._leave_session()
         controller = Controller(remote, ConversationModel())
-        pump = asyncio.create_task(controller.run())
-        self._viewing = (session, remote, pump)
-        self._opening = None
-        self._show(controller)
+        self._show(Viewing(session, remote, controller, asyncio.create_task(controller.run())))
 
     def _leave_session(self) -> None:
         """Back to this window's own conversation; the sub-session keeps working."""
-        if self._viewing is None:
-            return
-        session, remote, pump = self._viewing
-        self._viewing = None
-        pump.cancel()
-        assert self.sessions is not None
-        self.sessions.release(session, remote)
-        self._show(self.home)
+        if (viewing := self._viewing) is not None:
+            self._show(None)
+            viewing.pump.cancel()
+            assert self.sessions is not None
+            self.sessions.release(viewing.session, viewing.remote)
 
-    def _show(self, controller: Controller) -> None:
+    def _show(self, viewing: Viewing | None) -> None:
+        """Put a sub-session on screen, or (None) the window's own conversation."""
         self.model.on_change = lambda change: None
-        self.controller = controller
-        self.model = controller.model
+        self._viewing = viewing
         self.model.on_change = self._changed
         self._rebuild()
-        self._render_sidebar()
 
     def open_duty(self) -> None:
         if self.model.conversation is None:
